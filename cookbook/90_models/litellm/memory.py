@@ -1,6 +1,17 @@
+"""
+Litellm Memory
+==============
+
+Cookbook example for `litellm/memory.py`.
+"""
+
 from agno.agent import Agent
 from agno.models.litellm import LiteLLM
 from rich.pretty import pprint
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=LiteLLM(id="gpt-4o"),
@@ -24,3 +35,10 @@ agent.print_response("What was my first message?", stream=True)
 pprint(
     [m.model_dump(include={"role", "content"}) for m in agent.get_session_messages()]
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

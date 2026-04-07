@@ -324,15 +324,15 @@ def test_code_chunking_custom_tokenizer_subclass(sample_python_code):
 
 
 def test_code_chunking_no_document_id(sample_python_code):
-    """Test chunking document without id."""
+    """Test chunking document without id uses name as fallback."""
     chunker = CodeChunking(language="python")
-    doc = Document(content=sample_python_code, name="test.py")  # No id
+    doc = Document(content=sample_python_code, name="test.py")  # No id, but has name
 
     chunks = chunker.chunk(doc)
 
     assert len(chunks) > 0
-    # Chunks should have None id
-    assert all(chunk.id is None for chunk in chunks)
+    # Chunks should have name-based IDs when document has name but no id
+    assert all(chunk.id is not None and chunk.id.startswith("test.py_") for chunk in chunks)
 
 
 def test_code_chunking_lazy_initialization(sample_python_code):

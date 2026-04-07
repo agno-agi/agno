@@ -48,6 +48,24 @@ def openai_model():
         return model
 
 
+@pytest.fixture
+def openai_model_factory():
+    """Factory fixture that creates a fresh OpenAI model each call.
+
+    Memori's llm.register() wraps the client object, so registering the same
+    cached client twice causes provider detection to fail. Use this fixture
+    when a test needs multiple independent Memori registrations.
+    """
+
+    def _create():
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}):
+            model = OpenAIChat(id="gpt-4o-mini")
+            model.get_client()
+            return model
+
+    return _create
+
+
 class TestMemoriIntegration:
     """Test Memori integration with Agno agents."""
 
@@ -85,12 +103,14 @@ class TestMemoriIntegration:
         assert agent is not None
         assert agent.model == openai_model
 
-    def test_multiple_memori_instances(self, db_session, openai_model):
+    def test_multiple_memori_instances(self, db_session, openai_model_factory):
         """Test that multiple Memori instances can be created with different attributions."""
-        mem1 = Memori(conn=db_session).llm.register(openai_model.get_client())
+        model1 = openai_model_factory()
+        mem1 = Memori(conn=db_session).llm.register(model1.get_client())
         mem1.attribution(entity_id="entity-1", process_id="process-1")
 
-        mem2 = Memori(conn=db_session).llm.register(openai_model.get_client())
+        model2 = openai_model_factory()
+        mem2 = Memori(conn=db_session).llm.register(model2.get_client())
         mem2.attribution(entity_id="entity-2", process_id="process-2")
 
         assert mem1 is not None
@@ -149,25 +169,27 @@ class TestMemoriWithAgent:
         # Agent should be created successfully
         assert agent is not None
 
-    def test_agent_with_different_entity_ids(self, db_session, openai_model):
+    def test_agent_with_different_entity_ids(self, db_session, openai_model_factory):
         """Test that different entity IDs can be used for different agents."""
         # Agent 1
-        mem1 = Memori(conn=db_session).llm.register(openai_model.get_client())
+        model1 = openai_model_factory()
+        mem1 = Memori(conn=db_session).llm.register(model1.get_client())
         mem1.attribution(entity_id="user-1", process_id="session-1")
         mem1.config.storage.build()
 
         agent1 = Agent(
-            model=openai_model,
+            model=model1,
             instructions=["You are agent 1."],
         )
 
         # Agent 2
-        mem2 = Memori(conn=db_session).llm.register(openai_model.get_client())
+        model2 = openai_model_factory()
+        mem2 = Memori(conn=db_session).llm.register(model2.get_client())
         mem2.attribution(entity_id="user-2", process_id="session-2")
         mem2.config.storage.build()
 
         agent2 = Agent(
-            model=openai_model,
+            model=model2,
             instructions=["You are agent 2."],
         )
 

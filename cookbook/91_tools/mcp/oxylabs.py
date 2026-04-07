@@ -1,9 +1,20 @@
+"""
+Oxylabs
+=============================
+
+Demonstrates oxylabs.
+"""
+
 import asyncio
 import os
 
 from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.mcp import MCPTools
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 async def run_agent_prompt():
@@ -26,6 +37,10 @@ async def run_agent_prompt():
             "Don't invent URLs, start from one provided."
         )
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(run_agent_prompt())

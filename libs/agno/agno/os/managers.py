@@ -84,9 +84,9 @@ class WebSocketHandler:
             if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
                 log_debug("WebSocket closed, event not sent (expected during disconnection)")
             else:
-                log_warning(f"Failed to handle WebSocket event: {e}")
+                log_warning(f"Failed to handle WebSocket event: {str(e)}")
         except Exception as e:
-            log_warning(f"Failed to handle WebSocket event: {e}")
+            log_warning(f"Failed to handle WebSocket event: {str(e)}")
 
 
 class WebSocketManager:
@@ -160,7 +160,7 @@ class WebSocketManager:
             try:
                 await websocket.send_text(message)
             except Exception as e:
-                log_warning(f"Failed to broadcast to run {run_id}: {e}")
+                log_warning(f"Failed to broadcast to run {run_id}: {str(e)}")
                 # Remove dead connection
                 await self.disconnect_by_run_id(run_id)
 

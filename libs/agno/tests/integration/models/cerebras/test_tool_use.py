@@ -70,6 +70,9 @@ async def test_async_tool_use_stream():
         telemetry=False,
     )
 
+    tool_call_seen = False
+    keyword_seen_in_response = False
+
     async for response in agent.arun(
         "What is the current price of TSLA?",
         stream=True,

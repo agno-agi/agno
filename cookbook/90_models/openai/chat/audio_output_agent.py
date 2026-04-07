@@ -1,8 +1,18 @@
+"""
+Openai Audio Output Agent
+=========================
+
+Cookbook example for `openai/chat/audio_output_agent.py`.
+"""
+
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIChat
 from agno.utils.audio import write_audio_to_file
 from agno.db.in_memory import InMemoryDb
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 # Provide the agent with the audio file and audio configuration and get result as text + audio
 agent = Agent(
@@ -31,3 +41,10 @@ if run_output.response_audio:
         audio=run_output.response_audio.content,
         filename="tmp/scary_story_sequal.wav",
     )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

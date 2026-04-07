@@ -1,5 +1,16 @@
+"""
+Azure Demo Cohere
+=================
+
+Cookbook example for `azure/ai_foundry/demo_cohere.py`.
+"""
+
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.azure import AzureAIFoundry
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(model=AzureAIFoundry(id="Cohere-command-r-08-2024"), markdown=True)
 
@@ -9,3 +20,10 @@ agent = Agent(model=AzureAIFoundry(id="Cohere-command-r-08-2024"), markdown=True
 
 # Print the response on the terminal
 agent.print_response("Share a 2 sentence horror story")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

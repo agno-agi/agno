@@ -1,8 +1,19 @@
+"""
+Google Image Generation
+=======================
+
+Cookbook example for `google/gemini/image_generation.py`.
+"""
+
 from io import BytesIO
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.google import Gemini
 from PIL import Image
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 # No system message should be provided
 agent = Agent(
@@ -25,3 +36,9 @@ if run_response and isinstance(run_response, RunOutput) and run_response.images:
             # image.save("generated_image.png")
 else:
     print("No images found in run response")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    pass

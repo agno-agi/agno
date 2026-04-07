@@ -86,8 +86,10 @@ def team_2(shared_db):
 def test_session_sharing_team_to_agent_with_history(agent_1, team_1):
     team_1.add_history_to_context = True
     team_1.num_history_runs = 5
+    team_1.store_history_messages = True
     agent_1.add_history_to_context = True
     agent_1.num_history_runs = 5
+    agent_1.store_history_messages = True
 
     session_id = str(uuid.uuid4())
     team_1.run(
@@ -140,8 +142,10 @@ def test_session_sharing_team_to_agent_with_history(agent_1, team_1):
 def test_session_sharing_agent_to_team_with_history(agent_1, team_1):
     team_1.add_history_to_context = True
     team_1.num_history_runs = 5
+    team_1.store_history_messages = True
     agent_1.add_history_to_context = True
     agent_1.num_history_runs = 5
+    agent_1.store_history_messages = True
 
     session_id = str(uuid.uuid4())
     agent_1.run(
@@ -189,8 +193,10 @@ def test_session_sharing_agent_to_team_with_history(agent_1, team_1):
 def test_session_sharing_agent_to_agent_with_history(agent_1, agent_2):
     agent_1.add_history_to_context = True
     agent_1.num_history_runs = 5
+    agent_1.store_history_messages = True
     agent_2.add_history_to_context = True
     agent_2.num_history_runs = 5
+    agent_2.store_history_messages = True
 
     session_id = str(uuid.uuid4())
 
@@ -227,8 +233,10 @@ def test_session_sharing_agent_to_agent_with_history(agent_1, agent_2):
 def test_session_sharing_team_to_team_with_history(team_1, team_2):
     team_1.add_history_to_context = True
     team_1.num_history_runs = 5
+    team_1.store_history_messages = True
     team_2.add_history_to_context = True
     team_2.num_history_runs = 5
+    team_2.store_history_messages = True
 
     session_id = str(uuid.uuid4())
 

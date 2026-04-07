@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import logger
+from agno.utils.log import log_warning
 
 try:
     import numpy as np
@@ -24,10 +24,16 @@ class FastEmbedEmbedder(Embedder):
 
     id: str = "BAAI/bge-small-en-v1.5"
     dimensions: Optional[int] = 384
+    fastembed_client: Optional[TextEmbedding] = None
+
+    @property
+    def client(self) -> TextEmbedding:
+        if self.fastembed_client is None:
+            self.fastembed_client = TextEmbedding(model_name=self.id)
+        return self.fastembed_client
 
     def get_embedding(self, text: str) -> List[float]:
-        model = TextEmbedding(model_name=self.id)
-        embeddings = model.embed(text)
+        embeddings = self.client.embed(text)
         embedding_list = list(embeddings)[0]
         if isinstance(embedding_list, np.ndarray):
             return embedding_list.tolist()
@@ -35,7 +41,7 @@ class FastEmbedEmbedder(Embedder):
         try:
             return list(embedding_list)
         except Exception as e:
-            logger.warning(e)
+            log_warning(f"Failed to convert embedding list: {str(e)}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:

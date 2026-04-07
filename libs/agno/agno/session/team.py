@@ -93,10 +93,10 @@ class TeamSession:
         """Adds a RunOutput, together with some calculated data, to the runs list."""
         messages = run_response.messages
 
-        # Make message duration None
+        # Clear message timer before storage
         for m in messages or []:
-            if m.metrics is not None:
-                m.metrics.duration = None
+            if m.metrics is not None and hasattr(m.metrics, "timer"):
+                m.metrics.timer = None
 
         if not self.runs:
             self.runs = []
@@ -166,7 +166,25 @@ class TeamSession:
         if team_id:
             session_runs = [run for run in session_runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
         if member_ids:
-            session_runs = [run for run in session_runs if hasattr(run, "agent_id") and run.agent_id in member_ids]  # type: ignore
+            filtered_runs = []
+            seen_run_ids: set[str] = set()
+
+            def _add_if_unseen(run: Union[TeamRunOutput, RunOutput]) -> None:
+                run_id = getattr(run, "run_id", None)
+                if run_id and run_id in seen_run_ids:
+                    return
+                if run_id:
+                    seen_run_ids.add(run_id)
+                filtered_runs.append(run)
+
+            for run in session_runs:
+                if hasattr(run, "agent_id") and run.agent_id in member_ids:  # type: ignore
+                    _add_if_unseen(run)
+                elif hasattr(run, "member_responses"):
+                    for member_run in run.member_responses:
+                        if hasattr(member_run, "agent_id") and member_run.agent_id in member_ids:  # type: ignore
+                            _add_if_unseen(member_run)
+            session_runs = filtered_runs
 
         if skip_member_messages:
             # Filter for the top-level runs (main team runs or agent runs when sharing session)

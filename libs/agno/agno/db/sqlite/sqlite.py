@@ -1,7 +1,7 @@
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -26,12 +26,13 @@ from agno.db.sqlite.utils import (
     serialize_cultural_knowledge_for_db,
 )
 from agno.db.utils import deserialize_session_json_fields, serialize_session_json_fields
+from agno.run.base import RunStatus
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, String, Table, func, select, text
+    from sqlalchemy import Column, MetaData, String, Table, func, or_, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -59,6 +60,9 @@ class SqliteDb(BaseDb):
         component_configs_table: Optional[str] = None,
         component_links_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
+        schedules_table: Optional[str] = None,
+        schedule_runs_table: Optional[str] = None,
+        approvals_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -87,6 +91,8 @@ class SqliteDb(BaseDb):
             component_configs_table (Optional[str]): Name of the table to store component configurations.
             component_links_table (Optional[str]): Name of the table to store component links.
             learnings_table (Optional[str]): Name of the table to store learning records.
+            schedules_table (Optional[str]): Name of the table to store cron schedules.
+            schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -111,6 +117,9 @@ class SqliteDb(BaseDb):
             component_configs_table=component_configs_table,
             component_links_table=component_links_table,
             learnings_table=learnings_table,
+            schedules_table=schedules_table,
+            schedule_runs_table=schedule_runs_table,
+            approvals_table=approvals_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -166,6 +175,10 @@ class SqliteDb(BaseDb):
             components_table=data.get("components_table"),
             component_configs_table=data.get("component_configs_table"),
             component_links_table=data.get("component_links_table"),
+            learnings_table=data.get("learnings_table"),
+            schedules_table=data.get("schedules_table"),
+            schedule_runs_table=data.get("schedule_runs_table"),
+            approvals_table=data.get("approvals_table"),
             id=data.get("id"),
         )
 
@@ -204,6 +217,9 @@ class SqliteDb(BaseDb):
             (self.component_configs_table_name, "component_configs"),
             (self.component_links_table_name, "component_links"),
             (self.learnings_table_name, "learnings"),
+            (self.schedules_table_name, "schedules"),
+            (self.schedule_runs_table_name, "schedule_runs"),
+            (self.approvals_table_name, "approvals"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -229,8 +245,12 @@ class SqliteDb(BaseDb):
         try:
             from sqlalchemy.schema import ForeignKeyConstraint, PrimaryKeyConstraint
 
-            # Pass traces_table_name for spans table foreign key resolution
-            table_schema = get_table_schema_definition(table_type, traces_table_name=self.trace_table_name).copy()
+            # Pass table names for foreign key resolution
+            table_schema = get_table_schema_definition(
+                table_type,
+                traces_table_name=self.trace_table_name,
+                schedules_table_name=self.schedules_table_name,
+            ).copy()
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -239,6 +259,7 @@ class SqliteDb(BaseDb):
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
             schema_primary_key = table_schema.pop("__primary_key__", None)
             schema_foreign_keys = table_schema.pop("__foreign_keys__", [])
+            schema_composite_indexes = table_schema.pop("__composite_indexes__", [])
 
             # Build columns
             for col_name, col_config in table_schema.items():
@@ -264,7 +285,10 @@ class SqliteDb(BaseDb):
                 # Single-column FK
                 if "foreign_key" in col_config:
                     fk_ref = self._resolve_fk_reference(col_config["foreign_key"])
-                    column_args.append(ForeignKey(fk_ref))
+                    fk_kwargs: Dict[str, Any] = {}
+                    if "ondelete" in col_config:
+                        fk_kwargs["ondelete"] = col_config["ondelete"]
+                    column_args.append(ForeignKey(fk_ref, **fk_kwargs))
 
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
@@ -326,6 +350,12 @@ class SqliteDb(BaseDb):
                 idx_name = f"idx_{table_name}_{idx_col}"
                 Index(idx_name, table.c[idx_col])  # Correct way; do NOT append as constraint
 
+            # Composite indexes
+            for idx_config in schema_composite_indexes:
+                idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
+                idx_cols = [table.c[c] for c in idx_config["columns"]]
+                Index(idx_name, *idx_cols)
+
             # Create table
             table_created = False
             if not self.table_exists(table_name):
@@ -350,7 +380,7 @@ class SqliteDb(BaseDb):
                     log_debug(f"Created index: {idx.name} for table {table_name}")
 
                 except Exception as e:
-                    log_warning(f"Error creating index {idx.name}: {e}")
+                    log_warning(f"Error creating index {idx.name}: {str(e)}")
 
             # Store the schema version for the created table
             if table_name != self.versions_table_name and table_created:
@@ -363,7 +393,7 @@ class SqliteDb(BaseDb):
             from traceback import print_exc
 
             print_exc()
-            log_error(f"Could not create table '{table_name}': {e}")
+            log_error(f"Could not create table '{table_name}': {str(e)}")
             raise e
 
     def _resolve_fk_reference(self, fk_ref: str) -> str:
@@ -519,6 +549,30 @@ class SqliteDb(BaseDb):
             )
             return self.learnings_table
 
+        elif table_type == "schedules":
+            self.schedules_table = self._get_or_create_table(
+                table_name=self.schedules_table_name,
+                table_type="schedules",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.schedules_table
+
+        elif table_type == "schedule_runs":
+            self.schedule_runs_table = self._get_or_create_table(
+                table_name=self.schedule_runs_table_name,
+                table_type="schedule_runs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.schedule_runs_table
+
+        elif table_type == "approvals":
+            self.approvals_table = self._get_or_create_table(
+                table_name=self.approvals_table_name,
+                table_type="approvals",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.approvals_table
+
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
 
@@ -555,7 +609,7 @@ class SqliteDb(BaseDb):
             return table
 
         except Exception as e:
-            log_error(f"Error loading existing table {table_name}: {e}")
+            log_error(f"Error loading existing table {table_name}: {str(e)}")
             raise e
 
     def get_latest_schema_version(self, table_name: str):
@@ -596,12 +650,13 @@ class SqliteDb(BaseDb):
 
     # -- Session methods --
 
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """
         Delete a session from the database.
 
         Args:
             session_id (str): ID of the session to delete
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -613,24 +668,27 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
-                    log_debug(f"No session found to deletewith session_id: {session_id}")
+                    log_debug(f"No session found to delete with session_id: {session_id}")
                     return False
                 else:
                     log_debug(f"Successfully deleted session with session_id: {session_id}")
                     return True
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_error(f"Error deleting session: {str(e)}")
             raise e
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete all given sessions from the database.
         Can handle multiple session types in the same run.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -642,12 +700,14 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_error(f"Error deleting sessions: {str(e)}")
             raise e
 
     def get_session(
@@ -813,6 +873,7 @@ class SqliteDb(BaseDb):
         session_id: str,
         session_type: SessionType,
         session_name: str,
+        user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
@@ -822,6 +883,7 @@ class SqliteDb(BaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name for the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -835,7 +897,7 @@ class SqliteDb(BaseDb):
         try:
             # Get the current session as a deserialized object
             # Get the session record
-            session = self.get_session(session_id, session_type, deserialize=True)
+            session = self.get_session(session_id, session_type, user_id=user_id, deserialize=True)
             if session is None:
                 return None
 
@@ -849,7 +911,7 @@ class SqliteDb(BaseDb):
             return self.upsert_session(session, deserialize=deserialize)
 
         except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+            log_error(f"Exception renaming session: {str(e)}")
             raise e
 
     def upsert_session(
@@ -904,6 +966,7 @@ class SqliteDb(BaseDb):
                             metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
                     )
                     stmt = stmt.returning(*table.columns)  # type: ignore
                     result = sess.execute(stmt)
@@ -942,6 +1005,7 @@ class SqliteDb(BaseDb):
                             metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
                     )
                     stmt = stmt.returning(*table.columns)  # type: ignore
                     result = sess.execute(stmt)
@@ -979,6 +1043,7 @@ class SqliteDb(BaseDb):
                             metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
+                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
                     )
                     stmt = stmt.returning(*table.columns)  # type: ignore
                     result = sess.execute(stmt)
@@ -990,7 +1055,7 @@ class SqliteDb(BaseDb):
                     return WorkflowSession.from_dict(session_raw)
 
         except Exception as e:
-            log_warning(f"Exception upserting into table: {e}")
+            log_warning(f"Exception upserting into table: {str(e)}")
             raise e
 
     def upsert_sessions(
@@ -1212,7 +1277,7 @@ class SqliteDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {e}")
+            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {str(e)}")
             # Fallback to individual upserts
             return [
                 result
@@ -1255,7 +1320,7 @@ class SqliteDb(BaseDb):
                     log_debug(f"No user memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting user memory: {e}")
+            log_error(f"Error deleting user memory: {str(e)}")
             raise e
 
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -1282,7 +1347,7 @@ class SqliteDb(BaseDb):
                     log_debug(f"No user memories found with ids: {memory_ids}")
 
         except Exception as e:
-            log_error(f"Error deleting user memories: {e}")
+            log_error(f"Error deleting user memories: {str(e)}")
             raise e
 
     def get_all_memory_topics(self) -> List[str]:
@@ -1432,7 +1497,7 @@ class SqliteDb(BaseDb):
             return [UserMemory.from_dict(record) for record in memories_raw]
 
         except Exception as e:
-            log_error(f"Error reading from memory table: {e}")
+            log_error(f"Error reading from memory table: {str(e)}")
             raise e
 
     def get_user_memory_stats(
@@ -1504,7 +1569,7 @@ class SqliteDb(BaseDb):
                 ], total_count
 
         except Exception as e:
-            log_error(f"Error getting user memory stats: {e}")
+            log_error(f"Error getting user memory stats: {str(e)}")
             raise e
 
     def upsert_user_memory(
@@ -1575,7 +1640,7 @@ class SqliteDb(BaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Error upserting user memory: {e}")
+            log_error(f"Error upserting user memory: {str(e)}")
             raise e
 
     def upsert_memories(
@@ -1673,7 +1738,7 @@ class SqliteDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {e}")
+            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {str(e)}")
 
             # Fallback to individual upserts
             return [
@@ -1701,7 +1766,7 @@ class SqliteDb(BaseDb):
         except Exception as e:
             from agno.utils.log import log_warning
 
-            log_warning(f"Exception deleting all memories: {e}")
+            log_warning(f"Exception deleting all memories: {str(e)}")
             raise e
 
     # -- Metrics methods --
@@ -1745,7 +1810,7 @@ class SqliteDb(BaseDb):
                 return [record._mapping for record in result]
 
         except Exception as e:
-            log_error(f"Error reading from sessions table: {e}")
+            log_error(f"Error reading from sessions table: {str(e)}")
             raise e
 
     def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
@@ -1850,7 +1915,7 @@ class SqliteDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Error refreshing metrics: {e}")
+            log_error(f"Error refreshing metrics: {str(e)}")
             raise e
 
     def get_metrics(
@@ -1892,7 +1957,7 @@ class SqliteDb(BaseDb):
             return [row._mapping for row in result], latest_updated_at
 
         except Exception as e:
-            log_error(f"Error getting metrics: {e}")
+            log_error(f"Error getting metrics: {str(e)}")
             raise e
 
     # -- Knowledge methods --
@@ -1916,7 +1981,7 @@ class SqliteDb(BaseDb):
                 sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Error deleting knowledge content: {e}")
+            log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
@@ -1945,7 +2010,7 @@ class SqliteDb(BaseDb):
                 return KnowledgeRow.model_validate(result._mapping)
 
         except Exception as e:
-            log_error(f"Error getting knowledge content: {e}")
+            log_error(f"Error getting knowledge content: {str(e)}")
             raise e
 
     def get_knowledge_contents(
@@ -1954,6 +2019,7 @@ class SqliteDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1962,6 +2028,7 @@ class SqliteDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1976,6 +2043,10 @@ class SqliteDb(BaseDb):
         try:
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
+
+                # Apply linked_to filter if provided
+                if linked_to is not None:
+                    stmt = stmt.where(table.c.linked_to == linked_to)
 
                 # Apply sorting
                 if sort_by is not None:
@@ -1995,7 +2066,7 @@ class SqliteDb(BaseDb):
                 return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 
         except Exception as e:
-            log_error(f"Error getting knowledge contents: {e}")
+            log_error(f"Error getting knowledge contents: {str(e)}")
             raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -2043,7 +2114,7 @@ class SqliteDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge content: {e}")
+            log_error(f"Error upserting knowledge content: {str(e)}")
             raise e
 
     # -- Eval methods --
@@ -2082,7 +2153,7 @@ class SqliteDb(BaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_error(f"Error creating eval run: {str(e)}")
             raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
@@ -2105,7 +2176,7 @@ class SqliteDb(BaseDb):
                     log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+            log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
@@ -2128,7 +2199,7 @@ class SqliteDb(BaseDb):
                     log_debug(f"Deleted {result.rowcount} eval runs")
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_error(f"Error deleting eval runs {eval_run_ids}: {str(e)}")
             raise e
 
     def get_eval_run(
@@ -2166,7 +2237,7 @@ class SqliteDb(BaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}: {str(e)}")
             raise e
 
     def get_eval_runs(
@@ -2260,7 +2331,7 @@ class SqliteDb(BaseDb):
             return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_error(f"Exception getting eval runs: {str(e)}")
             raise e
 
     def rename_eval_run(
@@ -2302,7 +2373,7 @@ class SqliteDb(BaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Error renaming eval run {eval_run_id}: {e}")
+            log_error(f"Error renaming eval run {eval_run_id}: {str(e)}")
             raise e
 
     # -- Trace methods --
@@ -2445,7 +2516,7 @@ class SqliteDb(BaseDb):
                 sess.execute(upsert_stmt)
 
         except Exception as e:
-            log_error(f"Error creating trace: {e}")
+            log_error(f"Error creating trace: {str(e)}")
             # Don't raise - tracing should not break the main application flow
 
     def get_trace(
@@ -2497,7 +2568,7 @@ class SqliteDb(BaseDb):
                 return None
 
         except Exception as e:
-            log_error(f"Error getting trace: {e}")
+            log_error(f"Error getting trace: {str(e)}")
             return None
 
     def get_traces(
@@ -2513,6 +2584,7 @@ class SqliteDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -2528,6 +2600,7 @@ class SqliteDb(BaseDb):
             end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
@@ -2558,7 +2631,7 @@ class SqliteDb(BaseDb):
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if agent_id:
                     base_stmt = base_stmt.where(table.c.agent_id == agent_id)
@@ -2575,6 +2648,20 @@ class SqliteDb(BaseDb):
                     # Convert datetime to ISO string for comparison
                     base_stmt = base_stmt.where(table.c.end_time <= end_time.isoformat())
 
+                # Apply advanced filter expression
+                if filter_expr:
+                    try:
+                        from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
+
+                        base_stmt = base_stmt.where(
+                            filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
+                        )
+                    except ValueError:
+                        # Re-raise ValueError for proper 400 response at API layer
+                        raise
+                    except (KeyError, TypeError) as e:
+                        raise ValueError(f"Invalid filter expression: {e}") from e
+
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = sess.execute(count_stmt).scalar() or 0
@@ -2589,7 +2676,7 @@ class SqliteDb(BaseDb):
                 return traces, total_count
 
         except Exception as e:
-            log_error(f"Error getting traces: {e}")
+            log_error(f"Error getting traces: {str(e)}")
             return [], 0
 
     def get_trace_stats(
@@ -2602,6 +2689,7 @@ class SqliteDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2614,6 +2702,7 @@ class SqliteDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -2631,22 +2720,20 @@ class SqliteDb(BaseDb):
                 base_stmt = (
                     select(
                         table.c.session_id,
-                        table.c.user_id,
-                        table.c.agent_id,
-                        table.c.team_id,
-                        table.c.workflow_id,
+                        func.max(table.c.user_id).label("user_id"),
+                        func.max(table.c.agent_id).label("agent_id"),
+                        func.max(table.c.team_id).label("team_id"),
+                        func.max(table.c.workflow_id).label("workflow_id"),
                         func.count(table.c.trace_id).label("total_traces"),
                         func.min(table.c.created_at).label("first_trace_at"),
                         func.max(table.c.created_at).label("last_trace_at"),
                     )
                     .where(table.c.session_id.isnot(None))  # Only sessions with session_id
-                    .group_by(
-                        table.c.session_id, table.c.user_id, table.c.agent_id, table.c.team_id, table.c.workflow_id
-                    )
+                    .group_by(table.c.session_id)
                 )
 
                 # Apply filters
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if workflow_id:
                     base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
@@ -2660,6 +2747,20 @@ class SqliteDb(BaseDb):
                 if end_time:
                     # Convert datetime to ISO string for comparison
                     base_stmt = base_stmt.where(table.c.created_at <= end_time.isoformat())
+
+                # Apply advanced filter expression
+                if filter_expr:
+                    try:
+                        from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
+
+                        base_stmt = base_stmt.where(
+                            filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
+                        )
+                    except ValueError:
+                        # Re-raise ValueError for proper 400 response at API layer
+                        raise
+                    except (KeyError, TypeError) as e:
+                        raise ValueError(f"Invalid filter expression: {e}") from e
 
                 # Get total count of sessions
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
@@ -2700,7 +2801,7 @@ class SqliteDb(BaseDb):
                 return stats_list, total_count
 
         except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+            log_error(f"Error getting trace stats: {str(e)}")
             return [], 0
 
     # -- Span methods --
@@ -2721,7 +2822,7 @@ class SqliteDb(BaseDb):
                 sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Error creating span: {e}")
+            log_error(f"Error creating span: {str(e)}")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2743,7 +2844,7 @@ class SqliteDb(BaseDb):
                     sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+            log_error(f"Error creating spans batch: {str(e)}")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2769,7 +2870,7 @@ class SqliteDb(BaseDb):
                 return None
 
         except Exception as e:
-            log_error(f"Error getting span: {e}")
+            log_error(f"Error getting span: {str(e)}")
             return None
 
     def get_spans(
@@ -2806,7 +2907,7 @@ class SqliteDb(BaseDb):
                 return [Span.from_dict(dict(row._mapping)) for row in results]
 
         except Exception as e:
-            log_error(f"Error getting spans: {e}")
+            log_error(f"Error getting spans: {str(e)}")
             return []
 
     # -- Migrations --
@@ -2886,7 +2987,7 @@ class SqliteDb(BaseDb):
         except Exception as e:
             from agno.utils.log import log_warning
 
-            log_warning(f"Exception deleting all cultural artifacts: {e}")
+            log_warning(f"Exception deleting all cultural artifacts: {str(e)}")
             raise e
 
     def delete_cultural_knowledge(self, id: str) -> None:
@@ -2914,7 +3015,7 @@ class SqliteDb(BaseDb):
                     log_debug(f"No cultural artifact found with id: {id}")
 
         except Exception as e:
-            log_error(f"Error deleting cultural artifact: {e}")
+            log_error(f"Error deleting cultural artifact: {str(e)}")
             raise e
 
     def get_cultural_knowledge(
@@ -2950,7 +3051,7 @@ class SqliteDb(BaseDb):
             return deserialize_cultural_knowledge_from_db(db_row)
 
         except Exception as e:
-            log_error(f"Exception reading from cultural artifacts table: {e}")
+            log_error(f"Exception reading from cultural artifacts table: {str(e)}")
             raise e
 
     def get_all_cultural_knowledge(
@@ -3024,7 +3125,7 @@ class SqliteDb(BaseDb):
             return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
 
         except Exception as e:
-            log_error(f"Error reading from cultural artifacts table: {e}")
+            log_error(f"Error reading from cultural artifacts table: {str(e)}")
             raise e
 
     def upsert_cultural_knowledge(
@@ -3095,7 +3196,7 @@ class SqliteDb(BaseDb):
             return deserialize_cultural_knowledge_from_db(db_row)
 
         except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
+            log_error(f"Error upserting cultural knowledge: {str(e)}")
             raise e
 
     # --- Components ---
@@ -3130,7 +3231,7 @@ class SqliteDb(BaseDb):
                 return dict(result._mapping) if result else None
 
         except Exception as e:
-            log_error(f"Error getting component: {e}")
+            log_error(f"Error getting component: {str(e)}")
             raise
 
     def upsert_component(
@@ -3139,6 +3240,7 @@ class SqliteDb(BaseDb):
         component_type: Optional[ComponentType] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        current_version: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Create or update a component.
@@ -3148,6 +3250,7 @@ class SqliteDb(BaseDb):
             component_type: Type (agent|team|workflow). Required for create, optional for update.
             name: Display name.
             description: Optional description.
+            current_version: Optional current version.
             metadata: Optional metadata dict.
 
         Returns:
@@ -3213,6 +3316,8 @@ class SqliteDb(BaseDb):
                         updates["name"] = name
                     if description is not None:
                         updates["description"] = description
+                    if current_version is not None:
+                        updates["current_version"] = current_version
                     if metadata is not None:
                         updates["metadata"] = metadata
 
@@ -3225,7 +3330,7 @@ class SqliteDb(BaseDb):
             return result
 
         except Exception as e:
-            log_error(f"Error upserting component: {e}")
+            log_error(f"Error upserting component: {str(e)}")
             raise
 
     def delete_component(
@@ -3275,7 +3380,7 @@ class SqliteDb(BaseDb):
             return result.rowcount > 0
 
         except Exception as e:
-            log_error(f"Error deleting component: {e}")
+            log_error(f"Error deleting component: {str(e)}")
             raise
 
     def list_components(
@@ -3284,6 +3389,7 @@ class SqliteDb(BaseDb):
         include_deleted: bool = False,
         limit: int = 20,
         offset: int = 0,
+        exclude_component_ids: Optional[Set[str]] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
 
@@ -3292,6 +3398,7 @@ class SqliteDb(BaseDb):
             include_deleted: Include soft-deleted components.
             limit: Maximum number of items to return.
             offset: Number of items to skip.
+            exclude_component_ids: Component IDs to exclude from results.
 
         Returns:
             Tuple of (list of component dicts, total count).
@@ -3308,6 +3415,8 @@ class SqliteDb(BaseDb):
                     where_clauses.append(table.c.component_type == component_type.value)
                 if not include_deleted:
                     where_clauses.append(table.c.deleted_at.is_(None))
+                if exclude_component_ids:
+                    where_clauses.append(table.c.component_id.notin_(exclude_component_ids))
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(table)
@@ -3328,7 +3437,7 @@ class SqliteDb(BaseDb):
                 return [dict(row._mapping) for row in results], total_count
 
         except Exception as e:
-            log_error(f"Error listing components: {e}")
+            log_error(f"Error listing components: {str(e)}")
             raise
 
     def create_component_with_config(
@@ -3461,7 +3570,7 @@ class SqliteDb(BaseDb):
             return component, config_result
 
         except Exception as e:
-            log_error(f"Error creating component with config: {e}")
+            log_error(f"Error creating component with config: {str(e)}")
             raise
 
     # --- Config ---
@@ -3535,7 +3644,7 @@ class SqliteDb(BaseDb):
                 return dict(result._mapping) if result else None
 
         except Exception as e:
-            log_error(f"Error getting config: {e}")
+            log_error(f"Error getting config: {str(e)}")
             raise
 
     def upsert_config(
@@ -3716,7 +3825,7 @@ class SqliteDb(BaseDb):
             return result
 
         except Exception as e:
-            log_error(f"Error upserting config: {e}")
+            log_error(f"Error upserting config: {str(e)}")
             raise
 
     def delete_config(
@@ -3759,10 +3868,6 @@ class SqliteDb(BaseDb):
                 if config_row is None:
                     return False
 
-                # Cannot delete published configs
-                if config_row.stage == "published":
-                    raise ValueError(f"Cannot delete published config {component_id} v{version}")
-
                 # Check if it's current version
                 current = sess.execute(
                     select(components_table.c.current_version).where(components_table.c.component_id == component_id)
@@ -3791,7 +3896,7 @@ class SqliteDb(BaseDb):
             return True
 
         except Exception as e:
-            log_error(f"Error deleting config: {e}")
+            log_error(f"Error deleting config: {str(e)}")
             raise
 
     def list_configs(
@@ -3848,7 +3953,7 @@ class SqliteDb(BaseDb):
                 return [dict(row._mapping) for row in results]
 
         except Exception as e:
-            log_error(f"Error listing configs: {e}")
+            log_error(f"Error listing configs: {str(e)}")
             raise
 
     def set_current_version(
@@ -3920,7 +4025,7 @@ class SqliteDb(BaseDb):
             return True
 
         except Exception as e:
-            log_error(f"Error setting current version: {e}")
+            log_error(f"Error setting current version: {str(e)}")
             raise
 
     # --- Component Links ---
@@ -3961,7 +4066,7 @@ class SqliteDb(BaseDb):
                 return [dict(row._mapping) for row in results]
 
         except Exception as e:
-            log_error(f"Error getting links: {e}")
+            log_error(f"Error getting links: {str(e)}")
             raise
 
     def get_dependents(
@@ -3992,7 +4097,7 @@ class SqliteDb(BaseDb):
                 return [dict(row._mapping) for row in results]
 
         except Exception as e:
-            log_error(f"Error getting dependents: {e}")
+            log_error(f"Error getting dependents: {str(e)}")
             raise
 
     def resolve_version(
@@ -4024,7 +4129,7 @@ class SqliteDb(BaseDb):
                 return result
 
         except Exception as e:
-            log_error(f"Error resolving version: {e}")
+            log_error(f"Error resolving version: {str(e)}")
             raise
 
     def load_component_graph(
@@ -4095,7 +4200,7 @@ class SqliteDb(BaseDb):
             }
 
         except Exception as e:
-            log_error(f"Error loading component graph: {e}")
+            log_error(f"Error loading component graph: {str(e)}")
             raise
 
     # -- Learning methods --
@@ -4324,3 +4429,395 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_debug(f"Error getting learnings: {e}")
             return []
+
+    # -- Schedule methods --
+    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == schedule_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule: {e}")
+            return None
+
+    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.name == name)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule by name: {e}")
+            return None
+
+    def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                # Build base query with filters
+                base_query = select(table)
+                if enabled is not None:
+                    base_query = base_query.where(table.c.enabled == enabled)
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_query.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Get paginated results
+                stmt = base_query.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error listing schedules: {e}")
+            return [], 0
+
+    def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="schedules", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create schedules table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**schedule_data))
+            return schedule_data
+        except Exception as e:
+            log_error(f"Error creating schedule: {str(e)}")
+            raise
+
+    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            kwargs["updated_at"] = int(time.time())
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == schedule_id).values(**kwargs))
+            return self.get_schedule(schedule_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule: {e}")
+            return None
+
+    def delete_schedule(self, schedule_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            runs_table = self._get_table(table_type="schedule_runs")
+            with self.Session() as sess, sess.begin():
+                if runs_table is not None:
+                    sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
+                result = sess.execute(table.delete().where(table.c.id == schedule_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting schedule: {e}")
+            return False
+
+    def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return None
+            now = int(time.time())
+            stale_lock_threshold = now - lock_grace_seconds
+            with self.Session() as sess, sess.begin():
+                # Find a due, enabled schedule that is either unlocked or has a stale lock
+                stmt = (
+                    select(table)
+                    .where(
+                        table.c.enabled == True,  # noqa: E712
+                        table.c.next_run_at <= now,
+                        or_(
+                            table.c.locked_by.is_(None),
+                            table.c.locked_at <= stale_lock_threshold,
+                        ),
+                    )
+                    .order_by(table.c.next_run_at.asc())
+                    .limit(1)
+                )
+                row = sess.execute(stmt).fetchone()
+                if row is None:
+                    return None
+                schedule = dict(row._mapping)
+                # Atomically claim it
+                result = sess.execute(
+                    table.update()
+                    .where(
+                        table.c.id == schedule["id"],
+                        or_(
+                            table.c.locked_by.is_(None),
+                            table.c.locked_at <= stale_lock_threshold,
+                        ),
+                    )
+                    .values(locked_by=worker_id, locked_at=now)
+                )
+                if result.rowcount == 0:
+                    return None
+                schedule["locked_by"] = worker_id
+                schedule["locked_at"] = now
+                return schedule
+        except Exception as e:
+            log_debug(f"Error claiming schedule: {e}")
+            return None
+
+    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        try:
+            table = self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            if next_run_at is not None:
+                updates["next_run_at"] = next_run_at
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.update().where(table.c.id == schedule_id).values(**updates))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error releasing schedule: {e}")
+            return False
+
+    def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="schedule_runs", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create schedule_runs table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**run_data))
+            return run_data
+        except Exception as e:
+            log_error(f"Error creating schedule run: {str(e)}")
+            raise
+
+    def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == schedule_run_id).values(**kwargs))
+            return self.get_schedule_run(schedule_run_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule run: {e}")
+            return None
+
+    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == run_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting schedule run: {e}")
+            return None
+
+    def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="schedule_runs")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                # Get total count
+                count_stmt = select(func.count()).select_from(table).where(table.c.schedule_id == schedule_id)
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Get paginated results
+                stmt = (
+                    select(table)
+                    .where(table.c.schedule_id == schedule_id)
+                    .order_by(table.c.created_at.desc())
+                    .limit(limit)
+                    .offset(offset)
+                )
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error getting schedule runs: {e}")
+            return [], 0
+
+    # -- Approval methods --
+
+    def create_approval(self, approval_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="approvals", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create approvals table")
+            data = {**approval_data}
+            now = int(time.time())
+            data.setdefault("created_at", now)
+            data.setdefault("updated_at", now)
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**data))
+            return data
+        except Exception as e:
+            log_error(f"Error creating approval: {str(e)}")
+            raise
+
+    def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == approval_id)).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting approval: {e}")
+            return None
+
+    def get_approvals(
+        self,
+        status: Optional[str] = None,
+        source_type: Optional[str] = None,
+        approval_type: Optional[str] = None,
+        pause_type: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        schedule_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                stmt = select(table)
+                count_stmt = select(func.count()).select_from(table)
+                if status is not None:
+                    stmt = stmt.where(table.c.status == status)
+                    count_stmt = count_stmt.where(table.c.status == status)
+                if source_type is not None:
+                    stmt = stmt.where(table.c.source_type == source_type)
+                    count_stmt = count_stmt.where(table.c.source_type == source_type)
+                if approval_type is not None:
+                    stmt = stmt.where(table.c.approval_type == approval_type)
+                    count_stmt = count_stmt.where(table.c.approval_type == approval_type)
+                if pause_type is not None:
+                    stmt = stmt.where(table.c.pause_type == pause_type)
+                    count_stmt = count_stmt.where(table.c.pause_type == pause_type)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                    count_stmt = count_stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                    count_stmt = count_stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                    count_stmt = count_stmt.where(table.c.workflow_id == workflow_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                    count_stmt = count_stmt.where(table.c.user_id == user_id)
+                if schedule_id is not None:
+                    stmt = stmt.where(table.c.schedule_id == schedule_id)
+                    count_stmt = count_stmt.where(table.c.schedule_id == schedule_id)
+                if run_id is not None:
+                    stmt = stmt.where(table.c.run_id == run_id)
+                    count_stmt = count_stmt.where(table.c.run_id == run_id)
+                total = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                stmt = stmt.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total
+        except Exception as e:
+            log_debug(f"Error listing approvals: {e}")
+            return [], 0
+
+    def update_approval(
+        self, approval_id: str, expected_status: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return None
+            kwargs["updated_at"] = int(time.time())
+            with self.Session() as sess, sess.begin():
+                stmt = table.update().where(table.c.id == approval_id)
+                if expected_status is not None:
+                    stmt = stmt.where(table.c.status == expected_status)
+                result = sess.execute(stmt.values(**kwargs))
+                if result.rowcount == 0:
+                    return None
+            return self.get_approval(approval_id)
+        except Exception as e:
+            log_debug(f"Error updating approval: {e}")
+            return None
+
+    def delete_approval(self, approval_id: str) -> bool:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return False
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.id == approval_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting approval: {e}")
+            return False
+
+    def get_pending_approval_count(self, user_id: Optional[str] = None) -> int:
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return 0
+            with self.Session() as sess:
+                stmt = select(func.count()).select_from(table).where(table.c.status == "pending")
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                return sess.execute(stmt).scalar() or 0
+        except Exception as e:
+            log_debug(f"Error counting approvals: {e}")
+            return 0
+
+    def update_approval_run_status(self, run_id: str, run_status: RunStatus) -> int:
+        """Update run_status on all approvals for a given run_id.
+
+        Args:
+            run_id: The run ID to match.
+            run_status: The new run status.
+
+        Returns:
+            Number of approvals updated.
+        """
+        try:
+            table = self._get_table(table_type="approvals")
+            if table is None:
+                return 0
+            with self.Session() as sess, sess.begin():
+                stmt = (
+                    table.update()
+                    .where(table.c.run_id == run_id)
+                    .values(run_status=run_status.value, updated_at=int(time.time()))
+                )
+                result = sess.execute(stmt)
+                return result.rowcount
+        except Exception as e:
+            log_debug(f"Error updating approval run_status: {e}")
+            return 0

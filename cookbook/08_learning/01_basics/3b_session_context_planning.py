@@ -17,9 +17,9 @@ from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, SessionContextConfig
 from agno.models.openai import OpenAIResponses
 
-# ============================================================================
-# Setup
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
@@ -37,9 +37,9 @@ agent = Agent(
     markdown=True,
 )
 
-# ============================================================================
-# Demo
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     user_id = "planner@example.com"
@@ -56,7 +56,7 @@ if __name__ == "__main__":
         session_id=session_id,
         stream=True,
     )
-    agent.get_learning_machine().session_context_store.print(session_id=session_id)
+    agent.learning_machine.session_context_store.print(session_id=session_id)
 
     # Turn 2: Complete first step
     print("\n" + "=" * 60)
@@ -69,7 +69,7 @@ if __name__ == "__main__":
         session_id=session_id,
         stream=True,
     )
-    agent.get_learning_machine().session_context_store.print(session_id=session_id)
+    agent.learning_machine.session_context_store.print(session_id=session_id)
 
     # Turn 3: Complete second step
     print("\n" + "=" * 60)
@@ -82,4 +82,4 @@ if __name__ == "__main__":
         session_id=session_id,
         stream=True,
     )
-    agent.get_learning_machine().session_context_store.print(session_id=session_id)
+    agent.learning_machine.session_context_store.print(session_id=session_id)

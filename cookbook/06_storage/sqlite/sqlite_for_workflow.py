@@ -1,3 +1,10 @@
+"""
+SQLite Storage for Workflow
+===========================
+
+Demonstrates using SqliteDb as the session storage backend for a workflow.
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
@@ -7,9 +14,14 @@ from agno.tools.websearch import WebSearchTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db = SqliteDb(db_file="tmp/workflow.db")
 
-# Define agents
+# ---------------------------------------------------------------------------
+# Create Workflow
+# ---------------------------------------------------------------------------
 hackernews_agent = Agent(
     name="Hackernews Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -50,7 +62,9 @@ content_planning_step = Step(
     agent=content_planner,
 )
 
-# Create and use workflow
+# ---------------------------------------------------------------------------
+# Run Workflow
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",

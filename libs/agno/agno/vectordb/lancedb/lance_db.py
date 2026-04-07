@@ -2,7 +2,7 @@ import asyncio
 import json
 from hashlib import md5
 from os import getenv
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Set, Union
 
 try:
     import lancedb
@@ -14,7 +14,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -98,14 +98,17 @@ class LanceDb(VectorDb):
 
         # LanceDB connection details
         self.uri: lancedb.URI = uri
+        if str(uri).startswith("db://") and not (api_key or getenv("LANCEDB_API_KEY")):
+            raise ValueError("LanceDB Cloud URI (db://...) requires an API key. Pass api_key= or set LANCEDB_API_KEY.")
         self.connection: lancedb.DBConnection = connection or lancedb.connect(uri=self.uri, api_key=api_key)
         self.table: Optional[lancedb.db.LanceTable] = table
 
         self.async_connection: Optional[lancedb.AsyncConnection] = async_connection
         self.async_table: Optional[lancedb.db.AsyncTable] = async_table
 
-        if table_name and table_name in self.connection.table_names():
-            # Open the table if it exists
+        is_cloud = bool(api_key or getenv("LANCEDB_API_KEY") or str(uri).startswith("db://"))
+
+        if table_name and not is_cloud and table_name in self._get_table_names(self.connection):
             try:
                 self.table = self.connection.open_table(name=table_name)
                 self.table_name = self.table.name
@@ -115,6 +118,19 @@ class LanceDb(VectorDb):
                 # Table might have been dropped by async operations but sync connection hasn't updated
                 if "was not found" in str(e):
                     log_debug(f"Table {table_name} listed but not accessible, will create if needed")
+                    self.table = None
+                else:
+                    raise
+
+        if table_name and is_cloud and self.table is None:
+            try:
+                self.table = self.connection.open_table(name=table_name)
+                self.table_name = self.table.name
+                self._vector_col = self.table.schema.names[0]
+                self._id = self.table.schema.names[1]  # type: ignore
+            except ValueError as e:
+                if "was not found" in str(e) or "not found" in str(e).lower():
+                    log_debug(f"Table {table_name} not found on cloud, will create")
                     self.table = None
                 else:
                     raise
@@ -157,6 +173,25 @@ class LanceDb(VectorDb):
 
         log_debug(f"Initialized LanceDb with table: '{self.table_name}'")
 
+    def _is_cloud(self) -> bool:
+        """True if connected to LanceDB Cloud (db:// URI or api_key)."""
+        return bool(self.api_key or getenv("LANCEDB_API_KEY") or str(self.uri).startswith("db://"))
+
+    def _get_table_names(self, conn: lancedb.DBConnection) -> List[str]:
+        """Get table names with backward compatibility for older LanceDB versions."""
+        # Prefer list_tables over table_names (deprecated in new versions)
+        if hasattr(conn, "list_tables"):
+            return conn.list_tables().tables
+        return conn.table_names()
+
+    async def _get_async_table_names(self, conn: lancedb.AsyncConnection) -> List[str]:
+        """Get table names asynchronously with backward compatibility for older LanceDB versions."""
+        # Prefer list_tables over table_names (deprecated in new versions)
+        if hasattr(conn, "list_tables"):
+            table_list = await conn.list_tables()
+            return table_list.tables
+        return await conn.table_names()
+
     def _prepare_vector(self, embedding) -> List[float]:
         """Prepare vector embedding for insertion, ensuring correct dimensions and type."""
         if embedding is not None and len(embedding) > 0:
@@ -186,7 +221,7 @@ class LanceDb(VectorDb):
             self.async_connection = await lancedb.connect_async(self.uri)
         # Only try to open table if it exists and we don't have it already
         if self.async_table is None:
-            table_names = await self.async_connection.table_names()
+            table_names = await self._get_async_table_names(self.async_connection)
             if self.table_name in table_names:
                 try:
                     self.async_table = await self.async_connection.open_table(self.table_name)
@@ -197,9 +232,11 @@ class LanceDb(VectorDb):
 
     def _refresh_sync_connection(self) -> None:
         """Refresh the sync connection to see changes made by async operations."""
+        if self._is_cloud():
+            return
         try:
             # Re-establish sync connection to see async changes
-            if self.connection and self.table_name in self.connection.table_names():
+            if self.connection is not None and self.table_name in self._get_table_names(self.connection):
                 self.table = self.connection.open_table(self.table_name)
         except Exception as e:
             log_debug(f"Could not refresh sync connection: {e}")
@@ -222,15 +259,15 @@ class LanceDb(VectorDb):
                     self.table_name, schema=schema, mode="overwrite", exist_ok=True
                 )
                 log_debug(f"Successfully created async table: {self.table_name}")
-            except Exception as e:
-                logger.error(f"Error creating async table: {e}")
+            except Exception:
+                logger.exception("Error creating async table")
                 # Try to fall back to sync table creation
                 try:
                     log_debug("Falling back to sync table creation")
                     self.table = self._init_table()
                     log_debug("Sync table created successfully")
-                except Exception as sync_e:
-                    logger.error(f"Sync table creation also failed: {sync_e}")
+                except Exception:
+                    logger.exception("Sync table creation also failed")
                     raise
 
     def _base_schema(self) -> pa.Schema:
@@ -282,9 +319,10 @@ class LanceDb(VectorDb):
                 meta_data.update(filters)
                 document.meta_data = meta_data
 
-            # Only embed if the document doesn't already have an embedding
+            # Only embed if the document doesn't already have a valid embedding
             # This prevents duplicate embedding when called from async_insert or async_upsert
-            if document.embedding is None:
+            # Check for both None and empty list (async embedding failures return [])
+            if document.embedding is None or (isinstance(document.embedding, list) and len(document.embedding) == 0):
                 document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             # Include content_hash in ID to ensure uniqueness across different content hashes
@@ -308,7 +346,7 @@ class LanceDb(VectorDb):
             log_debug(f"Parsed document: {document.name} ({document.meta_data})")
 
         if self.table is None:
-            logger.error("Table not initialized. Please create the table first")
+            log_error("Table not initialized. Please create the table first")
             return
 
         if not data:
@@ -358,17 +396,29 @@ class LanceDb(VectorDb):
                     for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
                 )
                 if is_rate_limit:
-                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    # Log any embedding failures (they will be re-tried in sync insert)
+                    for i, result in enumerate(results):
+                        if isinstance(result, Exception):
+                            log_warning(
+                                f"Async embedding failed for document {i}, will retry in sync insert: {e}",
+                            )
+
         else:
             embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-            await asyncio.gather(*embed_tasks, return_exceptions=True)
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+            # Log any embedding failures (they will be re-tried in sync insert)
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    log_warning(f"Async embedding failed for document {i}, will retry in sync insert")
 
         # Use sync insert to avoid sync/async table synchronization issues
+        # Sync insert will re-embed any documents that failed async embedding
         self.insert(content_hash, documents, filters)
 
     def upsert_available(self) -> bool:
@@ -414,13 +464,26 @@ class LanceDb(VectorDb):
                     if is_rate_limit:
                         raise e
                     else:
+                        log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
+
                         embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                        await asyncio.gather(*embed_tasks, return_exceptions=True)
+                        results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                        # Log any embedding failures (they will be re-tried in sync upsert)
+                        for i, result in enumerate(results):
+                            if isinstance(result, Exception):
+                                log_warning(
+                                    f"Async embedding failed for document {i}, will retry in sync upsert: {str(e)}"
+                                )
             else:
                 embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                await asyncio.gather(*embed_tasks, return_exceptions=True)
+                results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                # Log any embedding failures (they will be re-tried in sync upsert)
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        log_warning(f"Async embedding failed for document {i}, will retry in sync upsert")
 
         # Use sync upsert for reliability
+        # Sync upsert (via insert) will re-embed any documents that failed async embedding
         self.upsert(content_hash=content_hash, documents=documents, filters=filters)
 
     def search(
@@ -437,8 +500,9 @@ class LanceDb(VectorDb):
         Returns:
             List[Document]: List of matching documents
         """
-        if self.connection:
-            self.table = self.connection.open_table(name=self.table_name)
+        if self.table is None:
+            log_error("Table not initialized")
+            return []
 
         results = None
 
@@ -453,7 +517,7 @@ class LanceDb(VectorDb):
         elif self.search_type == SearchType.hybrid:
             results = self.hybrid_search(query, limit)
         else:
-            logger.error(f"Invalid search type '{self.search_type}'.")
+            log_error(f"Invalid search type '{self.search_type}'.")
             return []
 
         if results is None:
@@ -483,6 +547,16 @@ class LanceDb(VectorDb):
         if self.reranker and search_results:
             search_results = self.reranker.rerank(query=query, documents=search_results)
 
+        # Deduplicate results that hybrid search may return from both vector and FTS branches
+        seen_hashes: Set[str] = set()
+        unique_results: List[Document] = []
+        for doc in search_results:
+            doc_hash = md5(doc.content.encode()).hexdigest()
+            if doc_hash not in seen_hashes:
+                seen_hashes.add(doc_hash)
+                unique_results.append(doc)
+        search_results = unique_results
+
         log_info(f"Found {len(search_results)} documents")
         return search_results
 
@@ -508,14 +582,14 @@ class LanceDb(VectorDb):
 
     def vector_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-    ) -> List[Document]:
+    ) -> Optional[List[Dict[str, Any]]]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return None
 
         if self.table is None:
-            logger.error("Table not initialized. Please create the table first")
+            log_error("Table not initialized. Please create the table first")
             return None  # type: ignore
 
         results = self.table.search(
@@ -526,18 +600,18 @@ class LanceDb(VectorDb):
         if self.nprobes:
             results.nprobes(self.nprobes)
 
-        return results.to_pandas()
+        return results.to_list()
 
     def hybrid_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-    ) -> List[Document]:
+    ) -> List[Dict[str, Any]]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         if self.table is None:
-            logger.error("Table not initialized. Please create the table first")
+            log_error("Table not initialized. Please create the table first")
             return []
 
         if not self.fts_index_exists:
@@ -557,13 +631,13 @@ class LanceDb(VectorDb):
         if self.nprobes:
             results.nprobes(self.nprobes)
 
-        return results.to_pandas()
+        return results.to_list()
 
     def keyword_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
-    ) -> List[Document]:
+    ) -> List[Dict[str, Any]]:
         if self.table is None:
-            logger.error("Table not initialized. Please create the table first")
+            log_error("Table not initialized. Please create the table first")
             return []
 
         if not self.fts_index_exists:
@@ -575,12 +649,12 @@ class LanceDb(VectorDb):
             query_type="fts",
         ).limit(limit)
 
-        return results.to_pandas()
+        return results.to_list()
 
-    def _build_search_results(self, results) -> List[Document]:  # TODO: typehint pandas?
+    def _build_search_results(self, results: List[Dict[str, Any]]) -> List[Document]:
         search_results: List[Document] = []
         try:
-            for _, item in results.iterrows():
+            for item in results:
                 payload = json.loads(item["payload"])
                 search_results.append(
                     Document(
@@ -594,8 +668,8 @@ class LanceDb(VectorDb):
                     )
                 )
 
-        except Exception as e:
-            logger.error(f"Error building search results: {e}")
+        except Exception:
+            logger.exception("Error building search results")
 
         return search_results
 
@@ -619,8 +693,10 @@ class LanceDb(VectorDb):
         # If we have an async table that was created, the table exists
         if self.async_table is not None:
             return True
-        if self.connection:
-            return self.table_name in self.connection.table_names()
+        if self._is_cloud():
+            return self.table is not None
+        if self.connection is not None:
+            return self.table_name in self._get_table_names(self.connection)
         return False
 
     async def async_exists(self) -> bool:
@@ -631,7 +707,7 @@ class LanceDb(VectorDb):
         # Check if table exists in database without trying to open it
         if self.async_connection is None:
             self.async_connection = await lancedb.connect_async(self.uri)
-        table_names = await self.async_connection.table_names()
+        table_names = await self._get_async_table_names(self.async_connection)
         return self.table_name in table_names
 
     async def async_get_count(self) -> int:
@@ -677,14 +753,14 @@ class LanceDb(VectorDb):
             return False
 
         try:
-            result = self.table.search().select(["payload"]).to_pandas()
-            # Convert the JSON strings in payload column to dictionaries
-            payloads = result["payload"].apply(json.loads)
-
-            # Check if the name exists in any of the payloads
-            return any(payload.get("name") == name for payload in payloads)
-        except Exception as e:
-            logger.error(f"Error checking name existence: {e}")
+            result = self.table.search().select(["payload"]).to_list()
+            for row in result:
+                payload = json.loads(row["payload"])
+                if payload.get("name") == name:
+                    return True
+            return False
+        except Exception:
+            logger.exception("Error checking name existence")
             return False
 
     async def async_name_exists(self, name: str) -> bool:
@@ -693,21 +769,20 @@ class LanceDb(VectorDb):
     def id_exists(self, id: str) -> bool:
         """Check if a document with the given ID exists in the database"""
         if self.table is None:
-            logger.error("Table not initialized")
+            log_error("Table not initialized")
             return False
 
         try:
-            # Search for the document with the specific ID
-            result = self.table.search().where(f"{self._id} = '{id}'").to_pandas()
+            result = self.table.search().where(f"{self._id} = '{id}'").to_list()
             return len(result) > 0
-        except Exception as e:
-            logger.error(f"Error checking id existence: {e}")
+        except Exception:
+            logger.exception("Error checking id existence")
             return False
 
     def delete_by_id(self, id: str) -> bool:
         """Delete content by ID."""
         if self.table is None:
-            logger.error("Table not initialized")
+            log_error("Table not initialized")
             return False
 
         try:
@@ -715,28 +790,26 @@ class LanceDb(VectorDb):
             self.table.delete(f"{self._id} = '{id}'")
             log_info(f"Deleted records with id '{id}' from table '{self.table_name}'.")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting rows by id '{id}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting rows by id '{id}'")
             return False
 
     def delete_by_name(self, name: str) -> bool:
         """Delete content by name."""
         if self.table is None:
-            logger.error("Table not initialized")
+            log_error("Table not initialized")
             return False
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
 
-            # Find matching IDs
             ids_to_delete = []
-            for _, row in result.iterrows():
+            for row in result:
                 payload = json.loads(row["payload"])
                 if payload.get("name") == name:
                     ids_to_delete.append(row["id"])
 
-            # Delete matching records
             if ids_to_delete:
                 for doc_id in ids_to_delete:
                     self.table.delete(f"{self._id} = '{doc_id}'")
@@ -746,27 +819,25 @@ class LanceDb(VectorDb):
                 log_info(f"No records found with name '{name}' to delete.")
                 return False
 
-        except Exception as e:
-            logger.error(f"Error deleting rows by name '{name}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting rows by name '{name}'")
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
         """Delete content by metadata."""
         if self.table is None:
-            logger.error("Table not initialized")
+            log_error("Table not initialized")
             return False
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
 
-            # Find matching IDs
             ids_to_delete = []
-            for _, row in result.iterrows():
+            for row in result:
                 payload = json.loads(row["payload"])
                 doc_metadata = payload.get("meta_data", {})
 
-                # Check if all metadata key-value pairs match
                 match = True
                 for key, value in metadata.items():
                     if key not in doc_metadata or doc_metadata[key] != value:
@@ -776,7 +847,6 @@ class LanceDb(VectorDb):
                 if match:
                     ids_to_delete.append(row["id"])
 
-            # Delete matching records
             if ids_to_delete:
                 for doc_id in ids_to_delete:
                     self.table.delete(f"{self._id} = '{doc_id}'")
@@ -788,28 +858,26 @@ class LanceDb(VectorDb):
                 log_info(f"No records found with metadata '{metadata}' to delete.")
                 return False
 
-        except Exception as e:
-            logger.error(f"Error deleting rows by metadata '{metadata}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting rows by metadata '{metadata}'")
             return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
         """Delete content by content ID."""
         if self.table is None:
-            logger.error("Table not initialized")
+            log_error("Table not initialized")
             return False
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
 
-            # Find matching IDs
             ids_to_delete = []
-            for _, row in result.iterrows():
+            for row in result:
                 payload = json.loads(row["payload"])
                 if payload.get("content_id") == content_id:
                     ids_to_delete.append(row["id"])
 
-            # Delete matching records
             if ids_to_delete:
                 for doc_id in ids_to_delete:
                     self.table.delete(f"{self._id} = '{doc_id}'")
@@ -821,28 +889,26 @@ class LanceDb(VectorDb):
                 log_info(f"No records found with content_id '{content_id}' to delete.")
                 return False
 
-        except Exception as e:
-            logger.error(f"Error deleting rows by content_id '{content_id}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting rows by content_id '{content_id}'")
             return False
 
     def _delete_by_content_hash(self, content_hash: str) -> bool:
         """Delete content by content hash."""
         if self.table is None:
-            logger.error("Table not initialized")
+            log_error("Table not initialized")
             return False
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
 
-            # Find matching IDs
             ids_to_delete = []
-            for _, row in result.iterrows():
+            for row in result:
                 payload = json.loads(row["payload"])
                 if payload.get("content_hash") == content_hash:
                     ids_to_delete.append(row["id"])
 
-            # Delete matching records
             if ids_to_delete:
                 for doc_id in ids_to_delete:
                     self.table.delete(f"{self._id} = '{doc_id}'")
@@ -854,30 +920,29 @@ class LanceDb(VectorDb):
                 log_info(f"No records found with content_hash '{content_hash}' to delete.")
                 return False
 
-        except Exception as e:
-            logger.error(f"Error deleting rows by content_hash '{content_hash}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting rows by content_hash '{content_hash}'")
             return False
 
     def content_hash_exists(self, content_hash: str) -> bool:
         """Check if documents with the given content hash exist."""
         if self.table is None:
-            logger.error("Table not initialized")
+            log_error("Table not initialized")
             return False
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
 
-            # Check if any records match the content_hash
-            for _, row in result.iterrows():
+            for row in result:
                 payload = json.loads(row["payload"])
                 if payload.get("content_hash") == content_hash:
                     return True
 
             return False
 
-        except Exception as e:
-            logger.error(f"Error checking content_hash existence '{content_hash}': {e}")
+        except Exception:
+            logger.exception(f"Error checking content_hash existence '{content_hash}'")
             return False
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
@@ -892,20 +957,18 @@ class LanceDb(VectorDb):
 
         try:
             if self.table is None:
-                logger.error("Table not initialized")
+                log_error("Table not initialized")
                 return
 
-            # Get all documents and filter in Python (LanceDB doesn't support JSON operators)
             total_count = self.table.count_rows()
-            results = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+            results = self.table.search().select(["id", "payload", "vector"]).limit(total_count).to_list()
 
-            if results.empty:
+            if not results:
                 logger.debug("No documents found")
                 return
 
-            # Find matching documents with the given content_id
             matching_rows = []
-            for _, row in results.iterrows():
+            for row in results:
                 payload = json.loads(row["payload"])
                 if payload.get("content_id") == content_id:
                     matching_rows.append(row)
@@ -955,8 +1018,8 @@ class LanceDb(VectorDb):
 
             logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
-        except Exception as e:
-            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+        except Exception:
+            logger.exception(f"Error updating metadata for content_id '{content_id}'")
             raise
 
     def get_supported_search_types(self) -> List[str]:

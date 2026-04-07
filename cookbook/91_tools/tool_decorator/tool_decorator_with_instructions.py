@@ -1,6 +1,17 @@
+"""
+Tool Decorator With Instructions
+=============================
+
+Demonstrates tool decorator with instructions.
+"""
+
 import httpx
 from agno.agent import Agent
 from agno.tools import tool
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 @tool(
@@ -40,6 +51,10 @@ agent = Agent(
     markdown=True,
 )
 
-agent.print_response(
-    "Show me the top news from Hacker News and summarize them", stream=True
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Show me the top news from Hacker News and summarize them", stream=True
+    )

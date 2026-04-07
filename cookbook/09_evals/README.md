@@ -1,15 +1,19 @@
-# Evals
+# Evals Cookbook
 
-Evals are used to measure and improve the performance of the Agents you build.
+This directory contains runnable examples for Agno evaluation patterns.
 
-Currently our evals measure three dimensions. You can find a directory with examples for each dimension:
+## Directory Overview
 
-## Accuracy
-How accurate is the Agent’s response, given a question and expected response
+- `accuracy/` - Accuracy evaluation examples for agents and teams.
+- `agent_as_judge/` - LLM-as-judge evaluation examples with scoring and hooks.
+- `performance/` - Runtime and memory performance benchmark examples.
+- `performance/comparison/` - Instantiation benchmarks for non-Agno frameworks.
+- `reliability/` - Tool-call reliability evaluation examples.
+- `reliability/single_tool_calls/` - Reliability examples for single expected tool calls.
+- `reliability/multiple_tool_calls/` - Reliability examples for multi-tool workflows.
+- `reliability/team/` - Reliability examples for team tool-call flows.
 
-## Performance
-How fast the Agent responds, and what is the memory footprint
+## Root Files
 
-## Reliability
-How accurate the Agent is making the expected tool calls
-
+- `RESTRUCTURE_PLAN.md` - Detailed restructuring plan and file dispositions.
+- `RESTRUCTURE_PROMPT.md` - Implementation prompt for the restructuring task.

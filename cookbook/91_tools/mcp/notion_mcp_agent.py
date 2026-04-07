@@ -23,6 +23,10 @@ from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
 from mcp import StdioServerParameters
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 async def run_agent():
     token = os.getenv("NOTION_API_KEY")
@@ -61,6 +65,10 @@ async def run_agent():
             exit_on=["exit", "quit"],
         )
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(run_agent())

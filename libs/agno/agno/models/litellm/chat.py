@@ -8,11 +8,12 @@ from pydantic import BaseModel
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.models.claude import supports_prefill
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 from agno.utils.tokens import count_schema_tokens
 
@@ -46,6 +47,8 @@ class LiteLLM(Model):
     extra_query: Optional[Dict[str, Any]] = None
     extra_body: Optional[Dict[str, Any]] = None
     request_params: Optional[Dict[str, Any]] = None
+    append_trailing_user_message: Optional[bool] = None
+    trailing_user_message_content: str = "continue"
 
     client: Optional[Any] = None
 
@@ -60,6 +63,10 @@ class LiteLLM(Model):
         # This ensures the client is preserved when the model is copied for background tasks
         if self.client is not None and self._original_client is None:
             self._original_client = self.client
+
+        # Auto-enable trailing user message for Claude 4.6+ via LiteLLM
+        if self.append_trailing_user_message is None:
+            self.append_trailing_user_message = not supports_prefill(self.id)
 
         # Set up API key from environment variable if not already set
         if not self.client and not self.api_key:
@@ -116,6 +123,11 @@ class LiteLLM(Model):
 
     def _format_messages(self, messages: List[Message], compress_tool_results: bool = False) -> List[Dict[str, Any]]:
         """Format messages for LiteLLM API."""
+        from agno.utils.message import normalize_tool_messages
+
+        # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
+        messages = normalize_tool_messages(messages)
+
         formatted_messages = []
         for m in messages:
             # Use compressed content for tool messages if compression is active
@@ -176,6 +188,12 @@ class LiteLLM(Model):
                 if m.videos is not None and len(m.videos) > 0:
                     log_warning("Video input is currently unsupported.")
             formatted_messages.append(msg)
+
+        # Claude 4.6+ models do not support assistant message prefill.
+        # Append a trailing user turn so the request ends with a user message.
+        if self.append_trailing_user_message and formatted_messages and formatted_messages[-1]["role"] == "assistant":
+            log_info("Appending trailing user message because this model does not support assistant message prefill")
+            formatted_messages.append({"role": "user", "content": self.trailing_user_message_content})
 
         return formatted_messages
 
@@ -238,9 +256,6 @@ class LiteLLM(Model):
         completion_kwargs = self.get_request_params(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
 
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
 
         provider_response = self.get_client().completion(**completion_kwargs)
@@ -266,9 +281,6 @@ class LiteLLM(Model):
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
 
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
 
         for chunk in self.get_client().completion(**completion_kwargs):
@@ -289,9 +301,6 @@ class LiteLLM(Model):
         """Sends an asynchronous chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages, compress_tool_results)
-
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
 
         assistant_message.metrics.start_timer()
 
@@ -318,9 +327,6 @@ class LiteLLM(Model):
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
 
-        if run_response and run_response.metrics:
-            run_response.metrics.set_time_to_first_token()
-
         assistant_message.metrics.start_timer()
 
         try:
@@ -333,7 +339,7 @@ class LiteLLM(Model):
             assistant_message.metrics.stop_timer()
 
         except Exception as e:
-            log_error(f"Error in streaming response: {e}")
+            log_error(f"Error in streaming response: {str(e)}")
             raise
 
     def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
@@ -450,8 +456,7 @@ class LiteLLM(Model):
             if not isinstance(function_data, dict):
                 function_data = {}
 
-            # Update function name if provided
-            if function_data.get("name") is not None:
+            if function_data.get("name"):
                 name = function_data.get("name", "")
                 if isinstance(tool_calls_by_index[index]["function"], dict):
                     # type: ignore
@@ -500,24 +505,38 @@ class LiteLLM(Model):
 
         return result
 
-    def _get_metrics(self, response_usage: Any) -> Metrics:
+    def _get_metrics(self, response_usage: Any) -> MessageMetrics:
         """
-        Parse the given LiteLLM usage into an Agno Metrics object.
+        Parse the given LiteLLM usage into an Agno MessageMetrics object.
 
         Args:
             response_usage: Usage data from LiteLLM
 
         Returns:
-            Metrics: Parsed metrics data
+            MessageMetrics: Parsed metrics data
         """
-        metrics = Metrics()
+        metrics = MessageMetrics()
 
         if isinstance(response_usage, dict):
             metrics.input_tokens = response_usage.get("prompt_tokens") or 0
             metrics.output_tokens = response_usage.get("completion_tokens") or 0
+            if (prompt_details := response_usage.get("prompt_tokens_details")) and isinstance(prompt_details, dict):
+                metrics.cache_read_tokens = prompt_details.get("cached_tokens", 0) or 0
+                metrics.audio_input_tokens = prompt_details.get("audio_tokens", 0) or 0
+            if (completion_details := response_usage.get("completion_tokens_details")) and isinstance(
+                completion_details, dict
+            ):
+                metrics.reasoning_tokens = completion_details.get("reasoning_tokens", 0) or 0
+                metrics.audio_output_tokens = completion_details.get("audio_tokens", 0) or 0
         else:
             metrics.input_tokens = response_usage.prompt_tokens or 0
             metrics.output_tokens = response_usage.completion_tokens or 0
+            if prompt_details := getattr(response_usage, "prompt_tokens_details", None):
+                metrics.cache_read_tokens = getattr(prompt_details, "cached_tokens", 0) or 0
+                metrics.audio_input_tokens = getattr(prompt_details, "audio_tokens", 0) or 0
+            if completion_details := getattr(response_usage, "completion_tokens_details", None):
+                metrics.reasoning_tokens = getattr(completion_details, "reasoning_tokens", 0) or 0
+                metrics.audio_output_tokens = getattr(completion_details, "audio_tokens", 0) or 0
 
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 

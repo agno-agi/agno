@@ -1,3 +1,10 @@
+"""
+Meta Image Input Bytes
+======================
+
+Cookbook example for `meta/llama/image_input_bytes.py`.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
@@ -5,6 +12,10 @@ from agno.media import Image
 from agno.models.meta import LlamaOpenAI
 from agno.tools.websearch import WebSearchTools
 from agno.utils.media import download_image
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
@@ -29,3 +40,10 @@ agent.print_response(
     ],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

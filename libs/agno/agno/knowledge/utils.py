@@ -5,6 +5,74 @@ from agno.knowledge.reader.reader_factory import ReaderFactory
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug
 
+RESERVED_AGNO_KEY = "_agno"
+
+
+def merge_user_metadata(
+    existing: Optional[Dict[str, Any]],
+    incoming: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Deep-merge two metadata dicts, preserving the ``_agno`` sub-key from both sides.
+
+    Top-level keys from *incoming* overwrite those in *existing* (except ``_agno``).
+    Keys inside ``_agno`` are merged individually so that info added
+    after initial source info is not lost.
+    """
+    if not existing:
+        return incoming
+    if not incoming:
+        return existing
+
+    merged = dict(existing)
+    for key, value in incoming.items():
+        if key == RESERVED_AGNO_KEY:
+            old_agno = merged.get(RESERVED_AGNO_KEY, {}) or {}
+            new_agno = value if isinstance(value, dict) else {}
+            merged[RESERVED_AGNO_KEY] = {**old_agno, **new_agno}
+        else:
+            merged[key] = value
+    return merged
+
+
+def set_agno_metadata(
+    metadata: Optional[Dict[str, Any]],
+    key: str,
+    value: Any,
+) -> Dict[str, Any]:
+    """Set a key under the reserved ``_agno`` namespace in metadata."""
+    if metadata is None:
+        metadata = {}
+    agno_meta = metadata.get(RESERVED_AGNO_KEY, {}) or {}
+    agno_meta[key] = value
+    metadata[RESERVED_AGNO_KEY] = agno_meta
+    return metadata
+
+
+def get_agno_metadata(
+    metadata: Optional[Dict[str, Any]],
+    key: str,
+) -> Any:
+    """Get a key from the reserved ``_agno`` namespace in metadata."""
+    if not metadata:
+        return None
+    agno_meta = metadata.get(RESERVED_AGNO_KEY)
+    if not isinstance(agno_meta, dict):
+        return None
+    return agno_meta.get(key)
+
+
+def strip_agno_metadata(
+    metadata: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """Return a copy of *metadata* without the reserved ``_agno`` key.
+
+    Useful before sending metadata to the vector DB where only
+    user-defined fields should be searchable.
+    """
+    if not metadata:
+        return metadata
+    return {k: v for k, v in metadata.items() if k != RESERVED_AGNO_KEY}
+
 
 def _get_chunker_class(strategy_type):
     """Get the chunker class for a given strategy type without instantiation."""

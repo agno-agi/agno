@@ -16,6 +16,10 @@ from agno.models.anthropic import Claude
 from anthropic import Anthropic
 from file_download_helper import download_skill_files
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # Create a simple agent with Word document skills
 document_agent = Agent(
     name="Document Creator",
@@ -33,6 +37,9 @@ document_agent = Agent(
     markdown=True,
 )
 
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     # Check for API key

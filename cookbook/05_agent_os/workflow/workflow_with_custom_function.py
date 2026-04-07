@@ -1,16 +1,34 @@
+"""
+Workflow With Custom Function Executors
+=======================================
+
+Demonstrates AgentOS workflows using both sync and streaming custom function steps.
+"""
+
+from typing import AsyncIterator, Union
+
 from agno.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.db.postgres import PostgresDb
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team import Team
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
-from agno.workflow.step import Step, StepInput, StepOutput
+from agno.workflow.step import Step, StepInput, StepOutput, WorkflowRunOutputEvent
 from agno.workflow.workflow import Workflow
+
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+USE_STREAMING_WORKFLOW = False
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-# Define agents
+# ---------------------------------------------------------------------------
+# Create Agents And Team
+# ---------------------------------------------------------------------------
 hackernews_agent = Agent(
     name="Hackernews Agent",
     model=OpenAIChat(id="gpt-4o"),
@@ -25,14 +43,13 @@ web_agent = Agent(
     instructions="Search the web for the latest news and trends",
 )
 
-# Define research team for complex analysis
 research_team = Team(
     name="Research Team",
     members=[hackernews_agent, web_agent],
     instructions="Analyze content and create comprehensive social media strategy",
 )
 
-content_planner = Agent(
+sync_content_planner = Agent(
     name="Content Planner",
     model=OpenAIChat(id="gpt-4o"),
     instructions=[
@@ -41,15 +58,25 @@ content_planner = Agent(
     ],
 )
 
+streaming_content_planner = Agent(
+    name="Content Planner",
+    model=OpenAIChat(id="gpt-4o"),
+    instructions=[
+        "Plan a content schedule over 4 weeks for the provided topic and research content",
+        "Ensure that I have posts for 3 posts per week",
+    ],
+    db=InMemoryDb(),
+)
 
+
+# ---------------------------------------------------------------------------
+# Create Custom Functions
+# ---------------------------------------------------------------------------
 def custom_content_planning_function(step_input: StepInput) -> StepOutput:
-    """
-    Custom function that does intelligent content planning with context awareness
-    """
+    """Create a content plan using prior workflow context."""
     message = step_input.input
     previous_step_content = step_input.previous_step_content
 
-    # Create intelligent planning prompt
     planning_prompt = f"""
         STRATEGIC CONTENT PLANNING REQUEST:
 
@@ -68,14 +95,13 @@ def custom_content_planning_function(step_input: StepInput) -> StepOutput:
     """
 
     try:
-        response = content_planner.run(planning_prompt)
-
+        response = sync_content_planner.run(planning_prompt)
         enhanced_content = f"""
             ## Strategic Content Plan
 
             **Planning Topic:** {message}
 
-            **Research Integration:** {"✓ Research-based" if previous_step_content else "✗ No research foundation"}
+            **Research Integration:** {"Research-based" if previous_step_content else "No research foundation"}
 
             **Content Strategy:**
             {response.content}
@@ -85,44 +111,125 @@ def custom_content_planning_function(step_input: StepInput) -> StepOutput:
             - Strategic Alignment: Optimized for multi-channel distribution
             - Execution Ready: Detailed action items included
         """.strip()
-
         return StepOutput(content=enhanced_content)
-
-    except Exception as e:
+    except Exception as exc:
         return StepOutput(
-            content=f"Custom content planning failed: {str(e)}",
-            success=False,
+            content=f"Custom content planning failed: {str(exc)}", success=False
         )
 
 
-# Define steps using different executor types
+async def streaming_custom_content_planning_function(
+    step_input: StepInput,
+) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
+    """Create a content plan with streamed planner output events."""
+    message = step_input.input
+    previous_step_content = step_input.previous_step_content
 
-research_step = Step(
-    name="Research Step",
-    team=research_team,
-)
+    planning_prompt = f"""
+        STRATEGIC CONTENT PLANNING REQUEST:
 
-content_planning_step = Step(
-    name="Content Planning Step",
-    executor=custom_content_planning_function,
-)
+        Core Topic: {message}
 
-content_creation_workflow = Workflow(
+        Research Results: {previous_step_content[:500] if previous_step_content else "No research results"}
+
+        Planning Requirements:
+        1. Create a comprehensive content strategy based on the research
+        2. Leverage the research findings effectively
+        3. Identify content formats and channels
+        4. Provide timeline and priority recommendations
+        5. Include engagement and distribution strategies
+
+        Please create a detailed, actionable content plan.
+    """
+
+    try:
+        response_iterator = streaming_content_planner.arun(
+            planning_prompt,
+            stream=True,
+            stream_events=True,
+        )
+        async for event in response_iterator:
+            yield event
+
+        response = streaming_content_planner.get_last_run_output()
+        enhanced_content = f"""
+            ## Strategic Content Plan
+
+            **Planning Topic:** {message}
+
+            **Research Integration:** {"Research-based" if previous_step_content else "No research foundation"}
+
+            **Content Strategy:**
+            {response.content}
+
+            **Custom Planning Enhancements:**
+            - Research Integration: {"High" if previous_step_content else "Baseline"}
+            - Strategic Alignment: Optimized for multi-channel distribution
+            - Execution Ready: Detailed action items included
+        """.strip()
+        yield StepOutput(content=enhanced_content)
+    except Exception as exc:
+        yield StepOutput(
+            content=f"Custom content planning failed: {str(exc)}", success=False
+        )
+
+
+# ---------------------------------------------------------------------------
+# Create Workflows
+# ---------------------------------------------------------------------------
+sync_content_creation_workflow = Workflow(
     name="Content Creation Workflow",
     description="Automated content creation with custom execution options",
     db=PostgresDb(
         session_table="workflow_session",
         db_url=db_url,
     ),
-    steps=[research_step, content_planning_step],
+    steps=[
+        Step(
+            name="Research Step",
+            team=research_team,
+        ),
+        Step(
+            name="Content Planning Step",
+            executor=custom_content_planning_function,
+        ),
+    ],
 )
 
-# Initialize the AgentOS with the workflows
+streaming_content_creation_workflow = Workflow(
+    name="Streaming Content Creation Workflow",
+    description="Automated content creation with streaming custom execution functions",
+    db=SqliteDb(
+        session_table="workflow_session",
+        db_file="tmp/workflow.db",
+    ),
+    steps=[
+        Step(
+            name="Research Step",
+            team=research_team,
+        ),
+        Step(
+            name="Content Planning Step",
+            executor=streaming_custom_content_planning_function,
+        ),
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# Create AgentOS
+# ---------------------------------------------------------------------------
 agent_os = AgentOS(
     description="Example app for basic agent with playground capabilities",
-    workflows=[content_creation_workflow],
+    workflows=[
+        streaming_content_creation_workflow
+        if USE_STREAMING_WORKFLOW
+        else sync_content_creation_workflow
+    ],
 )
 app = agent_os.get_app()
 
+# ---------------------------------------------------------------------------
+# Run
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     agent_os.serve(app="workflow_with_custom_function:app", reload=True)

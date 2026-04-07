@@ -22,6 +22,11 @@ from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools, StreamableHTTPClientParams
 from agno.utils.log import log_exception
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 mcp_server_url = getenv("MCP_SERVER_URL")
 mcp_access_token = getenv("MCP_ACCESS_TOKEN")
 pipedream_project_id = getenv("PIPEDREAM_PROJECT_ID")
@@ -52,6 +57,10 @@ async def run_agent(task: str) -> None:
     except Exception as e:
         log_exception(f"Unexpected error: {e}")
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     # The agent can read channels, users, messages, etc.

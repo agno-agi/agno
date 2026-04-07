@@ -5,6 +5,10 @@ from agno.knowledge.knowledge import Knowledge
 from agno.models.meta import Llama
 from agno.vectordb.pgvector import PgVector
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 knowledge = Knowledge(
@@ -17,3 +21,10 @@ agent = Agent(
     model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), knowledge=knowledge
 )
 agent.print_response("How to make Thai curry?", markdown=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

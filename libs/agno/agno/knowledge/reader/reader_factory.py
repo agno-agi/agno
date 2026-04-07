@@ -18,7 +18,11 @@ class ReaderFactory:
         },
         "csv": {
             "name": "CsvReader",
-            "description": "Parses CSV, XLSX, and XLS files with custom delimiter support",
+            "description": "Parses CSV files with custom delimiter support",
+        },
+        "excel": {
+            "name": "ExcelReader",
+            "description": "Processes Excel workbooks (.xlsx and .xls) with sheet filtering and row-based chunking",
         },
         "field_labeled_csv": {
             "name": "FieldLabeledCsvReader",
@@ -72,6 +76,10 @@ class ReaderFactory:
             "name": "WebSearchReader",
             "description": "Executes web searches and processes results with relevance ranking and content extraction",
         },
+        "docling": {
+            "name": "DoclingReader",
+            "description": "Converts multiple document formats like PDF, DOCX, PPTX, images, HTML, etc. using IBM's Docling library",
+        },
     }
 
     @classmethod
@@ -93,10 +101,22 @@ class ReaderFactory:
 
         config: Dict[str, Any] = {
             "name": "CSV Reader",
-            "description": "Parses CSV, XLSX, and XLS files with custom delimiter support",
+            "description": "Parses CSV files with custom delimiter support",
         }
         config.update(kwargs)
         return CSVReader(**config)
+
+    @classmethod
+    def _get_excel_reader(cls, **kwargs) -> Reader:
+        """Get Excel reader instance."""
+        from agno.knowledge.reader.excel_reader import ExcelReader
+
+        config: Dict[str, Any] = {
+            "name": "Excel Reader",
+            "description": "Processes Excel workbooks (.xlsx and .xls) with sheet filtering and row-based chunking",
+        }
+        config.update(kwargs)
+        return ExcelReader(**config)
 
     @classmethod
     def _get_field_labeled_csv_reader(cls, **kwargs) -> Reader:
@@ -260,6 +280,18 @@ class ReaderFactory:
         return WebSearchReader(**config)
 
     @classmethod
+    def _get_docling_reader(cls, **kwargs) -> Reader:
+        """Get Docling reader instance."""
+        from agno.knowledge.reader.docling_reader import DoclingReader
+
+        config: Dict[str, Any] = {
+            "name": "Docling Reader",
+            "description": "Converts multiple document formats like PDF, DOCX, PPTX, images, HTML, etc. using IBM's Docling library",
+        }
+        config.update(kwargs)
+        return DoclingReader(**config)
+
+    @classmethod
     def _get_reader_method(cls, reader_key: str) -> Callable[[], Reader]:
         """Get the appropriate reader method for the given key."""
         method_name = f"_get_{reader_key}_reader"
@@ -288,6 +320,7 @@ class ReaderFactory:
         reader_class_map: Dict[str, tuple] = {
             "pdf": ("agno.knowledge.reader.pdf_reader", "PDFReader"),
             "csv": ("agno.knowledge.reader.csv_reader", "CSVReader"),
+            "excel": ("agno.knowledge.reader.excel_reader", "ExcelReader"),
             "field_labeled_csv": ("agno.knowledge.reader.field_labeled_csv_reader", "FieldLabeledCSVReader"),
             "docx": ("agno.knowledge.reader.docx_reader", "DocxReader"),
             "pptx": ("agno.knowledge.reader.pptx_reader", "PPTXReader"),
@@ -301,6 +334,7 @@ class ReaderFactory:
             "arxiv": ("agno.knowledge.reader.arxiv_reader", "ArxivReader"),
             "wikipedia": ("agno.knowledge.reader.wikipedia_reader", "WikipediaReader"),
             "web_search": ("agno.knowledge.reader.web_search_reader", "WebSearchReader"),
+            "docling": ("agno.knowledge.reader.docling_reader", "DoclingReader"),
         }
 
         if reader_key not in reader_class_map:
@@ -331,19 +365,20 @@ class ReaderFactory:
     @classmethod
     def get_reader_for_extension(cls, extension: str) -> Reader:
         """Get the appropriate reader for a file extension."""
+        # TODO: add docling for unique file extensions eg: images, audios, etc.
         extension = extension.lower()
 
         if extension in [".pdf", "application/pdf"]:
             return cls.create_reader("pdf")
+        elif extension in [".csv", "text/csv"]:
+            return cls.create_reader("csv")
         elif extension in [
-            ".csv",
             ".xlsx",
             ".xls",
-            "text/csv",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "application/vnd.ms-excel",
         ]:
-            return cls.create_reader("csv")
+            return cls.create_reader("excel")
         elif extension in [".docx", ".doc", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
             return cls.create_reader("docx")
         elif extension == ".pptx":

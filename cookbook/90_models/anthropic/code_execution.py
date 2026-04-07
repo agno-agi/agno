@@ -1,5 +1,16 @@
+"""
+Anthropic Code Execution
+========================
+
+Cookbook example for `anthropic/code_execution.py`.
+"""
+
 from agno.agent import Agent
 from agno.models.anthropic import Claude
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=Claude(
@@ -19,3 +30,10 @@ agent.print_response(
     "Calculate the mean and standard deviation of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]",
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -1,25 +1,30 @@
 """
-This example shows how to use agentops to log model calls.
+AgentOps Integration
+====================
 
-Steps to get started with agentops:
-1. Install agentops: uv pip install agentops
-2. Obtain an API key from https://app.agentops.ai/
-3. Export environment variables like AGENTOPS_API_KEY and OPENAI_API_KEY.
-4. Run the script.
-
-You can view the logs in the AgentOps dashboard: https://app.agentops.ai/
+Demonstrates logging Agno model calls with AgentOps.
 """
 
 import agentops
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 # Initialize AgentOps
 agentops.init()
 
-# Create and run an agent
-agent = Agent(model=OpenAIChat(id="gpt-4o"))
-response = agent.run("Share a 2 sentence horror story")
 
-# Print the response
-print(response.content)
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+agent = Agent(model=OpenAIChat(id="gpt-4o"))
+
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    response = agent.run("Share a 2 sentence horror story")
+    print(response.content)

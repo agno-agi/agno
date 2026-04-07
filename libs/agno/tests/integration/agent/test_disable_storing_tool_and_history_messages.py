@@ -42,6 +42,7 @@ def test_store_tool_results_enabled_by_default(tmp_path):
     stored_run = agent.get_last_run_output()
     assert stored_run is not None
 
+    assert stored_run.messages is not None
     if stored_run.messages:
         # May or may not have tool calls depending on model behavior
         # But if tools were used, should be stored
@@ -68,6 +69,7 @@ def test_store_tool_results_disabled(tmp_path):
     assert stored_run is not None
 
     # Should have NO tool messages
+    assert stored_run.messages is not None
     if stored_run.messages:
         tool_messages = [m for m in stored_run.messages if m.role == "tool"]
         assert len(tool_messages) == 0
@@ -114,14 +116,15 @@ async def test_store_tool_results_disabled_async(tmp_path):
     assert stored_run is not None
 
     # Should have NO tool messages
+    assert stored_run.messages is not None
     if stored_run.messages:
         tool_messages = [m for m in stored_run.messages if m.role == "tool"]
         assert len(tool_messages) == 0
 
 
 # --- History Message Storage Tests ---
-def test_store_history_messages_enabled_by_default(tmp_path):
-    """Test that history messages are stored by default."""
+def test_store_history_messages_disabled_by_default(tmp_path):
+    """Test that history messages are NOT stored by default (prevents quadratic storage growth)."""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         db=SqliteDb(db_file=str(tmp_path / "test.db")),
@@ -129,8 +132,8 @@ def test_store_history_messages_enabled_by_default(tmp_path):
         num_history_runs=2,
     )
 
-    # Default should be True
-    assert agent.store_history_messages is True
+    # Default should be False to prevent quadratic storage growth
+    assert agent.store_history_messages is False
 
     # First run to establish history
     agent.run("My name is Alice")
@@ -142,10 +145,11 @@ def test_store_history_messages_enabled_by_default(tmp_path):
     stored_run = agent.get_last_run_output()
     assert stored_run is not None
 
+    assert stored_run.messages is not None
     if stored_run.messages:
-        # Should have history messages
+        # Should NOT have history messages stored (they're reconstructed on-the-fly)
         history_msgs = [m for m in stored_run.messages if m.from_history]
-        assert len(history_msgs) > 0
+        assert len(history_msgs) == 0
 
 
 def test_store_history_messages_disabled(tmp_path):
@@ -171,6 +175,7 @@ def test_store_history_messages_disabled(tmp_path):
     assert stored_run is not None
 
     # Should have NO history messages
+    assert stored_run.messages is not None
     if stored_run.messages:
         history_msgs = [m for m in stored_run.messages if m.from_history]
         assert len(history_msgs) == 0
@@ -219,6 +224,7 @@ async def test_store_history_messages_disabled_async(tmp_path):
     assert stored_run is not None
 
     # Should have NO history messages
+    assert stored_run.messages is not None
     if stored_run.messages:
         history_msgs = [m for m in stored_run.messages if m.from_history]
         assert len(history_msgs) == 0
@@ -247,6 +253,7 @@ def test_all_storage_disabled(tmp_path):
     assert stored_run is not None
 
     # Check that nothing extra is stored
+    assert stored_run.messages is not None
     if stored_run.messages:
         history_msgs = [m for m in stored_run.messages if m.from_history]
         tool_msgs = [m for m in stored_run.messages if m.role == "tool"]
@@ -277,6 +284,7 @@ def test_selective_storage(tmp_path):
     stored_run = agent.get_last_run_output()
     assert stored_run is not None
 
+    assert stored_run.messages is not None
     if stored_run.messages:
         # Should have history
         history_msgs = [m for m in stored_run.messages if m.from_history]
@@ -357,6 +365,7 @@ def test_multiple_runs_same_agent(tmp_path):
         assert stored_run is not None
 
         # Each run should have no tool/history messages stored
+        assert stored_run.messages is not None
         if stored_run.messages:
             history_msgs = [m for m in stored_run.messages if m.from_history]
             tool_msgs = [m for m in stored_run.messages if m.role == "tool"]
@@ -386,6 +395,7 @@ def test_store_tool_results_disabled_streaming(tmp_path):
     stored_run = agent.get_last_run_output()
     assert stored_run is not None
 
+    assert stored_run.messages is not None
     if stored_run.messages:
         tool_msgs = [m for m in stored_run.messages if m.role == "tool"]
         assert len(tool_msgs) == 0
@@ -414,6 +424,7 @@ async def test_store_history_messages_disabled_streaming_async(tmp_path):
     stored_run = agent.get_last_run_output()
     assert stored_run is not None
 
+    assert stored_run.messages is not None
     if stored_run.messages:
         history_msgs = [m for m in stored_run.messages if m.from_history]
         assert len(history_msgs) == 0

@@ -1,4 +1,4 @@
-"""🐙 MCP GitHub Agent - Your Personal GitHub Explorer!
+"""MCP GitHub Agent - Your Personal GitHub Explorer!
 
 This example shows how to create a GitHub agent that uses MCP to explore,
 analyze, and provide insights about GitHub repositories. The agent leverages the Model
@@ -25,6 +25,10 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.tools.mcp import MCPTools
 from mcp import StdioServerParameters
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 async def run_agent(message: str) -> None:
@@ -54,6 +58,10 @@ async def run_agent(message: str) -> None:
 
 
 # Example usage
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     # Pull request example
     asyncio.run(

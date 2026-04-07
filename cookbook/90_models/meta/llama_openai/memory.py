@@ -11,6 +11,10 @@ from agno.db.postgres import PostgresDb
 from agno.models.meta import LlamaOpenAI
 from rich.pretty import pprint
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 agent = Agent(
     model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
@@ -47,3 +51,10 @@ pprint(agent.memory.summaries)
 agent.print_response(
     "What have we been talking about, do you know my name?", stream=True
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -142,4 +142,35 @@ class GitHubContent:
         }
 
 
-RemoteContent = Union[S3Content, GCSContent, SharePointContent, GitHubContent]
+@dataclass
+class AzureBlobContent:
+    """Content reference for Azure Blob Storage files.
+
+    Used with AzureBlobConfig to load files from Azure Blob Storage containers.
+    Supports loading single blobs or entire prefixes (folders).
+    """
+
+    def __init__(
+        self,
+        config_id: str,
+        blob_name: Optional[str] = None,
+        prefix: Optional[str] = None,
+    ):
+        self.config_id = config_id
+        self.blob_name = blob_name
+        self.prefix = prefix
+
+        if self.blob_name is None and self.prefix is None:
+            raise ValueError("Either blob_name or prefix must be provided")
+        if self.blob_name is not None and self.prefix is not None:
+            raise ValueError("Provide either blob_name or prefix, not both")
+
+    def get_config(self):
+        return {
+            "config_id": self.config_id,
+            "blob_name": self.blob_name,
+            "prefix": self.prefix,
+        }
+
+
+RemoteContent = Union[S3Content, GCSContent, SharePointContent, GitHubContent, AzureBlobContent]

@@ -11,6 +11,11 @@ Run: `uv pip install apache-airflow` to install the dependencies
 from agno.agent import Agent
 from agno.tools.airflow import AirflowTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Example 1: All functions enabled (default behavior)
 agent_full = Agent(
     tools=[AirflowTools(dags_dir="tmp/dags")],  # All functions enabled by default
@@ -28,8 +33,8 @@ agent_readonly = Agent(
     tools=[
         AirflowTools(
             dags_dir="tmp/dags",
-            enable_save_dag=False,  # Disable DAG creation
-            enable_read_dag=True,  # Enable DAG reading
+            enable_save_dag_file=False,  # Disable DAG creation
+            enable_read_dag_file=True,  # Enable DAG reading
         )
     ],
     description="You are an Airflow analyst focused on reading and analyzing existing DAGs.",
@@ -46,8 +51,8 @@ agent_explicit = Agent(
     tools=[
         AirflowTools(
             dags_dir="tmp/dags",
-            enable_save_dag=True,
-            enable_read_dag=True,
+            enable_save_dag_file=True,
+            enable_read_dag_file=True,
         )
     ],
     description="You are an Airflow developer with explicit permissions for all DAG operations.",
@@ -110,7 +115,10 @@ with DAG(
     )
 """
 
-agent.run(f"Save this DAG file as 'example_dag.py': {dag_content}")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.run(f"Save this DAG file as 'example_dag.py': {dag_content}")
 
-
-agent.print_response("Read the contents of 'example_dag.py'")
+    agent.print_response("Read the contents of 'example_dag.py'")

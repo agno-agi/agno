@@ -2,6 +2,11 @@
 
 from mcp.server.fastmcp import FastMCP
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 mcp = FastMCP("calendar_assistant")
 
 
@@ -14,6 +19,10 @@ def get_events(day: str) -> str:
 def get_birthdays_this_week() -> str:
     return "It is your mom's birthday tomorrow"
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     mcp.run(transport="sse")

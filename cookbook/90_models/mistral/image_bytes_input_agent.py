@@ -1,7 +1,18 @@
+"""
+Mistral Image Bytes Input Agent
+===============================
+
+Cookbook example for `mistral/image_bytes_input_agent.py`.
+"""
+
 import requests
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.mistral.mistral import MistralChat
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=MistralChat(id="pixtral-12b-2409"),
@@ -32,3 +43,10 @@ agent.print_response(
         Image(content=image_bytes_from_url),
     ],
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

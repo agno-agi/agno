@@ -14,10 +14,15 @@ from agno.tools.hackernews import HackerNewsTools
 from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel
 
-# Initialize AsyncSqliteDb with a database file
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 db = AsyncSqliteDb(db_file="team_storage.db")
 
 
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 class Article(BaseModel):
     title: str
     summary: str
@@ -55,6 +60,12 @@ hn_team = Team(
     show_members_responses=True,
 )
 
-asyncio.run(
-    hn_team.aprint_response("Write an article about the top 2 stories on hackernews")
-)
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    asyncio.run(
+        hn_team.aprint_response(
+            "Write an article about the top 2 stories on hackernews"
+        )
+    )

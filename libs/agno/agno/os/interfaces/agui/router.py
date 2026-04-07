@@ -1,8 +1,9 @@
 """Async router handling exposing an Agno Agent or Team in an AG-UI compatible format."""
 
-import logging
 import uuid
 from typing import AsyncIterator, Optional, Union
+
+from agno.utils.log import log_error
 
 try:
     from ag_ui.core import (
@@ -14,7 +15,7 @@ try:
     )
     from ag_ui.encoder import EventEncoder
 except ImportError as e:
-    raise ImportError("`ag_ui` not installed. Please install it with `pip install -U ag-ui`") from e
+    raise ImportError("`ag_ui` not installed. Please install it with `pip install -U ag-ui-protocol`") from e
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -27,8 +28,6 @@ from agno.os.interfaces.agui.utils import (
 )
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
-
-logger = logging.getLogger(__name__)
 
 
 async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
@@ -70,7 +69,7 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
 
     # Emit a RunErrorEvent if any error occurs
     except Exception as e:
-        logger.error(f"Error running agent: {e}", exc_info=True)
+        log_error(f"Error running agent: {str(e)}")
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 
@@ -108,7 +107,7 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
             yield event
 
     except Exception as e:
-        logger.error(f"Error running team: {e}", exc_info=True)
+        log_error(f"Error running team: {str(e)}")
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 

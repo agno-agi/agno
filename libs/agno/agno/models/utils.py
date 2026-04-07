@@ -139,10 +139,20 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return MistralChat(id=model_id)
 
+    elif model_provider == "moonshot":
+        from agno.models.moonshot import MoonShot
+
+        return MoonShot(id=model_id)
+
     elif model_provider == "nebius":
         from agno.models.nebius import Nebius
 
         return Nebius(id=model_id)
+
+    elif model_provider == "neosantara":
+        from agno.models.neosantara import Neosantara
+
+        return Neosantara(id=model_id)
 
     elif model_provider == "nexus":
         from agno.models.nexus import Nexus

@@ -1,9 +1,20 @@
+"""
+Google Image Editing
+====================
+
+Cookbook example for `google/gemini/image_editing.py`.
+"""
+
 from io import BytesIO
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.media import Image
 from agno.models.google import Gemini
 from PIL import Image as PILImage
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 # No system message should be provided (Gemini requires only the image)
 agent = Agent(
@@ -31,3 +42,9 @@ if run_response and isinstance(run_response, RunOutput) and run_response.images:
             # image.save("generated_image.png")
 else:
     print("No images found in run response")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    pass

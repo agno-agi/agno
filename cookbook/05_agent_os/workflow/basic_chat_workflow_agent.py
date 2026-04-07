@@ -10,6 +10,10 @@ from agno.workflow.step import Step
 from agno.workflow.types import StepInput
 from agno.workflow.workflow import Workflow
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 
@@ -102,6 +106,10 @@ agent_os = AgentOS(
     workflows=[workflow],
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="basic_chat_workflow_agent:app", reload=True)

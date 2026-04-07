@@ -25,6 +25,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.utils import json_serializer
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -108,7 +109,7 @@ class MySQLDb(BaseDb):
 
         _engine: Optional[Engine] = db_engine
         if _engine is None and db_url is not None:
-            _engine = create_engine(db_url)
+            _engine = create_engine(db_url, json_serializer=json_serializer)
         if _engine is None:
             raise ValueError("One of db_url or db_engine must be provided")
 
@@ -238,7 +239,7 @@ class MySQLDb(BaseDb):
 
                     log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
                 except Exception as e:
-                    log_error(f"Error creating index {idx.name}: {e}")
+                    log_error(f"Error creating index {idx.name}: {str(e)}")
 
             # Store the schema version for the created table
             if table_name != self.versions_table_name and table_created:
@@ -251,7 +252,7 @@ class MySQLDb(BaseDb):
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {self.db_schema}.{table_name}: {e}")
+            log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
     def _create_all_tables(self):
@@ -388,7 +389,7 @@ class MySQLDb(BaseDb):
             return table
 
         except Exception as e:
-            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {e}")
+            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
     def get_latest_schema_version(self, table_name: str) -> str:
@@ -425,12 +426,13 @@ class MySQLDb(BaseDb):
             sess.execute(stmt)
 
     # -- Session methods --
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """
         Delete a session from the database.
 
         Args:
             session_id (str): ID of the session to delete
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -445,6 +447,8 @@ class MySQLDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
                 if result.rowcount == 0:
                     log_debug(f"No session found to delete with session_id: {session_id} in table {table.name}")
@@ -454,15 +458,16 @@ class MySQLDb(BaseDb):
                     return True
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_error(f"Error deleting session: {str(e)}")
             return False
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete all given sessions from the database.
         Can handle multiple session types in the same run.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -474,12 +479,14 @@ class MySQLDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(delete_stmt)
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_error(f"Error deleting sessions: {str(e)}")
 
     def get_session(
         self,
@@ -534,7 +541,7 @@ class MySQLDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception reading from session table: {e}")
+            log_error(f"Exception reading from session table: {str(e)}")
             return None
 
     def get_sessions(
@@ -638,11 +645,16 @@ class MySQLDb(BaseDb):
                     raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception getting sessions: {e}")
+            log_error(f"Exception getting sessions: {str(e)}")
             raise e
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Rename a session in the database.
@@ -651,6 +663,7 @@ class MySQLDb(BaseDb):
             session_id (str): The ID of the session to rename.
             session_type (SessionType): The type of session to rename.
             session_name (str): The new name for the session.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
         Returns:
@@ -674,10 +687,14 @@ class MySQLDb(BaseDb):
                     .where(table.c.session_type == session_type.value)
                     .values(session_data=func.json_set(table.c.session_data, "$.session_name", session_name))
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 sess.execute(stmt)
 
                 # Fetch the updated row
                 select_stmt = select(table).where(table.c.session_id == session_id)
+                if user_id is not None:
+                    select_stmt = select_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(select_stmt)
                 row = result.fetchone()
                 if not row:
@@ -698,7 +715,7 @@ class MySQLDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+            log_error(f"Exception renaming session: {str(e)}")
             return None
 
     def upsert_session(
@@ -728,6 +745,16 @@ class MySQLDb(BaseDb):
 
             if isinstance(session, AgentSession):
                 with self.Session() as sess, sess.begin():
+                    existing_row = sess.execute(
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
+                    ).fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.AGENT.value,
@@ -766,6 +793,16 @@ class MySQLDb(BaseDb):
 
             elif isinstance(session, TeamSession):
                 with self.Session() as sess, sess.begin():
+                    existing_row = sess.execute(
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
+                    ).fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.TEAM.value,
@@ -804,6 +841,16 @@ class MySQLDb(BaseDb):
 
             else:
                 with self.Session() as sess, sess.begin():
+                    existing_row = sess.execute(
+                        select(table.c.user_id)
+                        .where(table.c.session_id == session_dict.get("session_id"))
+                        .with_for_update()
+                    ).fetchone()
+                    if existing_row is not None:
+                        existing_uid = existing_row[0]
+                        if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                            return None
+
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.WORKFLOW.value,
@@ -841,7 +888,7 @@ class MySQLDb(BaseDb):
                     return WorkflowSession.from_dict(session_dict)
 
         except Exception as e:
-            log_error(f"Exception upserting into sessions table: {e}")
+            log_error(f"Exception upserting into sessions table: {str(e)}")
             return None
 
     def upsert_sessions(
@@ -1052,7 +1099,7 @@ class MySQLDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {e}")
+            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {str(e)}")
             # Fallback to individual upserts
             return [
                 result
@@ -1094,7 +1141,7 @@ class MySQLDb(BaseDb):
                     log_debug(f"No user memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting user memory: {e}")
+            log_error(f"Error deleting user memory: {str(e)}")
 
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
@@ -1120,7 +1167,7 @@ class MySQLDb(BaseDb):
                     log_debug(f"No user memories found with ids: {memory_ids}")
 
         except Exception as e:
-            log_error(f"Error deleting user memories: {e}")
+            log_error(f"Error deleting user memories: {str(e)}")
 
     def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
@@ -1157,7 +1204,7 @@ class MySQLDb(BaseDb):
                 return list(topics_set)
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             raise e
 
     def get_user_memory(
@@ -1198,7 +1245,7 @@ class MySQLDb(BaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             return None
 
     def get_user_memories(
@@ -1284,7 +1331,7 @@ class MySQLDb(BaseDb):
             return [UserMemory.from_dict(record) for record in memories_raw]
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             raise e
 
     def clear_memories(self) -> None:
@@ -1297,7 +1344,7 @@ class MySQLDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 sess.execute(table.delete())
         except Exception as e:
-            log_error(f"Exception clearing user memories: {e}")
+            log_error(f"Exception clearing user memories: {str(e)}")
 
     def get_user_memory_stats(
         self, limit: Optional[int] = None, page: Optional[int] = None, user_id: Optional[str] = None
@@ -1366,7 +1413,7 @@ class MySQLDb(BaseDb):
                 ], total_count
 
         except Exception as e:
-            log_error(f"Exception getting user memory stats: {e}")
+            log_error(f"Exception getting user memory stats: {str(e)}")
             return [], 0
 
     def upsert_user_memory(
@@ -1436,7 +1483,7 @@ class MySQLDb(BaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Exception upserting user memory: {e}")
+            log_error(f"Exception upserting user memory: {str(e)}")
             return None
 
     def upsert_memories(
@@ -1529,7 +1576,7 @@ class MySQLDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {e}")
+            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {str(e)}")
             # Fallback to individual upserts
             return [
                 result
@@ -1579,7 +1626,7 @@ class MySQLDb(BaseDb):
                 return [record._mapping for record in result]
 
         except Exception as e:
-            log_error(f"Exception reading from sessions table: {e}")
+            log_error(f"Exception reading from sessions table: {str(e)}")
             raise e
 
     def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
@@ -1683,7 +1730,7 @@ class MySQLDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception refreshing metrics: {e}")
+            log_error(f"Exception refreshing metrics: {str(e)}")
             return None
 
     def get_metrics(
@@ -1725,7 +1772,7 @@ class MySQLDb(BaseDb):
             return [row._mapping for row in result], latest_updated_at
 
         except Exception as e:
-            log_error(f"Exception getting metrics: {e}")
+            log_error(f"Exception getting metrics: {str(e)}")
             return [], None
 
     # -- Knowledge methods --
@@ -1749,7 +1796,7 @@ class MySQLDb(BaseDb):
                 sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Exception deleting knowledge content: {e}")
+            log_error(f"Exception deleting knowledge content: {str(e)}")
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
@@ -1776,7 +1823,7 @@ class MySQLDb(BaseDb):
                 return KnowledgeRow.model_validate(result._mapping)
 
         except Exception as e:
-            log_error(f"Exception getting knowledge content: {e}")
+            log_error(f"Exception getting knowledge content: {str(e)}")
             return None
 
     def get_knowledge_contents(
@@ -1785,6 +1832,7 @@ class MySQLDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1793,7 +1841,7 @@ class MySQLDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
-            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1808,6 +1856,10 @@ class MySQLDb(BaseDb):
         try:
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
+
+                # Apply linked_to filter if provided
+                if linked_to is not None:
+                    stmt = stmt.where(table.c.linked_to == linked_to)
 
                 # Apply sorting
                 if sort_by is not None:
@@ -1830,7 +1882,7 @@ class MySQLDb(BaseDb):
                 return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 
         except Exception as e:
-            log_error(f"Exception getting knowledge contents: {e}")
+            log_error(f"Exception getting knowledge contents: {str(e)}")
             return [], 0
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -1907,7 +1959,7 @@ class MySQLDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge row: {e}")
+            log_error(f"Error upserting knowledge row: {str(e)}")
             return None
 
     # -- Eval methods --
@@ -1939,7 +1991,7 @@ class MySQLDb(BaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_error(f"Error creating eval run: {str(e)}")
             return None
 
     def delete_eval_run(self, eval_run_id: str) -> None:
@@ -1962,7 +2014,7 @@ class MySQLDb(BaseDb):
                     log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+            log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         """Delete multiple eval runs from the database.
@@ -1984,7 +2036,7 @@ class MySQLDb(BaseDb):
                     log_debug(f"Deleted {result.rowcount} eval runs")
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_error(f"Error deleting eval runs {eval_run_ids}: {str(e)}")
 
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
@@ -2021,7 +2073,7 @@ class MySQLDb(BaseDb):
                 return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}: {str(e)}")
             return None
 
     def get_eval_runs(
@@ -2116,7 +2168,7 @@ class MySQLDb(BaseDb):
                 return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_error(f"Exception getting eval runs: {str(e)}")
             raise e
 
     def rename_eval_run(
@@ -2152,7 +2204,7 @@ class MySQLDb(BaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Error upserting eval run name {eval_run_id}: {e}")
+            log_error(f"Error upserting eval run name {eval_run_id}: {str(e)}")
             return None
 
     # -- Culture methods --
@@ -2172,7 +2224,7 @@ class MySQLDb(BaseDb):
                 sess.execute(table.delete())
 
         except Exception as e:
-            log_warning(f"Exception deleting all cultural knowledge: {e}")
+            log_warning(f"Exception deleting all cultural knowledge: {str(e)}")
             raise e
 
     def delete_cultural_knowledge(self, id: str) -> None:
@@ -2200,7 +2252,7 @@ class MySQLDb(BaseDb):
                     log_debug(f"No cultural knowledge found with id: {id}")
 
         except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {e}")
+            log_error(f"Error deleting cultural knowledge: {str(e)}")
             raise e
 
     def get_cultural_knowledge(
@@ -2236,7 +2288,7 @@ class MySQLDb(BaseDb):
             return deserialize_cultural_knowledge_from_db(db_row)
 
         except Exception as e:
-            log_error(f"Exception reading from cultural knowledge table: {e}")
+            log_error(f"Exception reading from cultural knowledge table: {str(e)}")
             raise e
 
     def get_all_cultural_knowledge(
@@ -2310,7 +2362,7 @@ class MySQLDb(BaseDb):
             return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
 
         except Exception as e:
-            log_error(f"Error reading from cultural knowledge table: {e}")
+            log_error(f"Error reading from cultural knowledge table: {str(e)}")
             raise e
 
     def upsert_cultural_knowledge(
@@ -2368,7 +2420,7 @@ class MySQLDb(BaseDb):
             return self.get_cultural_knowledge(id=cultural_knowledge.id, deserialize=deserialize)
 
         except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
+            log_error(f"Error upserting cultural knowledge: {str(e)}")
             raise e
 
     # -- Migrations --
@@ -2565,7 +2617,7 @@ class MySQLDb(BaseDb):
                 sess.execute(upsert_stmt)
 
         except Exception as e:
-            log_error(f"Error creating trace: {e}")
+            log_error(f"Error creating trace: {str(e)}")
             # Don't raise - tracing should not break the main application flow
 
     def get_trace(
@@ -2617,7 +2669,7 @@ class MySQLDb(BaseDb):
                 return None
 
         except Exception as e:
-            log_error(f"Error getting trace: {e}")
+            log_error(f"Error getting trace: {str(e)}")
             return None
 
     def get_traces(
@@ -2676,7 +2728,7 @@ class MySQLDb(BaseDb):
                     base_stmt = base_stmt.where(table.c.run_id == run_id)
                 if session_id:
                     base_stmt = base_stmt.where(table.c.session_id == session_id)
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if agent_id:
                     base_stmt = base_stmt.where(table.c.agent_id == agent_id)
@@ -2707,7 +2759,7 @@ class MySQLDb(BaseDb):
                 return traces, total_count
 
         except Exception as e:
-            log_error(f"Error getting traces: {e}")
+            log_error(f"Error getting traces: {str(e)}")
             return [], 0
 
     def get_trace_stats(
@@ -2749,22 +2801,20 @@ class MySQLDb(BaseDb):
                 base_stmt = (
                     select(
                         table.c.session_id,
-                        table.c.user_id,
-                        table.c.agent_id,
-                        table.c.team_id,
-                        table.c.workflow_id,
+                        func.max(table.c.user_id).label("user_id"),
+                        func.max(table.c.agent_id).label("agent_id"),
+                        func.max(table.c.team_id).label("team_id"),
+                        func.max(table.c.workflow_id).label("workflow_id"),
                         func.count(table.c.trace_id).label("total_traces"),
                         func.min(table.c.created_at).label("first_trace_at"),
                         func.max(table.c.created_at).label("last_trace_at"),
                     )
                     .where(table.c.session_id.isnot(None))  # Only sessions with session_id
-                    .group_by(
-                        table.c.session_id, table.c.user_id, table.c.agent_id, table.c.team_id, table.c.workflow_id
-                    )
+                    .group_by(table.c.session_id)
                 )
 
                 # Apply filters
-                if user_id:
+                if user_id is not None:
                     base_stmt = base_stmt.where(table.c.user_id == user_id)
                 if workflow_id:
                     base_stmt = base_stmt.where(table.c.workflow_id == workflow_id)
@@ -2816,7 +2866,7 @@ class MySQLDb(BaseDb):
                 return stats_list, total_count
 
         except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+            log_error(f"Error getting trace stats: {str(e)}")
             return [], 0
 
     # --- Spans ---
@@ -2836,7 +2886,7 @@ class MySQLDb(BaseDb):
                 sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Error creating span: {e}")
+            log_error(f"Error creating span: {str(e)}")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2858,7 +2908,7 @@ class MySQLDb(BaseDb):
                     sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+            log_error(f"Error creating spans batch: {str(e)}")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2884,7 +2934,7 @@ class MySQLDb(BaseDb):
                 return None
 
         except Exception as e:
-            log_error(f"Error getting span: {e}")
+            log_error(f"Error getting span: {str(e)}")
             return None
 
     def get_spans(
@@ -2926,7 +2976,7 @@ class MySQLDb(BaseDb):
                 return [Span.from_dict(dict(row._mapping)) for row in results]
 
         except Exception as e:
-            log_error(f"Error getting spans: {e}")
+            log_error(f"Error getting spans: {str(e)}")
             return []
 
     # -- Learning methods (stubs) --

@@ -10,6 +10,10 @@ from agno.os import AgentOS
 from teams import reasoning_finance_team
 from workflows import research_workflow
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # ************* Create the AgentOS *************
 agent_os = AgentOS(
     description="SurrealDB AgentOS",
@@ -22,6 +26,10 @@ app = agent_os.get_app()
 # *******************************
 
 # ************* Run the AgentOS *************
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     agent_os.serve(app="run:app", reload=True)
 # *******************************

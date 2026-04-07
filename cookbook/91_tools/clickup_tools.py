@@ -19,6 +19,11 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.clickup import ClickUpTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 clickup_agent = Agent(
     name="ClickUp Agent",
     role="Manage ClickUp tasks and spaces",
@@ -49,11 +54,15 @@ clickup_agent = Agent(
     markdown=True,
 )
 
-clickup_agent.print_response(
-    "List all spaces i have",
-    markdown=True,
-)
-clickup_agent.print_response(
-    "Create a task (status 'To Do') called 'QA task' in Project 1 in the Team Space. The description should be about running basic QA checks on our Python codebase.",
-    markdown=True,
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    clickup_agent.print_response(
+        "List all spaces i have",
+        markdown=True,
+    )
+    clickup_agent.print_response(
+        "Create a task (status 'To Do') called 'QA task' in Project 1 in the Team Space. The description should be about running basic QA checks on our Python codebase.",
+        markdown=True,
+    )

@@ -5,6 +5,10 @@ from agno.db.sqlite import SqliteDb
 from agno.models.litellm import LiteLLM
 from agno.tools.websearch import WebSearchTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # Setup the database
 db = SqliteDb(
     db_file="tmp/data.db",
@@ -20,3 +24,10 @@ agent = Agent(
 
 agent.print_response("How many people live in Canada?")
 agent.print_response("What is their national anthem called?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -29,7 +29,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from agno.learn.config import LearningMode, SessionContextConfig
 from agno.learn.schemas import SessionContext
@@ -41,6 +41,10 @@ from agno.utils.log import (
     set_log_level_to_debug,
     set_log_level_to_info,
 )
+from agno.utils.message import get_conversation_text
+
+if TYPE_CHECKING:
+    from agno.metrics import RunMetrics
 
 try:
     from agno.db.base import AsyncBaseDb, BaseDb
@@ -154,6 +158,7 @@ class SessionContextStore(LearningStore):
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            run_metrics=kwargs.get("run_metrics"),
         )
 
     async def aprocess(
@@ -178,6 +183,7 @@ class SessionContextStore(LearningStore):
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
+            run_metrics=kwargs.get("run_metrics"),
         )
 
     def build_context(self, data: Any) -> str:
@@ -493,6 +499,7 @@ class SessionContextStore(LearningStore):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         """Extract session context from messages and save.
 
@@ -523,7 +530,7 @@ class SessionContextStore(LearningStore):
         # Get existing context to build upon
         existing_context = self.get(session_id=session_id)
 
-        conversation_text = self._messages_to_text(messages=messages)
+        conversation_text = get_conversation_text(messages)
 
         tools = self._get_extraction_tools(
             session_id=session_id,
@@ -540,13 +547,25 @@ class SessionContextStore(LearningStore):
             existing_context=existing_context,
         )
 
-        messages_for_model = [system_message]
+        messages_for_model = [
+            system_message,
+            # For models that require a non-system message
+            Message(
+                role="user",
+                content="Please analyze the conversation and update the session context using the available tools.",
+            ),
+        ]
 
         model_copy = deepcopy(self.model)
         response = model_copy.response(
             messages=messages_for_model,
             tools=functions,
         )
+
+        if run_metrics is not None and response.response_usage is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
 
         if response.tool_executions:
             self.context_updated = True
@@ -562,6 +581,7 @@ class SessionContextStore(LearningStore):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        run_metrics: Optional["RunMetrics"] = None,
     ) -> str:
         """Async version of extract_and_save."""
         if self.model is None:
@@ -579,7 +599,7 @@ class SessionContextStore(LearningStore):
         # Get existing context to build upon
         existing_context = await self.aget(session_id=session_id)
 
-        conversation_text = self._messages_to_text(messages=messages)
+        conversation_text = get_conversation_text(messages)
 
         tools = await self._aget_extraction_tools(
             session_id=session_id,
@@ -596,13 +616,25 @@ class SessionContextStore(LearningStore):
             existing_context=existing_context,
         )
 
-        messages_for_model = [system_message]
+        messages_for_model = [
+            system_message,
+            # For models that require a non-system message
+            Message(
+                role="user",
+                content="Please analyze the conversation and update the session context using the available tools.",
+            ),
+        ]
 
         model_copy = deepcopy(self.model)
         response = await model_copy.aresponse(
             messages=messages_for_model,
             tools=functions,
         )
+
+        if run_metrics is not None and response.response_usage is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(response, model_copy, ModelType.LEARNING_MODEL, run_metrics)
 
         if response.tool_executions:
             self.context_updated = True
@@ -638,20 +670,6 @@ class SessionContextStore(LearningStore):
             parts.append(f"**Completed:**\n  - {progress_items}")
 
         return "\n\n".join(parts)
-
-    def _messages_to_text(self, messages: List["Message"]) -> str:
-        """Convert messages to text for extraction."""
-        parts = []
-        for msg in messages:
-            if msg.role == "user":
-                content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
-                if content and content.strip():
-                    parts.append(f"User: {content}")
-            elif msg.role in ["assistant", "model"]:
-                content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
-                if content and content.strip():
-                    parts.append(f"Assistant: {content}")
-        return "\n".join(parts)
 
     def _get_system_message(
         self,
@@ -857,7 +875,7 @@ class SessionContextStore(LearningStore):
                 functions.append(func)
                 log_debug(f"Added function {func.name}")
             except Exception as e:
-                log_warning(f"Could not add function {tool}: {e}")
+                log_warning(f"Could not add function {tool}: {str(e)}")
 
         return functions
 
@@ -948,7 +966,7 @@ class SessionContextStore(LearningStore):
                     log_debug(f"Session context saved: {summary[:50]}...")
                     return "Session context saved"
                 except Exception as e:
-                    log_warning(f"Error saving session context: {e}")
+                    log_warning(f"Error saving session context: {str(e)}")
                     return f"Error: {e}"
 
         else:
@@ -997,7 +1015,7 @@ class SessionContextStore(LearningStore):
                     log_debug(f"Session context saved: {summary[:50]}...")
                     return "Session context saved"
                 except Exception as e:
-                    log_warning(f"Error saving session context: {e}")
+                    log_warning(f"Error saving session context: {str(e)}")
                     return f"Error: {e}"
 
         return [save_session_context]
@@ -1089,7 +1107,7 @@ class SessionContextStore(LearningStore):
                     log_debug(f"Session context saved: {summary[:50]}...")
                     return "Session context saved"
                 except Exception as e:
-                    log_warning(f"Error saving session context: {e}")
+                    log_warning(f"Error saving session context: {str(e)}")
                     return f"Error: {e}"
 
         else:
@@ -1138,7 +1156,7 @@ class SessionContextStore(LearningStore):
                     log_debug(f"Session context saved: {summary[:50]}...")
                     return "Session context saved"
                 except Exception as e:
-                    log_warning(f"Error saving session context: {e}")
+                    log_warning(f"Error saving session context: {str(e)}")
                     return f"Error: {e}"
 
         return [save_session_context]

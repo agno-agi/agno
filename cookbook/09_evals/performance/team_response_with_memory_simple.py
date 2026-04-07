@@ -1,3 +1,10 @@
+"""
+Simple Team Memory Performance Evaluation
+=========================================
+
+Demonstrates team response performance with memory enabled.
+"""
+
 import asyncio
 import random
 
@@ -7,6 +14,9 @@ from agno.eval.performance import PerformanceEval
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 
+# ---------------------------------------------------------------------------
+# Create Sample Inputs
+# ---------------------------------------------------------------------------
 cities = [
     "New York",
     "Los Angeles",
@@ -22,16 +32,23 @@ cities = [
     "Las Vegas",
 ]
 
-
-# Setup the database
+# ---------------------------------------------------------------------------
+# Create Database
+# ---------------------------------------------------------------------------
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
 
+# ---------------------------------------------------------------------------
+# Create Tool
+# ---------------------------------------------------------------------------
 def get_weather(city: str) -> str:
     return f"The weather in {city} is sunny."
 
 
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 weather_agent = Agent(
     id="weather_agent",
     model=OpenAIChat(id="gpt-5.2"),
@@ -55,6 +72,9 @@ team = Team(
 )
 
 
+# ---------------------------------------------------------------------------
+# Create Benchmark Function
+# ---------------------------------------------------------------------------
 async def run_team():
     random_city = random.choice(cities)
     _ = team.arun(
@@ -66,6 +86,9 @@ async def run_team():
     return "Successfully ran team"
 
 
+# ---------------------------------------------------------------------------
+# Create Evaluation
+# ---------------------------------------------------------------------------
 team_response_with_memory_impact = PerformanceEval(
     name="Team Memory Impact",
     func=run_team,
@@ -76,6 +99,9 @@ team_response_with_memory_impact = PerformanceEval(
     memory_growth_tracking=True,
 )
 
+# ---------------------------------------------------------------------------
+# Run Evaluation
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     asyncio.run(
         team_response_with_memory_impact.arun(print_results=True, print_summary=True)

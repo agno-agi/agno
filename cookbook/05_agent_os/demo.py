@@ -17,6 +17,10 @@ from agno.tools.mcp import MCPTools
 from agno.tools.websearch import WebSearchTools
 from agno.vectordb.pgvector import PgVector
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # Database connection
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -90,6 +94,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="demo:app", port=7777, reload=True)

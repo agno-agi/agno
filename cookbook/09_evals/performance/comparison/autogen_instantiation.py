@@ -1,4 +1,9 @@
-"""Run `uv pip install autogen-agentchat "autogen-ext[openai]"` to install dependencies."""
+"""
+AutoGen Instantiation Performance Evaluation
+============================================
+
+Demonstrates agent instantiation benchmarking with AutoGen.
+"""
 
 from typing import Literal
 
@@ -7,6 +12,9 @@ from autogen_agentchat.agents import AssistantAgent
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 
 
+# ---------------------------------------------------------------------------
+# Create Benchmark Tool
+# ---------------------------------------------------------------------------
 def get_weather(city: Literal["nyc", "sf"]):
     """Use this to get weather information."""
     if city == "nyc":
@@ -20,6 +28,9 @@ def get_weather(city: Literal["nyc", "sf"]):
 tools = [get_weather]
 
 
+# ---------------------------------------------------------------------------
+# Create Benchmark Function
+# ---------------------------------------------------------------------------
 def instantiate_agent():
     return AssistantAgent(
         name="assistant",
@@ -37,7 +48,13 @@ def instantiate_agent():
     )
 
 
+# ---------------------------------------------------------------------------
+# Create Evaluation
+# ---------------------------------------------------------------------------
 autogen_instantiation = PerformanceEval(func=instantiate_agent, num_iterations=1000)
 
+# ---------------------------------------------------------------------------
+# Run Evaluation
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     autogen_instantiation.run(print_results=True, print_summary=True)

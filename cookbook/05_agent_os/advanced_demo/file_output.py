@@ -1,8 +1,19 @@
+"""
+File Output
+===========
+
+Demonstrates file output.
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.file_generation import FileGenerationTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 db = SqliteDb(db_file="tmp/agentos.db")
 
@@ -20,6 +31,10 @@ agent_os = AgentOS(
     agents=[file_agent],
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="file_output:app", reload=True)

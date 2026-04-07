@@ -7,13 +7,33 @@ Instructions for Claude Code when working on this codebase.
 ## Repository Structure
 
 ```
-agno/
+.
 ├── libs/agno/agno/          # Core framework code
 ├── cookbook/                # Examples, patterns and test cases (organized by topic)
 ├── scripts/                 # Development and build scripts
 ├── specs/                   # Design documents (symlinked, private)
+├── docs/                    # Documentation (symlinked, private)
 └── .cursorrules             # Coding patterns and conventions
 ```
+
+---
+
+## Conductor Notes
+
+When working in Conductor, you can use the `.context/` directory for scratch notes or agent-to-agent handoff artifacts. This directory is gitignored.
+
+---
+
+## Setting Up Symlinks
+
+The `specs/` and `docs/` directories are symlinked from external locations. For a fresh clone or new workspace, create these symlinks:
+
+```bash
+ln -s ~/code/specs specs
+ln -s ~/code/docs docs
+```
+
+These contain private design documents and documentation that are not checked into the repository.
 
 ---
 
@@ -23,7 +43,7 @@ This project uses two virtual environments:
 
 | Environment | Purpose | Setup |
 |-------------|---------|-------|
-| `.venv/` | Development: tests, formatting, validation | `uv sync` or standard setup |
+| `.venv/` | Development: tests, formatting, validation | `./scripts/dev_setup.sh` |
 | `.venvs/demo/` | Cookbooks: has all demo dependencies | `./scripts/demo_setup.sh` |
 
 **Use `.venv`** for development tasks (`pytest`, `./scripts/format.sh`, `./scripts/validate.sh`).
@@ -62,10 +82,7 @@ Apart from implementing features, your most important task will be to test and m
 
 Each cookbook folder should have the following files:
 - `README.md` — The README for the cookbook.
-- `CLAUDE.md` — Project-specific instructions (most cookbooks won't have this yet).
 - `TEST_LOG.md` — Test results log.
-
-When testing a cookbook folder, first check for the `CLAUDE.md` file. If it doesn't exist, ask the user if they'd like you to create it. Use `cookbook/08_learning/CLAUDE.md` as a reference.
 
 ### Testing Workflow
 
@@ -102,32 +119,6 @@ Format:
 
 ---
 ```
-
----
-
-## Design Documents
-
-The `specs/` folder contains design documents for ongoing initiatives. If you're working on one of the following:
-- `specs/learning-machine/` — Unified learning system for agents
-
-**Always read the design document first**.
-
-Each spec follows this structure:
-```
-specs/<spec-name>/
-├── CLAUDE.md           # Spec-specific instructions (read this first)
-├── design.md           # The specification
-├── implementation.md   # Current status and what's done
-├── decisions.md        # Why decisions were made
-└── future-work.md      # What's deferred
-```
-
-**Workflow:**
-1. Read the spec's `CLAUDE.md` for specific instructions
-2. Read `design.md` to understand what we're building
-3. Check `implementation.md` for current status
-4. Find the relevant code in `libs/agno`
-5. Create/update cookbooks to test patterns
 
 ---
 
@@ -208,11 +199,11 @@ Both scripts must pass with no errors before code review.
 **PR Title Format:**
 
 PR titles must follow one of these formats:
-- `[type] description` — e.g., `[feat] add workflow serialization`
 - `type: description` — e.g., `feat: add workflow serialization`
+- `[type] description` — e.g., `[feat] add workflow serialization`
 - `type-kebab-case` — e.g., `feat-workflow-serialization`
 
-Valid types: `feat`, `fix`, `cookbook`, `test`, `refactor`, `build`, `ci`, `chore`, `perf`, `style`, `revert`
+Valid types: `feat`, `fix`, `cookbook`, `test`, `refactor`, `chore`, `style`, `revert`, `release`
 
 **PR Description:**
 
@@ -247,4 +238,18 @@ gh api repos/agno-agi/agno/pulls/<PR_NUMBER> -X PATCH -f body="$(cat /path/to/bo
 - Don't use emojis in examples and print lines
 - Don't skip async variants of public methods
 - Don't push code without running `./scripts/format.sh` and `./scripts/validate.sh`
-- Don't submit a PR without a detailed PR description. Always follow the PR template provided in `.github/pull_request_template.md` add to it. 
+- Don't submit a PR without a detailed PR description. Always follow the PR template provided in `.github/pull_request_template.md`.
+
+---
+
+## CI: Automated Code Review
+
+Every non-draft PR automatically receives a review from Opus using both `code-review` and `pr-review-toolkit` official plugins (10 specialized agents total). No manual trigger needed — the review posts as a sticky comment on the PR.
+
+When running in GitHub Actions (CI), always end your response with a plain-text summary of findings. Never let the final action be a tool call. If there are no issues, say "No high-confidence findings."
+
+Agno-specific checks to always verify:
+- Both sync and async variants exist for all new public methods
+- No agent creation inside loops (agents should be reused)
+- CLAUDE.md coding patterns are followed
+- No f-strings for print lines where there are no variables

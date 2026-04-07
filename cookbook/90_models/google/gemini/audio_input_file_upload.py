@@ -1,9 +1,20 @@
+"""
+Google Audio Input File Upload
+==============================
+
+Cookbook example for `google/gemini/audio_input_file_upload.py`.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.media import Audio
 from agno.models.google import Gemini
 from google.genai.types import UploadFileConfig
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 model = Gemini(id="gemini-3-flash-preview")
 agent = Agent(
@@ -37,3 +48,10 @@ agent.print_response(
     audio=[Audio(content=audio_file)],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

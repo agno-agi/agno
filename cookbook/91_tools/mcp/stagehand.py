@@ -1,5 +1,5 @@
 """
-🤖 Stagehand MCP Agent - Hacker News Reader's Digest
+ Stagehand MCP Agent - Hacker News Reader's Digest
 
 This example demonstrates how to use Agno's agent to create a Hacker News content using the Stagehand MCP server.
 
@@ -26,6 +26,10 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
 from mcp import StdioServerParameters
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 async def run_agent(message: str) -> None:
@@ -69,6 +73,10 @@ async def run_agent(message: str) -> None:
         )
         await agent.aprint_response(message, stream=True)
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(

@@ -50,11 +50,12 @@ class InMemoryDb(BaseDb):
         pass
 
     # -- Session methods --
-    def delete_session(self, session_id: str) -> bool:
+    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a session from in-memory storage.
 
         Args:
             session_id (str): The ID of the session to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -64,7 +65,11 @@ class InMemoryDb(BaseDb):
         """
         try:
             original_count = len(self._sessions)
-            self._sessions = [s for s in self._sessions if s.get("session_id") != session_id]
+            self._sessions = [
+                s
+                for s in self._sessions
+                if not (s.get("session_id") == session_id and (user_id is None or s.get("user_id") == user_id))
+            ]
 
             if len(self._sessions) < original_count:
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
@@ -74,24 +79,29 @@ class InMemoryDb(BaseDb):
                 return False
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_error(f"Error deleting session: {str(e)}")
             raise e
 
-    def delete_sessions(self, session_ids: List[str]) -> None:
+    def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple sessions from in-memory storage.
 
         Args:
             session_ids (List[str]): The IDs of the sessions to delete.
+            user_id (Optional[str]): User ID to filter by. Defaults to None.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
-            self._sessions = [s for s in self._sessions if s.get("session_id") not in session_ids]
+            self._sessions = [
+                s
+                for s in self._sessions
+                if not (s.get("session_id") in session_ids and (user_id is None or s.get("user_id") == user_id))
+            ]
             log_debug(f"Successfully deleted sessions with ids: {session_ids}")
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_error(f"Error deleting sessions: {str(e)}")
             raise e
 
     def get_session(
@@ -141,7 +151,7 @@ class InMemoryDb(BaseDb):
             import traceback
 
             traceback.print_exc()
-            log_error(f"Exception reading session: {e}")
+            log_error(f"Exception reading session: {str(e)}")
             raise e
 
     def get_sessions(
@@ -233,15 +243,22 @@ class InMemoryDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception reading sessions: {e}")
+            log_error(f"Exception reading sessions: {str(e)}")
             raise e
 
     def rename_session(
-        self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
+        self,
+        session_id: str,
+        session_type: SessionType,
+        session_name: str,
+        user_id: Optional[str] = None,
+        deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         try:
             for i, session in enumerate(self._sessions):
                 if session.get("session_id") == session_id and session.get("session_type") == session_type.value:
+                    if user_id is not None and session.get("user_id") != user_id:
+                        continue
                     # Update session name in session_data
                     if "session_data" not in session:
                         session["session_data"] = {}
@@ -265,7 +282,7 @@ class InMemoryDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+            log_error(f"Exception renaming session: {str(e)}")
             raise e
 
     def upsert_session(
@@ -288,6 +305,9 @@ class InMemoryDb(BaseDb):
                 if existing_session.get("session_id") == session_dict.get("session_id") and self._matches_session_key(
                     existing_session, session
                 ):
+                    existing_uid = existing_session.get("user_id")
+                    if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                        return None
                     session_dict["updated_at"] = int(time.time())
                     self._sessions[i] = deepcopy(session_dict)
                     session_updated = True
@@ -310,7 +330,7 @@ class InMemoryDb(BaseDb):
                 return WorkflowSession.from_dict(session_dict_copy)
 
         except Exception as e:
-            log_error(f"Exception upserting session: {e}")
+            log_error(f"Exception upserting session: {str(e)}")
             raise e
 
     def _matches_session_key(self, existing_session: Dict[str, Any], session: Session) -> bool:
@@ -354,7 +374,7 @@ class InMemoryDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk session upsert: {e}")
+            log_error(f"Exception during bulk session upsert: {str(e)}")
             return []
 
     # -- Memory methods --
@@ -385,7 +405,7 @@ class InMemoryDb(BaseDb):
                 log_debug(f"No memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting memory: {e}")
+            log_error(f"Error deleting memory: {str(e)}")
             raise e
 
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -409,7 +429,7 @@ class InMemoryDb(BaseDb):
             log_debug(f"Successfully deleted {len(memory_ids)} user memories")
 
         except Exception as e:
-            log_error(f"Error deleting memories: {e}")
+            log_error(f"Error deleting memories: {str(e)}")
             raise e
 
     def get_all_memory_topics(self) -> List[str]:
@@ -430,7 +450,7 @@ class InMemoryDb(BaseDb):
             return list(topics)
 
         except Exception as e:
-            log_error(f"Exception reading from memory storage: {e}")
+            log_error(f"Exception reading from memory storage: {str(e)}")
             raise e
 
     def get_user_memory(
@@ -464,7 +484,7 @@ class InMemoryDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Exception reading from memory storage: {e}")
+            log_error(f"Exception reading from memory storage: {str(e)}")
             raise e
 
     def get_user_memories(
@@ -519,7 +539,7 @@ class InMemoryDb(BaseDb):
             return [UserMemory.from_dict(memory) for memory in filtered_memories]
 
         except Exception as e:
-            log_error(f"Exception reading from memory storage: {e}")
+            log_error(f"Exception reading from memory storage: {str(e)}")
             raise e
 
     def get_user_memory_stats(
@@ -573,7 +593,7 @@ class InMemoryDb(BaseDb):
             return stats_list, total_count
 
         except Exception as e:
-            log_error(f"Exception getting user memory stats: {e}")
+            log_error(f"Exception getting user memory stats: {str(e)}")
             raise e
 
     def upsert_user_memory(
@@ -604,7 +624,7 @@ class InMemoryDb(BaseDb):
             return UserMemory.from_dict(memory_dict_copy)
 
         except Exception as e:
-            log_warning(f"Exception upserting user memory: {e}")
+            log_warning(f"Exception upserting user memory: {str(e)}")
             raise e
 
     def upsert_memories(
@@ -639,7 +659,7 @@ class InMemoryDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk memory upsert: {e}")
+            log_error(f"Exception during bulk memory upsert: {str(e)}")
             return []
 
     def clear_memories(self) -> None:
@@ -652,7 +672,7 @@ class InMemoryDb(BaseDb):
             self._memories.clear()
 
         except Exception as e:
-            log_warning(f"Exception deleting all memories: {e}")
+            log_warning(f"Exception deleting all memories: {str(e)}")
             raise e
 
     # -- Metrics methods --
@@ -716,7 +736,7 @@ class InMemoryDb(BaseDb):
             return results
 
         except Exception as e:
-            log_warning(f"Exception refreshing metrics: {e}")
+            log_warning(f"Exception refreshing metrics: {str(e)}")
             raise e
 
     def _get_metrics_calculation_starting_date(self, metrics: List[Dict[str, Any]]) -> Optional[date]:
@@ -767,7 +787,7 @@ class InMemoryDb(BaseDb):
             return filtered_sessions
 
         except Exception as e:
-            log_error(f"Exception reading sessions for metrics: {e}")
+            log_error(f"Exception reading sessions for metrics: {str(e)}")
             raise e
 
     def get_metrics(
@@ -797,7 +817,7 @@ class InMemoryDb(BaseDb):
             return filtered_metrics, latest_updated_at
 
         except Exception as e:
-            log_error(f"Exception getting metrics: {e}")
+            log_error(f"Exception getting metrics: {str(e)}")
             raise e
 
     # -- Knowledge methods --
@@ -815,7 +835,7 @@ class InMemoryDb(BaseDb):
             self._knowledge = [item for item in self._knowledge if item.get("id") != id]
 
         except Exception as e:
-            log_error(f"Error deleting knowledge content: {e}")
+            log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
@@ -838,7 +858,7 @@ class InMemoryDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Error getting knowledge content: {e}")
+            log_error(f"Error getting knowledge content: {str(e)}")
             raise e
 
     def get_knowledge_contents(
@@ -847,6 +867,7 @@ class InMemoryDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        linked_to: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from in-memory storage.
 
@@ -855,6 +876,7 @@ class InMemoryDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -864,6 +886,10 @@ class InMemoryDb(BaseDb):
         """
         try:
             knowledge_items = [deepcopy(item) for item in self._knowledge]
+
+            # Apply linked_to filter if provided
+            if linked_to is not None:
+                knowledge_items = [item for item in knowledge_items if item.get("linked_to") == linked_to]
 
             total_count = len(knowledge_items)
 
@@ -880,7 +906,7 @@ class InMemoryDb(BaseDb):
             return [KnowledgeRow.model_validate(item) for item in knowledge_items], total_count
 
         except Exception as e:
-            log_error(f"Error getting knowledge contents: {e}")
+            log_error(f"Error getting knowledge contents: {str(e)}")
             raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -912,7 +938,7 @@ class InMemoryDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge row: {e}")
+            log_error(f"Error upserting knowledge row: {str(e)}")
             raise e
 
     # -- Eval methods --
@@ -932,7 +958,7 @@ class InMemoryDb(BaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_error(f"Error creating eval run: {str(e)}")
             raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
@@ -948,7 +974,7 @@ class InMemoryDb(BaseDb):
                 log_debug(f"No eval runs found with IDs: {eval_run_ids}")
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_error(f"Error deleting eval runs {eval_run_ids}: {str(e)}")
             raise e
 
     def get_eval_run(
@@ -966,7 +992,7 @@ class InMemoryDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}: {str(e)}")
             raise e
 
     def get_eval_runs(
@@ -1030,7 +1056,7 @@ class InMemoryDb(BaseDb):
             return [EvalRunRecord.model_validate(run) for run in filtered_runs]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_error(f"Exception getting eval runs: {str(e)}")
             raise e
 
     def rename_eval_run(
@@ -1055,7 +1081,7 @@ class InMemoryDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Error renaming eval run {eval_run_id}: {e}")
+            log_error(f"Error renaming eval run {eval_run_id}: {str(e)}")
             raise e
 
     # -- Culture methods --
@@ -1065,7 +1091,7 @@ class InMemoryDb(BaseDb):
         try:
             self._cultural_knowledge = []
         except Exception as e:
-            log_error(f"Error clearing cultural knowledge: {e}")
+            log_error(f"Error clearing cultural knowledge: {str(e)}")
             raise e
 
     def delete_cultural_knowledge(self, id: str) -> None:
@@ -1073,7 +1099,7 @@ class InMemoryDb(BaseDb):
         try:
             self._cultural_knowledge = [ck for ck in self._cultural_knowledge if ck.get("id") != id]
         except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {e}")
+            log_error(f"Error deleting cultural knowledge: {str(e)}")
             raise e
 
     def get_cultural_knowledge(
@@ -1089,7 +1115,7 @@ class InMemoryDb(BaseDb):
                     return deserialize_cultural_knowledge_from_db(ck_data_copy)
             return None
         except Exception as e:
-            log_error(f"Error getting cultural knowledge: {e}")
+            log_error(f"Error getting cultural knowledge: {str(e)}")
             raise e
 
     def get_all_cultural_knowledge(
@@ -1133,7 +1159,7 @@ class InMemoryDb(BaseDb):
 
             return [deserialize_cultural_knowledge_from_db(deepcopy(ck)) for ck in filtered_ck]
         except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {e}")
+            log_error(f"Error getting all cultural knowledge: {str(e)}")
             raise e
 
     def upsert_cultural_knowledge(
@@ -1169,7 +1195,7 @@ class InMemoryDb(BaseDb):
 
             return self.get_cultural_knowledge(cultural_knowledge.id, deserialize=deserialize)
         except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
+            log_error(f"Error upserting cultural knowledge: {str(e)}")
             raise e
 
     # --- Traces ---

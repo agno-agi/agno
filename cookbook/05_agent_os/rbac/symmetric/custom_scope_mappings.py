@@ -20,6 +20,10 @@ from agno.os import AgentOS
 from agno.os.middleware import JWTMiddleware
 from agno.tools.websearch import WebSearchTools
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # JWT Secret (use environment variable in production)
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 
@@ -69,6 +73,10 @@ app.add_middleware(
     scope_mappings=custom_scopes,  # Providing scope_mappings enables RBAC
     admin_scope="agent_os:admin",  # Admin can bypass all checks
 )
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """

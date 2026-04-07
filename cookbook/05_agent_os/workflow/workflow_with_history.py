@@ -1,9 +1,20 @@
+"""
+Workflow With History
+=====================
+
+Demonstrates workflow with history.
+"""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.workflow.step import Step, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 # Define specialized agents for meal planning conversation
 meal_suggester = Agent(
@@ -140,6 +151,10 @@ agent_os = AgentOS(
     workflows=[meal_workflow],
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="workflow_with_history:app", reload=True)

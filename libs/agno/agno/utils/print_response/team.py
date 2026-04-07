@@ -61,7 +61,7 @@ def print_response(
         tags_to_include_in_markdown = {"think", "thinking"}
 
     with Live(console=console) as live_console:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_console.update(status)
 
         response_timer = Timer()
@@ -121,17 +121,19 @@ def print_response(
         team_markdown = False
         member_markdown = {}
         if markdown:
-            for member in team.members:
-                if member.id is not None:
-                    member_markdown[member.id] = True
+            if isinstance(team.members, list):
+                for member in team.members:
+                    if member.id is not None:
+                        member_markdown[member.id] = True
             team_markdown = True
 
         if team.output_schema is not None:
             team_markdown = False
 
-        for member in team.members:
-            if member.output_schema is not None and member.id is not None:
-                member_markdown[member.id] = False  # type: ignore
+        if isinstance(team.members, list):
+            for member in team.members:
+                if member.output_schema is not None and member.id is not None:
+                    member_markdown[member.id] = False  # type: ignore
 
         # Handle reasoning
         reasoning_steps = []
@@ -349,7 +351,7 @@ def print_response(
                 panels.append(summary_panel)
                 team.session_summary_manager.summaries_updated = False
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_console.update(Group(*panels))
 
@@ -410,7 +412,7 @@ def print_response_stream(
     processed_tool_calls = set()
 
     with Live(console=console) as live_console:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_console.update(status)
         response_timer = Timer()
         response_timer.start()
@@ -487,12 +489,12 @@ def print_response_stream(
                         try:
                             _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                         except Exception as e:
-                            log_warning(f"Failed to convert response to JSON: {e}")
+                            log_warning(f"Failed to convert response to JSON: {str(e)}")
                     elif team.output_schema is not None and isinstance(resp.content, dict):
                         try:
                             _response_content = JSON(json.dumps(resp.content), indent=2)  # type: ignore
                         except Exception as e:
-                            log_warning(f"Failed to convert response to JSON: {e}")
+                            log_warning(f"Failed to convert response to JSON: {str(e)}")
                     if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:  # type: ignore
                         _response_reasoning_content += resp.reasoning_content  # type: ignore
                 if hasattr(resp, "reasoning_steps") and resp.reasoning_steps is not None:  # type: ignore
@@ -735,17 +737,19 @@ def print_response_stream(
             live_console.update(Group(*panels))
             team.session_summary_manager.summaries_updated = False
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
 
         if markdown:
-            for member in team.members:
-                if member.id is not None:
-                    member_markdown[member.id] = True
+            if isinstance(team.members, list):
+                for member in team.members:
+                    if member.id is not None:
+                        member_markdown[member.id] = True
 
-        for member in team.members:
-            if member.output_schema is not None and member.id is not None:
-                member_markdown[member.id] = False  # type: ignore
+        if isinstance(team.members, list):
+            for member in team.members:
+                if member.output_schema is not None and member.id is not None:
+                    member_markdown[member.id] = False  # type: ignore
 
         # Final panels assembly - we'll recreate the panels from scratch to ensure correct order
         final_panels = []
@@ -992,7 +996,7 @@ async def aprint_response(
         tags_to_include_in_markdown = {"think", "thinking"}
 
     with Live(console=console) as live_console:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_console.update(status)
 
         response_timer = Timer()
@@ -1052,17 +1056,19 @@ async def aprint_response(
         team_markdown = False
         member_markdown = {}
         if markdown:
-            for member in team.members:
-                if member.id is not None:
-                    member_markdown[member.id] = True
+            if isinstance(team.members, list):
+                for member in team.members:
+                    if member.id is not None:
+                        member_markdown[member.id] = True
             team_markdown = True
 
         if team.output_schema is not None:
             team_markdown = False
 
-        for member in team.members:
-            if member.output_schema is not None and member.id is not None:
-                member_markdown[member.id] = False  # type: ignore
+        if isinstance(team.members, list):
+            for member in team.members:
+                if member.output_schema is not None and member.id is not None:
+                    member_markdown[member.id] = False  # type: ignore
 
         # Handle reasoning
         reasoning_steps = []
@@ -1278,7 +1284,7 @@ async def aprint_response(
                 panels.append(summary_panel)
                 team.session_summary_manager.summaries_updated = False
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
         live_console.update(Group(*panels))
 
@@ -1340,7 +1346,7 @@ async def aprint_response_stream(
     final_panels = []  # type: ignore
 
     with Live(console=console) as live_console:
-        status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
+        status = Status("Working...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
         live_console.update(status)
         response_timer = Timer()
         response_timer.start()
@@ -1415,12 +1421,12 @@ async def aprint_response_stream(
                         try:
                             _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                         except Exception as e:
-                            log_warning(f"Failed to convert response to JSON: {e}")
+                            log_warning(f"Failed to convert response to JSON: {str(e)}")
                     elif team.output_schema is not None and isinstance(resp.content, dict):
                         try:
                             _response_content = JSON(json.dumps(resp.content), indent=2)  # type: ignore
                         except Exception as e:
-                            log_warning(f"Failed to convert response to JSON: {e}")
+                            log_warning(f"Failed to convert response to JSON: {str(e)}")
                     if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:  # type: ignore
                         _response_reasoning_content += resp.reasoning_content  # type: ignore
                 if hasattr(resp, "reasoning_steps") and resp.reasoning_steps is not None:  # type: ignore
@@ -1663,17 +1669,19 @@ async def aprint_response_stream(
             live_console.update(Group(*panels))
             team.session_summary_manager.summaries_updated = False
 
-        # Final update to remove the "Thinking..." status
+        # Final update to remove the "Working..." status
         panels = [p for p in panels if not isinstance(p, Status)]
 
         if markdown:
-            for member in team.members:
-                if member.id is not None:
-                    member_markdown[member.id] = True  # type: ignore
+            if isinstance(team.members, list):
+                for member in team.members:
+                    if member.id is not None:
+                        member_markdown[member.id] = True  # type: ignore
 
-        for member in team.members:
-            if member.output_schema is not None and member.id is not None:
-                member_markdown[member.id] = False  # type: ignore
+        if isinstance(team.members, list):
+            for member in team.members:
+                if member.output_schema is not None and member.id is not None:
+                    member_markdown[member.id] = False  # type: ignore
 
         # Final panels assembly - we'll recreate the panels from scratch to ensure correct order
         final_panels = []
@@ -1913,11 +1921,11 @@ def _parse_response_content(
         try:
             return JSON(run_response.content.model_dump_json(exclude_none=True), indent=2)
         except Exception as e:
-            log_warning(f"Failed to convert response to JSON: {e}")
+            log_warning(f"Failed to convert response to JSON: {str(e)}")
     else:
         import json
 
         try:
             return JSON(json.dumps(run_response.content), indent=4)
         except Exception as e:
-            log_warning(f"Failed to convert response to JSON: {e}")
+            log_warning(f"Failed to convert response to JSON: {str(e)}")

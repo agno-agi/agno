@@ -13,7 +13,7 @@ from agno.agent import Agent
 from agno.db.base import BaseDb
 from agno.media import Audio, Image, Video
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.registry import Registry
 from agno.run import RunContext
 from agno.run.agent import RunContentEvent, RunOutput
@@ -32,7 +32,16 @@ from agno.session.workflow import WorkflowSession
 from agno.team import Team
 from agno.utils.log import log_debug, log_warning, logger, use_agent_logger, use_team_logger, use_workflow_logger
 from agno.utils.merge_dict import merge_dictionaries
-from agno.workflow.types import StepInput, StepOutput, StepType
+from agno.workflow.types import (
+    ErrorRequirement,
+    OnError,
+    OnReject,
+    StepInput,
+    StepOutput,
+    StepRequirement,
+    StepType,
+    UserInputField,
+)
 
 if TYPE_CHECKING:
     from agno.workflow.workflow import Workflow
@@ -78,6 +87,23 @@ class Step:
     add_workflow_history: Optional[bool] = None
     num_history_runs: int = 3
 
+    # Human-in-the-loop (HITL) configuration
+    # If True, the step will pause before execution and require user confirmation
+    requires_confirmation: bool = False
+    # Message to display to the user when requesting confirmation
+    confirmation_message: Optional[str] = None
+    # What to do when step is rejected: OnReject.skip (skip step, continue workflow) or OnReject.cancel (cancel workflow)
+    on_reject: Union[OnReject, str] = OnReject.skip
+    # If True, the step will pause before execution and require user input
+    requires_user_input: bool = False
+    # Message to display to the user when requesting input
+    user_input_message: Optional[str] = None
+    # Schema for user input fields (list of dicts with name, field_type, description, required)
+    user_input_schema: Optional[List[Dict[str, Any]]] = None
+    # What to do when step encounters an error: OnError.fail (default), OnError.skip, OnError.pause (HITL)
+    # OnError.pause triggers HITL allowing user to retry or skip the failed step
+    on_error: Union[OnError, str] = OnError.skip
+
     _retry_count: int = 0
 
     def __init__(
@@ -94,7 +120,34 @@ class Step:
         strict_input_validation: bool = False,
         add_workflow_history: Optional[bool] = None,
         num_history_runs: int = 3,
+        requires_confirmation: bool = False,
+        confirmation_message: Optional[str] = None,
+        on_reject: Union[OnReject, str] = OnReject.skip,
+        requires_user_input: bool = False,
+        user_input_message: Optional[str] = None,
+        user_input_schema: Optional[List[Dict[str, Any]]] = None,
+        on_error: Union[OnError, str] = OnError.skip,
     ):
+        # Auto-detect HITL metadata from @hitl decorator on executor function
+        if executor is not None:
+            from agno.workflow.decorators import get_pause_metadata
+
+            hitl_metadata = get_pause_metadata(executor)
+            if hitl_metadata:
+                # Use decorator values as defaults, but allow explicit params to override
+                if name is None and hitl_metadata.get("name"):
+                    name = hitl_metadata["name"]
+                if not requires_confirmation and hitl_metadata.get("requires_confirmation"):
+                    requires_confirmation = hitl_metadata["requires_confirmation"]
+                if confirmation_message is None and hitl_metadata.get("confirmation_message"):
+                    confirmation_message = hitl_metadata["confirmation_message"]
+                if not requires_user_input and hitl_metadata.get("requires_user_input"):
+                    requires_user_input = hitl_metadata["requires_user_input"]
+                if user_input_message is None and hitl_metadata.get("user_input_message"):
+                    user_input_message = hitl_metadata["user_input_message"]
+                if user_input_schema is None and hitl_metadata.get("user_input_schema"):
+                    user_input_schema = hitl_metadata["user_input_schema"]
+
         # Auto-detect name for function executors if not provided
         if name is None and executor is not None:
             name = getattr(executor, "__name__", None)
@@ -115,6 +168,13 @@ class Step:
         self.strict_input_validation = strict_input_validation
         self.add_workflow_history = add_workflow_history
         self.num_history_runs = num_history_runs
+        self.requires_confirmation = requires_confirmation
+        self.confirmation_message = confirmation_message
+        self.on_reject = on_reject
+        self.requires_user_input = requires_user_input
+        self.user_input_message = user_input_message
+        self.user_input_schema = user_input_schema
+        self.on_error = on_error
         self.step_id = step_id
 
         if step_id is None:
@@ -126,6 +186,7 @@ class Step:
     def to_dict(self) -> Dict[str, Any]:
         """Convert step to a dictionary representation."""
         result = {
+            "type": "Step",
             "name": self.name,
             "step_id": self.step_id,
             "description": self.description,
@@ -134,6 +195,13 @@ class Step:
             "strict_input_validation": self.strict_input_validation,
             "add_workflow_history": self.add_workflow_history,
             "num_history_runs": self.num_history_runs,
+            "requires_confirmation": self.requires_confirmation,
+            "confirmation_message": self.confirmation_message,
+            "requires_user_input": self.requires_user_input,
+            "user_input_message": self.user_input_message,
+            "user_input_schema": self.user_input_schema,
+            "on_reject": self.on_reject,
+            "on_error": self.on_error,
         }
 
         if self.agent is not None:
@@ -142,7 +210,8 @@ class Step:
             result["team_id"] = self.team.id
         if self.workflow is not None:
             result["workflow_id"] = self.workflow.id
-        # TODO: Add support for custom executors
+        if self.executor is not None:
+            result["executor_ref"] = self.executor.__name__
 
         return result
 
@@ -175,16 +244,61 @@ class Step:
 
         # --- Handle Agent reconstruction ---
         if "agent_id" in config and config["agent_id"]:
-            from agno.agent.agent import get_agent_by_id
-
             agent_id = config.get("agent_id")
-            if db is not None and agent_id is not None:
+
+            # First try registry (code-defined agents)
+            if registry and agent_id:
+                registry_agent = registry.get_agent(agent_id)
+                if registry_agent is not None:
+                    try:
+                        # Deep copy to isolate mutable state between concurrent requests
+                        agent = registry_agent.deep_copy()
+                    except Exception as e:
+                        log_warning(
+                            f"deep_copy() failed for registry agent '{agent_id}', using shared instance: {e}",
+                        )
+
+                        agent = registry_agent
+
+            # Fall back to database
+            if agent is None and db is not None and agent_id is not None:
+                from agno.agent.agent import get_agent_by_id
+
                 agent = get_agent_by_id(db=db, id=agent_id, registry=registry)
 
+            if agent is None and agent_id:
+                log_warning(
+                    f"Could not resolve agent_id='{agent_id}' from registry or DB for step '{config.get('name')}'"
+                )
+
         # --- Handle Team reconstruction ---
-        # if "team_id" in config and config["team_id"] and registry:
-        #     from agno.team.team import get_team_by_id
-        #     team = get_team_by_id(db=db, id=config["team_id"])
+        if "team_id" in config and config["team_id"]:
+            team_id = config.get("team_id")
+
+            # First try registry (code-defined teams)
+            if registry and team_id:
+                registry_team = registry.get_team(team_id)
+                if registry_team is not None:
+                    try:
+                        # Deep copy to isolate mutable state between concurrent requests
+                        team = registry_team.deep_copy()
+                    except Exception as e:
+                        log_warning(
+                            f"deep_copy() failed for registry team '{team_id}', using shared instance: {e}",
+                        )
+
+                        team = registry_team
+
+            # Fall back to database
+            if team is None and db is not None and team_id is not None:
+                from agno.team.team import get_team_by_id
+
+                team = get_team_by_id(db=db, id=team_id, registry=registry)
+
+            if team is None and team_id:
+                log_warning(
+                    f"Could not resolve team_id='{team_id}' from registry or DB for step '{config.get('name')}'"
+                )
 
         # --- Handle Workflow reconstruction ---
         # if "workflow_id" in config and config["workflow_id"] and db:
@@ -192,9 +306,8 @@ class Step:
         #     workflow = Workflow.load(db=db, id=config["workflow_id"])
 
         # --- Handle Executor reconstruction ---
-        # TODO: Implement executor reconstruction
-        # if "executor_ref" in config and config["executor_ref"] and registry:
-        #     executor = registry.rehydrate_function(config["executor_ref"])
+        if "executor_ref" in config and config["executor_ref"] and registry:
+            executor = registry.get_function(config["executor_ref"])
 
         return cls(
             name=config.get("name"),
@@ -205,6 +318,13 @@ class Step:
             strict_input_validation=config.get("strict_input_validation", False),
             add_workflow_history=config.get("add_workflow_history"),
             num_history_runs=config.get("num_history_runs", 3),
+            requires_confirmation=config.get("requires_confirmation", False),
+            confirmation_message=config.get("confirmation_message"),
+            on_reject=config.get("on_reject", "cancel"),
+            requires_user_input=config.get("requires_user_input", False),
+            user_input_message=config.get("user_input_message"),
+            user_input_schema=config.get("user_input_schema"),
+            on_error=config.get("on_error", "fail"),
             agent=agent,
             team=team,
             executor=executor,
@@ -257,6 +377,80 @@ class Step:
             )
 
         return links
+
+    def create_step_requirement(
+        self,
+        step_index: int,
+        step_input: StepInput,
+    ) -> StepRequirement:
+        """Create a StepRequirement for HITL pause (confirmation or user input).
+
+        Args:
+            step_index: Index of the step in the workflow.
+            step_input: The prepared input for the step.
+
+        Returns:
+            StepRequirement configured for this step's HITL needs.
+        """
+        user_input_schema = self._normalize_user_input_schema() if self.requires_user_input else None
+
+        return StepRequirement(
+            step_id=self.step_id or str(uuid4()),
+            step_name=self.name or f"step_{step_index + 1}",
+            step_index=step_index,
+            step_type="Step",
+            requires_confirmation=self.requires_confirmation,
+            confirmation_message=self.confirmation_message,
+            on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
+            requires_user_input=self.requires_user_input,
+            user_input_message=self.user_input_message,
+            user_input_schema=user_input_schema,
+            step_input=step_input,
+        )
+
+    def create_error_requirement(
+        self,
+        step_index: int,
+        error: Exception,
+    ) -> ErrorRequirement:
+        """Create an ErrorRequirement for HITL pause on error.
+
+        Args:
+            step_index: Index of the step in the workflow.
+            error: The exception that was raised.
+
+        Returns:
+            ErrorRequirement configured for error handling.
+        """
+        return ErrorRequirement(
+            step_id=self.step_id or str(uuid4()),
+            step_name=self.name or f"step_{step_index + 1}",
+            step_index=step_index,
+            error_message=str(error),
+            error_type=type(error).__name__,
+            retry_count=self._retry_count,
+        )
+
+    def _normalize_user_input_schema(self) -> Optional[List[UserInputField]]:
+        """Normalize user_input_schema to a list of UserInputField objects."""
+        if not self.user_input_schema:
+            return None
+
+        result: List[UserInputField] = []
+        for f in self.user_input_schema:
+            if isinstance(f, UserInputField):
+                result.append(f)
+            elif isinstance(f, dict):
+                result.append(
+                    UserInputField(
+                        name=f["name"],
+                        field_type=f.get("field_type", "str"),
+                        description=f.get("description"),
+                        required=f.get("required", True),
+                        allowed_values=f.get("allowed_values"),
+                    )
+                )
+        return result
 
     @property
     def executor_name(self) -> str:
@@ -321,7 +515,7 @@ class Step:
         else:
             raise ValueError("No executor configured")
 
-    def _extract_metrics_from_response(self, response: Union[RunOutput, TeamRunOutput]) -> Optional[Metrics]:
+    def _extract_metrics_from_response(self, response: Union[RunOutput, TeamRunOutput]) -> Optional[RunMetrics]:
         """Extract metrics from agent or team response"""
         if hasattr(response, "metrics") and response.metrics:
             return response.metrics
@@ -377,6 +571,8 @@ class Step:
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
@@ -514,6 +710,15 @@ class Step:
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
+                        # Append user input context if available (from HITL)
+                        if step_input.additional_data and step_input.additional_data.get("user_input"):
+                            user_input = step_input.additional_data["user_input"]
+                            user_input_str = "\n".join(f"- {k}: {v}" for k, v in user_input.items())
+                            if final_message:
+                                final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
+                            else:
+                                final_message = f"User preferences:\n{user_input_str}"
+
                         response = self.active_executor.run(  # type: ignore
                             input=final_message,  # type: ignore
                             images=images,
@@ -524,6 +729,8 @@ class Step:
                             user_id=user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
                             run_context=run_context,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
                             **kwargs,
                         )
 
@@ -533,6 +740,16 @@ class Step:
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, response)  # type: ignore
+
+                        # Check if agent/team response is paused (e.g., due to tool HITL)
+                        # This is NOT supported at workflow level - warn the user
+                        if hasattr(response, "is_paused") and response.is_paused:
+                            logger.warning(
+                                f"Step '{self.name}': Agent/Team response is paused (likely due to tool HITL). "
+                                "Agent tool-level HITL is NOT propagated to the workflow. "
+                                "The workflow will continue but the paused tool may not have executed. "
+                                "Consider using workflow-level HITL (Step.requires_confirmation) instead."
+                            )
 
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
@@ -561,7 +778,7 @@ class Step:
 
             except Exception as e:
                 self.retry_count = attempt + 1
-                logger.warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
+                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -608,6 +825,9 @@ class Step:
             event.workflow_id = workflow_run_response.workflow_id
         if hasattr(event, "workflow_run_id"):
             event.workflow_run_id = workflow_run_response.run_id
+        # Set session_id to match workflow's session_id for consistent event tracking
+        if hasattr(event, "session_id") and workflow_run_response.session_id:
+            event.session_id = workflow_run_response.session_id
         if hasattr(event, "step_id"):
             event.step_id = self.step_id
         if hasattr(event, "step_name") and self.name is not None:
@@ -637,6 +857,8 @@ class Step:
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -785,6 +1007,15 @@ class Step:
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
+                        # Append user input context if available (from HITL)
+                        if step_input.additional_data and step_input.additional_data.get("user_input"):
+                            user_input = step_input.additional_data["user_input"]
+                            user_input_str = "\n".join(f"- {k}: {v}" for k, v in user_input.items())
+                            if final_message:
+                                final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
+                            else:
+                                final_message = f"User preferences:\n{user_input_str}"
+
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
                             input=final_message,
                             images=images,
@@ -798,6 +1029,8 @@ class Step:
                             stream_events=stream_events,
                             yield_run_output=True,
                             run_context=run_context,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
                             **kwargs,
                         )
 
@@ -819,6 +1052,20 @@ class Step:
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
+
+                        # Check if agent/team response is paused (e.g., due to tool HITL)
+                        # This is NOT supported at workflow level - warn the user
+                        if (
+                            active_executor_run_response is not None
+                            and hasattr(active_executor_run_response, "is_paused")
+                            and active_executor_run_response.is_paused
+                        ):
+                            logger.warning(
+                                f"Step '{self.name}': Agent/Team response is paused (likely due to tool HITL). "
+                                "Agent tool-level HITL is NOT propagated to the workflow. "
+                                "The workflow will continue but the paused tool may not have executed. "
+                                "Consider using workflow-level HITL (Step.requires_confirmation) instead."
+                            )
 
                         final_response = active_executor_run_response  # type: ignore
 
@@ -880,7 +1127,7 @@ class Step:
                 return
             except Exception as e:
                 self.retry_count = attempt + 1
-                logger.warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
+                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -909,6 +1156,8 @@ class Step:
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         logger.info(f"Executing async step (non-streaming): {self.name}")
@@ -1077,6 +1326,15 @@ class Step:
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
+                        # Append user input context if available (from HITL)
+                        if step_input.additional_data and step_input.additional_data.get("user_input"):
+                            user_input = step_input.additional_data["user_input"]
+                            user_input_str = "\n".join(f"- {k}: {v}" for k, v in user_input.items())
+                            if final_message:
+                                final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
+                            else:
+                                final_message = f"User preferences:\n{user_input_str}"
+
                         response = await self.active_executor.arun(  # type: ignore
                             input=final_message,  # type: ignore
                             images=images,
@@ -1087,6 +1345,8 @@ class Step:
                             user_id=user_id,
                             session_state=session_state_copy,
                             run_context=run_context,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
                             **kwargs,
                         )
 
@@ -1096,6 +1356,16 @@ class Step:
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, response)  # type: ignore
+
+                        # Check if agent/team response is paused (e.g., due to tool HITL)
+                        # This is NOT supported at workflow level - warn the user
+                        if hasattr(response, "is_paused") and response.is_paused:
+                            logger.warning(
+                                f"Step '{self.name}': Agent/Team response is paused (likely due to tool HITL). "
+                                "Agent tool-level HITL is NOT propagated to the workflow. "
+                                "The workflow will continue but the paused tool may not have executed. "
+                                "Consider using workflow-level HITL (Step.requires_confirmation) instead."
+                            )
 
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
@@ -1124,7 +1394,7 @@ class Step:
 
             except Exception as e:
                 self.retry_count = attempt + 1
-                logger.warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
+                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -1153,6 +1423,8 @@ class Step:
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -1345,6 +1617,15 @@ class Step:
                             if history_messages:
                                 final_message = f"{history_messages}{message}"
 
+                        # Append user input context if available (from HITL)
+                        if step_input.additional_data and step_input.additional_data.get("user_input"):
+                            user_input = step_input.additional_data["user_input"]
+                            user_input_str = "\n".join(f"- {k}: {v}" for k, v in user_input.items())
+                            if final_message:
+                                final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
+                            else:
+                                final_message = f"User preferences:\n{user_input_str}"
+
                         response_stream = self.active_executor.arun(  # type: ignore
                             input=final_message,
                             images=images,
@@ -1358,6 +1639,8 @@ class Step:
                             stream_events=stream_events,
                             run_context=run_context,
                             yield_run_output=True,
+                            add_dependencies_to_context=add_dependencies_to_context,
+                            add_session_state_to_context=add_session_state_to_context,
                             **kwargs,
                         )
 
@@ -1379,6 +1662,20 @@ class Step:
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
+
+                        # Check if agent/team response is paused (e.g., due to tool HITL)
+                        # This is NOT supported at workflow level - warn the user
+                        if (
+                            active_executor_run_response is not None
+                            and hasattr(active_executor_run_response, "is_paused")
+                            and active_executor_run_response.is_paused
+                        ):
+                            logger.warning(
+                                f"Step '{self.name}': Agent/Team response is paused (likely due to tool HITL). "
+                                "Agent tool-level HITL is NOT propagated to the workflow. "
+                                "The workflow will continue but the paused tool may not have executed. "
+                                "Consider using workflow-level HITL (Step.requires_confirmation) instead."
+                            )
 
                         final_response = active_executor_run_response  # type: ignore
 
@@ -1440,7 +1737,7 @@ class Step:
 
             except Exception as e:
                 self.retry_count = attempt + 1
-                logger.warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
+                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -1547,7 +1844,7 @@ class Step:
                 or not self.active_executor.store_tool_messages
                 or not self.active_executor.store_history_messages
             ):  # type: ignore
-                self.active_executor._scrub_run_output_for_storage(executor_run_response)  # type: ignore
+                self.active_executor.scrub_run_output_for_storage(executor_run_response)  # type: ignore
 
             # Get the raw response from the step's active executor
             raw_response = executor_run_response
@@ -1627,6 +1924,7 @@ class Step:
         images = getattr(response, "images", None)
         videos = getattr(response, "videos", None)
         audio = getattr(response, "audio", None)
+        files = getattr(response, "files", None)
 
         # Extract metrics from response
         metrics = self._extract_metrics_from_response(response)
@@ -1645,6 +1943,7 @@ class Step:
             images=images,
             videos=videos,
             audio=audio,
+            files=files,
             metrics=metrics,
         )
 
@@ -1995,6 +2294,7 @@ class Step:
             List of Image objects ready for agent processing
         """
         import base64
+        import binascii
 
         images = []
         for i, img_artifact in enumerate(image_artifacts):
@@ -2007,9 +2307,13 @@ class Step:
                 try:
                     # Try to decode as base64 first (for images from OpenAI tools)
                     if isinstance(img_artifact.content, bytes):
-                        # Decode bytes to string, then decode base64 to get actual image bytes
-                        base64_str: str = img_artifact.content.decode("utf-8")
-                        actual_image_bytes = base64.b64decode(base64_str)
+                        try:
+                            # Attempt UTF-8 decode in case bytes are base64-encoded text
+                            base64_str: str = img_artifact.content.decode("utf-8")
+                            actual_image_bytes = base64.b64decode(base64_str)
+                        except (UnicodeDecodeError, binascii.Error):
+                            # Raw image bytes (e.g., from Telegram, WhatsApp, or file uploads)
+                            actual_image_bytes = img_artifact.content
                     else:
                         # If it's already actual image bytes
                         actual_image_bytes = img_artifact.content
@@ -2024,8 +2328,8 @@ class Step:
 
                     images.append(Image(**image_kwargs))
 
-                except Exception as e:
-                    logger.error(f"Failed to process image content: {e}")
+                except Exception:
+                    logger.exception("Failed to process image content")
                     # Skip this image if we can't process it
                     continue
 

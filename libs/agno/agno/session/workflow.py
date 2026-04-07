@@ -16,7 +16,7 @@ from agno.utils.log import log_debug, logger
 
 @dataclass
 class WorkflowSession:
-    """Workflow Session V2 for pipeline-based workflows"""
+    """Workflow Session for pipeline-based workflows"""
 
     # Session UUID - this is the workflow_session_id that gets set on agents/teams
     session_id: str

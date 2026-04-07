@@ -5,6 +5,10 @@ from agno.knowledge.knowledge import Knowledge
 from agno.models.groq import Groq
 from agno.vectordb.pgvector import PgVector
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 knowledge = Knowledge(
@@ -15,3 +19,10 @@ knowledge.insert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.p
 
 agent = Agent(model=Groq(id="Qwen-2.5-32b"), knowledge=knowledge)
 agent.print_response("How to make Thai curry?", markdown=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

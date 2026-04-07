@@ -1,3 +1,10 @@
+"""
+Google Image Input File Upload
+==============================
+
+Cookbook example for `google/gemini/image_input_file_upload.py`.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
@@ -6,6 +13,10 @@ from agno.models.google import Gemini
 from agno.tools.websearch import WebSearchTools
 from google.generativeai import upload_file
 from google.generativeai.types import file_types
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=Gemini(id="gemini-2.0-flash-exp"),
@@ -23,3 +34,10 @@ agent.print_response(
     images=[Image(content=image_file)],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

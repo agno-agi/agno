@@ -16,6 +16,10 @@ import asyncio
 
 from agno.client.a2a import A2AClient
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 async def multi_turn_conversation():
     """Demonstrate multi-turn conversation with context retention."""
@@ -90,6 +94,10 @@ async def main():
     await multi_turn_conversation()
     await streaming_multi_turn()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

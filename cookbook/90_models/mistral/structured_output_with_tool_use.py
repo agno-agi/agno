@@ -1,7 +1,18 @@
+"""
+Mistral Structured Output With Tool Use
+=======================================
+
+Cookbook example for `mistral/structured_output_with_tool_use.py`.
+"""
+
 from agno.agent import Agent
 from agno.models.mistral import MistralChat
 from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class Person(BaseModel):
@@ -29,3 +40,10 @@ researcher = Agent(
 )
 
 researcher.print_response("Find information about Elon Musk")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -62,7 +62,7 @@ def test_agent_exponential_backoff():
 
     # Mock the model's response method so _run's retry logic can still work
     with patch.object(model, "response", side_effect=mock_response):
-        with patch("agno.agent.agent.time.sleep") as mock_sleep:
+        with patch("agno.agent._run.time.sleep") as mock_sleep:
             _ = agent.run("Test message")
 
     # Check that sleep was called with exponentially increasing delays

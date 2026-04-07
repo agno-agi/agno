@@ -1,75 +1,34 @@
 # Agent Teams
 
-**Teams:** Groups of agents that collaborate to solve complex tasks through coordination, routing, or collaboration. This directory contains cookbooks demonstrating how to build and manage agent teams.
+Cookbooks for building multi-agent teams in Agno.
 
-> Note: Fork and clone this repository if needed
+## Prerequisites
 
-## Getting Started
+- Load environment variables with `direnv allow` (for example `OPENAI_API_KEY`).
+- Use `.venvs/demo/bin/python` to run examples.
+- Some examples require external services (for example PostgreSQL, LanceDB, Infinity server, or AgentOS remote instances).
 
-### 1. Setup Environment
+## Directories
 
-```bash
-python3 -m venv ~/.venvs/aienv
-source ~/.venvs/aienv/bin/activate
-uv pip install -U agno openai
-```
-
-### 2. Basic Team
-
-```python
-from agno.agent import Agent
-from agno.team import Team
-from agno.models.openai import OpenAIChat
-
-# Create team members
-researcher = Agent(
-    name="Researcher",
-    model=OpenAIChat(id="gpt-4o"),
-    role="Research and gather information",
-)
-
-writer = Agent(
-    name="Writer",
-    model=OpenAIChat(id="gpt-4o"),
-    role="Write clear summaries",
-)
-
-# Create team
-team = Team(
-    name="Research Team",
-    members=[researcher, writer],
-    model=OpenAIChat(id="gpt-4o"),
-)
-
-team.print_response("What are the latest trends in AI?")
-```
-
-## Examples
-
-Teams organized by functionality and use case.
-
-### Core Functionality
-- **[basic_flows/](./basic_flows/)** - Basic team coordination patterns and flows
-- **[async_flows/](./async_flows/)** - Asynchronous team execution with `arun` method
-- **[streaming/](./streaming/)** - Real-time response streaming and event handling
-- **[structured_input_output/](./structured_input_output/)** - Structured data processing with Pydantic
-- **[tools/](./tools/)** - Custom tools and tool coordination across team members
-- **[other/](./other/)** - Input formats, response handling, and basic operations
-
-### Knowledge, Memory and Sessions
-- **[knowledge/](./knowledge/)** - Teams with shared knowledge bases
-- **[memory/](./memory/)** - Persistent memory management across interactions
-- **[session/](./session/)** - Session management and persistence
-- **[state/](./state/)** - Shared state management across team members
-- **[dependencies/](./dependencies/)** - Runtime dependency injection and context management
-
-### Advanced Patterns
-- **[distributed_rag/](./distributed_rag/)** - Distributed retrieval-augmented generation
-- **[search_coordination/](./search_coordination/)** - Coordinated search across agents and sources
-- **[reasoning/](./reasoning/)** - Multi-agent reasoning and analysis
-- **[multimodal/](./multimodal/)** - Teams handling text, images, audio, and video
-
-### Operations
-- **[metrics/](./metrics/)** - Team performance monitoring and metrics collection
-- **[hooks/](./hooks/)** - Pre and post-processing hooks for input/output
-- **[guardrails/](./guardrails/)** - Safety guardrails (moderation, PII, prompt injection)
+- `01_quickstart/` - Core team coordination patterns, including route/broadcast/tasks and nested teams.
+- `02_modes/` - Team execution modes (coordinate, route, broadcast, tasks) with examples for each.
+- `03_tools/` - Custom tools and tool hook patterns.
+- `04_structured_input_output/` - Structured input/output schemas, overrides, and streaming.
+- `05_knowledge/` - Team knowledge, filters, and custom retrievers.
+- `06_memory/` - Memory manager, agentic memory, and LearningMachine examples.
+- `07_session/` - Session persistence, options, summaries, and history search.
+- `08_streaming/` - Response streaming and event monitoring.
+- `09_context_management/` - Context filtering, introductions, and few-shot context.
+- `10_context_compression/` - Tool-result compression and compression manager usage.
+- `11_reasoning/` - Multi-purpose reasoning team patterns.
+- `12_learning/` - Team learning patterns (always, configured, entity memory, session planning, learned knowledge, decision log).
+- `13_hooks/` - Input pre-hooks, output post-hooks, and stream hooks.
+- `14_run_control/` - Cancellation, retries, model inheritance, remote teams, and background execution.
+- `15_distributed_rag/` - Multi-member distributed retrieval with PgVector/LanceDB/reranking.
+- `16_search_coordination/` - Coordinated RAG/search patterns across members.
+- `17_dependencies/` - Runtime dependencies in context, tools, and member flows.
+- `18_guardrails/` - Prompt-injection, moderation, and PII protections.
+- `19_multimodal/` - Audio, image, and video workflows.
+- `20_human_in_the_loop/` - Confirmation, external execution, and user-input-required flows.
+- `21_state/` - Shared session state across members and nested teams.
+- `22_metrics/` - Team/session/member metrics inspection.
