@@ -173,7 +173,9 @@ class OpenAIChat(Model):
             if isinstance(self.http_client, httpx.AsyncClient):
                 client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.AsyncClient. Ignoring and using OpenAI SDK default.")
+                log_warning(
+                    "http_client is not an instance of httpx.AsyncClient. Ignoring and using OpenAI SDK default."
+                )
         # When no custom http_client is provided, let the OpenAI SDK use its own default client.
         # The SDK defaults to HTTP/1.1 which avoids transient 400 errors caused by HTTP/2
         # protocol edge cases with OpenAI's infrastructure.
