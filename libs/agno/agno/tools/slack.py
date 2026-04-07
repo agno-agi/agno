@@ -72,6 +72,21 @@ class SlackTools(Toolkit):
                 text += "\nWhen to use: only when search_workspace is unavailable."
             sections.append(text)
 
+        # Messaging guidance — critical for thread-aware responses
+        if "send_message" in enabled and "send_message_thread" in enabled:
+            sections.append(
+                "**send_message** vs **send_message_thread** — choosing correctly:\n"
+                "- If you have a `Slack thread_ts` in your context/dependencies, "
+                "ALWAYS use send_message_thread with that thread_ts. "
+                "Never use send_message when replying inside a thread.\n"
+                "- Only use send_message for new top-level channel messages."
+            )
+        elif "send_message_thread" in enabled:
+            sections.append(
+                "**send_message_thread** — reply inside a thread.\n"
+                "When you have a `Slack thread_ts` in your context/dependencies, use it."
+            )
+
         # Only inject guidance when there are multiple tools to choose between
         if len(sections) < 2:
             return ""
@@ -88,6 +103,9 @@ class SlackTools(Toolkit):
             routing.append("- Always expand threads with high reply_count before summarizing")
         if "search_messages" in enabled and "search_workspace" in enabled:
             routing.append("- Fallback (user-token only) → search_messages")
+        if "send_message" in enabled and "send_message_thread" in enabled:
+            routing.append("- Replying in a thread → send_message_thread (use Slack thread_ts from context)")
+            routing.append("- New top-level channel message → send_message")
 
         if routing:
             result += "\n\n## When to use which\n" + "\n".join(routing)
