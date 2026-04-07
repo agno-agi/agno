@@ -521,7 +521,7 @@ def test_nested_workflow_streaming_event_order_and_source(shared_db):
 
     # All events should have workflow_id/name pointing to outer (enrichment)
     for ev in events:
-        assert ev.workflow_id == "outer-workflow", f"All events should have workflow_id=outer-workflow after enrichment"
+        assert ev.workflow_id == "outer-workflow", "All events should have workflow_id=outer-workflow after enrichment"
 
 
 def test_nested_workflow_streaming_with_loop_events(shared_db):
@@ -1023,23 +1023,17 @@ def test_workflow_passed_directly_as_step(shared_db):
 def test_nested_workflow_shared_session_state(shared_db):
     """Test that session state is shared between outer and nested workflow.
 
-    Session state is accessed via workflow_session.session_data["session_state"],
-    not directly on StepInput.
+    Function executors access session_state by declaring it as a parameter
+    in their function signature. The framework inspects the signature and
+    passes the dict automatically.
     """
 
-    def set_state(step_input: StepInput) -> StepOutput:
-        if step_input.workflow_session is not None:
-            if step_input.workflow_session.session_data is None:
-                step_input.workflow_session.session_data = {}
-            session_state = step_input.workflow_session.session_data.setdefault("session_state", {})
-            session_state["inner_key"] = "inner_value"
+    def set_state(step_input: StepInput, session_state: dict) -> StepOutput:
+        session_state["inner_key"] = "inner_value"
         return StepOutput(content="state_set")
 
-    def read_state(step_input: StepInput) -> StepOutput:
-        val = "NO_STATE"
-        if step_input.workflow_session and step_input.workflow_session.session_data:
-            session_state = step_input.workflow_session.session_data.get("session_state", {})
-            val = session_state.get("inner_key", "NOT_FOUND")
+    def read_state(step_input: StepInput, session_state: dict) -> StepOutput:
+        val = session_state.get("inner_key", "NOT_FOUND")
         return StepOutput(content=f"state_read: {val}")
 
     inner = Workflow(
