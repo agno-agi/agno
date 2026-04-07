@@ -3,7 +3,7 @@ from urllib.parse import urlparse
 
 from agno.knowledge.document import Document
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 try:
     from infinity_client import AuthenticatedClient, Client
@@ -91,7 +91,7 @@ class InfinityReranker(Reranker):
                 result = rerank.sync(client=client, body=body)
 
                 if result is None:
-                    logger.error("Rerank request returned None")
+                    log_error("Rerank request returned None")
                     return documents
 
                 # Process the response
@@ -163,7 +163,7 @@ class InfinityReranker(Reranker):
                 result = await rerank.asyncio(client=client, body=body)
 
                 if result is None:
-                    logger.error("Async rerank request returned None")
+                    log_error("Async rerank request returned None")
                     return documents
 
                 # Process the response

@@ -4,7 +4,7 @@ from typing import Any, List, Optional
 import requests
 
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 
 class LinearTools(Toolkit):
@@ -44,7 +44,7 @@ class LinearTools(Toolkit):
             data = response.json()
 
             if "errors" in data:
-                logger.error(f"GraphQL Error: {data['errors']}")
+                log_error(f"GraphQL Error: {data['errors']}")
                 raise Exception(f"GraphQL Error: {data['errors']}")
 
             log_info("GraphQL query executed successfully.")
@@ -90,7 +90,7 @@ class LinearTools(Toolkit):
                 )
                 return str(user)
             else:
-                logger.error("Failed to retrieve the current user details")
+                log_error("Failed to retrieve the current user details")
                 return None
 
         except Exception:
@@ -128,7 +128,7 @@ class LinearTools(Toolkit):
                 log_info(f"Retrieved authenticated team details: {teams}")
                 return str(teams)
             else:
-                logger.error("Failed to retrieve the current user details")
+                log_error("Failed to retrieve the current user details")
                 return None
 
         except Exception:
@@ -168,7 +168,7 @@ class LinearTools(Toolkit):
                 log_info(f"Issue '{issue['title']}' retrieved successfully with ID {issue['id']}.")
                 return str(issue)
             else:
-                logger.error(f"Failed to retrieve issue with ID {issue_id}.")
+                log_error(f"Failed to retrieve issue with ID {issue_id}.")
                 return None
 
         except Exception:
@@ -235,7 +235,7 @@ class LinearTools(Toolkit):
                 log_info(f"Issue '{issue['title']}' created successfully with ID {issue['id']}")
                 return str(issue)
             else:
-                logger.error("Issue creation failed.")
+                log_error("Issue creation failed.")
                 return None
 
         except Exception:
@@ -286,7 +286,7 @@ class LinearTools(Toolkit):
                 log_info(f"Issue ID {issue_id} updated successfully.")
                 return str(issue)
             else:
-                logger.error(f"Failed to update issue ID {issue_id}. Success flag was false.")
+                log_error(f"Failed to update issue ID {issue_id}. Success flag was false.")
                 return None
 
         except Exception:
@@ -334,7 +334,7 @@ class LinearTools(Toolkit):
                 log_info(f"Retrieved {len(issues)} issues assigned to user '{user['name']}' (ID: {user['id']}).")
                 return str(issues)
             else:
-                logger.error("Failed to retrieve user or issues.")
+                log_error("Failed to retrieve user or issues.")
                 return None
 
         except Exception:
@@ -377,7 +377,7 @@ class LinearTools(Toolkit):
                 log_info(f"Retrieved {len(issues)} issues in workflow state ID {workflow_id}.")
                 return str(issues)
             else:
-                logger.error("Failed to retrieve issues for the specified workflow state.")
+                log_error("Failed to retrieve issues for the specified workflow state.")
                 return None
 
         except Exception:
@@ -418,7 +418,7 @@ class LinearTools(Toolkit):
                 log_info(f"Retrieved {len(high_priority_issues)} high-priority issues.")
                 return str(high_priority_issues)
             else:
-                logger.error("Failed to retrieve high-priority issues.")
+                log_error("Failed to retrieve high-priority issues.")
                 return None
 
         except Exception:

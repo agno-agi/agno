@@ -13,7 +13,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_info, log_warning, logger
+from agno.utils.log import log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 
 DEFAULT_NAMESPACE = ""
@@ -127,7 +127,7 @@ class UpstashVectorDb(VectorDb):
             self.index.info()
             return True
         except Exception as e:
-            logger.error(f"Error checking index existence: {str(e)}")
+            log_error(f"Error checking index existence: {str(e)}")
             return False
 
     def create(self) -> None:
@@ -153,7 +153,7 @@ class UpstashVectorDb(VectorDb):
         if self.namespace_exists(_namespace):
             self.index.delete_namespace(_namespace)
         else:
-            logger.error(f"Namespace {_namespace} does not exist.")
+            log_error(f"Namespace {_namespace} does not exist.")
 
     def get_all_namespaces(self) -> List[str]:
         """Get all namespaces in the index.
@@ -251,7 +251,7 @@ class UpstashVectorDb(VectorDb):
 
         for i, document in enumerate(documents):
             if document.id is None:
-                logger.error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
+                log_error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
                 continue
 
             logger.debug(
@@ -284,12 +284,12 @@ class UpstashVectorDb(VectorDb):
 
             if not self.use_upstash_embeddings:
                 if self.embedder is None:
-                    logger.error("Embedder is None but use_upstash_embeddings is False")
+                    log_error("Embedder is None but use_upstash_embeddings is False")
                     continue
 
                 document.embed(embedder=self.embedder)
                 if document.embedding is None:
-                    logger.error(f"Failed to generate embedding for document: {document.id}")
+                    log_error(f"Failed to generate embedding for document: {document.id}")
                     continue
 
                 vector = Vector(id=document.id, vector=document.embedding, metadata=meta_data, data=document.content)
@@ -347,7 +347,7 @@ class UpstashVectorDb(VectorDb):
             dense_embedding = self.embedder.get_embedding(query)
 
             if dense_embedding is None:
-                logger.error(f"Error getting embedding for Query: {query}")
+                log_error(f"Error getting embedding for Query: {query}")
                 return []
 
             response = self.index.query(
@@ -573,7 +573,7 @@ class UpstashVectorDb(VectorDb):
 
         for i, document in enumerate(documents):
             if document.id is None:
-                logger.error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
+                log_error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
                 continue
 
             logger.debug(
@@ -606,11 +606,11 @@ class UpstashVectorDb(VectorDb):
 
             if not self.use_upstash_embeddings:
                 if self.embedder is None:
-                    logger.error("Embedder is None but use_upstash_embeddings is False")
+                    log_error("Embedder is None but use_upstash_embeddings is False")
                     continue
 
                 if document.embedding is None:
-                    logger.error(f"Failed to generate embedding for document: {document.id}")
+                    log_error(f"Failed to generate embedding for document: {document.id}")
                     continue
 
                 vector = Vector(id=document.id, vector=document.embedding, metadata=meta_data, data=document.content)

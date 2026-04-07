@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 try:
     from todoist_api_python.api import TodoistAPI
@@ -173,7 +173,7 @@ class TodoistTools(Toolkit):
             return json.dumps({"success": success})
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"Failed to update task: {error_msg}")
+            log_error(f"Failed to update task: {error_msg}")
             return json.dumps({"error": error_msg})
 
     def close_task(self, task_id: str) -> str:

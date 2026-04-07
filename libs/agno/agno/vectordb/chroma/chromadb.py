@@ -19,7 +19,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_exception, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_exception, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -709,7 +709,7 @@ class ChromaDb(VectorDb):
         elif self.search_type == SearchType.hybrid:
             search_results = self._hybrid_search(query, limit, filters)
         else:
-            logger.error(f"Invalid search type '{self.search_type}'.")
+            log_error(f"Invalid search type '{self.search_type}'.")
             return []
 
         if self.reranker and search_results:
@@ -734,7 +734,7 @@ class ChromaDb(VectorDb):
         """
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         if not self._collection:
@@ -813,7 +813,7 @@ class ChromaDb(VectorDb):
         """
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         if not self._collection:
@@ -1239,7 +1239,7 @@ class ChromaDb(VectorDb):
     def delete_by_id(self, id: str) -> bool:
         """Delete document by ID."""
         if not self.client:
-            logger.error("Client not initialized")
+            log_error("Client not initialized")
             return False
 
         try:
@@ -1261,7 +1261,7 @@ class ChromaDb(VectorDb):
     def delete_by_name(self, name: str) -> bool:
         """Delete documents by name."""
         if not self.client:
-            logger.error("Client not initialized")
+            log_error("Client not initialized")
             return False
 
         try:
@@ -1286,7 +1286,7 @@ class ChromaDb(VectorDb):
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
         """Delete documents by metadata."""
         if not self.client:
-            logger.error("Client not initialized")
+            log_error("Client not initialized")
             return False
 
         try:
@@ -1316,7 +1316,7 @@ class ChromaDb(VectorDb):
     def delete_by_content_id(self, content_id: str) -> bool:
         """Delete documents by content ID."""
         if not self.client:
-            logger.error("Client not initialized")
+            log_error("Client not initialized")
             return False
 
         try:
@@ -1341,7 +1341,7 @@ class ChromaDb(VectorDb):
     def _delete_by_content_hash(self, content_hash: str) -> bool:
         """Delete documents by content hash."""
         if not self.client:
-            logger.error("Client not initialized")
+            log_error("Client not initialized")
             return False
 
         try:
@@ -1373,7 +1373,7 @@ class ChromaDb(VectorDb):
             bool: True if the document exists, False otherwise.
         """
         if not self.client:
-            logger.error("Client not initialized")
+            log_error("Client not initialized")
             return False
 
         try:
@@ -1391,7 +1391,7 @@ class ChromaDb(VectorDb):
     def content_hash_exists(self, content_hash: str) -> bool:
         """Check if documents with the given content hash exist."""
         if not self.client:
-            logger.error("Client not initialized")
+            log_error("Client not initialized")
             return False
 
         try:
@@ -1443,7 +1443,7 @@ class ChromaDb(VectorDb):
         """
         try:
             if not self.client:
-                logger.error("Client not initialized")
+                log_error("Client not initialized")
                 return
 
             collection: Collection = self.client.get_collection(name=self.collection_name)

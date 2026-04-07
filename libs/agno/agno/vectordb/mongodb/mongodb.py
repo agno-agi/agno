@@ -8,7 +8,7 @@ from bson import ObjectId
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -594,7 +594,7 @@ class MongoDb(VectorDb):
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Failed to generate embedding for query: {query}")
+            log_error(f"Failed to generate embedding for query: {query}")
             return []
 
         if self.cosmos_compatibility:
@@ -754,7 +754,7 @@ class MongoDb(VectorDb):
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Failed to generate embedding for query: {query}")
+            log_error(f"Failed to generate embedding for query: {query}")
             return []
 
         collection = self._get_collection()
@@ -906,16 +906,16 @@ class MongoDb(VectorDb):
             log_info(f"Hybrid search completed. Found {len(docs)} documents.")
             return docs
         except errors.OperationFailure as e:
-            logger.error(
+            log_error(
                 f"Error during hybrid search, potentially due to missing or misconfigured Atlas Search index for text search: {e}"
             )
-            logger.error(f"Details: {e.details}")
+            log_error(f"Details: {e.details}")
             return []
         except Exception:
             logger.exception("Error during hybrid search")
             import traceback
 
-            logger.error(f"Traceback: {traceback.format_exc()}")
+            log_error(f"Traceback: {traceback.format_exc()}")
             return []
 
     def drop(self) -> None:
@@ -1149,7 +1149,7 @@ class MongoDb(VectorDb):
             filters = None
         query_embedding = await self.embedder.async_get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Failed to generate embedding for query: {query}")
+            log_error(f"Failed to generate embedding for query: {query}")
             return []
 
         try:

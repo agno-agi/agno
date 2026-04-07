@@ -9,7 +9,7 @@ from agno.media import Audio
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 
 class DesiVocalTools(Toolkit):
@@ -24,7 +24,7 @@ class DesiVocalTools(Toolkit):
     ):
         self.api_key = api_key or getenv("DESI_VOCAL_API_KEY")
         if not self.api_key:
-            logger.error("DESI_VOCAL_API_KEY not set. Please set the DESI_VOCAL_API_KEY environment variable.")
+            log_error("DESI_VOCAL_API_KEY not set. Please set the DESI_VOCAL_API_KEY environment variable.")
 
         self.voice_id = voice_id
 

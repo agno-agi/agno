@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, cast
 from urllib.parse import quote_plus
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error, logger
 
 try:
     import gitlab
@@ -262,7 +262,7 @@ class GitlabTools(Toolkit):
             return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
         except httpx.HTTPStatusError as e:
             message = self._http_error_message(e.response)
-            logger.error(f"GitLab API error while listing projects: {message}")
+            log_error(f"GitLab API error while listing projects: {message}")
             return self._json_error(message)
         except httpx.RequestError as e:
             logger.exception("GitLab request error while listing projects")
@@ -309,7 +309,7 @@ class GitlabTools(Toolkit):
             return json.dumps(self._serialize_project(project), indent=2)
         except httpx.HTTPStatusError as e:
             message = self._http_error_message(e.response)
-            logger.error(f"GitLab API error while getting project {project_id_or_path}: {message}")
+            log_error(f"GitLab API error while getting project {project_id_or_path}: {message}")
             return self._json_error(message)
         except httpx.RequestError as e:
             logger.exception(f"GitLab request error while getting project {project_id_or_path}")
@@ -407,7 +407,7 @@ class GitlabTools(Toolkit):
             return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
         except httpx.HTTPStatusError as e:
             message = self._http_error_message(e.response)
-            logger.error(f"GitLab API error while listing merge requests for project {project_id_or_path}: {message}")
+            log_error(f"GitLab API error while listing merge requests for project {project_id_or_path}: {message}")
             return self._json_error(message)
         except httpx.RequestError as e:
             logger.exception(f"GitLab request error while listing merge requests for project {project_id_or_path}")
@@ -457,7 +457,7 @@ class GitlabTools(Toolkit):
             return json.dumps(self._serialize_merge_request(merge_request), indent=2)
         except httpx.HTTPStatusError as e:
             message = self._http_error_message(e.response)
-            logger.error(f"GitLab API error while getting merge request {merge_request_iid}: {message}")
+            log_error(f"GitLab API error while getting merge request {merge_request_iid}: {message}")
             return self._json_error(message)
         except httpx.RequestError as e:
             logger.exception(f"GitLab request error while getting merge request {merge_request_iid}")
@@ -563,7 +563,7 @@ class GitlabTools(Toolkit):
             return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
         except httpx.HTTPStatusError as e:
             message = self._http_error_message(e.response)
-            logger.error(f"GitLab API error while listing issues for project {project_id_or_path}: {message}")
+            log_error(f"GitLab API error while listing issues for project {project_id_or_path}: {message}")
             return self._json_error(message)
         except httpx.RequestError as e:
             logger.exception(f"GitLab request error while listing issues for project {project_id_or_path}")

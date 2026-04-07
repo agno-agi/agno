@@ -226,23 +226,33 @@ def log_warning(msg, *args, **kwargs):
 
 
 def log_error(msg, *args, **kwargs):
+    """Log an error. When called inside an except block and AGNO_LOG_TRACEBACKS
+    is enabled, the traceback is automatically included.
+    """
+    import sys
+
     global logger
+    if "exc_info" not in kwargs and log_tracebacks and sys.exc_info()[0] is not None:
+        kwargs["exc_info"] = True
     logger.error(msg, *args, **kwargs)
 
 
 def log_exception(msg, *args, **kwargs):
+    """Log an error with full traceback. Always includes the traceback
+    regardless of AGNO_LOG_TRACEBACKS setting.
+    """
     global logger
     logger.exception(msg, *args, **kwargs)
 
 
 def set_log_tracebacks(enabled: bool = True) -> None:
-    """Enable or disable full tracebacks in warning log output.
+    """Enable or disable full tracebacks in log output.
 
-    When enabled, ``log_warning`` calls with ``exc_info=True`` will
-    render the complete traceback.  When disabled (the default), the
-    handler strips exc_info so only the message is shown.
+    When enabled, ``log_error`` and ``log_warning`` calls inside except
+    blocks include the full traceback.  When disabled (the default),
+    only the message is logged.
 
-    Error-level logs (``log_exception``) always show tracebacks.
+    ``log_exception`` always includes tracebacks regardless of this setting.
 
     Can also be controlled via the ``AGNO_LOG_TRACEBACKS`` env var.
     """

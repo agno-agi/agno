@@ -1,7 +1,7 @@
 from typing import Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 
 class EmailTools(Toolkit):
@@ -38,7 +38,7 @@ class EmailTools(Toolkit):
             import smtplib
             from email.message import EmailMessage
         except ImportError:
-            logger.error("`smtplib` not installed")
+            log_error("`smtplib` not installed")
             raise
 
         if not self.receiver_email:

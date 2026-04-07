@@ -18,7 +18,7 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error, logger
 from agno.utils.merge_dict import merge_parallel_session_states
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
@@ -327,7 +327,7 @@ class Parallel:
                 return idx, step_result, step_session_state
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
-                logger.error(f"Parallel step {parallel_step_name} failed: {exc}")
+                log_error(f"Parallel step {parallel_step_name} failed: {exc}")
                 return (
                     idx,
                     StepOutput(
@@ -508,7 +508,7 @@ class Parallel:
                 return idx, step_outputs, step_session_state
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
-                logger.error(f"Parallel step {parallel_step_name} streaming failed: {exc}")
+                log_error(f"Parallel step {parallel_step_name} streaming failed: {exc}")
                 error_event = StepOutput(
                     step_name=parallel_step_name,
                     content=f"Step {parallel_step_name} failed: {str(exc)}",
@@ -556,7 +556,7 @@ class Parallel:
                 except queue.Empty:
                     for i, future in enumerate(futures):
                         if future.done() and future.exception():
-                            logger.error(f"Parallel step {i} failed: {future.exception()}")
+                            log_error(f"Parallel step {i} failed: {future.exception()}")
                             if completed_steps < total_steps:
                                 completed_steps += 1
                 except Exception:
@@ -665,7 +665,7 @@ class Parallel:
                 return idx, inner_step_result, step_session_state
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
-                logger.error(f"Parallel step {parallel_step_name} failed: {exc}")
+                log_error(f"Parallel step {parallel_step_name} failed: {exc}")
                 return (
                     idx,
                     StepOutput(
@@ -692,7 +692,7 @@ class Parallel:
         for i, result in enumerate(results_with_indices):
             if isinstance(result, Exception):
                 step_name = getattr(self.steps[i], "name", f"step_{i}")
-                logger.error(f"Parallel step {step_name} failed: {result}")
+                log_error(f"Parallel step {step_name} failed: {result}")
                 processed_results_with_indices.append(
                     (
                         i,

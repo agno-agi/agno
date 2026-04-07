@@ -7,7 +7,7 @@ from typing import Any, List, Optional
 import requests
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info, logger
 
 
 class ZoomTools(Toolkit):
@@ -35,7 +35,7 @@ class ZoomTools(Toolkit):
         self.__token_expiry = None  # Track token expiration
 
         if not self.account_id or not self.client_id or not self.client_secret:
-            logger.error(
+            log_error(
                 "ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, and ZOOM_CLIENT_SECRET must be set either through parameters or environment variables."
             )
 
@@ -111,7 +111,7 @@ class ZoomTools(Toolkit):
         log_debug(f"Attempting to schedule meeting: {topic} in timezone: {timezone}")
         token = self.get_access_token()
         if not token:
-            logger.error("Unable to obtain access token.")
+            log_error("Unable to obtain access token.")
             return json.dumps({"error": "Failed to obtain access token"})
 
         url = "https://api.zoom.us/v2/users/me/meetings"
@@ -166,7 +166,7 @@ class ZoomTools(Toolkit):
         log_debug(f"Fetching upcoming meetings for user: {user_id}")
         token = self.get_access_token()
         if not token:
-            logger.error("Unable to obtain access token.")
+            log_error("Unable to obtain access token.")
             return json.dumps({"error": "Failed to obtain access token"})
 
         url = f"https://api.zoom.us/v2/users/{user_id}/meetings"
@@ -205,7 +205,7 @@ class ZoomTools(Toolkit):
         log_debug(f"Fetching meetings for user: {user_id}")
         token = self.get_access_token()
         if not token:
-            logger.error("Unable to obtain access token.")
+            log_error("Unable to obtain access token.")
             return json.dumps({"error": "Failed to obtain access token"})
 
         url = f"https://api.zoom.us/v2/users/{user_id}/meetings"
@@ -249,7 +249,7 @@ class ZoomTools(Toolkit):
         log_debug(f"Fetching recordings for meeting: {meeting_id}")
         token = self.get_access_token()
         if not token:
-            logger.error("Unable to obtain access token.")
+            log_error("Unable to obtain access token.")
             return json.dumps({"error": "Failed to obtain access token"})
 
         url = f"https://api.zoom.us/v2/meetings/{meeting_id}/recordings"
@@ -305,7 +305,7 @@ class ZoomTools(Toolkit):
         log_debug(f"Attempting to delete meeting: {meeting_id}")
         token = self.get_access_token()
         if not token:
-            logger.error("Unable to obtain access token.")
+            log_error("Unable to obtain access token.")
             return json.dumps({"error": "Failed to obtain access token"})
 
         url = f"https://api.zoom.us/v2/meetings/{meeting_id}"
@@ -342,7 +342,7 @@ class ZoomTools(Toolkit):
         log_debug(f"Fetching details for meeting: {meeting_id}")
         token = self.get_access_token()
         if not token:
-            logger.error("Unable to obtain access token.")
+            log_error("Unable to obtain access token.")
             return json.dumps({"error": "Failed to obtain access token"})
 
         url = f"https://api.zoom.us/v2/meetings/{meeting_id}"

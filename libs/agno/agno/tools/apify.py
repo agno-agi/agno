@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import requests
 
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 try:
     from apify_client import ApifyClient
@@ -94,7 +94,7 @@ class ApifyTools(Toolkit):
 
                 except Exception as e:
                     error_msg = f"Error running Apify Actor {actor_id}: {str(e)}"
-                    logger.error(error_msg)
+                    log_error(error_msg)
                     return json.dumps([{"error": error_msg}])
 
             docstring = f"{actor_description}\n\nArgs:\n"

@@ -16,7 +16,7 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_loop_end_condition, is_cel_expression
 from agno.workflow.step import Step
 from agno.workflow.types import OnReject, StepInput, StepOutput, StepRequirement, StepType
@@ -228,7 +228,7 @@ class Loop:
 
         if isinstance(self.end_condition, str):
             if not CEL_AVAILABLE:
-                logger.error(
+                log_error(
                     "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
                 )
                 return False
@@ -256,7 +256,7 @@ class Loop:
 
         if isinstance(self.end_condition, str):
             if not CEL_AVAILABLE:
-                logger.error(
+                log_error(
                     "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
                 )
                 return False

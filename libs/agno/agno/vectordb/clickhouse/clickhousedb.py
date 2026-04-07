@@ -14,7 +14,7 @@ except ImportError:
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -456,7 +456,7 @@ class Clickhouse(VectorDb):
             log_warning("Filters are not yet supported in Clickhouse. No filters will be applied.")
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         parameters = self._get_base_parameters()
@@ -485,7 +485,7 @@ class Clickhouse(VectorDb):
             )
         except Exception:
             logger.exception("Error searching for documents")
-            logger.error("Table might not exist, creating for future use")
+            log_error("Table might not exist, creating for future use")
             self.create()
             return []
 
@@ -517,7 +517,7 @@ class Clickhouse(VectorDb):
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         parameters = self._get_base_parameters()
@@ -546,7 +546,7 @@ class Clickhouse(VectorDb):
             )
         except Exception:
             logger.exception("Async error searching for documents")
-            logger.error("Table might not exist, creating for future use")
+            log_error("Table might not exist, creating for future use")
             await self.async_create()
             return []
 

@@ -26,7 +26,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.vectordb.base import VectorDb
 
 
@@ -485,7 +485,7 @@ class PineconeDb(VectorDb):
             sparse_embedding = self.sparse_encoder.encode_queries(query)
 
         if dense_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         if self.use_hybrid_search:

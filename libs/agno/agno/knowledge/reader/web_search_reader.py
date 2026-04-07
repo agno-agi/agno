@@ -12,7 +12,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_warning, logger
 
 try:
     from bs4 import BeautifulSoup, Tag  # noqa: F401
@@ -132,7 +132,7 @@ class WebSearchReader(Reader):
         if self.search_engine == "duckduckgo":
             return self._perform_duckduckgo_search(query)
         else:
-            logger.error(f"Unsupported search engine: {self.search_engine}")
+            log_error(f"Unsupported search engine: {self.search_engine}")
             return []
 
     def _is_valid_url(self, url: str) -> bool:
@@ -189,7 +189,7 @@ class WebSearchReader(Reader):
                     time.sleep(random.uniform(1, 3))  # Random delay between retries
                 continue
 
-        logger.error(f"Failed to fetch content from {url} after {self.max_retries} attempts")
+        log_error(f"Failed to fetch content from {url} after {self.max_retries} attempts")
         return None
 
     def _create_document_from_url(self, url: str, content: str, search_result: Dict[str, str]) -> Document:

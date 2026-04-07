@@ -9,7 +9,7 @@ import httpx
 
 from agno.run.base import RunContext
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_warning, logger
 
 try:
     from slack_sdk import WebClient
@@ -571,7 +571,7 @@ class SlackTools(Toolkit):
                 limit_mb = self.max_file_size / (1024 * 1024)
                 actual_mb = file_size / (1024 * 1024)
                 filename = file_info.get("name", file_id)
-                logger.error(f"File {filename} ({actual_mb:.1f}MB) exceeds {limit_mb:.0f}MB download limit")
+                log_error(f"File {filename} ({actual_mb:.1f}MB) exceeds {limit_mb:.0f}MB download limit")
                 return None
 
             url_private = file_info.get("url_private")
@@ -662,7 +662,7 @@ class SlackTools(Toolkit):
 
             if not response.get("ok"):
                 error = response.get("error", "unknown_error")
-                logger.error(f"assistant.search.context failed: {error}")
+                log_error(f"assistant.search.context failed: {error}")
                 return json.dumps({"error": error})
 
             return json.dumps(self._format_search_results(response.get("results", {}), include_context_messages))

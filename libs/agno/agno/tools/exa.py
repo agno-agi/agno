@@ -4,7 +4,7 @@ from os import getenv
 from typing import Any, Dict, List, Literal, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info, logger
 
 try:
     from exa_py import Exa
@@ -72,7 +72,7 @@ class ExaTools(Toolkit):
     ):
         self.api_key = api_key or getenv("EXA_API_KEY")
         if not self.api_key:
-            logger.error("EXA_API_KEY not set. Please set the EXA_API_KEY environment variable.")
+            log_error("EXA_API_KEY not set. Please set the EXA_API_KEY environment variable.")
 
         self.exa = Exa(self.api_key)
         self.show_results = show_results
@@ -179,7 +179,7 @@ class ExaTools(Toolkit):
                 log_info(parsed_results)
             return parsed_results
         except TimeoutError as e:
-            logger.error(f"Search timed out after {self.timeout} seconds")
+            log_error(f"Search timed out after {self.timeout} seconds")
             return f"Error: {str(e)}"
         except Exception as e:
             logger.exception("Failed to search exa")
@@ -214,7 +214,7 @@ class ExaTools(Toolkit):
 
             return parsed_results
         except TimeoutError as e:
-            logger.error(f"Get contents timed out after {self.timeout} seconds")
+            log_error(f"Get contents timed out after {self.timeout} seconds")
             return f"Error: {str(e)}"
         except Exception as e:
             logger.exception("Failed to get contents from Exa")
@@ -257,7 +257,7 @@ class ExaTools(Toolkit):
 
             return parsed_results
         except TimeoutError as e:
-            logger.error(f"Find similar timed out after {self.timeout} seconds")
+            log_error(f"Find similar timed out after {self.timeout} seconds")
             return f"Error: {str(e)}"
         except Exception as e:
             logger.exception("Failed to get similar links from Exa")
@@ -308,7 +308,7 @@ class ExaTools(Toolkit):
             return json.dumps(result, indent=4)
 
         except TimeoutError as e:
-            logger.error(f"Answer generation timed out after {self.timeout} seconds")
+            log_error(f"Answer generation timed out after {self.timeout} seconds")
             return f"Error: {str(e)}"
         except Exception as e:
             logger.exception("Failed to get answer from Exa")
@@ -367,9 +367,9 @@ class ExaTools(Toolkit):
 
         except TimeoutError:
             error_msg = "Research task timed out"
-            logger.error(error_msg)
+            log_error(error_msg)
             return json.dumps({"error": error_msg}, indent=4)
         except Exception as e:
             error_msg = f"Research failed: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return json.dumps({"error": error_msg}, indent=4)

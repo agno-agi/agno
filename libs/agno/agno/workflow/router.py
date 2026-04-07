@@ -14,7 +14,7 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_router_selector, is_cel_expression
 from agno.workflow.step import Step
 from agno.workflow.types import (
@@ -458,7 +458,7 @@ class Router:
         # Handle CEL expression selector
         if isinstance(self.selector, str):
             if not CEL_AVAILABLE:
-                logger.error(
+                log_error(
                     "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
                 )
                 return []
@@ -495,7 +495,7 @@ class Router:
         # Handle CEL expression selector (CEL evaluation is synchronous)
         if isinstance(self.selector, str):
             if not CEL_AVAILABLE:
-                logger.error(
+                log_error(
                     "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
                 )
                 return []

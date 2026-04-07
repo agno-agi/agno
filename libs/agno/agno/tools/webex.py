@@ -3,13 +3,13 @@ from os import getenv
 from typing import Any, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 try:
     from webexpythonsdk import WebexAPI
     from webexpythonsdk.exceptions import ApiError
 except ImportError:
-    logger.error("Webex tools require the `webexpythonsdk` package. Run `pip install webexpythonsdk` to install it.")
+    log_error("Webex tools require the `webexpythonsdk` package. Run `pip install webexpythonsdk` to install it.")
 
 
 class WebexTools(Toolkit):

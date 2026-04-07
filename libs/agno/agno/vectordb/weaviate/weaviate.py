@@ -22,7 +22,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.search import SearchType
 from agno.vectordb.weaviate.index import Distance, VectorIndex
@@ -243,7 +243,7 @@ class Weaviate(VectorDb):
         for document in documents:
             document.embed(embedder=self.embedder)
             if document.embedding is None:
-                logger.error(f"Document embedding is None: {document.name}")
+                log_error(f"Document embedding is None: {document.name}")
                 continue
 
             cleaned_content = document.content.replace("\x00", "\ufffd")
@@ -335,7 +335,7 @@ class Weaviate(VectorDb):
             for document in documents:
                 try:
                     if document.embedding is None:
-                        logger.error(f"Document embedding is None: {document.name}")
+                        log_error(f"Document embedding is None: {document.name}")
                         continue
 
                     # Clean content and generate UUID
@@ -363,7 +363,7 @@ class Weaviate(VectorDb):
                     log_debug(f"Inserted document asynchronously: {document.name}")
 
                 except Exception as e:
-                    logger.error(f"Error inserting document {document.name}: {str(e)}")
+                    log_error(f"Error inserting document {document.name}: {str(e)}")
         finally:
             await client.close()
 
@@ -421,7 +421,7 @@ class Weaviate(VectorDb):
         elif self.search_type == SearchType.hybrid:
             return self.hybrid_search(query, limit, filters)
         else:
-            logger.error(f"Invalid search type '{self.search_type}'.")
+            log_error(f"Invalid search type '{self.search_type}'.")
             return []
 
     async def async_search(
@@ -448,7 +448,7 @@ class Weaviate(VectorDb):
         elif self.search_type == SearchType.hybrid:
             return await self.async_hybrid_search(query, limit, filters)
         else:
-            logger.error(f"Invalid search type '{self.search_type}'.")
+            log_error(f"Invalid search type '{self.search_type}'.")
             return []
 
     def vector_search(
@@ -457,7 +457,7 @@ class Weaviate(VectorDb):
         try:
             query_embedding = self.embedder.get_embedding(query)
             if query_embedding is None:
-                logger.error(f"Error getting embedding for query: {query}")
+                log_error(f"Error getting embedding for query: {query}")
                 return []
 
             collection = self.get_client().collections.get(self.collection)
@@ -502,7 +502,7 @@ class Weaviate(VectorDb):
         """
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for query: {query}")
+            log_error(f"Error getting embedding for query: {query}")
             return []
 
         search_results = []
@@ -613,7 +613,7 @@ class Weaviate(VectorDb):
         try:
             query_embedding = self.embedder.get_embedding(query)
             if query_embedding is None:
-                logger.error(f"Error getting embedding for query: {query}")
+                log_error(f"Error getting embedding for query: {query}")
                 return []
 
             collection = self.get_client().collections.get(self.collection)
@@ -661,7 +661,7 @@ class Weaviate(VectorDb):
         """
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for query: {query}")
+            log_error(f"Error getting embedding for query: {query}")
             return []
 
         search_results = []

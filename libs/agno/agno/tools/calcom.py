@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 try:
     import pytz
@@ -44,9 +44,9 @@ class CalComTools(Toolkit):
             self.event_type_id = int(event_type_str) if event_type_str is not None else 0
 
         if not self.api_key:
-            logger.error("CALCOM_API_KEY not set. Please set the CALCOM_API_KEY environment variable.")
+            log_error("CALCOM_API_KEY not set. Please set the CALCOM_API_KEY environment variable.")
         if not self.event_type_id:
-            logger.error("CALCOM_EVENT_TYPE_ID not set. Please set the CALCOM_EVENT_TYPE_ID environment variable.")
+            log_error("CALCOM_EVENT_TYPE_ID not set. Please set the CALCOM_EVENT_TYPE_ID environment variable.")
 
         self.user_timezone = user_timezone or "America/New_York"
 

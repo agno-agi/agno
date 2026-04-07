@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 
 class DiscordTools(Toolkit):
@@ -24,7 +24,7 @@ class DiscordTools(Toolkit):
     ):
         self.bot_token = bot_token or getenv("DISCORD_BOT_TOKEN")
         if not self.bot_token:
-            logger.error("Discord bot token is required")
+            log_error("Discord bot token is required")
             raise ValueError("Discord bot token is required")
 
         self.base_url = "https://discord.com/api/v10"

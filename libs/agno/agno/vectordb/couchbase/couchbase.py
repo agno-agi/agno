@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Union
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 
 try:
@@ -214,7 +214,7 @@ class CouchbaseSearch(VectorDb):
                 )
             except CollectionAlreadyExistsException:
                 # This is an unexpected state if overwrite=True and drop was supposed to clear the way.
-                logger.error(
+                log_error(
                     f"Failed to create collection '{self.collection_name}' as it already exists, "
                     f"even after drop attempt for overwrite. Overwrite operation may not have completed as intended."
                 )
@@ -472,7 +472,7 @@ class CouchbaseSearch(VectorDb):
         """Search the Couchbase bucket for documents relevant to the query."""
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Failed to generate embedding for query: {query}")
+            log_error(f"Failed to generate embedding for query: {query}")
             return []
 
         try:
@@ -769,7 +769,7 @@ class CouchbaseSearch(VectorDb):
                 )
             except CollectionAlreadyExistsException:
                 # This is an unexpected state if overwrite=True and drop was supposed to clear the way.
-                logger.error(
+                log_error(
                     f"Failed to create collection '{self.collection_name}' as it already exists, "
                     f"even after drop attempt for overwrite. Overwrite operation may not have completed as intended."
                 )
@@ -964,7 +964,7 @@ class CouchbaseSearch(VectorDb):
                     current_doc_id = batch_doc_ids[idx]
                     if isinstance(result, Exception):
                         total_failed_count += 1
-                        logger.error(f"[async] Error inserting document '{current_doc_id}': {result}")
+                        log_error(f"[async] Error inserting document '{current_doc_id}': {result}")
                     else:
                         # Assuming successful insert doesn't return a specific value we need to check further,
                         # or if it does, the absence of an exception means success.
@@ -1067,7 +1067,7 @@ class CouchbaseSearch(VectorDb):
                     current_doc_id = batch_doc_ids[idx]
                     if isinstance(result, Exception):
                         total_failed_count += 1
-                        logger.error(f"[async] Error upserting document '{current_doc_id}': {result}")
+                        log_error(f"[async] Error upserting document '{current_doc_id}': {result}")
                     else:
                         # Assuming successful upsert doesn't return a specific value we need to check further,
                         # or if it does, the absence of an exception means success.
@@ -1085,7 +1085,7 @@ class CouchbaseSearch(VectorDb):
             filters = None
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"[async] Failed to generate embedding for query: {query}")
+            log_error(f"[async] Failed to generate embedding for query: {query}")
             return []
         try:
             # Implement vector search using Couchbase FTS

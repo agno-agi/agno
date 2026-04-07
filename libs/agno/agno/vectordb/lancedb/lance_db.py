@@ -14,7 +14,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -346,7 +346,7 @@ class LanceDb(VectorDb):
             log_debug(f"Parsed document: {document.name} ({document.meta_data})")
 
         if self.table is None:
-            logger.error("Table not initialized. Please create the table first")
+            log_error("Table not initialized. Please create the table first")
             return
 
         if not data:
@@ -499,7 +499,7 @@ class LanceDb(VectorDb):
             List[Document]: List of matching documents
         """
         if self.table is None:
-            logger.error("Table not initialized")
+            log_error("Table not initialized")
             return []
 
         results = None
@@ -515,7 +515,7 @@ class LanceDb(VectorDb):
         elif self.search_type == SearchType.hybrid:
             results = self.hybrid_search(query, limit)
         else:
-            logger.error(f"Invalid search type '{self.search_type}'.")
+            log_error(f"Invalid search type '{self.search_type}'.")
             return []
 
         if results is None:
@@ -583,11 +583,11 @@ class LanceDb(VectorDb):
     ) -> Optional[List[Dict[str, Any]]]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return None
 
         if self.table is None:
-            logger.error("Table not initialized. Please create the table first")
+            log_error("Table not initialized. Please create the table first")
             return None  # type: ignore
 
         results = self.table.search(
@@ -605,11 +605,11 @@ class LanceDb(VectorDb):
     ) -> List[Dict[str, Any]]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         if self.table is None:
-            logger.error("Table not initialized. Please create the table first")
+            log_error("Table not initialized. Please create the table first")
             return []
 
         if not self.fts_index_exists:
@@ -635,7 +635,7 @@ class LanceDb(VectorDb):
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Dict[str, Any]]:
         if self.table is None:
-            logger.error("Table not initialized. Please create the table first")
+            log_error("Table not initialized. Please create the table first")
             return []
 
         if not self.fts_index_exists:
@@ -767,7 +767,7 @@ class LanceDb(VectorDb):
     def id_exists(self, id: str) -> bool:
         """Check if a document with the given ID exists in the database"""
         if self.table is None:
-            logger.error("Table not initialized")
+            log_error("Table not initialized")
             return False
 
         try:
@@ -780,7 +780,7 @@ class LanceDb(VectorDb):
     def delete_by_id(self, id: str) -> bool:
         """Delete content by ID."""
         if self.table is None:
-            logger.error("Table not initialized")
+            log_error("Table not initialized")
             return False
 
         try:
@@ -795,7 +795,7 @@ class LanceDb(VectorDb):
     def delete_by_name(self, name: str) -> bool:
         """Delete content by name."""
         if self.table is None:
-            logger.error("Table not initialized")
+            log_error("Table not initialized")
             return False
 
         try:
@@ -824,7 +824,7 @@ class LanceDb(VectorDb):
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
         """Delete content by metadata."""
         if self.table is None:
-            logger.error("Table not initialized")
+            log_error("Table not initialized")
             return False
 
         try:
@@ -863,7 +863,7 @@ class LanceDb(VectorDb):
     def delete_by_content_id(self, content_id: str) -> bool:
         """Delete content by content ID."""
         if self.table is None:
-            logger.error("Table not initialized")
+            log_error("Table not initialized")
             return False
 
         try:
@@ -894,7 +894,7 @@ class LanceDb(VectorDb):
     def _delete_by_content_hash(self, content_hash: str) -> bool:
         """Delete content by content hash."""
         if self.table is None:
-            logger.error("Table not initialized")
+            log_error("Table not initialized")
             return False
 
         try:
@@ -925,7 +925,7 @@ class LanceDb(VectorDb):
     def content_hash_exists(self, content_hash: str) -> bool:
         """Check if documents with the given content hash exist."""
         if self.table is None:
-            logger.error("Table not initialized")
+            log_error("Table not initialized")
             return False
 
         try:
@@ -955,7 +955,7 @@ class LanceDb(VectorDb):
 
         try:
             if self.table is None:
-                logger.error("Table not initialized")
+                log_error("Table not initialized")
                 return
 
             total_count = self.table.count_rows()

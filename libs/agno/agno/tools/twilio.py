@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 try:
     from twilio.base.exceptions import TwilioRestException
@@ -55,7 +55,7 @@ class TwilioTools(Toolkit):
 
         # Validate required credentials
         if not self.account_sid:
-            logger.error("TWILIO_ACCOUNT_SID not set. Please set the TWILIO_ACCOUNT_SID environment variable.")
+            log_error("TWILIO_ACCOUNT_SID not set. Please set the TWILIO_ACCOUNT_SID environment variable.")
 
         # Initialize client based on provided authentication method
         if self.api_key and self.api_secret:
@@ -76,7 +76,7 @@ class TwilioTools(Toolkit):
                 edge=self.edge or None,
             )
         else:
-            logger.error(
+            log_error(
                 "Neither (auth_token) nor (api_key and api_secret) provided. "
                 "Please set either TWILIO_AUTH_TOKEN or both TWILIO_API_KEY and TWILIO_API_SECRET environment variables."
             )
