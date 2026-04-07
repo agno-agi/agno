@@ -99,6 +99,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return InternLM(id=model_id)
 
+    elif model_provider == "kelly-intelligence":
+        from agno.models.kelly_intelligence import KellyIntelligence
+
+        return KellyIntelligence(id=model_id)
+
     elif model_provider == "langdb":
         from agno.models.langdb import LangDB
 
