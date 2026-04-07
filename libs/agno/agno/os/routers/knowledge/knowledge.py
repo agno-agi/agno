@@ -1383,7 +1383,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                     status_code=401,
                     detail="Invalid or missing AWS credentials for this source",
                 )
-            log_error(f"Error listing files from {type(config).__name__}: {e}")
+            log_error(f"Error listing files from {type(config).__name__}: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Failed to list files: {error_str}")
 
         return SourceFilesResponseSchema(

@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import logger
+from agno.utils.log import log_warning
 
 try:
     import numpy as np
@@ -41,7 +41,7 @@ class FastEmbedEmbedder(Embedder):
         try:
             return list(embedding_list)
         except Exception as e:
-            logger.warning(e)
+            log_warning(f"Failed to convert embedding list: {str(e)}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:

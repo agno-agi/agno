@@ -14,7 +14,7 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_router_selector, is_cel_expression
 from agno.workflow.step import Step
 from agno.workflow.types import (
@@ -458,9 +458,7 @@ class Router:
         # Handle CEL expression selector
         if isinstance(self.selector, str):
             if not CEL_AVAILABLE:
-                logger.error(
-                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
-                )
+                log_error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return []
             try:
                 step_names = list(self._step_name_map.keys())
@@ -468,8 +466,8 @@ class Router:
                     self.selector, step_input, session_state, step_choices=step_names
                 )
                 return self._resolve_selector_result(step_name)
-            except Exception as e:
-                logger.error(f"Router CEL evaluation failed: {e}")
+            except Exception:
+                logger.exception("Router CEL evaluation failed")
                 return []
 
         # Handle callable selector
@@ -495,9 +493,7 @@ class Router:
         # Handle CEL expression selector (CEL evaluation is synchronous)
         if isinstance(self.selector, str):
             if not CEL_AVAILABLE:
-                logger.error(
-                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
-                )
+                log_error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return []
             try:
                 step_names = list(self._step_name_map.keys())
@@ -505,8 +501,8 @@ class Router:
                     self.selector, step_input, session_state, step_choices=step_names
                 )
                 return self._resolve_selector_result(step_name)
-            except Exception as e:
-                logger.error(f"Router CEL evaluation failed: {e}")
+            except Exception:
+                logger.exception("Router CEL evaluation failed")
                 return []
 
         # Handle callable selector
@@ -627,7 +623,7 @@ class Router:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Router step {step_name} failed: {e}")
+                logger.exception(f"Router step {step_name} failed")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -777,7 +773,7 @@ class Router:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Router step {step_name} streaming failed: {e}")
+                logger.exception(f"Router step {step_name} streaming failed")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -904,7 +900,7 @@ class Router:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Router step {step_name} async failed: {e}")
+                logger.exception(f"Router step {step_name} async failed")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -1056,7 +1052,7 @@ class Router:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Router step {step_name} async streaming failed: {e}")
+                logger.exception(f"Router step {step_name} async streaming failed")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",

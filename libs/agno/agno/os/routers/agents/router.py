@@ -295,7 +295,7 @@ def get_agent_router(
                         base64_image = process_image(file)
                         base64_images.append(base64_image)
                     except Exception as e:
-                        log_error(f"Error processing image {file.filename}: {e}")
+                        log_error(f"Error processing image {file.filename}: {str(e)}")
                         continue
                 elif file.content_type in [
                     "audio/wav",
@@ -312,7 +312,9 @@ def get_agent_router(
                         audio = process_audio(file)
                         base64_audios.append(audio)
                     except Exception as e:
-                        log_error(f"Error processing audio {file.filename} with content type {file.content_type}: {e}")
+                        log_error(
+                            f"Error processing audio {file.filename} with content type {file.content_type}: {str(e)}"
+                        )
                         continue
                 elif file.content_type in [
                     "video/x-flv",
@@ -331,7 +333,7 @@ def get_agent_router(
                         base64_video = process_video(file)
                         base64_videos.append(base64_video)
                     except Exception as e:
-                        log_error(f"Error processing video {file.filename}: {e}")
+                        log_error(f"Error processing video {file.filename}: {str(e)}")
                         continue
                 elif file.content_type in [
                     "application/pdf",
@@ -356,7 +358,7 @@ def get_agent_router(
                         if input_file is not None:
                             input_files.append(input_file)
                     except Exception as e:
-                        log_error(f"Error processing file {file.filename}: {e}")
+                        log_error(f"Error processing file {file.filename}: {str(e)}")
                         continue
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")

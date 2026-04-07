@@ -14,7 +14,7 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_condition_evaluator, is_cel_expression
 from agno.workflow.step import Step
 from agno.workflow.types import OnReject, StepInput, StepOutput, StepRequirement, StepType
@@ -309,14 +309,12 @@ class Condition:
         if isinstance(self.evaluator, str):
             # CEL expression
             if not CEL_AVAILABLE:
-                logger.error(
-                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
-                )
+                log_error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return False
             try:
                 return evaluate_cel_condition_evaluator(self.evaluator, step_input, session_state)
-            except Exception as e:
-                logger.error(f"CEL expression evaluation failed: {e}")
+            except Exception:
+                logger.exception("CEL expression evaluation failed")
                 return False
 
         if callable(self.evaluator):
@@ -347,14 +345,12 @@ class Condition:
         if isinstance(self.evaluator, str):
             # CEL expression - CEL evaluation is synchronous
             if not CEL_AVAILABLE:
-                logger.error(
-                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
-                )
+                log_error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return False
             try:
                 return evaluate_cel_condition_evaluator(self.evaluator, step_input, session_state)
-            except Exception as e:
-                logger.error(f"CEL expression evaluation failed: {e}")
+            except Exception:
+                logger.exception("CEL expression evaluation failed")
                 return False
 
         if callable(self.evaluator):
@@ -526,7 +522,7 @@ class Condition:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} failed: {e}")
+                logger.exception(f"Condition step {step_name} failed")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -749,7 +745,7 @@ class Condition:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} streaming failed: {e}")
+                logger.exception(f"Condition step {step_name} streaming failed")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -917,7 +913,7 @@ class Condition:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} async failed: {e}")
+                logger.exception(f"Condition step {step_name} async failed")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -1141,7 +1137,7 @@ class Condition:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} async streaming failed: {e}")
+                logger.exception(f"Condition step {step_name} async streaming failed")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
