@@ -30,7 +30,7 @@ def get_vertexai_reasoning(
     try:
         reasoning_agent_response = reasoning_agent.run(input=messages)
     except Exception as e:
-        log_warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return None
 
     # Accumulate reasoning agent metrics into the parent run_metrics
@@ -67,7 +67,7 @@ async def aget_vertexai_reasoning(
     try:
         reasoning_agent_response = await reasoning_agent.arun(input=messages)
     except Exception as e:
-        log_warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return None
 
     # Accumulate reasoning agent metrics into the parent run_metrics
@@ -123,7 +123,7 @@ def get_vertexai_reasoning_stream(
                 elif event.event == RunEvent.run_completed:
                     pass
     except Exception as e:
-        log_warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return
 
     # Yield final message
@@ -165,7 +165,7 @@ async def aget_vertexai_reasoning_stream(
                 elif event.event == RunEvent.run_completed:
                     pass
     except Exception as e:
-        log_warning(f"Reasoning error: {e}")
+        log_warning(f"Reasoning error: {str(e)}")
         return
 
     # Yield final message

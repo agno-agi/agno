@@ -255,7 +255,7 @@ def _load_session(session_id: str, model_id: str, agent_creation_callback: Calla
                 logger.warning(f"No session found in database for session_id: {session_id}")
 
         except Exception as e:
-            log_warning(f"Could not load chat history: {e}")
+            log_warning(f"Could not load chat history: {str(e)}")
 
         st.rerun()
 

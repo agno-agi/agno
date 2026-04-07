@@ -256,7 +256,7 @@ class SlackTools(Toolkit):
             log_debug(f"File saved to: {file_path}")
             return str(file_path)
         except OSError as e:
-            log_warning(f"Failed to save file locally: {e}")
+            log_warning(f"Failed to save file locally: {str(e)}")
             return None
 
     def _format_search_results(self, results: Dict[str, Any], include_context: bool) -> Dict[str, Any]:
@@ -546,7 +546,7 @@ class SlackTools(Toolkit):
                     log_debug(f"File downloaded to: {save_path}")
                     result["path"] = str(save_path)
                 except OSError as e:
-                    log_warning(f"Failed to save file locally: {e}")
+                    log_warning(f"Failed to save file locally: {str(e)}")
                     result["content_base64"] = base64.b64encode(content).decode("utf-8")
             else:
                 result["content_base64"] = base64.b64encode(content).decode("utf-8")

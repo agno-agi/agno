@@ -247,7 +247,7 @@ def _try_fallback_models(
             _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             return result
         except ModelProviderError as e:
-            log_warning(f"Fallback model '{fallback.id}' also failed: {e}")
+            log_warning(f"Fallback model '{fallback.id}' also failed: {str(e)}")
             continue
     raise primary_error
 
@@ -268,7 +268,7 @@ async def _atry_fallback_models(
             _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             return result
         except ModelProviderError as e:
-            log_warning(f"Fallback model '{fallback.id}' also failed: {e}")
+            log_warning(f"Fallback model '{fallback.id}' also failed: {str(e)}")
             continue
     raise primary_error
 
@@ -288,7 +288,7 @@ def _try_fallback_models_stream(
             _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             return
         except ModelProviderError as e:
-            log_warning(f"Fallback model '{fallback.id}' also failed: {e}")
+            log_warning(f"Fallback model '{fallback.id}' also failed: {str(e)}")
             continue
     raise primary_error
 
@@ -309,6 +309,6 @@ async def _atry_fallback_models_stream(
             _notify_fallback(fallback_config, primary_model_id, fallback.id, primary_error)
             return
         except ModelProviderError as e:
-            log_warning(f"Fallback model '{fallback.id}' also failed: {e}")
+            log_warning(f"Fallback model '{fallback.id}' also failed: {str(e)}")
             continue
     raise primary_error

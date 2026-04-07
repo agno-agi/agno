@@ -24,7 +24,7 @@ if sys.version_info >= (3, 12):
                 valid_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
                 return original_load_config(*args, **valid_kwargs)
             except Exception as e:
-                log_warning(f"Error in patched_load_config: {e}")
+                log_warning(f"Error in patched_load_config: {str(e)}")
                 return {}
 
         # Replace the original function with our patched version
@@ -46,7 +46,7 @@ if sys.version_info >= (3, 12):
 
         logger.info("Applied comprehensive compatibility patch for Docker client on Python 3.12")
     except Exception as e:
-        log_warning(f"Failed to apply Docker client compatibility patch: {e}")
+        log_warning(f"Failed to apply Docker client compatibility patch: {str(e)}")
 
 try:
     import docker

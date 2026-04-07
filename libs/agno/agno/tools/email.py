@@ -37,8 +37,8 @@ class EmailTools(Toolkit):
         try:
             import smtplib
             from email.message import EmailMessage
-        except ImportError:
-            log_error("`smtplib` not installed")
+        except ImportError as e:
+            log_error(f"`smtplib` not installed: {str(e)}")
             raise
 
         if not self.receiver_email:

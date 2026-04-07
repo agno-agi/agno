@@ -196,8 +196,8 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
             },
         }
 
-    except Exception:
-        log_error("Error processing image")
+    except Exception as e:
+        log_error(f"Error processing image: {str(e)}")
         return None
 
 

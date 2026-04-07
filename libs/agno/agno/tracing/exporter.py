@@ -12,7 +12,8 @@ from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult  # typ
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.remote.base import RemoteDb
 from agno.tracing.schemas import Span, create_trace_from_spans
-from agno.utils.log import log_debug, log_warning, log_error
+from agno.utils.log import log_debug, log_error, log_warning
+
 
 class DatabaseSpanExporter(SpanExporter):
     """Custom OpenTelemetry SpanExporter that writes to Agno database"""
@@ -57,8 +58,8 @@ class DatabaseSpanExporter(SpanExporter):
                 try:
                     converted_span = Span.from_otel_span(span)
                     converted_spans.append(converted_span)
-                except Exception:
-                    log_error(f"Failed to convert span {span.name}")
+                except Exception as e:
+                    log_error(f"Failed to convert span {span.name}: {str(e)}")
                     # Continue processing other spans
                     continue
 
@@ -81,8 +82,8 @@ class DatabaseSpanExporter(SpanExporter):
                 self._export_sync(spans_by_trace)
 
             return SpanExportResult.SUCCESS
-        except Exception:
-            log_error("Failed to export spans to database")
+        except Exception as e:
+            log_error(f"Failed to export spans to database: {str(e)}")
             return SpanExportResult.FAILURE
 
     def _export_sync(self, spans_by_trace: Dict[str, List[Span]]) -> None:
@@ -98,8 +99,8 @@ class DatabaseSpanExporter(SpanExporter):
                 # Create span records
                 self.db.create_spans(spans)  # type: ignore
 
-        except Exception:
-            log_error("Failed to export sync traces")
+        except Exception as e:
+            log_error(f"Failed to export sync traces: {str(e)}")
             raise
 
     def _export_async(self, spans_by_trace: Dict[str, List[Span]]) -> None:
@@ -116,8 +117,8 @@ class DatabaseSpanExporter(SpanExporter):
             # No event loop, create new one
             try:
                 asyncio.run(self._do_async_export(spans_by_trace))
-            except Exception:
-                log_error("Failed to export async traces")
+            except Exception as e:
+                log_error(f"Failed to export async traces: {str(e)}")
 
     async def _do_async_export(self, spans_by_trace: Dict[str, List[Span]]) -> None:
         """Actually perform the async export"""
@@ -136,8 +137,8 @@ class DatabaseSpanExporter(SpanExporter):
                 if create_spans_result is not None:
                     await create_spans_result
 
-        except Exception:
-            log_error("Failed to do async export")
+        except Exception as e:
+            log_error(f"Failed to do async export: {str(e)}")
             raise
 
     def shutdown(self) -> None:

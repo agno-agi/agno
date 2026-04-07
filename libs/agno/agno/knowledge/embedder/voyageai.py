@@ -74,7 +74,7 @@ class VoyageAIEmbedder(Embedder):
             embedding = response.embeddings[0]
             return [float(x) for x in embedding]  # Ensure all values are float
         except Exception as e:
-            log_warning(f"Failed to get embedding: {e}")
+            log_warning(f"Failed to get embedding: {str(e)}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -101,7 +101,7 @@ class VoyageAIEmbedder(Embedder):
             embedding = response.embeddings[0]
             return [float(x) for x in embedding]  # Ensure all values are float
         except Exception as e:
-            log_warning(f"Error getting embedding: {e}")
+            log_warning(f"Error getting embedding: {str(e)}")
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -112,7 +112,7 @@ class VoyageAIEmbedder(Embedder):
             usage = {"total_tokens": response.total_tokens}
             return [float(x) for x in embedding], usage
         except Exception as e:
-            log_warning(f"Error getting embedding and usage: {e}")
+            log_warning(f"Error getting embedding and usage: {str(e)}")
             return [], None
 
     async def async_get_embeddings_batch_and_usage(
@@ -150,7 +150,7 @@ class VoyageAIEmbedder(Embedder):
                 usage_dict = {"total_tokens": response.total_tokens}
                 all_usage.extend([usage_dict] * len(batch_embeddings))
             except Exception as e:
-                log_warning(f"Error in async batch embedding: {e}")
+                log_warning(f"Error in async batch embedding: {str(e)}")
                 # Fallback to individual calls for this batch
                 for text in batch_texts:
                     try:

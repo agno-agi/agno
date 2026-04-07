@@ -553,10 +553,10 @@ class Parallel:
                         step_name = getattr(self.steps[step_idx], "name", f"step_{step_idx}")
                         log_debug(f"Parallel step {step_name} streaming completed")
 
-                except queue.Empty:
+                except queue.Empty as e:
                     for i, future in enumerate(futures):
                         if future.done() and future.exception():
-                            log_error(f"Parallel step {i} failed: {future.exception()}")
+                            log_error(f"Parallel step {i} failed: {future.exception()}: {str(e)}")
                             if completed_steps < total_steps:
                                 completed_steps += 1
                 except Exception:

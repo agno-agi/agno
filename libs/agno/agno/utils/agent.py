@@ -56,19 +56,19 @@ async def await_for_open_threads(
         try:
             await memory_task
         except Exception as e:
-            log_warning(f"Error in memory creation: {e}")
+            log_warning(f"Error in memory creation: {str(e)}")
 
     if cultural_knowledge_task is not None:
         try:
             await cultural_knowledge_task
         except Exception as e:
-            log_warning(f"Error in cultural knowledge creation: {e}")
+            log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
     if learning_task is not None:
         try:
             await learning_task
         except Exception as e:
-            log_warning(f"Error in learning extraction: {e}")
+            log_warning(f"Error in learning extraction: {str(e)}")
 
 
 def wait_for_open_threads(
@@ -80,20 +80,20 @@ def wait_for_open_threads(
         try:
             memory_future.result()
         except Exception as e:
-            log_warning(f"Error in memory creation: {e}")
+            log_warning(f"Error in memory creation: {str(e)}")
 
     # Wait for cultural knowledge creation
     if cultural_knowledge_future is not None:
         try:
             cultural_knowledge_future.result()
         except Exception as e:
-            log_warning(f"Error in cultural knowledge creation: {e}")
+            log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
     if learning_future is not None:
         try:
             learning_future.result()
         except Exception as e:
-            log_warning(f"Error in learning extraction: {e}")
+            log_warning(f"Error in learning extraction: {str(e)}")
 
 
 async def await_for_thread_tasks_stream(
@@ -125,7 +125,7 @@ async def await_for_thread_tasks_stream(
         try:
             await memory_task
         except Exception as e:
-            log_warning(f"Error in memory creation: {e}")
+            log_warning(f"Error in memory creation: {str(e)}")
         if stream_events:
             # Get memories after update if callback provided
             memories = None
@@ -138,7 +138,7 @@ async def await_for_thread_tasks_stream(
                     else:
                         memories = result
                 except Exception as e:
-                    log_warning(f"Error getting memories: {e}")
+                    log_warning(f"Error getting memories: {str(e)}")
 
             if isinstance(run_response, TeamRunOutput):
                 yield handle_event(  # type: ignore
@@ -159,13 +159,13 @@ async def await_for_thread_tasks_stream(
         try:
             await cultural_knowledge_task
         except Exception as e:
-            log_warning(f"Error in cultural knowledge creation: {e}")
+            log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
     if learning_task is not None:
         try:
             await learning_task
         except Exception as e:
-            log_warning(f"Error in learning extraction: {e}")
+            log_warning(f"Error in learning extraction: {str(e)}")
 
 
 def wait_for_thread_tasks_stream(
@@ -197,7 +197,7 @@ def wait_for_thread_tasks_stream(
         try:
             memory_future.result()
         except Exception as e:
-            log_warning(f"Error in memory creation: {e}")
+            log_warning(f"Error in memory creation: {str(e)}")
         if stream_events:
             # Get memories after update if callback provided
             memories = None
@@ -205,7 +205,7 @@ def wait_for_thread_tasks_stream(
                 try:
                     memories = get_memories_callback()
                 except Exception as e:
-                    log_warning(f"Error getting memories: {e}")
+                    log_warning(f"Error getting memories: {str(e)}")
 
             if isinstance(run_response, TeamRunOutput):
                 yield handle_event(  # type: ignore
@@ -228,13 +228,13 @@ def wait_for_thread_tasks_stream(
         try:
             cultural_knowledge_future.result()
         except Exception as e:
-            log_warning(f"Error in cultural knowledge creation: {e}")
+            log_warning(f"Error in cultural knowledge creation: {str(e)}")
 
     if learning_future is not None:
         try:
             learning_future.result()
         except Exception as e:
-            log_warning(f"Error in learning extraction: {e}")
+            log_warning(f"Error in learning extraction: {str(e)}")
 
 
 def collect_background_metrics(*futures_or_tasks: Any) -> List["RunMetrics"]:

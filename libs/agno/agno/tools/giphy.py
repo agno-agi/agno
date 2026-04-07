@@ -86,7 +86,7 @@ class GiphyTools(Toolkit):
                 return ToolResult(content="No gifs found")
 
         except httpx.HTTPStatusError as e:
-            log_error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}: {e}")
+            log_error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}: {str(e)}")
             return ToolResult(content=f"HTTP error occurred: {e.response.status_code}")
         except Exception as e:
             logger.exception("An error occurred")

@@ -104,7 +104,7 @@ async def resolve_slack_user(async_client: Any, slack_user_id: str) -> Tuple[str
 
         return (resolved_id, display_name)
     except Exception as e:
-        log_warning(f"Failed to resolve Slack user {slack_user_id}: {e}")
+        log_warning(f"Failed to resolve Slack user {slack_user_id}: {str(e)}")
         return (slack_user_id, None)
 
 
@@ -116,7 +116,7 @@ async def resolve_channel_name(async_client: Any, channel_id: str) -> Optional[s
         # API returns "" for unnamed channels; normalize to None
         return channel.get("name") or None
     except Exception as e:
-        log_warning(f"Failed to resolve channel name for {channel_id}: {e}")
+        log_warning(f"Failed to resolve channel name for {channel_id}: {str(e)}")
         return None
 
 
@@ -167,8 +167,8 @@ async def download_event_files_async(
                     # Pass None for unsupported types to avoid File validation errors
                     safe_mime = mimetype if mimetype in File.valid_mime_types() else None
                     files.append(File(content=file_content, filename=filename, mime_type=safe_mime))
-            except Exception:
-                log_error(f"Failed to download file {file_id}")
+            except Exception as e:
+                log_error(f"Failed to download file {file_id}: {str(e)}")
 
     return files, images, videos, audio, skipped
 
@@ -194,8 +194,8 @@ async def upload_response_media_async(async_client: Any, response: Any, channel_
                         filename=getattr(item, "filename", None) or default_name,
                         thread_ts=thread_ts,
                     )
-                except Exception:
-                    log_error(f"Failed to upload {attr.rstrip('s')}")
+                except Exception as e:
+                    log_error(f"Failed to upload {attr.rstrip('s')}: {str(e)}")
 
 
 async def send_slack_message_async(

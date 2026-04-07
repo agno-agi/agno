@@ -86,7 +86,7 @@ class SharePointLoader(BaseLoader):
             response.raise_for_status()
             return response.json().get("id")
         except httpx.HTTPStatusError as e:
-            log_error(f"Failed to get SharePoint site ID: {e.response.status_code} - {e.response.text}: {e}")
+            log_error(f"Failed to get SharePoint site ID: {e.response.status_code} - {e.response.text}: {str(e)}")
             return None
 
     async def _aget_sharepoint_site_id(
@@ -106,7 +106,7 @@ class SharePointLoader(BaseLoader):
                 response.raise_for_status()
                 return response.json().get("id")
         except httpx.HTTPStatusError as e:
-            log_error(f"Failed to get SharePoint site ID: {e.response.status_code} - {e.response.text}: {e}")
+            log_error(f"Failed to get SharePoint site ID: {e.response.status_code} - {e.response.text}: {str(e)}")
             return None
 
     def _list_sharepoint_folder_items(self, site_id: str, folder_path: str, access_token: str) -> List[dict]:
@@ -124,7 +124,7 @@ class SharePointLoader(BaseLoader):
                 items.extend(data.get("value", []))
                 url = data.get("@odata.nextLink")
         except httpx.HTTPStatusError as e:
-            log_error(f"Failed to list SharePoint folder: {e.response.status_code} - {e.response.text}: {e}")
+            log_error(f"Failed to list SharePoint folder: {e.response.status_code} - {e.response.text}: {str(e)}")
 
         return items
 
@@ -144,7 +144,7 @@ class SharePointLoader(BaseLoader):
                     items.extend(data.get("value", []))
                     url = data.get("@odata.nextLink")
         except httpx.HTTPStatusError as e:
-            log_error(f"Failed to list SharePoint folder: {e.response.status_code} - {e.response.text}: {e}")
+            log_error(f"Failed to list SharePoint folder: {e.response.status_code} - {e.response.text}: {str(e)}")
 
         return items
 
@@ -159,9 +159,7 @@ class SharePointLoader(BaseLoader):
             response.raise_for_status()
             return BytesIO(response.content)
         except httpx.HTTPStatusError as e:
-            log_error(
-                f"Failed to download SharePoint file {file_path}: {e.response.status_code} - {e.response.text}"
-            )
+            log_error(f"Failed to download SharePoint file {file_path}: {e.response.status_code} - {e.response.text}")
             return None
 
     async def _adownload_sharepoint_file(self, site_id: str, file_path: str, access_token: str) -> Optional[BytesIO]:
@@ -176,9 +174,7 @@ class SharePointLoader(BaseLoader):
                 response.raise_for_status()
                 return BytesIO(response.content)
         except httpx.HTTPStatusError as e:
-            log_error(
-                f"Failed to download SharePoint file {file_path}: {e.response.status_code} - {e.response.text}"
-            )
+            log_error(f"Failed to download SharePoint file {file_path}: {e.response.status_code} - {e.response.text}")
             return None
 
     def _build_sharepoint_metadata(
@@ -276,8 +272,8 @@ class SharePointLoader(BaseLoader):
                     else:
                         log_warning(f"SharePoint path {path_to_process} is neither file nor folder")
                         return
-            except Exception:
-                log_error(f"Error checking SharePoint path {path_to_process}")
+            except Exception as e:
+                log_error(f"Error checking SharePoint path {path_to_process}: {str(e)}")
                 return
 
         if not files_to_process:
@@ -392,8 +388,8 @@ class SharePointLoader(BaseLoader):
                     else:
                         log_warning(f"SharePoint path {path_to_process} is neither file nor folder")
                         return
-            except Exception:
-                log_error(f"Error checking SharePoint path {path_to_process}")
+            except Exception as e:
+                log_error(f"Error checking SharePoint path {path_to_process}: {str(e)}")
                 return
 
         if not files_to_process:

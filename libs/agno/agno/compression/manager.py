@@ -135,8 +135,8 @@ class CompressionManager:
                 accumulate_model_metrics(response, self.model, ModelType.COMPRESSION_MODEL, run_metrics)
 
             return response.content
-        except Exception:
-            log_error("Error compressing tool result")
+        except Exception as e:
+            log_error(f"Error compressing tool result: {str(e)}")
             return tool_content
 
     def compress(
@@ -240,8 +240,8 @@ class CompressionManager:
                 accumulate_model_metrics(response, self.model, ModelType.COMPRESSION_MODEL, run_metrics)
 
             return response.content
-        except Exception:
-            log_error("Error compressing tool result")
+        except Exception as e:
+            log_error(f"Error compressing tool result: {str(e)}")
             return tool_content
 
     async def acompress(

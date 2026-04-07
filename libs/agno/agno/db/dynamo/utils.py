@@ -153,8 +153,8 @@ def create_table_if_not_exists(dynamodb_client, table_name: str, schema: Dict[st
 
             return True
 
-        except Exception:
-            log_error(f"Failed to create table {table_name}")
+        except Exception as e:
+            log_error(f"Failed to create table {table_name}: {str(e)}")
             return False
 
 
@@ -305,8 +305,8 @@ def deserialize_session(session: Dict[str, Any]) -> Optional[Session]:
                 if isinstance(deserialized[field], str):
                     try:
                         deserialized[field] = json.loads(deserialized[field])
-                    except json.JSONDecodeError:
-                        log_error(f"Failed to deserialize {field} field")
+                    except json.JSONDecodeError as e:
+                        log_error(f"Failed to deserialize {field} field: {str(e)}")
                         deserialized[field] = None
 
         # Handle timestamp fields
@@ -322,8 +322,8 @@ def deserialize_session(session: Dict[str, Any]) -> Optional[Session]:
 
         return Session.from_dict(deserialized)  # type: ignore
 
-    except Exception:
-        log_error("Failed to deserialize session")
+    except Exception as e:
+        log_error(f"Failed to deserialize session: {str(e)}")
         return None
 
 
@@ -513,8 +513,8 @@ def fetch_all_sessions_data_by_type(
             response = dynamodb_client.query(**query_kwargs)
             items.extend(response.get("Items", []))
 
-    except Exception:
-        log_error("Failed to fetch sessions")
+    except Exception as e:
+        log_error(f"Failed to fetch sessions: {str(e)}")
 
     return items
 
@@ -535,8 +535,8 @@ def bulk_upsert_metrics(dynamodb_client, table_name: str, metrics_data: List[Dic
 
             dynamodb_client.batch_write_item(RequestItems=request_items)
 
-    except Exception:
-        log_error("Failed to bulk upsert metrics")
+    except Exception as e:
+        log_error(f"Failed to bulk upsert metrics: {str(e)}")
 
 
 # -- Query utils --
@@ -702,8 +702,8 @@ def process_query_results(
             item = deserialize_func(data)
             if item:
                 deserialized_items.append(item)
-        except Exception:
-            log_error("Failed to deserialize item")
+        except Exception as e:
+            log_error(f"Failed to deserialize item: {str(e)}")
 
     return deserialized_items
 

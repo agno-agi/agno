@@ -67,8 +67,8 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
                         encoded_string = base64.b64encode(audio_file.read()).decode("utf-8")
                     if not audio_format:
                         audio_format = path.suffix.lstrip(".")
-                except Exception:
-                    log_error(f"Failed to read audio file {path}")
+                except Exception as e:
+                    log_error(f"Failed to read audio file {path}: {str(e)}")
                     continue  # Skip this audio snippet if file reading fails
             else:
                 log_error(f"Audio file not found or is not a file: {path}")
@@ -112,8 +112,8 @@ def _process_image_path(
     try:
         with open(path, "rb") as image_file:
             image_data = image_file.read()
-    except Exception:
-        log_error(f"Failed to read image file {path}")
+    except Exception as e:
+        log_error(f"Failed to read image file {path}: {str(e)}")
         raise
 
     base64_image = base64.b64encode(image_data).decode("utf-8")
@@ -158,8 +158,8 @@ def process_image(image: Image) -> Optional[Dict[str, Any]]:
     except (FileNotFoundError, IsADirectoryError, ValueError):
         log_error("Failed to process image due to invalid input")
         return None  # Return None for handled validation errors
-    except Exception:
-        log_error("An unexpected error occurred while processing image")
+    except Exception as e:
+        log_error(f"An unexpected error occurred while processing image: {str(e)}")
         # Depending on policy, you might want to return None or re-raise
         return None  # Return None for unexpected errors as well, preventing crashes
 
@@ -188,8 +188,8 @@ def images_to_message(images: Sequence[Image]) -> List[Dict[str, Any]]:
             image_data = process_image(image)
             if image_data:
                 image_messages.append(image_data)
-        except Exception:
-            log_error("Failed to process image")
+        except Exception as e:
+            log_error(f"Failed to process image: {str(e)}")
             continue
 
     return image_messages

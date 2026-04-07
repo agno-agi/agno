@@ -7,7 +7,7 @@ from typing import Union
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.remote.base import RemoteDb
 from agno.tracing.exporter import DatabaseSpanExporter
-from agno.utils.log import log_info, log_debug, log_error
+from agno.utils.log import log_debug, log_error, log_info
 
 try:
     from openinference.instrumentation.agno import AgnoInstrumentor  # type: ignore
@@ -107,6 +107,6 @@ def setup_tracing(
         AgnoInstrumentor().instrument(tracer_provider=tracer_provider)
 
         log_info("Agno tracing successfully set up with database storage")
-    except Exception:
-        log_error("Failed to set up tracing")
+    except Exception as e:
+        log_error(f"Failed to set up tracing: {str(e)}")
         raise

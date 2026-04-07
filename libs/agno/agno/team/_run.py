@@ -407,7 +407,7 @@ def _run_tasks(
             try:
                 team.session_summary_manager.create_session_summary(session=session, run_metrics=run_response.metrics)
             except Exception as e:
-                log_warning(f"Error in session summary creation: {e}")
+                log_warning(f"Error in session summary creation: {str(e)}")
 
         raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -463,7 +463,7 @@ def _run_tasks(
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
             run_response.content = str(e)
-        log_error(f"Error in Team task run: {e}")
+        log_error(f"Error in Team task run: {str(e)}")
         _cleanup_and_store(team, run_response=run_response, session=session)
         return run_response
 
@@ -849,7 +849,7 @@ def _run_tasks_stream(
             try:
                 team.session_summary_manager.create_session_summary(session=session)
             except Exception as e:
-                log_warning(f"Error in session summary creation: {e}")
+                log_warning(f"Error in session summary creation: {str(e)}")
             if stream_events:
                 yield handle_event(  # type: ignore
                     create_team_session_summary_completed_event(
@@ -941,7 +941,7 @@ def _run_tasks_stream(
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
             run_response.content = str(e)
-        log_error(f"Error in Team task run (stream): {e}")
+        log_error(f"Error in Team task run (stream): {str(e)}")
         _cleanup_and_store(team, run_response=run_response, session=session)
         yield run_error
 
@@ -1206,7 +1206,7 @@ def _run(
                             session=session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
-                        log_warning(f"Error in session summary creation: {e}")
+                        log_warning(f"Error in session summary creation: {str(e)}")
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1275,7 +1275,7 @@ def _run(
                     else:
                         delay = team.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {e}")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
 
@@ -1287,7 +1287,7 @@ def _run(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_error(f"Error in Team run: {e}")
+                log_error(f"Error in Team run: {str(e)}")
 
                 # Cleanup and store the run response and session
                 _cleanup_and_store(team, run_response=run_response, session=session)
@@ -1623,7 +1623,7 @@ def _run_stream(
                             session=session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
-                        log_warning(f"Error in session summary creation: {e}")
+                        log_warning(f"Error in session summary creation: {str(e)}")
                     if stream_events:
                         yield handle_event(  # type: ignore
                             create_team_session_summary_completed_event(
@@ -1725,7 +1725,7 @@ def _run_stream(
                     else:
                         delay = team.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {e}")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
 
@@ -1735,7 +1735,7 @@ def _run_stream(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_error(f"Error in Team run: {e}")
+                log_error(f"Error in Team run: {str(e)}")
 
                 _cleanup_and_store(team, run_response=run_response, session=session)
                 yield run_error
@@ -2207,7 +2207,7 @@ async def _arun_tasks(
                     session=team_session, run_metrics=run_response.metrics
                 )
             except Exception as e:
-                log_warning(f"Error in session summary creation: {e}")
+                log_warning(f"Error in session summary creation: {str(e)}")
 
         await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -2265,7 +2265,7 @@ async def _arun_tasks(
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
             run_response.content = str(e)
-        log_error(f"Error in Team task run: {e}")
+        log_error(f"Error in Team task run: {str(e)}")
         if team_session is not None:
             await _acleanup_and_store(team, run_response=run_response, session=team_session)
         return run_response
@@ -2668,7 +2668,7 @@ async def _arun_tasks_stream(
             try:
                 await team.session_summary_manager.acreate_session_summary(session=team_session)
             except Exception as e:
-                log_warning(f"Error in session summary creation: {e}")
+                log_warning(f"Error in session summary creation: {str(e)}")
             if stream_events:
                 yield handle_event(  # type: ignore
                     create_team_session_summary_completed_event(
@@ -2766,7 +2766,7 @@ async def _arun_tasks_stream(
         run_response.events = add_team_error_event(error=run_error, events=run_response.events)
         if run_response.content is None:
             run_response.content = str(e)
-        log_error(f"Error in Team task run (async stream): {e}")
+        log_error(f"Error in Team task run (async stream): {str(e)}")
         if team_session is not None:
             await _acleanup_and_store(team, run_response=run_response, session=team_session)
         yield run_error
@@ -3064,7 +3064,7 @@ async def _arun(
                             session=team_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
-                        log_warning(f"Error in session summary creation: {e}")
+                        log_warning(f"Error in session summary creation: {str(e)}")
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -3133,7 +3133,7 @@ async def _arun(
                     else:
                         delay = team.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {e}")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -3144,7 +3144,7 @@ async def _arun(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_error(f"Error in Team run: {e}")
+                log_error(f"Error in Team run: {str(e)}")
 
                 # Cleanup and store the run response and session
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
@@ -3237,15 +3237,15 @@ async def _arun_background(
                 background_tasks=background_tasks,
                 **kwargs,
             )
-        except Exception:
-            log_error(f"Background run {run_response.run_id} failed")
+        except Exception as e:
+            log_error(f"Background run {run_response.run_id} failed: {str(e)}")
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
                 team_session.upsert_run(run_response=run_response)
                 await asave_session(team, session=team_session)
-            except Exception:
-                log_error(f"Failed to persist error state for background run {run_response.run_id}")
+            except Exception as e:
+                log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
             # Note: acleanup_run is already called by _arun's finally block
 
     task = asyncio.create_task(_background_task())
@@ -3594,7 +3594,7 @@ async def _arun_stream(
                             session=team_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
-                        log_warning(f"Error in session summary creation: {e}")
+                        log_warning(f"Error in session summary creation: {str(e)}")
                     if stream_events:
                         yield handle_event(  # type: ignore
                             create_team_session_summary_completed_event(
@@ -3703,7 +3703,7 @@ async def _arun_stream(
                     else:
                         delay = team.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {e}")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -3713,7 +3713,7 @@ async def _arun_stream(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_error(f"Error in Team run: {e}")
+                log_error(f"Error in Team run: {str(e)}")
 
                 # Cleanup and store the run response and session
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
@@ -4155,7 +4155,7 @@ def _resolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
 
             run_context.dependencies[key] = resolved_value
         except Exception as e:
-            log_warning(f"Failed to resolve dependencies for {key}: {e}")
+            log_warning(f"Failed to resolve dependencies for {key}: {str(e)}")
 
 
 async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
@@ -4190,7 +4190,7 @@ async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> N
 
             run_context.dependencies[key] = resolved_value
         except Exception as e:
-            log_warning(f"Failed to resolve context for '{key}': {e}")
+            log_warning(f"Failed to resolve context for '{key}': {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -5107,7 +5107,7 @@ def _continue_run(
                             session=session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
-                        log_warning(f"Error in session summary creation: {e}")
+                        log_warning(f"Error in session summary creation: {str(e)}")
 
                 # Complete
                 run_response.status = RunStatus.completed
@@ -5154,7 +5154,7 @@ def _continue_run(
                         delay = team.delay_between_retries * (2**attempt)
                     else:
                         delay = team.delay_between_retries
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {e}")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     _time.sleep(delay)
                     continue
 
@@ -5163,7 +5163,7 @@ def _continue_run(
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
-                log_error(f"Error in Team continue_run: {e}")
+                log_error(f"Error in Team continue_run: {str(e)}")
                 _cleanup_and_store(team, run_response=run_response, session=session)
                 return run_response
     finally:
@@ -5335,7 +5335,7 @@ def _continue_run_stream(
                             session=session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
-                        log_warning(f"Error in session summary creation: {e}")
+                        log_warning(f"Error in session summary creation: {str(e)}")
                     if stream_events:
                         yield handle_event(
                             create_team_session_summary_completed_event(
@@ -5418,7 +5418,7 @@ def _continue_run_stream(
                         delay = team.delay_between_retries * (2**attempt)
                     else:
                         delay = team.delay_between_retries
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {e}")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     _time.sleep(delay)
                     continue
 
@@ -5427,7 +5427,7 @@ def _continue_run_stream(
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
-                log_error(f"Error in Team continue_run stream: {e}")
+                log_error(f"Error in Team continue_run stream: {str(e)}")
                 _cleanup_and_store(team, run_response=run_response, session=session)
                 yield run_error
     finally:
@@ -5789,7 +5789,7 @@ async def _acontinue_run(
                             session=team_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
-                        log_warning(f"Error in session summary creation: {e}")
+                        log_warning(f"Error in session summary creation: {str(e)}")
 
                 run_response.status = RunStatus.completed
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
@@ -5834,7 +5834,7 @@ async def _acontinue_run(
                         delay = team.delay_between_retries * (2**attempt)
                     else:
                         delay = team.delay_between_retries
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {e}")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -5843,7 +5843,7 @@ async def _acontinue_run(
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
-                log_error(f"Error in Team acontinue_run: {e}")
+                log_error(f"Error in Team acontinue_run: {str(e)}")
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 return run_response
@@ -6161,7 +6161,7 @@ async def _acontinue_run_stream(
                             session=team_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
-                        log_warning(f"Error in session summary creation: {e}")
+                        log_warning(f"Error in session summary creation: {str(e)}")
                     if stream_events:
                         yield handle_event(
                             create_team_session_summary_completed_event(
@@ -6254,7 +6254,7 @@ async def _acontinue_run_stream(
                         delay = team.delay_between_retries * (2**attempt)
                     else:
                         delay = team.delay_between_retries
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {e}")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -6263,7 +6263,7 @@ async def _acontinue_run_stream(
                 run_response.events = add_team_error_event(error=run_error, events=run_response.events)
                 if run_response.content is None:
                     run_response.content = str(e)
-                log_error(f"Error in Team acontinue_run stream: {e}")
+                log_error(f"Error in Team acontinue_run stream: {str(e)}")
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 yield run_error

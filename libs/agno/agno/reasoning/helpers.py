@@ -34,7 +34,7 @@ def get_next_action(reasoning_step: ReasoningStep) -> NextAction:
         try:
             return NextAction(next_action)
         except ValueError as e:
-            log_warning(f"Reasoning error. Invalid next action: {next_action}: {e}")
+            log_warning(f"Reasoning error. Invalid next action: {next_action}: {str(e)}")
             return NextAction.FINAL_ANSWER
     return next_action
 

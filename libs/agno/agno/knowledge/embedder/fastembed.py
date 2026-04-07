@@ -41,7 +41,7 @@ class FastEmbedEmbedder(Embedder):
         try:
             return list(embedding_list)
         except Exception as e:
-            log_warning(f"Failed to convert embedding list: {e}")
+            log_warning(f"Failed to convert embedding list: {str(e)}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:

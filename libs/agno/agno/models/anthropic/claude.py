@@ -901,11 +901,11 @@ class Claude(Model):
                                 model_response.parsed = response_format.model_validate(parsed_data)
                                 log_debug(f"Successfully parsed structured output: {model_response.parsed}")
                             except json.JSONDecodeError as e:
-                                log_warning(f"Failed to parse JSON from structured output: {e}")
+                                log_warning(f"Failed to parse JSON from structured output: {str(e)}")
                             except ValidationError as e:
-                                log_warning(f"Failed to validate structured output against schema: {e}")
+                                log_warning(f"Failed to validate structured output against schema: {str(e)}")
                             except Exception as e:
-                                log_warning(f"Unexpected error parsing structured output: {e}")
+                                log_warning(f"Unexpected error parsing structured output: {str(e)}")
 
                     # Capture citations from the response
                     if block.citations is not None:
@@ -1122,11 +1122,11 @@ class Claude(Model):
                         model_response.parsed = response_format.model_validate(parsed_data)
                         log_debug(f"Successfully parsed structured output from stream: {model_response.parsed}")
                     except json.JSONDecodeError as e:
-                        log_warning(f"Failed to parse JSON from structured output in stream: {e}")
+                        log_warning(f"Failed to parse JSON from structured output in stream: {str(e)}")
                     except ValidationError as e:
-                        log_warning(f"Failed to validate structured output against schema in stream: {e}")
+                        log_warning(f"Failed to validate structured output against schema in stream: {str(e)}")
                     except Exception as e:
-                        log_warning(f"Unexpected error parsing structured output in stream: {e}")
+                        log_warning(f"Unexpected error parsing structured output in stream: {str(e)}")
 
             # Capture context management information if present
             if self.context_management is not None and hasattr(response.message, "context_management"):  # type: ignore
@@ -1176,8 +1176,8 @@ class Claude(Model):
                 and response.delta.text is not None
             ):
                 model_response.content = response.delta.text
-        except Exception:
-            log_error("Error parsing Beta response")
+        except Exception as e:
+            log_error(f"Error parsing Beta response: {str(e)}")
 
         return model_response
 

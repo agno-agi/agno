@@ -115,13 +115,13 @@ class CSVReader(Reader):
             return documents
         except FileNotFoundError:
             raise
-        except UnicodeDecodeError:
+        except UnicodeDecodeError as e:
             file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
-            log_error(f"Encoding error reading {file_desc}. Try specifying a different encoding.")
+            log_error(f"Encoding error reading {file_desc}. Try specifying a different encoding.: {str(e)}")
             return []
-        except Exception:
+        except Exception as e:
             file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
-            log_error(f"Error reading {file_desc}")
+            log_error(f"Error reading {file_desc}: {str(e)}")
             return []
 
     async def async_read(
@@ -205,11 +205,11 @@ class CSVReader(Reader):
             return documents
         except FileNotFoundError:
             raise
-        except UnicodeDecodeError:
+        except UnicodeDecodeError as e:
             file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
-            log_error(f"Encoding error reading {file_desc}. Try specifying a different encoding.")
+            log_error(f"Encoding error reading {file_desc}. Try specifying a different encoding.: {str(e)}")
             return []
-        except Exception:
+        except Exception as e:
             file_desc = getattr(file, "name", str(file)) if isinstance(file, IO) else file
-            log_error(f"Error reading {file_desc}")
+            log_error(f"Error reading {file_desc}: {str(e)}")
             return []

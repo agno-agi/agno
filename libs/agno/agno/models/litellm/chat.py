@@ -338,8 +338,8 @@ class LiteLLM(Model):
 
             assistant_message.metrics.stop_timer()
 
-        except Exception:
-            log_error("Error in streaming response")
+        except Exception as e:
+            log_error(f"Error in streaming response: {str(e)}")
             raise
 
     def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:

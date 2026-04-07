@@ -3,7 +3,8 @@ from typing import Any, Optional
 from pydantic import BaseModel, ConfigDict
 
 from agno.cloud.aws.s3.api_client import AwsApiClient
-from agno.utils.log import log_warning, log_debug, log_error
+from agno.utils.log import log_debug, log_error, log_warning
+
 
 class AwsResource(BaseModel):
     """Base class for AWS Resources."""

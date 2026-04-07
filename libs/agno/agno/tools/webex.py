@@ -8,8 +8,10 @@ from agno.utils.log import log_error, logger
 try:
     from webexpythonsdk import WebexAPI
     from webexpythonsdk.exceptions import ApiError
-except ImportError:
-    log_error("Webex tools require the `webexpythonsdk` package. Run `pip install webexpythonsdk` to install it.")
+except ImportError as e:
+    log_error(
+        f"Webex tools require the `webexpythonsdk` package. Run `pip install webexpythonsdk` to install it.: {str(e)}"
+    )
 
 
 class WebexTools(Toolkit):

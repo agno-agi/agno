@@ -41,7 +41,7 @@ class SentenceTransformerEmbedder(Embedder):
 
             return embedding  # type: ignore
         except Exception as e:
-            log_warning(f"Failed to get embedding: {e}")
+            log_warning(f"Failed to get embedding: {str(e)}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:

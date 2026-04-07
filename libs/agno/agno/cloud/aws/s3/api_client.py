@@ -31,7 +31,7 @@ class AwsApiClient:
             logger.debug(f"\taws_region: {self._boto3_session.region_name}")
             logger.debug(f"\taws_profile: {self._boto3_session.profile_name}")
         except Exception as e:
-            log_error(f"Could not connect to aws. Please confirm aws cli is installed and configured: {e}")
+            log_error(f"Could not connect to aws. Please confirm aws cli is installed and configured: {str(e)}")
             log_error(e)
             exit(0)
         return self._boto3_session

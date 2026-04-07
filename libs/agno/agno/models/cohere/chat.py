@@ -231,7 +231,7 @@ class Cohere(Model):
             return model_response
 
         except Exception as e:
-            log_error(f"Unexpected error calling Cohere API: {e}")
+            log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
@@ -265,7 +265,7 @@ class Cohere(Model):
             assistant_message.metrics.stop_timer()
 
         except Exception as e:
-            log_error(f"Unexpected error calling Cohere API: {e}")
+            log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
@@ -297,7 +297,7 @@ class Cohere(Model):
             return model_response
 
         except Exception as e:
-            log_error(f"Unexpected error calling Cohere API: {e}")
+            log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -331,7 +331,7 @@ class Cohere(Model):
             assistant_message.metrics.stop_timer()
 
         except Exception as e:
-            log_error(f"Unexpected error calling Cohere API: {e}")
+            log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def _parse_provider_response(self, response: V2ChatResponse, **kwargs) -> ModelResponse:

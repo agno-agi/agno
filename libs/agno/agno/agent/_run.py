@@ -148,7 +148,7 @@ def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
                     run_context.dependencies[key] = result
 
             except Exception as e:
-                log_warning(f"Failed to resolve dependencies for '{key}': {e}")
+                log_warning(f"Failed to resolve dependencies for '{key}': {str(e)}")
         else:
             run_context.dependencies[key] = value
 
@@ -182,7 +182,7 @@ async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> No
 
             run_context.dependencies[key] = result
         except Exception as e:
-            log_warning(f"Failed to resolve context for '{key}': {e}")
+            log_warning(f"Failed to resolve context for '{key}': {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -607,7 +607,7 @@ def _run(
                             session=agent_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
-                        log_warning(f"Error in session summary creation: {e}")
+                        log_warning(f"Error in session summary creation: {str(e)}")
 
                 run_response.status = RunStatus.completed
 
@@ -671,7 +671,7 @@ def _run(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {e}")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
 
@@ -681,7 +681,7 @@ def _run(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_error(f"Error in Agent run: {e}")
+                log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
@@ -1064,7 +1064,7 @@ def _run_stream(
                             session=agent_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
-                        log_warning(f"Error in session summary creation: {e}")
+                        log_warning(f"Error in session summary creation: {str(e)}")
                     if stream_events:
                         yield handle_event(  # type: ignore
                             create_session_summary_completed_event(
@@ -1176,7 +1176,7 @@ def _run_stream(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {e}")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
 
@@ -1189,7 +1189,7 @@ def _run_stream(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_error(f"Error in Agent run: {e}")
+                log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
@@ -1696,7 +1696,7 @@ async def _arun(
                             session=agent_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
-                        log_warning(f"Error in session summary creation: {e}")
+                        log_warning(f"Error in session summary creation: {str(e)}")
 
                 run_response.status = RunStatus.completed
 
@@ -1767,7 +1767,7 @@ async def _arun(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {e}")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -1777,7 +1777,7 @@ async def _arun(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_error(f"Error in Agent run: {e}")
+                log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
@@ -1884,15 +1884,15 @@ async def _arun_background(
                 background_tasks=background_tasks,
                 **kwargs,
             )
-        except Exception:
-            log_error(f"Background run {run_response.run_id} failed")
+        except Exception as e:
+            log_error(f"Background run {run_response.run_id} failed: {str(e)}")
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
                 agent_session.upsert_run(run=run_response)
                 await asave_session(agent, session=agent_session)
-            except Exception:
-                log_error(f"Failed to persist error state for background run {run_response.run_id}")
+            except Exception as e:
+                log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
             # Note: acleanup_run is already called by _arun's finally block
 
     task = asyncio.create_task(_background_task())
@@ -2264,7 +2264,7 @@ async def _arun_stream(
                             session=agent_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
-                        log_warning(f"Error in session summary creation: {e}")
+                        log_warning(f"Error in session summary creation: {str(e)}")
                     if stream_events:
                         yield handle_event(  # type: ignore
                             create_session_summary_completed_event(
@@ -2393,7 +2393,7 @@ async def _arun_stream(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {e}")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -2407,7 +2407,7 @@ async def _arun_stream(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_error(f"Error in Agent run: {e}")
+                log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
@@ -3020,7 +3020,7 @@ def _continue_run(
                             session=session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
-                        log_warning(f"Error in session summary creation: {e}")
+                        log_warning(f"Error in session summary creation: {str(e)}")
 
                 # Set the run status to completed
                 run_response.status = RunStatus.completed
@@ -3078,7 +3078,7 @@ def _continue_run(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {e}")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
                 run_response.status = RunStatus.error
@@ -3087,7 +3087,7 @@ def _continue_run(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_error(f"Error in Agent run: {e}")
+                log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
                 cleanup_and_store(
@@ -3254,7 +3254,7 @@ def _continue_run_stream(
                             session=session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
-                        log_warning(f"Error in session summary creation: {e}")
+                        log_warning(f"Error in session summary creation: {str(e)}")
 
                     if stream_events:
                         yield handle_event(  # type: ignore
@@ -3364,7 +3364,7 @@ def _continue_run_stream(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {e}")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
                 run_response.status = RunStatus.error
@@ -3376,7 +3376,7 @@ def _continue_run_stream(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_error(f"Error in Agent run: {e}")
+                log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
                 cleanup_and_store(
@@ -3799,7 +3799,7 @@ async def _acontinue_run(
                             session=agent_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
-                        log_warning(f"Error in session summary creation: {e}")
+                        log_warning(f"Error in session summary creation: {str(e)}")
 
                 # Set the run status to completed
                 run_response.status = RunStatus.completed
@@ -3876,7 +3876,7 @@ async def _acontinue_run(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {e}")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -3892,7 +3892,7 @@ async def _acontinue_run(
                 if run_response.content is None:  # type: ignore
                     run_response.content = str(e)  # type: ignore
 
-                log_error(f"Error in Agent run: {e}")
+                log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
@@ -4229,7 +4229,7 @@ async def _acontinue_run_stream(
                             session=agent_session, run_metrics=run_response.metrics
                         )
                     except Exception as e:
-                        log_warning(f"Error in session summary creation: {e}")
+                        log_warning(f"Error in session summary creation: {str(e)}")
                     if stream_events:
                         yield handle_event(  # type: ignore
                             create_session_summary_completed_event(
@@ -4363,7 +4363,7 @@ async def _acontinue_run_stream(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {e}")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -4377,7 +4377,7 @@ async def _acontinue_run_stream(
                 if run_response.content is None:
                     run_response.content = str(e)
 
-                log_error(f"Error in Agent run: {e}")
+                log_error(f"Error in Agent run: {str(e)}")
 
                 # Cleanup and store the run response and session
                 if agent_session is not None:
@@ -4447,7 +4447,7 @@ def save_run_response_to_file(
 
                 fn_path.write_text(json.dumps(run_response.content, indent=2))
         except Exception as e:
-            log_warning(f"Failed to save output to file: {e}")
+            log_warning(f"Failed to save output to file: {str(e)}")
 
 
 def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:

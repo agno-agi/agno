@@ -225,7 +225,7 @@ class ChromaDb(VectorDb):
                 log_debug(f"ChromaDB max batch size: {max_size}")
             except Exception as e:
                 # Fallback to conservative value if query fails
-                log_warning(f"Could not query ChromaDB max batch size. Using fallback: 100: {e}")
+                log_warning(f"Could not query ChromaDB max batch size. Using fallback: 100: {str(e)}")
                 self._batch_size = 100
         return self._batch_size
 
@@ -413,7 +413,7 @@ class ChromaDb(VectorDb):
                     logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -607,7 +607,7 @@ class ChromaDb(VectorDb):
                     logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -716,7 +716,7 @@ class ChromaDb(VectorDb):
             try:
                 search_results = self.reranker.rerank(query=query, documents=search_results)
             except Exception as e:
-                log_warning(f"Reranker failed, returning unranked results: {e}")
+                log_warning(f"Reranker failed, returning unranked results: {str(e)}")
 
         log_info(f"Found {len(search_results)} documents")
         return search_results
@@ -843,8 +843,8 @@ class ChromaDb(VectorDb):
                         score = 1.0 / (1.0 + distance)
                         ranked.append((doc_id, score))
                 return ranked
-            except Exception:
-                log_error("Error in vector search component")
+            except Exception as e:
+                log_error(f"Error in vector search component: {str(e)}")
                 return []
 
         def fts_search() -> List[Tuple[str, float]]:
@@ -879,8 +879,8 @@ class ChromaDb(VectorDb):
                 # Sort by score descending
                 ranked.sort(key=lambda x: x[1], reverse=True)
                 return ranked
-            except Exception:
-                log_error("Error in FTS search component")
+            except Exception as e:
+                log_error(f"Error in FTS search component: {str(e)}")
                 return []
 
         # Execute searches in parallel for better performance
@@ -909,8 +909,8 @@ class ChromaDb(VectorDb):
                 ids=top_ids,
                 include=["documents", "metadatas", "embeddings"],
             )
-        except Exception:
-            log_error("Error fetching full results")
+        except Exception as e:
+            log_error(f"Error fetching full results: {str(e)}")
             return []
 
         # Build lookup dict for results
@@ -1070,7 +1070,7 @@ class ChromaDb(VectorDb):
                     )
                 )
         except Exception as e:
-            log_error(f"Error building search results: {e}")
+            log_error(f"Error building search results: {str(e)}")
 
         return search_results
 
@@ -1157,7 +1157,7 @@ class ChromaDb(VectorDb):
                     )
                 )
         except Exception as e:
-            log_error(f"Error building get results: {e}")
+            log_error(f"Error building get results: {str(e)}")
 
         return search_results
 
@@ -1498,8 +1498,8 @@ class ChromaDb(VectorDb):
                 else:
                     raise te
 
-        except Exception:
-            log_error(f"Error updating metadata for content_id '{content_id}'")
+        except Exception as e:
+            log_error(f"Error updating metadata for content_id '{content_id}': {str(e)}")
             raise
 
     def get_supported_search_types(self) -> List[str]:

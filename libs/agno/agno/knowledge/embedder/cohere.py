@@ -159,7 +159,7 @@ class CohereEmbedder(Embedder):
                         await self._async_rate_limit_backoff_sleep(attempt)
                         continue
                     else:
-                        log_warning(f"Async max retries ({max_retries}) reached for rate limiting: {e}")
+                        log_warning(f"Async max retries ({max_retries}) reached for rate limiting: {str(e)}")
                         raise e
                 else:
                     log_debug(f"Async non-rate-limit error on attempt {attempt + 1}: {e}")
@@ -180,7 +180,7 @@ class CohereEmbedder(Embedder):
                 log_warning("No embeddings found")
                 return []
         except Exception as e:
-            log_warning(f"Failed to get embedding: {e}")
+            log_warning(f"Failed to get embedding: {str(e)}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
@@ -221,7 +221,7 @@ class CohereEmbedder(Embedder):
                 log_warning("No embeddings found")
                 return []
         except Exception as e:
-            log_warning(f"Failed to get embedding: {e}")
+            log_warning(f"Failed to get embedding: {str(e)}")
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
@@ -277,11 +277,11 @@ class CohereEmbedder(Embedder):
                 all_usage.extend(batch_usage)
 
             except Exception as e:
-                log_warning(f"Async batch embedding failed after retries: {e}")
+                log_warning(f"Async batch embedding failed after retries: {str(e)}")
 
                 # Check if this is a rate limit error and backoff is disabled
                 if self._is_rate_limit_error(e) and not self.exponential_backoff:
-                    log_warning(f"Rate limit hit and backoff is disabled. Failing immediately.: {e}")
+                    log_warning(f"Rate limit hit and backoff is disabled. Failing immediately.: {str(e)}")
                     raise e
 
                 # Only fall back to individual calls for non-rate-limit errors

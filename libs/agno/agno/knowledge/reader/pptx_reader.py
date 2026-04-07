@@ -90,14 +90,14 @@ class PPTXReader(Reader):
                 return chunked_documents
             return documents
 
-        except Exception:
-            log_error("Error reading file")
+        except Exception as e:
+            log_error(f"Error reading file: {str(e)}")
             return []
 
     async def async_read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         """Asynchronously read a pptx file and return a list of documents"""
         try:
             return await asyncio.to_thread(self.read, file, name)
-        except Exception:
-            log_error("Error reading file asynchronously")
+        except Exception as e:
+            log_error(f"Error reading file asynchronously: {str(e)}")
             return []

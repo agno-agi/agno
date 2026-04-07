@@ -49,5 +49,5 @@ class ShellTools(Toolkit):
                 return f"Error: {result.stderr}"
             return "\n".join(result.stdout.split("\n")[-tail:])
         except Exception as e:
-            log_warning(f"Failed to run shell command: {e}")
+            log_warning(f"Failed to run shell command: {str(e)}")
             return f"Error: {e}"

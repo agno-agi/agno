@@ -177,9 +177,9 @@ class SingleStoreDb(BaseDb):
 
             return table
 
-        except Exception:
+        except Exception as e:
             table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
-            log_error(f"Could not create table structure for {table_ref}")
+            log_error(f"Could not create table structure for {table_ref}: {str(e)}")
             raise
 
     def _create_all_tables(self):
@@ -314,8 +314,8 @@ class SingleStoreDb(BaseDb):
                     idx.create(self.db_engine)
 
                     log_debug(f"Created index: {idx.name} for table {table_ref}")
-                except Exception:
-                    log_error(f"Error creating index {idx.name}")
+                except Exception as e:
+                    log_error(f"Error creating index {idx.name}: {str(e)}")
 
             # Store the schema version for the created table
             if table_name != self.versions_table_name and table_created:
@@ -324,8 +324,8 @@ class SingleStoreDb(BaseDb):
 
             return table
 
-        except Exception:
-            log_error(f"Could not create table {table_ref}")
+        except Exception as e:
+            log_error(f"Could not create table {table_ref}: {str(e)}")
             raise
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
@@ -449,9 +449,9 @@ class SingleStoreDb(BaseDb):
         try:
             return self._create_table_structure_only(table_name=table_name, table_type=table_type)
 
-        except Exception:
+        except Exception as e:
             table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
-            log_error(f"Error loading existing table {table_ref}")
+            log_error(f"Error loading existing table {table_ref}: {str(e)}")
             raise
 
     def get_latest_schema_version(self, table_name: str) -> str:
@@ -523,7 +523,7 @@ class SingleStoreDb(BaseDb):
                     return True
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_error(f"Error deleting session: {str(e)}")
             raise e
 
     def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -551,7 +551,7 @@ class SingleStoreDb(BaseDb):
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_error(f"Error deleting sessions: {str(e)}")
             raise e
 
     def get_session(
@@ -607,7 +607,7 @@ class SingleStoreDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception reading from session table: {e}")
+            log_error(f"Exception reading from session table: {str(e)}")
             raise e
 
     def get_sessions(
@@ -712,7 +712,7 @@ class SingleStoreDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception reading from session table: {e}")
+            log_error(f"Exception reading from session table: {str(e)}")
             raise e
 
     def rename_session(
@@ -784,7 +784,7 @@ class SingleStoreDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Error renaming session: {e}")
+            log_error(f"Error renaming session: {str(e)}")
             raise e
 
     def upsert_session(self, session: Session, deserialize: Optional[bool] = True) -> Optional[Session]:
@@ -964,7 +964,7 @@ class SingleStoreDb(BaseDb):
                     return WorkflowSession.from_dict(row._mapping)
 
         except Exception as e:
-            log_error(f"Error upserting into sessions table: {e}")
+            log_error(f"Error upserting into sessions table: {str(e)}")
             raise e
 
     def upsert_sessions(
@@ -1162,8 +1162,8 @@ class SingleStoreDb(BaseDb):
 
             return results
 
-        except Exception:
-            log_error("Exception during bulk session upsert")
+        except Exception as e:
+            log_error(f"Exception during bulk session upsert: {str(e)}")
             return []
 
     # -- Memory methods --
@@ -1198,7 +1198,7 @@ class SingleStoreDb(BaseDb):
                     log_debug(f"No memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting memory: {e}")
+            log_error(f"Error deleting memory: {str(e)}")
             raise e
 
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -1225,7 +1225,7 @@ class SingleStoreDb(BaseDb):
                     log_debug(f"No memories found with ids: {memory_ids}")
 
         except Exception as e:
-            log_error(f"Error deleting memories: {e}")
+            log_error(f"Error deleting memories: {str(e)}")
             raise e
 
     def get_all_memory_topics(self) -> List[str]:
@@ -1253,7 +1253,7 @@ class SingleStoreDb(BaseDb):
                 return list(set(topics))
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             raise e
 
     def get_user_memory(
@@ -1294,7 +1294,7 @@ class SingleStoreDb(BaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             raise e
 
     def get_user_memories(
@@ -1378,7 +1378,7 @@ class SingleStoreDb(BaseDb):
             return [UserMemory.from_dict(record) for record in memories_raw]
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             raise e
 
     def get_user_memory_stats(
@@ -1447,7 +1447,7 @@ class SingleStoreDb(BaseDb):
                 ], total_count
 
         except Exception as e:
-            log_error(f"Exception getting user memory stats: {e}")
+            log_error(f"Exception getting user memory stats: {str(e)}")
             raise e
 
     def upsert_user_memory(
@@ -1518,7 +1518,7 @@ class SingleStoreDb(BaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Error upserting user memory: {e}")
+            log_error(f"Error upserting user memory: {str(e)}")
             raise e
 
     def upsert_memories(
@@ -1603,8 +1603,8 @@ class SingleStoreDb(BaseDb):
 
             return results
 
-        except Exception:
-            log_error("Exception during bulk memory upsert")
+        except Exception as e:
+            log_error(f"Exception during bulk memory upsert: {str(e)}")
             return []
 
     def clear_memories(self) -> None:
@@ -1622,7 +1622,7 @@ class SingleStoreDb(BaseDb):
                 sess.execute(table.delete())
 
         except Exception as e:
-            log_error(f"Exception deleting all memories: {e}")
+            log_error(f"Exception deleting all memories: {str(e)}")
             raise e
 
     # -- Metrics methods --
@@ -1664,8 +1664,8 @@ class SingleStoreDb(BaseDb):
                 result = sess.execute(stmt).fetchall()
                 return [record._mapping for record in result]
 
-        except Exception:
-            log_error("Exception reading from sessions table")
+        except Exception as e:
+            log_error(f"Exception reading from sessions table: {str(e)}")
             return []
 
     def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
@@ -1765,7 +1765,7 @@ class SingleStoreDb(BaseDb):
             return metrics_records
 
         except Exception as e:
-            log_error(f"Error calculating metrics: {e}")
+            log_error(f"Error calculating metrics: {str(e)}")
             raise e
 
     def get_metrics(
@@ -1807,7 +1807,7 @@ class SingleStoreDb(BaseDb):
             return [row._mapping for row in result], latest_updated_at
 
         except Exception as e:
-            log_error(f"Error getting metrics: {e}")
+            log_error(f"Error getting metrics: {str(e)}")
             raise e
 
     # -- Knowledge methods --
@@ -1829,7 +1829,7 @@ class SingleStoreDb(BaseDb):
 
             log_debug(f"Deleted knowledge content with id '{id}'")
         except Exception as e:
-            log_error(f"Error deleting knowledge content: {e}")
+            log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
@@ -1853,7 +1853,7 @@ class SingleStoreDb(BaseDb):
                     return None
                 return KnowledgeRow.model_validate(result._mapping)
         except Exception as e:
-            log_error(f"Error getting knowledge content: {e}")
+            log_error(f"Error getting knowledge content: {str(e)}")
             raise e
 
     def get_knowledge_contents(
@@ -1912,7 +1912,7 @@ class SingleStoreDb(BaseDb):
                 return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 
         except Exception as e:
-            log_error(f"Error getting knowledge contents: {e}")
+            log_error(f"Error getting knowledge contents: {str(e)}")
             raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -1957,7 +1957,7 @@ class SingleStoreDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge row: {e}")
+            log_error(f"Error upserting knowledge row: {str(e)}")
             raise e
 
     # -- Eval methods --
@@ -1991,7 +1991,7 @@ class SingleStoreDb(BaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_error(f"Error creating eval run: {str(e)}")
             raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
@@ -2014,7 +2014,7 @@ class SingleStoreDb(BaseDb):
                     log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+            log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
@@ -2037,7 +2037,7 @@ class SingleStoreDb(BaseDb):
                     log_debug(f"Deleted {result.rowcount} eval runs")
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_error(f"Error deleting eval runs {eval_run_ids}: {str(e)}")
             raise e
 
     def get_eval_run(
@@ -2075,7 +2075,7 @@ class SingleStoreDb(BaseDb):
                 return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}: {str(e)}")
             raise e
 
     def get_eval_runs(
@@ -2170,7 +2170,7 @@ class SingleStoreDb(BaseDb):
                 return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_error(f"Exception getting eval runs: {str(e)}")
             raise e
 
     def rename_eval_run(
@@ -2209,7 +2209,7 @@ class SingleStoreDb(BaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Error renaming eval run {eval_run_id}: {e}")
+            log_error(f"Error renaming eval run {eval_run_id}: {str(e)}")
             raise e
 
     # -- Culture methods --
@@ -2229,7 +2229,7 @@ class SingleStoreDb(BaseDb):
                 sess.execute(table.delete())
 
         except Exception as e:
-            log_warning(f"Exception deleting all cultural knowledge: {e}")
+            log_warning(f"Exception deleting all cultural knowledge: {str(e)}")
             raise e
 
     def delete_cultural_knowledge(self, id: str) -> None:
@@ -2257,7 +2257,7 @@ class SingleStoreDb(BaseDb):
                     log_debug(f"No cultural knowledge found with id: {id}")
 
         except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {e}")
+            log_error(f"Error deleting cultural knowledge: {str(e)}")
             raise e
 
     def get_cultural_knowledge(
@@ -2293,7 +2293,7 @@ class SingleStoreDb(BaseDb):
             return deserialize_cultural_knowledge_from_db(db_row)
 
         except Exception as e:
-            log_error(f"Exception reading from cultural knowledge table: {e}")
+            log_error(f"Exception reading from cultural knowledge table: {str(e)}")
             raise e
 
     def get_all_cultural_knowledge(
@@ -2367,7 +2367,7 @@ class SingleStoreDb(BaseDb):
             return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
 
         except Exception as e:
-            log_error(f"Error reading from cultural knowledge table: {e}")
+            log_error(f"Error reading from cultural knowledge table: {str(e)}")
             raise e
 
     def upsert_cultural_knowledge(
@@ -2425,7 +2425,7 @@ class SingleStoreDb(BaseDb):
             return self.get_cultural_knowledge(id=cultural_knowledge.id, deserialize=deserialize)
 
         except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
+            log_error(f"Error upserting cultural knowledge: {str(e)}")
             raise e
 
     # --- Traces ---
@@ -2562,8 +2562,8 @@ class SingleStoreDb(BaseDb):
                 )
                 sess.execute(upsert_stmt)
 
-        except Exception:
-            log_error("Error creating trace")
+        except Exception as e:
+            log_error(f"Error creating trace: {str(e)}")
             # Don't raise - tracing should not break the main application flow
 
     def get_trace(
@@ -2614,8 +2614,8 @@ class SingleStoreDb(BaseDb):
                     return Trace.from_dict(dict(result._mapping))
                 return None
 
-        except Exception:
-            log_error("Error getting trace")
+        except Exception as e:
+            log_error(f"Error getting trace: {str(e)}")
             return None
 
     def get_traces(
@@ -2704,8 +2704,8 @@ class SingleStoreDb(BaseDb):
                 traces = [Trace.from_dict(dict(row._mapping)) for row in results]
                 return traces, total_count
 
-        except Exception:
-            log_error("Error getting traces")
+        except Exception as e:
+            log_error(f"Error getting traces: {str(e)}")
             return [], 0
 
     def get_trace_stats(
@@ -2823,8 +2823,8 @@ class SingleStoreDb(BaseDb):
 
                 return stats_list, total_count
 
-        except Exception:
-            log_error("Error getting trace stats")
+        except Exception as e:
+            log_error(f"Error getting trace stats: {str(e)}")
             return [], 0
 
     # --- Spans ---
@@ -2843,8 +2843,8 @@ class SingleStoreDb(BaseDb):
                 stmt = mysql.insert(table).values(span.to_dict())
                 sess.execute(stmt)
 
-        except Exception:
-            log_error("Error creating span")
+        except Exception as e:
+            log_error(f"Error creating span: {str(e)}")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2865,8 +2865,8 @@ class SingleStoreDb(BaseDb):
                     stmt = mysql.insert(table).values(span.to_dict())
                     sess.execute(stmt)
 
-        except Exception:
-            log_error("Error creating spans batch")
+        except Exception as e:
+            log_error(f"Error creating spans batch: {str(e)}")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2891,8 +2891,8 @@ class SingleStoreDb(BaseDb):
                     return Span.from_dict(dict(result._mapping))
                 return None
 
-        except Exception:
-            log_error("Error getting span")
+        except Exception as e:
+            log_error(f"Error getting span: {str(e)}")
             return None
 
     def get_spans(
@@ -2933,8 +2933,8 @@ class SingleStoreDb(BaseDb):
                 results = sess.execute(stmt).fetchall()
                 return [Span.from_dict(dict(row._mapping)) for row in results]
 
-        except Exception:
-            log_error("Error getting spans")
+        except Exception as e:
+            log_error(f"Error getting spans: {str(e)}")
             return []
 
     # -- Learning methods (stubs) --

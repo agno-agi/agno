@@ -66,7 +66,7 @@ class Newspaper4kTools(Toolkit):
 
             return article_data
         except Exception as e:
-            log_warning(f"Error reading article from {url}: {e}")
+            log_warning(f"Error reading article from {url}: {str(e)}")
             return None
 
     def read_article(self, url: str) -> str:

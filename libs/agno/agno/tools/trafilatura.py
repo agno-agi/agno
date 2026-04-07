@@ -20,7 +20,7 @@ try:
         SPIDER_AVAILABLE = True
     except ImportError as e:
         SPIDER_AVAILABLE = False
-        log_warning(f"Trafilatura spider module not available. Web crawling functionality will be disabled.: {e}")
+        log_warning(f"Trafilatura spider module not available. Web crawling functionality will be disabled.: {str(e)}")
 
 
 except ImportError:
@@ -178,7 +178,7 @@ class TrafilaturaTools(Toolkit):
             return result
 
         except Exception as e:
-            log_warning(f"Error extracting text from {url}: {e}")
+            log_warning(f"Error extracting text from {url}: {str(e)}")
             return f"Error extracting text from {url}: {e}"
 
     def extract_metadata_only(
@@ -226,7 +226,7 @@ class TrafilaturaTools(Toolkit):
                 return "\n".join(f"{key}: {value}" for key, value in metadata_dict.items())
 
         except Exception as e:
-            log_warning(f"Error extracting metadata from {url}: {e}")
+            log_warning(f"Error extracting metadata from {url}: {str(e)}")
             return f"Error extracting metadata from {url}: {e}"
 
     def crawl_website(
@@ -301,7 +301,7 @@ class TrafilaturaTools(Toolkit):
             return json.dumps(crawl_results, indent=2, default=str)
 
         except Exception as e:
-            log_warning(f"Error crawling website {homepage_url}: {e}")
+            log_warning(f"Error crawling website {homepage_url}: {str(e)}")
             return f"Error crawling website {homepage_url}: {e}"
 
     def html_to_text(
@@ -330,7 +330,7 @@ class TrafilaturaTools(Toolkit):
             return result if result else "Error: Could not extract text from HTML content"
 
         except Exception as e:
-            log_warning(f"Error converting HTML to text: {e}")
+            log_warning(f"Error converting HTML to text: {str(e)}")
             return f"Error converting HTML to text: {e}"
 
     def extract_batch(
@@ -385,5 +385,5 @@ class TrafilaturaTools(Toolkit):
             return json.dumps(batch_results, indent=2, default=str)
 
         except Exception as e:
-            log_warning(f"Error in batch extraction: {e}")
+            log_warning(f"Error in batch extraction: {str(e)}")
             return f"Error in batch extraction: {e}"

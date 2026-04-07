@@ -729,7 +729,7 @@ class Step:
 
             except Exception as e:
                 self.retry_count = attempt + 1
-                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
+                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -1052,7 +1052,7 @@ class Step:
                 return
             except Exception as e:
                 self.retry_count = attempt + 1
-                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
+                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -1304,7 +1304,7 @@ class Step:
 
             except Exception as e:
                 self.retry_count = attempt + 1
-                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
+                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -1620,7 +1620,7 @@ class Step:
 
             except Exception as e:
                 self.retry_count = attempt + 1
-                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
+                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:

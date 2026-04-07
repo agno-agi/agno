@@ -81,7 +81,7 @@ class GroqTools(Toolkit):
             return str(transcription_text)
 
         except Exception as e:
-            log_error(f"Failed to transcribe audio source '{audio_source}' with Groq: {e}")
+            log_error(f"Failed to transcribe audio source '{audio_source}' with Groq: {str(e)}")
             return f"Failed to transcribe audio source '{audio_source}' with Groq: {str(e)}"
 
     def translate_audio(self, audio_source: str) -> str:
@@ -112,7 +112,7 @@ class GroqTools(Toolkit):
             return str(translation)
 
         except Exception as e:
-            log_error(f"Failed to translate audio source '{audio_source}' with Groq: {e}")
+            log_error(f"Failed to translate audio source '{audio_source}' with Groq: {str(e)}")
             return f"Failed to translate audio source '{audio_source}' with Groq: {str(e)}"
 
     def generate_speech(
@@ -154,5 +154,5 @@ class GroqTools(Toolkit):
             return ToolResult(content=f"Speech generated successfully with ID: {media_id}", audios=[audio_artifact])
 
         except Exception as e:
-            log_error(f"Failed to generate speech with Groq: {e}")
+            log_error(f"Failed to generate speech with Groq: {str(e)}")
             return ToolResult(content=f"Failed to generate speech with Groq: {str(e)}")

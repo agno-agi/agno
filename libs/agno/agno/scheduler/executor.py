@@ -199,7 +199,7 @@ class ScheduleExecutor:
             return final_run
 
         except asyncio.CancelledError as e:
-            log_warning(f"Schedule {schedule_id} execution cancelled: {e}")
+            log_warning(f"Schedule {schedule_id} execution cancelled: {str(e)}")
             if run_record_id is not None:
                 cancel_updates: Dict[str, Any] = {
                     "completed_at": int(time.time()),
@@ -437,7 +437,7 @@ class ScheduleExecutor:
             try:
                 data = resp.json()
             except (json.JSONDecodeError, ValueError) as e:
-                log_warning(f"Invalid JSON in poll response for run {run_id}: {e}")
+                log_warning(f"Invalid JSON in poll response for run {run_id}: {str(e)}")
                 continue
 
             run_status = data.get("status")

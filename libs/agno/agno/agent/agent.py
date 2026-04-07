@@ -1687,8 +1687,8 @@ def get_agent_by_id(
 
         return agent
 
-    except Exception:
-        log_error(f"Error loading Agent {id} from database")
+    except Exception as e:
+        log_error(f"Error loading Agent {id} from database: {str(e)}")
         return None
 
 
@@ -1724,6 +1724,6 @@ def get_agents(
                     agents.append(agent)
         return agents
 
-    except Exception:
-        log_error("Error loading Agents from database")
+    except Exception as e:
+        log_error(f"Error loading Agents from database: {str(e)}")
         return []

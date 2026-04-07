@@ -331,7 +331,7 @@ class AwsBedrock(Model):
                             else:
                                 tool_input = json.loads(arguments)
                         except (json.JSONDecodeError, KeyError) as e:
-                            log_warning(f"Failed to parse tool call arguments: {e}")
+                            log_warning(f"Failed to parse tool call arguments: {str(e)}")
                             tool_input = {}
 
                         tool_use_content.append(
@@ -461,7 +461,7 @@ class AwsBedrock(Model):
 
             return tokens
         except Exception as e:
-            log_warning(f"Failed to count tokens via Bedrock API: {e}")
+            log_warning(f"Failed to count tokens via Bedrock API: {str(e)}")
             return super().count_tokens(messages, tools, output_schema)
 
     async def acount_tokens(
@@ -491,7 +491,7 @@ class AwsBedrock(Model):
 
             return tokens
         except Exception as e:
-            log_warning(f"Failed to count tokens via Bedrock API: {e}")
+            log_warning(f"Failed to count tokens via Bedrock API: {str(e)}")
             return await super().acount_tokens(messages, tools, output_schema)
 
     def invoke(
@@ -534,10 +534,10 @@ class AwsBedrock(Model):
             return model_response
 
         except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {e}")
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {e}")
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
@@ -584,10 +584,10 @@ class AwsBedrock(Model):
             assistant_message.metrics.stop_timer()
 
         except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {e}")
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {e}")
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
@@ -633,10 +633,10 @@ class AwsBedrock(Model):
             return model_response
 
         except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {e}")
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {e}")
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -683,10 +683,10 @@ class AwsBedrock(Model):
             assistant_message.metrics.stop_timer()
 
         except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {e}")
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {e}")
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Overwrite the default from the base model

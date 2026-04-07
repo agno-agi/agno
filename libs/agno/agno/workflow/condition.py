@@ -309,9 +309,7 @@ class Condition:
         if isinstance(self.evaluator, str):
             # CEL expression
             if not CEL_AVAILABLE:
-                log_error(
-                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
-                )
+                log_error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return False
             try:
                 return evaluate_cel_condition_evaluator(self.evaluator, step_input, session_state)
@@ -347,9 +345,7 @@ class Condition:
         if isinstance(self.evaluator, str):
             # CEL expression - CEL evaluation is synchronous
             if not CEL_AVAILABLE:
-                log_error(
-                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
-                )
+                log_error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return False
             try:
                 return evaluate_cel_condition_evaluator(self.evaluator, step_input, session_state)

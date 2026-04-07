@@ -458,9 +458,7 @@ class Router:
         # Handle CEL expression selector
         if isinstance(self.selector, str):
             if not CEL_AVAILABLE:
-                log_error(
-                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
-                )
+                log_error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return []
             try:
                 step_names = list(self._step_name_map.keys())
@@ -495,9 +493,7 @@ class Router:
         # Handle CEL expression selector (CEL evaluation is synchronous)
         if isinstance(self.selector, str):
             if not CEL_AVAILABLE:
-                log_error(
-                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
-                )
+                log_error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return []
             try:
                 step_names = list(self._step_name_map.keys())

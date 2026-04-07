@@ -112,8 +112,8 @@ class ZepTools(Toolkit):
                 except NotFoundError:
                     try:
                         self.zep_client.user.add(user_id=self.user_id)  # type: ignore
-                    except BadRequestError:
-                        log_error(f"Failed to create provided user {self.user_id}")
+                    except BadRequestError as e:
+                        log_error(f"Failed to create provided user {self.user_id}: {str(e)}")
                         self.zep_client = None  # Reset client on failure
                         return False  # Initialization failed
 
@@ -127,8 +127,8 @@ class ZepTools(Toolkit):
             self._initialized = True
             return True
 
-        except Exception:
-            log_error("Failed to initialize ZepTools")
+        except Exception as e:
+            log_error(f"Failed to initialize ZepTools: {str(e)}")
             self.zep_client = None
             self._initialized = False
             return False
@@ -198,8 +198,8 @@ class ZepTools(Toolkit):
                 log_warning(warning_msg)
                 return warning_msg
 
-        except Exception:
-            log_error(f"Failed to get Zep memory for session {self.session_id}")
+        except Exception as e:
+            log_error(f"Failed to get Zep memory for session {self.session_id}: {str(e)}")
             return f"Error getting memory for session {self.session_id}"
 
     def search_zep_memory(self, query: str, search_scope: str = "edges") -> str:
@@ -235,7 +235,7 @@ class ZepTools(Toolkit):
                 return f"No {search_scope} found for query: {query}"
 
         except Exception as e:
-            log_error(f"Failed to search Zep graph for user {self.user_id}: {e}")
+            log_error(f"Failed to search Zep graph for user {self.user_id}: {str(e)}")
             return f"Error searching graph: {e}"
 
 
@@ -318,8 +318,8 @@ class ZepAsyncTools(Toolkit):
                 except NotFoundError:
                     try:
                         await self.zep_client.user.add(user_id=self.user_id)  # type: ignore
-                    except BadRequestError:
-                        log_error(f"Failed to create provided user {self.user_id}")
+                    except BadRequestError as e:
+                        log_error(f"Failed to create provided user {self.user_id}: {str(e)}")
                         self.zep_client = None  # Reset client on failure
                         return False  # Initialization failed
 
@@ -333,8 +333,8 @@ class ZepAsyncTools(Toolkit):
             self._initialized = True
             return True
 
-        except Exception:
-            log_error("Failed to initialize ZepTools")
+        except Exception as e:
+            log_error(f"Failed to initialize ZepTools: {str(e)}")
             self.zep_client = None
             self._initialized = False
             return False
@@ -450,5 +450,5 @@ class ZepAsyncTools(Toolkit):
                 return f"No {scope} found for query: {query}"
 
         except Exception as e:
-            log_error(f"Failed to search Zep graph for user {self.user_id}: {e}")
+            log_error(f"Failed to search Zep graph for user {self.user_id}: {str(e)}")
             return f"Error searching graph: {e}"

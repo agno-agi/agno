@@ -19,7 +19,9 @@ try:
     PDF_AVAILABLE = True
 except ImportError as e:
     PDF_AVAILABLE = False
-    log_warning(f"reportlab not installed. PDF generation will not be available. Install with: pip install reportlab: {e}")
+    log_warning(
+        f"reportlab not installed. PDF generation will not be available. Install with: pip install reportlab: {str(e)}"
+    )
 
 
 class FileGenerationTools(Toolkit):

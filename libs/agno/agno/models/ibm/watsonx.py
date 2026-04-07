@@ -193,7 +193,7 @@ class WatsonX(Model):
             return model_response
 
         except Exception as e:
-            log_error(f"Error calling WatsonX API: {e}")
+            log_error(f"Error calling WatsonX API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
@@ -230,7 +230,7 @@ class WatsonX(Model):
             return model_response
 
         except Exception as e:
-            log_error(f"Error calling WatsonX API: {e}")
+            log_error(f"Error calling WatsonX API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
@@ -266,7 +266,7 @@ class WatsonX(Model):
             assistant_message.metrics.stop_timer()
 
         except Exception as e:
-            log_error(f"Error calling WatsonX API: {e}")
+            log_error(f"Error calling WatsonX API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -304,7 +304,7 @@ class WatsonX(Model):
             assistant_message.metrics.stop_timer()
 
         except Exception as e:
-            log_error(f"Error in async streaming from WatsonX API: {e}")
+            log_error(f"Error in async streaming from WatsonX API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Override base method
@@ -371,7 +371,7 @@ class WatsonX(Model):
                 if parsed_object is not None:
                     model_response.parsed = parsed_object
         except Exception as e:
-            log_warning(f"Error retrieving structured outputs: {e}")
+            log_warning(f"Error retrieving structured outputs: {str(e)}")
 
         # Add role
         if response_message.get("role") is not None:
@@ -386,7 +386,7 @@ class WatsonX(Model):
             try:
                 model_response.tool_calls = response_message["tool_calls"]
             except Exception as e:
-                log_warning(f"Error processing tool calls: {e}")
+                log_warning(f"Error processing tool calls: {str(e)}")
 
         if response.get("usage") is not None:
             model_response.response_usage = self._get_metrics(response["usage"])

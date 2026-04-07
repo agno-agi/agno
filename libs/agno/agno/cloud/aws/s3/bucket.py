@@ -5,7 +5,7 @@ from typing_extensions import Literal
 from agno.cloud.aws.base import AwsResource
 from agno.cloud.aws.s3.api_client import AwsApiClient
 from agno.cloud.aws.s3.object import S3Object
-from agno.utils.log import log_warning, log_debug, log_error
+from agno.utils.log import log_debug, log_error, log_warning
 
 
 class S3Bucket(AwsResource):
@@ -101,7 +101,7 @@ class S3Bucket(AwsResource):
                 self.active_resource = response
                 return True
         except Exception as e:
-            log_error(f"{self.get_resource_type()} could not be created.: {e}")
+            log_error(f"{self.get_resource_type()} could not be created.: {str(e)}")
             log_error(e)
         return False
 
@@ -119,7 +119,7 @@ class S3Bucket(AwsResource):
                     },
                 )
             except Exception as e:
-                log_error(f"Waiter failed.: {e}")
+                log_error(f"Waiter failed.: {str(e)}")
                 log_error(e)
         return True
 
@@ -148,7 +148,7 @@ class S3Bucket(AwsResource):
         except ClientError as ce:
             log_debug(f"ClientError: {ce}")
         except Exception as e:
-            log_error(f"Error reading {self.get_resource_type()}.: {e}")
+            log_error(f"Error reading {self.get_resource_type()}.: {str(e)}")
             log_error(e)
         return self.active_resource
 
@@ -167,8 +167,8 @@ class S3Bucket(AwsResource):
             log_debug(f"Response: {response}")
             return True
         except Exception as e:
-            log_error(f"{self.get_resource_type()} could not be deleted.: {e}")
-            log_error(f"Please try again or delete resources manually.: {e}")
+            log_error(f"{self.get_resource_type()} could not be deleted.: {str(e)}")
+            log_error(f"Please try again or delete resources manually.: {str(e)}")
             log_error(e)
         return False
 

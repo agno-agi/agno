@@ -264,9 +264,9 @@ class CouchbaseSearch(VectorDb):
                     logger.info(f"Dropping existing FTS index '{self.search_index_name}'")
                     self._search_indexes_mng().drop_index(self.search_index_name)
                 except SearchIndexNotFoundException as e:
-                    log_warning(f"Index '{self.search_index_name}' does not exist: {e}")
+                    log_warning(f"Index '{self.search_index_name}' does not exist: {str(e)}")
                 except Exception as e:
-                    log_warning(f"Error dropping index (may not exist): {e}")
+                    log_warning(f"Error dropping index (may not exist): {str(e)}")
 
             self._search_indexes_mng().upsert_index(self.search_index_definition)
             logger.info(f"Created FTS index '{self.search_index_name}'")
@@ -824,9 +824,9 @@ class CouchbaseSearch(VectorDb):
                     logger.info(f"Dropping existing FTS index '{self.search_index_name}'")
                     await async_search_mng.drop_index(self.search_index_name)
                 except SearchIndexNotFoundException as e:
-                    log_warning(f"Index '{self.search_index_name}' does not exist: {e}")
+                    log_warning(f"Index '{self.search_index_name}' does not exist: {str(e)}")
                 except Exception as e:
-                    log_warning(f"Error dropping index (may not exist): {e}")
+                    log_warning(f"Error dropping index (may not exist): {str(e)}")
 
             await async_search_mng.upsert_index(self.search_index_definition)
             logger.info(f"Created FTS index '{self.search_index_name}'")
@@ -918,7 +918,7 @@ class CouchbaseSearch(VectorDb):
                     logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -1020,7 +1020,7 @@ class CouchbaseSearch(VectorDb):
                     logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -1431,7 +1431,7 @@ class CouchbaseSearch(VectorDb):
                     self.collection.upsert(doc_id, doc_content)
                     updated_count += 1
                 except Exception as e:
-                    log_warning(f"Failed to update document {doc_id}: {e}")
+                    log_warning(f"Failed to update document {doc_id}: {str(e)}")
 
             if updated_count == 0:
                 logger.debug(f"No documents found with content_id: {content_id}")

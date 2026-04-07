@@ -318,7 +318,7 @@ class Weaviate(VectorDb):
                     logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -363,7 +363,7 @@ class Weaviate(VectorDb):
                     log_debug(f"Inserted document asynchronously: {document.name}")
 
                 except Exception as e:
-                    log_error(f"Error inserting document {document.name}: {str(e)}: {e}")
+                    log_error(f"Error inserting document {document.name}: {str(e)}: {str(e)}")
         finally:
             await client.close()
 

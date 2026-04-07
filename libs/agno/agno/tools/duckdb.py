@@ -66,7 +66,7 @@ class DuckDbTools(Toolkit):
                         self._connection.sql(command)
             except Exception as e:
                 logger.exception(e)
-                log_warning(f"Failed to run duckdb init commands: {e}")
+                log_warning(f"Failed to run duckdb init commands: {str(e)}")
 
         return self._connection
 

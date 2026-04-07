@@ -933,8 +933,8 @@ class Workflow:
 
             return config.get("version")
 
-        except Exception:
-            log_error("Error saving workflow")
+        except Exception as e:
+            log_error(f"Error saving workflow: {str(e)}")
             return None
 
     @classmethod
@@ -1329,7 +1329,7 @@ class Workflow:
                 session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
             return session if isinstance(session, (WorkflowSession, type(None))) else None
         except Exception as e:
-            log_warning(f"Error getting session from db: {e}")
+            log_warning(f"Error getting session from db: {str(e)}")
             return None
 
     def _read_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
@@ -1340,7 +1340,7 @@ class Workflow:
             session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
             return session if isinstance(session, (WorkflowSession, type(None))) else None
         except Exception as e:
-            log_warning(f"Error getting session from db: {e}")
+            log_warning(f"Error getting session from db: {str(e)}")
             return None
 
     async def _aupsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
@@ -1351,7 +1351,7 @@ class Workflow:
             result = await self.db.upsert_session(session=session)  # type: ignore
             return result if isinstance(result, (WorkflowSession, type(None))) else None
         except Exception as e:
-            log_warning(f"Error upserting session into db: {e}")
+            log_warning(f"Error upserting session into db: {str(e)}")
             return None
 
     def _upsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
@@ -1362,7 +1362,7 @@ class Workflow:
             result = self.db.upsert_session(session=session)
             return result if isinstance(result, (WorkflowSession, type(None))) else None
         except Exception as e:
-            log_warning(f"Error upserting session into db: {e}")
+            log_warning(f"Error upserting session into db: {str(e)}")
             return None
 
     def _update_metadata(self, session: WorkflowSession):
@@ -2451,7 +2451,9 @@ class Workflow:
                 return await func(**call_kwargs)  # type: ignore
         except TypeError as e:
             # If signature inspection fails, fall back to original method
-            log_warning(f"Async function signature inspection failed. Falling back to original calling convention.: {e}")
+            log_warning(
+                f"Async function signature inspection failed. Falling back to original calling convention.: {str(e)}"
+            )
 
             if isasyncgenfunction(func):
                 # For async generators, use the same signature inspection logic in fallback
@@ -7295,7 +7297,7 @@ class Workflow:
                         try:
                             fields_for_new_workflow[f.name] = copy(field_value)
                         except Exception as e:
-                            log_warning(f"Failed to copy field: {f.name}: {e}")
+                            log_warning(f"Failed to copy field: {f.name}: {str(e)}")
                             fields_for_new_workflow[f.name] = field_value
                 # For pydantic models, attempt a model_copy
                 elif isinstance(field_value, BaseModel):
@@ -7322,8 +7324,8 @@ class Workflow:
             new_workflow = self.__class__(**fields_for_new_workflow)
             log_debug(f"Created new {self.__class__.__name__}")
             return new_workflow
-        except Exception:
-            log_error(f"Failed to create deep copy of {self.__class__.__name__}")
+        except Exception as e:
+            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {str(e)}")
             raise
 
     def _deep_copy_steps(self, steps: Any) -> Any:
@@ -7496,8 +7498,8 @@ def get_workflow_by_id(
 
         return workflow
 
-    except Exception:
-        log_error(f"Error loading Workflow {id} from database")
+    except Exception as e:
+        log_error(f"Error loading Workflow {id} from database: {str(e)}")
         return None
 
 
@@ -7527,12 +7529,12 @@ def get_workflows(
                         workflow._version = component.get("current_version")
                         workflow._stage = config.get("stage")
                         workflows.append(workflow)
-            except Exception:
+            except Exception as e:
                 component_id = component.get("component_id", "unknown")
-                log_error(f"Error loading Workflow {component_id} from database")
+                log_error(f"Error loading Workflow {component_id} from database: {str(e)}")
                 continue
         return workflows
 
-    except Exception:
-        log_error("Error loading Workflows from database")
+    except Exception as e:
+        log_error(f"Error loading Workflows from database: {str(e)}")
         return []

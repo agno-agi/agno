@@ -153,8 +153,8 @@ def bulk_upsert_metrics(
                 results.append(result)
         return results
 
-    except Exception:
-        log_error("Error upserting metrics")
+    except Exception as e:
+        log_error(f"Error upserting metrics: {str(e)}")
 
     return []
 

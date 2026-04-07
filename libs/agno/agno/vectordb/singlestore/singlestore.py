@@ -125,8 +125,8 @@ class SingleStore(VectorDb):
         log_debug(f"Checking if table exists: {self.table.name}")
         try:
             return inspect(self.db_engine).has_table(self.table.name, schema=self.schema)
-        except Exception:
-            log_error("Unexpected error")
+        except Exception as e:
+            log_error(f"Unexpected error: {str(e)}")
             return False
 
     def content_hash_exists(self, content_hash: str) -> bool:
@@ -364,8 +364,8 @@ class SingleStore(VectorDb):
             if neighbor.embedding:
                 try:
                     embedding_list = json.loads(neighbor.embedding)
-                except Exception:
-                    log_error("Error extracting vector")
+                except Exception as e:
+                    log_error(f"Error extracting vector: {str(e)}")
                     embedding_list = []
 
             search_results.append(
@@ -444,8 +444,8 @@ class SingleStore(VectorDb):
                 result = sess.execute(stmt)  # type: ignore
                 log_info(f"Deleted {result.rowcount} records with ID {id} from table '{self.table.name}'.")  # type: ignore
                 return result.rowcount > 0  # type: ignore
-        except Exception:
-            log_error(f"Error deleting document with ID {id}")
+        except Exception as e:
+            log_error(f"Error deleting document with ID {id}: {str(e)}")
             return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
@@ -462,8 +462,8 @@ class SingleStore(VectorDb):
                     f"Deleted {result.rowcount} records with content_id {content_id} from table '{self.table.name}'."  # type: ignore
                 )
                 return result.rowcount > 0  # type: ignore
-        except Exception:
-            log_error(f"Error deleting document with content_id {content_id}")
+        except Exception as e:
+            log_error(f"Error deleting document with content_id {content_id}: {str(e)}")
             return False
 
     def delete_by_name(self, name: str) -> bool:
@@ -478,8 +478,8 @@ class SingleStore(VectorDb):
                 result = sess.execute(stmt)  # type: ignore
                 log_info(f"Deleted {result.rowcount} records with name '{name}' from table '{self.table.name}'.")  # type: ignore
                 return result.rowcount > 0  # type: ignore
-        except Exception:
-            log_error(f"Error deleting document with name {name}")
+        except Exception as e:
+            log_error(f"Error deleting document with name {name}: {str(e)}")
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
@@ -496,8 +496,8 @@ class SingleStore(VectorDb):
                 result = sess.execute(stmt)  # type: ignore
                 log_info(f"Deleted {result.rowcount} records with metadata {metadata} from table '{self.table.name}'.")  # type: ignore
                 return result.rowcount > 0  # type: ignore
-        except Exception:
-            log_error(f"Error deleting documents with metadata {metadata}")
+        except Exception as e:
+            log_error(f"Error deleting documents with metadata {metadata}: {str(e)}")
             return False
 
     async def async_create(self) -> None:
@@ -524,8 +524,8 @@ class SingleStore(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception:
-                        log_error(f"Error assigning batch embedding to document '{doc.name}'")
+                    except Exception as e:
+                        log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -536,10 +536,10 @@ class SingleStore(VectorDb):
                 )
 
                 if is_rate_limit:
-                    log_error(f"Rate limit detected during batch embedding.: {e}")
+                    log_error(f"Rate limit detected during batch embedding.: {str(e)}")
                     raise e
                 else:
-                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -610,8 +610,8 @@ class SingleStore(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception:
-                        log_error(f"Error assigning batch embedding to document '{doc.name}'")
+                    except Exception as e:
+                        log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -622,10 +622,10 @@ class SingleStore(VectorDb):
                 )
 
                 if is_rate_limit:
-                    log_error(f"Rate limit detected during batch embedding.: {e}")
+                    log_error(f"Rate limit detected during batch embedding.: {str(e)}")
                     raise e
                 else:
-                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -711,8 +711,8 @@ class SingleStore(VectorDb):
                     f"Deleted {result.rowcount} records with content_hash '{content_hash}' from table '{self.table.name}'."  # type: ignore
                 )
                 return result.rowcount > 0  # type: ignore
-        except Exception:
-            log_error(f"Error deleting documents with content_hash {content_hash}")
+        except Exception as e:
+            log_error(f"Error deleting documents with content_hash {content_hash}: {str(e)}")
             return False
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
@@ -762,8 +762,8 @@ class SingleStore(VectorDb):
                 else:
                     log_debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
-        except Exception:
-            log_error(f"Error updating metadata for content_id '{content_id}'")
+        except Exception as e:
+            log_error(f"Error updating metadata for content_id '{content_id}': {str(e)}")
             raise
 
     def get_supported_search_types(self) -> List[str]:

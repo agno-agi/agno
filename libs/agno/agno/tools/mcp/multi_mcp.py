@@ -111,7 +111,7 @@ class MultiMCPTools(Toolkit):
                 # Just verify we can inspect the signature - no parameter requirements
                 inspect.signature(header_provider)
             except Exception as e:
-                log_warning(f"Could not validate header_provider signature: {e}")
+                log_warning(f"Could not validate header_provider signature: {str(e)}")
 
         if server_params_list is None and commands is None and urls is None:
             raise ValueError("Either server_params_list or commands or urls must be provided")
@@ -253,7 +253,7 @@ class MultiMCPTools(Toolkit):
                     # Function takes no parameters
                     return header_provider()
         except Exception as e:
-            log_warning(f"Error calling header_provider: {e}")
+            log_warning(f"Error calling header_provider: {str(e)}")
             return {}
 
     async def _cleanup_stale_sessions(self) -> None:
@@ -519,7 +519,7 @@ class MultiMCPTools(Toolkit):
                 if not self.allow_partial_failure:
                     raise ValueError(f"MCP connection failed: {e}")
 
-                log_error(f"Failed to initialize MCP server with params {server_params}: {e}")
+                log_error(f"Failed to initialize MCP server with params {server_params}: {str(e)}")
                 server_connection_errors.append(str(e))
                 continue
 
@@ -616,8 +616,8 @@ class MultiMCPTools(Toolkit):
                     # Register the Function with the toolkit
                     self.functions[f.name] = f
                     log_debug(f"Function: {f.name} registered with {self.name}")
-                except Exception:
-                    log_error(f"Failed to register tool {tool.name}")
+                except Exception as e:
+                    log_error(f"Failed to register tool {tool.name}: {str(e)}")
                     raise
 
     async def initialize(self, session: ClientSession, server_idx: int = 0) -> None:
@@ -633,6 +633,6 @@ class MultiMCPTools(Toolkit):
             self._session_to_server_idx[session_list_idx] = server_idx
 
             self._initialized = True
-        except Exception:
-            log_error("Failed to get MCP tools")
+        except Exception as e:
+            log_error(f"Failed to get MCP tools: {str(e)}")
             raise

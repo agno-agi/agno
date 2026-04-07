@@ -111,7 +111,7 @@ class WebSearchReader(Reader):
                 return results
 
             except Exception as e:
-                log_warning(f"DuckDuckGo search attempt {attempt + 1} failed: {e}")
+                log_warning(f"DuckDuckGo search attempt {attempt + 1} failed: {str(e)}")
                 if "rate limit" in str(e).lower() or "429" in str(e):
                     # Rate limited - wait longer
                     wait_time = (
@@ -163,7 +163,7 @@ class WebSearchReader(Reader):
             return text
 
         except Exception as e:
-            log_warning(f"Error extracting text from {url}: {e}")
+            log_warning(f"Error extracting text from {url}: {str(e)}")
             return html_content
 
     def _fetch_url_content(self, url: str) -> Optional[str]:
@@ -184,7 +184,7 @@ class WebSearchReader(Reader):
                     return response.text
 
             except Exception as e:
-                log_warning(f"Attempt {attempt + 1} failed for {url}: {e}")
+                log_warning(f"Attempt {attempt + 1} failed for {url}: {str(e)}")
                 if attempt < self.max_retries - 1:
                     time.sleep(random.uniform(1, 3))  # Random delay between retries
                 continue
@@ -303,7 +303,7 @@ class WebSearchReader(Reader):
                     return self._create_document_from_url(url, content, result)
 
             except Exception as e:
-                log_warning(f"Error fetching {url}: {e}")
+                log_warning(f"Error fetching {url}: {str(e)}")
                 return None
 
         documents = []

@@ -72,7 +72,7 @@ def create_schema(session: Session, db_schema: str) -> None:
         log_debug(f"Creating schema if not exists: {db_schema}")
         session.execute(text(f"CREATE SCHEMA IF NOT EXISTS {db_schema};"))
     except Exception as e:
-        log_warning(f"Could not create schema {db_schema}: {e}")
+        log_warning(f"Could not create schema {db_schema}: {str(e)}")
 
 
 def is_table_available(session: Session, table_name: str, db_schema: Optional[str]) -> bool:
@@ -102,8 +102,8 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
 
         return exists
 
-    except Exception:
-        log_error("Error checking if table exists")
+    except Exception as e:
+        log_error(f"Error checking if table exists: {str(e)}")
         return False
 
 
@@ -146,9 +146,9 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
 
         return True
 
-    except Exception:
+    except Exception as e:
         table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
-        log_error(f"Error validating table schema for {table_ref}")
+        log_error(f"Error validating table schema for {table_ref}: {str(e)}")
         return False
 
 

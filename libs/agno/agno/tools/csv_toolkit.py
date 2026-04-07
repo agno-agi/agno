@@ -47,7 +47,7 @@ class CsvTools(Toolkit):
 
                 tools.append(self.query_csv_file)
             except ImportError as e:
-                log_warning(f"`duckdb` not installed. Query functionality disabled.: {e}")
+                log_warning(f"`duckdb` not installed. Query functionality disabled.: {str(e)}")
 
         super().__init__(name="csv_tools", tools=tools, **kwargs)
 

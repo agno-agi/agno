@@ -566,7 +566,7 @@ class MemoryManager:
             self.db.upsert_user_memory(memory=memory)
             return "Memory added successfully"
         except Exception as e:
-            log_warning(f"Error storing memory in db: {e}")
+            log_warning(f"Error storing memory in db: {str(e)}")
             return "Error adding memory"
 
     def _delete_db_memory(self, memory_id: str, user_id: Optional[str] = None) -> str:
@@ -581,7 +581,7 @@ class MemoryManager:
             self.db.delete_user_memory(memory_id=memory_id, user_id=user_id)
             return "Memory deleted successfully"
         except Exception as e:
-            log_warning(f"Error deleting memory in db: {e}")
+            log_warning(f"Error deleting memory in db: {str(e)}")
             return "Error deleting memory"
 
     # -*- Utility Functions
@@ -716,7 +716,7 @@ class MemoryManager:
                     log_warning("Failed to convert memory_search response to MemorySearchResponse")
                     return []
             except Exception as e:
-                log_warning(f"Failed to convert memory_search response to MemorySearchResponse: {e}")
+                log_warning(f"Failed to convert memory_search response to MemorySearchResponse: {str(e)}")
                 return []
 
         memories_to_return = []
@@ -951,7 +951,7 @@ class MemoryManager:
                 _functions.append(func)
                 log_debug(f"Added function {func.name}")
             except Exception as e:
-                log_warning(f"Could not add function {tool}: {e}")
+                log_warning(f"Could not add function {tool}: {str(e)}")
 
         return _functions
 
@@ -1356,7 +1356,7 @@ class MemoryManager:
                 log_debug(f"Memory added: {memory_id}")
                 return "Memory added successfully"
             except Exception as e:
-                log_warning(f"Error storing memory in db: {e}")
+                log_warning(f"Error storing memory in db: {str(e)}")
                 return "Error adding memory"
 
         def update_memory(memory_id: str, memory: str, topics: Optional[List[str]] = None) -> str:
@@ -1386,7 +1386,7 @@ class MemoryManager:
                 log_debug("Memory updated")
                 return "Memory updated successfully"
             except Exception as e:
-                log_warning(f"Error storing memory in db: {e}")
+                log_warning(f"Error storing memory in db: {str(e)}")
                 return "Error adding memory"
 
         def delete_memory(memory_id: str) -> str:
@@ -1401,7 +1401,7 @@ class MemoryManager:
                 log_debug("Memory deleted")
                 return "Memory deleted successfully"
             except Exception as e:
-                log_warning(f"Error deleting memory in db: {e}")
+                log_warning(f"Error deleting memory in db: {str(e)}")
                 return "Error deleting memory"
 
         def clear_memory() -> str:
@@ -1478,7 +1478,7 @@ class MemoryManager:
                 log_debug(f"Memory added: {memory_id}")
                 return "Memory added successfully"
             except Exception as e:
-                log_warning(f"Error storing memory in db: {e}")
+                log_warning(f"Error storing memory in db: {str(e)}")
                 return "Error adding memory"
 
         async def update_memory(memory_id: str, memory: str, topics: Optional[List[str]] = None) -> str:
@@ -1517,7 +1517,7 @@ class MemoryManager:
                 log_debug("Memory updated")
                 return "Memory updated successfully"
             except Exception as e:
-                log_warning(f"Error storing memory in db: {e}")
+                log_warning(f"Error storing memory in db: {str(e)}")
                 return "Error adding memory"
 
         async def delete_memory(memory_id: str) -> str:
@@ -1535,7 +1535,7 @@ class MemoryManager:
                 log_debug("Memory deleted")
                 return "Memory deleted successfully"
             except Exception as e:
-                log_warning(f"Error deleting memory in db: {e}")
+                log_warning(f"Error deleting memory in db: {str(e)}")
                 return "Error deleting memory"
 
         async def clear_memory() -> str:
