@@ -312,6 +312,9 @@ class TestPaginationAndSorting:
         assert resp.status_code == 200
         data, _ = _get_data(resp)
         assert len(data) >= 3
+        created_times = [s.get("created_at") for s in data if s.get("created_at")]
+        if len(created_times) >= 2:
+            assert created_times[0] >= created_times[-1]
 
 
 class TestSessionSchema:
@@ -869,15 +872,16 @@ class TestPaginationEdgeCases:
     """Edge cases for pagination parameters."""
 
     def test_page_zero_behavior(self, db_with_sessions):
-        """page=0 is allowed (ge=0 in query param), but results in negative offset."""
+        """page=0 is allowed (ge=0 in query param) and returns empty data due to negative offset."""
         db, *_ = db_with_sessions
         client = _build_client(db)
 
-        # page=0 will compute start_idx = (0-1)*limit = negative, which slices from end
-        # This is a potential edge case in the InMemoryDb pagination logic
+        # page=0 computes start_idx = (0-1)*limit = negative, resulting in empty slice
         resp = client.get("/sessions?user_id=user-1&page=0&limit=2")
-        # Should return 200 regardless (the implementation handles this gracefully)
         assert resp.status_code == 200
+        data, meta = _get_data(resp)
+        assert len(data) == 0
+        assert meta.get("total_count", 0) >= 3
 
     def test_large_page_returns_empty(self, db_with_sessions):
         db, *_ = db_with_sessions

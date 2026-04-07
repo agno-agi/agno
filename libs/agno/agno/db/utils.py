@@ -198,7 +198,7 @@ def serialize_session_json_fields(session: dict) -> dict:
     datetime, date, UUID, Message, Metrics, etc.
 
     Args:
-        data (dict): The dictionary to serialize JSON fields in.
+        session (dict): The session dictionary to serialize JSON fields in.
 
     Returns:
         dict: The dictionary with JSON fields serialized.

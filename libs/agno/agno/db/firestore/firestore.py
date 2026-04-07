@@ -321,7 +321,7 @@ class FirestoreDb(BaseDb):
             session_id (str): The ID of the session to get.
             session_type (Optional[SessionType]): The type of session to get. If None, the type is inferred.
             user_id (Optional[str]): The ID of the user to get the session for.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Union[Session, Dict[str, Any], None]:
@@ -462,7 +462,7 @@ class FirestoreDb(BaseDb):
             sessions = deserialize_sessions(session_type, sessions_raw)
 
             if not sessions:
-                return [] if deserialize else ([], 0)
+                return []
 
             return sessions
 

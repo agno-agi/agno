@@ -510,7 +510,7 @@ def get_mcp_server(
         if isinstance(db, RemoteDb):
             result = await db.update_session(
                 session_id=session_id,
-                session_type=session_type,  # type: ignore[arg-type]
+                session_type=session_type,
                 session_name=session_name,
                 session_state=session_state,
                 metadata=metadata,

@@ -542,20 +542,22 @@ class DynamoDb(BaseDb):
             if not current_item:
                 return None
 
+            # Deserialize the item once and reuse
+            item_data = deserialize_from_dynamodb_item(current_item)
+
             # Verify user_id if provided
             if user_id is not None:
-                item_data = deserialize_from_dynamodb_item(current_item)
                 if item_data.get("user_id") != user_id:
                     return None
 
             # Update session_data with the new session_name
-            session_data = deserialize_from_dynamodb_item(current_item).get("session_data", {})
+            session_data = item_data.get("session_data", {})
             session_data["session_name"] = session_name
             attr_values: Dict[str, Any] = {
                 ":session_data": {"S": json.dumps(session_data)},
                 ":updated_at": {"N": str(int(time.time()))},
             }
-            condition_parts: list[str] = []
+            condition_parts: List[str] = []
             if session_type is not None:
                 attr_values[":session_type"] = {"S": session_type.value}
                 condition_parts.append("session_type = :session_type")
