@@ -154,7 +154,7 @@ def create_table_if_not_exists(dynamodb_client, table_name: str, schema: Dict[st
             return True
 
         except Exception as e:
-            log_error(f"Failed to create table {table_name}: {e}")
+            log_error(f"Failed to create table {table_name}: {str(e)}")
             return False
 
 
@@ -470,7 +470,7 @@ def fetch_all_sessions_data_by_type(
             items.extend(response.get("Items", []))
 
     except Exception as e:
-        log_error(f"Failed to fetch sessions: {e}")
+        log_error(f"Failed to fetch sessions: {str(e)}")
 
     return items
 
@@ -492,7 +492,7 @@ def bulk_upsert_metrics(dynamodb_client, table_name: str, metrics_data: List[Dic
             dynamodb_client.batch_write_item(RequestItems=request_items)
 
     except Exception as e:
-        log_error(f"Failed to bulk upsert metrics: {e}")
+        log_error(f"Failed to bulk upsert metrics: {str(e)}")
 
 
 # -- Query utils --
@@ -659,7 +659,7 @@ def process_query_results(
             if item:
                 deserialized_items.append(item)
         except Exception as e:
-            log_error(f"Failed to deserialize item: {e}")
+            log_error(f"Failed to deserialize item: {str(e)}")
 
     return deserialized_items
 

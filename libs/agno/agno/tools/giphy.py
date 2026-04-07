@@ -9,7 +9,7 @@ from agno.media import Image
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 
 class GiphyTools(Toolkit):
@@ -31,7 +31,7 @@ class GiphyTools(Toolkit):
         """
         self.api_key = api_key or getenv("GIPHY_API_KEY")
         if not self.api_key:
-            logger.error("No Giphy API key provided")
+            log_error("No Giphy API key provided")
 
         self.limit: int = limit
 
@@ -86,8 +86,8 @@ class GiphyTools(Toolkit):
                 return ToolResult(content="No gifs found")
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
+            log_error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}: {str(e)}")
             return ToolResult(content=f"HTTP error occurred: {e.response.status_code}")
         except Exception as e:
-            logger.error(f"An error occurred: {e}")
+            logger.exception("An error occurred")
             return ToolResult(content=f"An error occurred: {e}")

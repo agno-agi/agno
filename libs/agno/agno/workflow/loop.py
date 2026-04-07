@@ -16,7 +16,7 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_loop_end_condition, is_cel_expression
 from agno.workflow.step import Step
 from agno.workflow.types import OnReject, StepInput, StepOutput, StepRequirement, StepType
@@ -228,23 +228,21 @@ class Loop:
 
         if isinstance(self.end_condition, str):
             if not CEL_AVAILABLE:
-                logger.error(
-                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
-                )
+                log_error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return False
             try:
                 return evaluate_cel_loop_end_condition(
                     self.end_condition, iteration_results, current_iteration, self.max_iterations
                 )
             except Exception as e:
-                logger.warning(f"CEL end condition evaluation failed: {e}")
+                log_warning(f"CEL end condition evaluation failed: {str(e)}")
                 return False
 
         if callable(self.end_condition):
             try:
                 return self.end_condition(iteration_results)
             except Exception as e:
-                logger.warning(f"End condition evaluation failed: {e}")
+                log_warning(f"End condition evaluation failed: {str(e)}")
                 return False
 
         return False
@@ -256,16 +254,14 @@ class Loop:
 
         if isinstance(self.end_condition, str):
             if not CEL_AVAILABLE:
-                logger.error(
-                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
-                )
+                log_error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return False
             try:
                 return evaluate_cel_loop_end_condition(
                     self.end_condition, iteration_results, current_iteration, self.max_iterations
                 )
             except Exception as e:
-                logger.warning(f"CEL end condition evaluation failed: {e}")
+                log_warning(f"CEL end condition evaluation failed: {str(e)}")
                 return False
 
         if callable(self.end_condition):
@@ -275,7 +271,7 @@ class Loop:
                 else:
                     return self.end_condition(iteration_results)
             except Exception as e:
-                logger.warning(f"End condition evaluation failed: {e}")
+                log_warning(f"End condition evaluation failed: {str(e)}")
                 return False
 
         return False

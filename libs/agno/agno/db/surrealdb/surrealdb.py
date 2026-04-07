@@ -1198,7 +1198,7 @@ class SurrealDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception refreshing metrics: {e}")
+            log_error(f"Exception refreshing metrics: {str(e)}")
             raise e
 
     # --- Knowledge ---
@@ -1570,7 +1570,7 @@ class SurrealDb(BaseDb):
                 )
 
         except Exception as e:
-            log_error(f"Error creating trace: {e}")
+            log_error(f"Error creating trace: {str(e)}")
 
     def get_trace(
         self,
@@ -1628,7 +1628,7 @@ class SurrealDb(BaseDb):
             return self._deserialize_trace(trace_data)
 
         except Exception as e:
-            log_error(f"Error getting trace: {e}")
+            log_error(f"Error getting trace: {str(e)}")
             return None
 
     def get_traces(
@@ -1721,7 +1721,7 @@ class SurrealDb(BaseDb):
             return result_traces, total_count
 
         except Exception as e:
-            log_error(f"Error getting traces: {e}")
+            log_error(f"Error getting traces: {str(e)}")
             return [], 0
 
     def get_trace_stats(
@@ -1816,7 +1816,7 @@ class SurrealDb(BaseDb):
             return stats_list, total_count
 
         except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+            log_error(f"Error getting trace stats: {str(e)}")
             return [], 0
 
     def _deserialize_trace(self, trace_data: dict) -> "Trace":
@@ -1864,7 +1864,7 @@ class SurrealDb(BaseDb):
             )
 
         except Exception as e:
-            log_error(f"Error creating span: {e}")
+            log_error(f"Error creating span: {str(e)}")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -1897,7 +1897,7 @@ class SurrealDb(BaseDb):
                 )
 
         except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+            log_error(f"Error creating spans batch: {str(e)}")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -1919,7 +1919,7 @@ class SurrealDb(BaseDb):
             return self._deserialize_span(span_data)
 
         except Exception as e:
-            log_error(f"Error getting span: {e}")
+            log_error(f"Error getting span: {str(e)}")
             return None
 
     def get_spans(
@@ -1963,7 +1963,7 @@ class SurrealDb(BaseDb):
             return [self._deserialize_span(s) for s in spans_raw]
 
         except Exception as e:
-            log_error(f"Error getting spans: {e}")
+            log_error(f"Error getting spans: {str(e)}")
             return []
 
     def _deserialize_span(self, span_data: dict) -> "Span":

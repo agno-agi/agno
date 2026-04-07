@@ -300,7 +300,7 @@ class Steps:
             )
 
         except Exception as e:
-            logger.error(f"Steps execution failed: {e}")
+            logger.exception("Steps execution failed")
             return StepOutput(
                 step_name=self.name or "Steps",
                 content=f"Steps execution failed: {str(e)}",
@@ -452,7 +452,7 @@ class Steps:
             )
 
         except Exception as e:
-            logger.error(f"Steps streaming failed: {e}")
+            logger.exception("Steps streaming failed")
             error_result = StepOutput(
                 step_name=self.name or "Steps",
                 content=f"Steps execution failed: {str(e)}",
@@ -549,7 +549,7 @@ class Steps:
             )
 
         except Exception as e:
-            logger.error(f"Async steps execution failed: {e}")
+            logger.exception("Async steps execution failed")
             return StepOutput(
                 step_name=self.name or "Steps",
                 content=f"Steps execution failed: {str(e)}",
@@ -700,7 +700,7 @@ class Steps:
             )
 
         except Exception as e:
-            logger.error(f"Async steps streaming failed: {e}")
+            logger.exception("Async steps streaming failed")
             error_result = StepOutput(
                 step_name=self.name or "Steps",
                 content=f"Steps execution failed: {str(e)}",

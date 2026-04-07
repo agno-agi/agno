@@ -385,7 +385,7 @@ class SqliteDb(BaseDb):
                     log_debug(f"Created index: {idx.name} for table {table_name}")
 
                 except Exception as e:
-                    log_warning(f"Error creating index {idx.name}: {e}")
+                    log_warning(f"Error creating index {idx.name}: {str(e)}")
 
             # Store the schema version for the created table
             if table_name != self.versions_table_name and table_created:
@@ -398,7 +398,7 @@ class SqliteDb(BaseDb):
             from traceback import print_exc
 
             print_exc()
-            log_error(f"Could not create table '{table_name}': {e}")
+            log_error(f"Could not create table '{table_name}': {str(e)}")
             raise e
 
     def _resolve_fk_reference(self, fk_ref: str) -> str:
@@ -614,7 +614,7 @@ class SqliteDb(BaseDb):
             return table
 
         except Exception as e:
-            log_error(f"Error loading existing table {table_name}: {e}")
+            log_error(f"Error loading existing table {table_name}: {str(e)}")
             raise e
 
     def get_latest_schema_version(self, table_name: str):
@@ -684,7 +684,7 @@ class SqliteDb(BaseDb):
                     return True
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_error(f"Error deleting session: {str(e)}")
             raise e
 
     def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -712,7 +712,7 @@ class SqliteDb(BaseDb):
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_error(f"Error deleting sessions: {str(e)}")
             raise e
 
     def get_session(
@@ -908,7 +908,7 @@ class SqliteDb(BaseDb):
             return self.upsert_session(session, deserialize=deserialize)
 
         except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+            log_error(f"Exception renaming session: {str(e)}")
             raise e
 
     def upsert_session(
@@ -1052,7 +1052,7 @@ class SqliteDb(BaseDb):
                     return WorkflowSession.from_dict(session_raw)
 
         except Exception as e:
-            log_warning(f"Exception upserting into table: {e}")
+            log_warning(f"Exception upserting into table: {str(e)}")
             raise e
 
     def upsert_sessions(
@@ -1274,7 +1274,7 @@ class SqliteDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {e}")
+            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {str(e)}")
             # Fallback to individual upserts
             return [
                 result
@@ -1317,7 +1317,7 @@ class SqliteDb(BaseDb):
                     log_debug(f"No user memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting user memory: {e}")
+            log_error(f"Error deleting user memory: {str(e)}")
             raise e
 
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -1344,7 +1344,7 @@ class SqliteDb(BaseDb):
                     log_debug(f"No user memories found with ids: {memory_ids}")
 
         except Exception as e:
-            log_error(f"Error deleting user memories: {e}")
+            log_error(f"Error deleting user memories: {str(e)}")
             raise e
 
     def get_all_memory_topics(self) -> List[str]:
@@ -1494,7 +1494,7 @@ class SqliteDb(BaseDb):
             return [UserMemory.from_dict(record) for record in memories_raw]
 
         except Exception as e:
-            log_error(f"Error reading from memory table: {e}")
+            log_error(f"Error reading from memory table: {str(e)}")
             raise e
 
     def get_user_memory_stats(
@@ -1566,7 +1566,7 @@ class SqliteDb(BaseDb):
                 ], total_count
 
         except Exception as e:
-            log_error(f"Error getting user memory stats: {e}")
+            log_error(f"Error getting user memory stats: {str(e)}")
             raise e
 
     def upsert_user_memory(
@@ -1637,7 +1637,7 @@ class SqliteDb(BaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Error upserting user memory: {e}")
+            log_error(f"Error upserting user memory: {str(e)}")
             raise e
 
     def upsert_memories(
@@ -1735,7 +1735,7 @@ class SqliteDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {e}")
+            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {str(e)}")
 
             # Fallback to individual upserts
             return [
@@ -1763,7 +1763,7 @@ class SqliteDb(BaseDb):
         except Exception as e:
             from agno.utils.log import log_warning
 
-            log_warning(f"Exception deleting all memories: {e}")
+            log_warning(f"Exception deleting all memories: {str(e)}")
             raise e
 
     # -- Metrics methods --
@@ -1807,7 +1807,7 @@ class SqliteDb(BaseDb):
                 return [record._mapping for record in result]
 
         except Exception as e:
-            log_error(f"Error reading from sessions table: {e}")
+            log_error(f"Error reading from sessions table: {str(e)}")
             raise e
 
     def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
@@ -1912,7 +1912,7 @@ class SqliteDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Error refreshing metrics: {e}")
+            log_error(f"Error refreshing metrics: {str(e)}")
             raise e
 
     def get_metrics(
@@ -1954,7 +1954,7 @@ class SqliteDb(BaseDb):
             return [row._mapping for row in result], latest_updated_at
 
         except Exception as e:
-            log_error(f"Error getting metrics: {e}")
+            log_error(f"Error getting metrics: {str(e)}")
             raise e
 
     # -- Knowledge methods --
@@ -1978,7 +1978,7 @@ class SqliteDb(BaseDb):
                 sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Error deleting knowledge content: {e}")
+            log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
@@ -2007,7 +2007,7 @@ class SqliteDb(BaseDb):
                 return KnowledgeRow.model_validate(result._mapping)
 
         except Exception as e:
-            log_error(f"Error getting knowledge content: {e}")
+            log_error(f"Error getting knowledge content: {str(e)}")
             raise e
 
     def get_knowledge_contents(
@@ -2063,7 +2063,7 @@ class SqliteDb(BaseDb):
                 return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 
         except Exception as e:
-            log_error(f"Error getting knowledge contents: {e}")
+            log_error(f"Error getting knowledge contents: {str(e)}")
             raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -2111,7 +2111,7 @@ class SqliteDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge content: {e}")
+            log_error(f"Error upserting knowledge content: {str(e)}")
             raise e
 
     # -- Eval methods --
@@ -2150,7 +2150,7 @@ class SqliteDb(BaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_error(f"Error creating eval run: {str(e)}")
             raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
@@ -2173,7 +2173,7 @@ class SqliteDb(BaseDb):
                     log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+            log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
@@ -2196,7 +2196,7 @@ class SqliteDb(BaseDb):
                     log_debug(f"Deleted {result.rowcount} eval runs")
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_error(f"Error deleting eval runs {eval_run_ids}: {str(e)}")
             raise e
 
     def get_eval_run(
@@ -2234,7 +2234,7 @@ class SqliteDb(BaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}: {str(e)}")
             raise e
 
     def get_eval_runs(
@@ -2328,7 +2328,7 @@ class SqliteDb(BaseDb):
             return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_error(f"Exception getting eval runs: {str(e)}")
             raise e
 
     def rename_eval_run(
@@ -2370,7 +2370,7 @@ class SqliteDb(BaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Error renaming eval run {eval_run_id}: {e}")
+            log_error(f"Error renaming eval run {eval_run_id}: {str(e)}")
             raise e
 
     # -- Trace methods --
@@ -2513,7 +2513,7 @@ class SqliteDb(BaseDb):
                 sess.execute(upsert_stmt)
 
         except Exception as e:
-            log_error(f"Error creating trace: {e}")
+            log_error(f"Error creating trace: {str(e)}")
             # Don't raise - tracing should not break the main application flow
 
     def get_trace(
@@ -2565,7 +2565,7 @@ class SqliteDb(BaseDb):
                 return None
 
         except Exception as e:
-            log_error(f"Error getting trace: {e}")
+            log_error(f"Error getting trace: {str(e)}")
             return None
 
     def get_traces(
@@ -2673,7 +2673,7 @@ class SqliteDb(BaseDb):
                 return traces, total_count
 
         except Exception as e:
-            log_error(f"Error getting traces: {e}")
+            log_error(f"Error getting traces: {str(e)}")
             return [], 0
 
     def get_trace_stats(
@@ -2798,7 +2798,7 @@ class SqliteDb(BaseDb):
                 return stats_list, total_count
 
         except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+            log_error(f"Error getting trace stats: {str(e)}")
             return [], 0
 
     # -- Span methods --
@@ -2819,7 +2819,7 @@ class SqliteDb(BaseDb):
                 sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Error creating span: {e}")
+            log_error(f"Error creating span: {str(e)}")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2841,7 +2841,7 @@ class SqliteDb(BaseDb):
                     sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+            log_error(f"Error creating spans batch: {str(e)}")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2867,7 +2867,7 @@ class SqliteDb(BaseDb):
                 return None
 
         except Exception as e:
-            log_error(f"Error getting span: {e}")
+            log_error(f"Error getting span: {str(e)}")
             return None
 
     def get_spans(
@@ -2904,7 +2904,7 @@ class SqliteDb(BaseDb):
                 return [Span.from_dict(dict(row._mapping)) for row in results]
 
         except Exception as e:
-            log_error(f"Error getting spans: {e}")
+            log_error(f"Error getting spans: {str(e)}")
             return []
 
     # -- Migrations --
@@ -2984,7 +2984,7 @@ class SqliteDb(BaseDb):
         except Exception as e:
             from agno.utils.log import log_warning
 
-            log_warning(f"Exception deleting all cultural artifacts: {e}")
+            log_warning(f"Exception deleting all cultural artifacts: {str(e)}")
             raise e
 
     def delete_cultural_knowledge(self, id: str) -> None:
@@ -3012,7 +3012,7 @@ class SqliteDb(BaseDb):
                     log_debug(f"No cultural artifact found with id: {id}")
 
         except Exception as e:
-            log_error(f"Error deleting cultural artifact: {e}")
+            log_error(f"Error deleting cultural artifact: {str(e)}")
             raise e
 
     def get_cultural_knowledge(
@@ -3048,7 +3048,7 @@ class SqliteDb(BaseDb):
             return deserialize_cultural_knowledge_from_db(db_row)
 
         except Exception as e:
-            log_error(f"Exception reading from cultural artifacts table: {e}")
+            log_error(f"Exception reading from cultural artifacts table: {str(e)}")
             raise e
 
     def get_all_cultural_knowledge(
@@ -3122,7 +3122,7 @@ class SqliteDb(BaseDb):
             return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
 
         except Exception as e:
-            log_error(f"Error reading from cultural artifacts table: {e}")
+            log_error(f"Error reading from cultural artifacts table: {str(e)}")
             raise e
 
     def upsert_cultural_knowledge(
@@ -3193,7 +3193,7 @@ class SqliteDb(BaseDb):
             return deserialize_cultural_knowledge_from_db(db_row)
 
         except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
+            log_error(f"Error upserting cultural knowledge: {str(e)}")
             raise e
 
     # --- Components ---
@@ -3228,7 +3228,7 @@ class SqliteDb(BaseDb):
                 return dict(result._mapping) if result else None
 
         except Exception as e:
-            log_error(f"Error getting component: {e}")
+            log_error(f"Error getting component: {str(e)}")
             raise
 
     def upsert_component(
@@ -3327,7 +3327,7 @@ class SqliteDb(BaseDb):
             return result
 
         except Exception as e:
-            log_error(f"Error upserting component: {e}")
+            log_error(f"Error upserting component: {str(e)}")
             raise
 
     def delete_component(
@@ -3377,7 +3377,7 @@ class SqliteDb(BaseDb):
             return result.rowcount > 0
 
         except Exception as e:
-            log_error(f"Error deleting component: {e}")
+            log_error(f"Error deleting component: {str(e)}")
             raise
 
     def list_components(
@@ -3434,7 +3434,7 @@ class SqliteDb(BaseDb):
                 return [dict(row._mapping) for row in results], total_count
 
         except Exception as e:
-            log_error(f"Error listing components: {e}")
+            log_error(f"Error listing components: {str(e)}")
             raise
 
     def create_component_with_config(
@@ -3567,7 +3567,7 @@ class SqliteDb(BaseDb):
             return component, config_result
 
         except Exception as e:
-            log_error(f"Error creating component with config: {e}")
+            log_error(f"Error creating component with config: {str(e)}")
             raise
 
     # --- Config ---
@@ -3641,7 +3641,7 @@ class SqliteDb(BaseDb):
                 return dict(result._mapping) if result else None
 
         except Exception as e:
-            log_error(f"Error getting config: {e}")
+            log_error(f"Error getting config: {str(e)}")
             raise
 
     def upsert_config(
@@ -3822,7 +3822,7 @@ class SqliteDb(BaseDb):
             return result
 
         except Exception as e:
-            log_error(f"Error upserting config: {e}")
+            log_error(f"Error upserting config: {str(e)}")
             raise
 
     def delete_config(
@@ -3893,7 +3893,7 @@ class SqliteDb(BaseDb):
             return True
 
         except Exception as e:
-            log_error(f"Error deleting config: {e}")
+            log_error(f"Error deleting config: {str(e)}")
             raise
 
     def list_configs(
@@ -3950,7 +3950,7 @@ class SqliteDb(BaseDb):
                 return [dict(row._mapping) for row in results]
 
         except Exception as e:
-            log_error(f"Error listing configs: {e}")
+            log_error(f"Error listing configs: {str(e)}")
             raise
 
     def set_current_version(
@@ -4022,7 +4022,7 @@ class SqliteDb(BaseDb):
             return True
 
         except Exception as e:
-            log_error(f"Error setting current version: {e}")
+            log_error(f"Error setting current version: {str(e)}")
             raise
 
     # --- Component Links ---
@@ -4063,7 +4063,7 @@ class SqliteDb(BaseDb):
                 return [dict(row._mapping) for row in results]
 
         except Exception as e:
-            log_error(f"Error getting links: {e}")
+            log_error(f"Error getting links: {str(e)}")
             raise
 
     def get_dependents(
@@ -4094,7 +4094,7 @@ class SqliteDb(BaseDb):
                 return [dict(row._mapping) for row in results]
 
         except Exception as e:
-            log_error(f"Error getting dependents: {e}")
+            log_error(f"Error getting dependents: {str(e)}")
             raise
 
     def resolve_version(
@@ -4126,7 +4126,7 @@ class SqliteDb(BaseDb):
                 return result
 
         except Exception as e:
-            log_error(f"Error resolving version: {e}")
+            log_error(f"Error resolving version: {str(e)}")
             raise
 
     def load_component_graph(
@@ -4197,7 +4197,7 @@ class SqliteDb(BaseDb):
             }
 
         except Exception as e:
-            log_error(f"Error loading component graph: {e}")
+            log_error(f"Error loading component graph: {str(e)}")
             raise
 
     # -- Learning methods --
@@ -4492,7 +4492,7 @@ class SqliteDb(BaseDb):
                 sess.execute(table.insert().values(**schedule_data))
             return schedule_data
         except Exception as e:
-            log_error(f"Error creating schedule: {e}")
+            log_error(f"Error creating schedule: {str(e)}")
             raise
 
     def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -4594,7 +4594,7 @@ class SqliteDb(BaseDb):
                 sess.execute(table.insert().values(**run_data))
             return run_data
         except Exception as e:
-            log_error(f"Error creating schedule run: {e}")
+            log_error(f"Error creating schedule run: {str(e)}")
             raise
 
     def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -4668,7 +4668,7 @@ class SqliteDb(BaseDb):
                 sess.execute(table.insert().values(**data))
             return data
         except Exception as e:
-            log_error(f"Error creating approval: {e}")
+            log_error(f"Error creating approval: {str(e)}")
             raise
 
     def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
