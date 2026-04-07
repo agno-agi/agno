@@ -293,7 +293,7 @@ class SqliteDb(BaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table = Table(table_name, self.metadata, *columns)
+            table = Table(table_name, self.metadata, *columns, extend_existing=True)
 
             # Composite PK
             if schema_primary_key is not None:
