@@ -12,7 +12,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_warning, logger
 
 try:
     from bs4 import BeautifulSoup, Tag  # noqa: F401
@@ -111,7 +111,7 @@ class WebSearchReader(Reader):
                 return results
 
             except Exception as e:
-                logger.warning(f"DuckDuckGo search attempt {attempt + 1} failed", exc_info=True)
+                log_warning(f"DuckDuckGo search attempt {attempt + 1} failed: {e}")
                 if "rate limit" in str(e).lower() or "429" in str(e):
                     # Rate limited - wait longer
                     wait_time = (
@@ -162,8 +162,8 @@ class WebSearchReader(Reader):
 
             return text
 
-        except Exception:
-            logger.warning(f"Error extracting text from {url}", exc_info=True)
+        except Exception as e:
+            log_warning(f"Error extracting text from {url}: {e}")
             return html_content
 
     def _fetch_url_content(self, url: str) -> Optional[str]:
@@ -183,8 +183,8 @@ class WebSearchReader(Reader):
                     # For non-HTML content, return as-is
                     return response.text
 
-            except Exception:
-                logger.warning(f"Attempt {attempt + 1} failed for {url}", exc_info=True)
+            except Exception as e:
+                log_warning(f"Attempt {attempt + 1} failed for {url}: {e}")
                 if attempt < self.max_retries - 1:
                     time.sleep(random.uniform(1, 3))  # Random delay between retries
                 continue
@@ -302,8 +302,8 @@ class WebSearchReader(Reader):
 
                     return self._create_document_from_url(url, content, result)
 
-            except Exception:
-                logger.warning(f"Error fetching {url}", exc_info=True)
+            except Exception as e:
+                log_warning(f"Error fetching {url}: {e}")
                 return None
 
         documents = []

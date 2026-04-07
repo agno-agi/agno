@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ValidationError
 
-from agno.utils.log import logger
+from agno.utils.log import log_warning, logger
 
 POSTGRES_INVALID_CHARS_REGEX = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]")
 
@@ -153,8 +153,8 @@ def _parse_individual_json(content: str, output_schema: Type[BaseModel]) -> Opti
 
     try:
         return output_schema.model_validate(merged_data)
-    except ValidationError:
-        logger.warning("Validation failed on merged data", exc_info=True)
+    except ValidationError as e:
+        log_warning(f"Validation failed on merged data: {e}")
         return None
 
 
@@ -181,8 +181,8 @@ def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Op
             # Second attempt: Parse as Python dict
             data = json.loads(cleaned_content)
             structured_output = output_schema.model_validate(data)
-        except (ValidationError, json.JSONDecodeError):
-            logger.warning("Failed to parse cleaned JSON", exc_info=True)
+        except (ValidationError, json.JSONDecodeError) as e:
+            log_warning(f"Failed to parse cleaned JSON: {e}")
 
             # Third attempt: Extract individual JSON objects
             candidate_jsons = _extract_json_objects(cleaned_content)
@@ -220,8 +220,8 @@ def parse_response_dict_str(content: str) -> Optional[dict]:
     try:
         # First attempt: direct JSON parsing on cleaned content
         return json.loads(cleaned_content)
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse cleaned JSON", exc_info=True)
+    except json.JSONDecodeError as e:
+        log_warning(f"Failed to parse cleaned JSON: {e}")
 
         # Second attempt: Extract individual JSON objects
         candidate_jsons = _extract_json_objects(cleaned_content)

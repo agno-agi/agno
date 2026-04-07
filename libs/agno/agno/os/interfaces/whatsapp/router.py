@@ -254,7 +254,7 @@ def attach_routes(
                         session_config.db.upsert_session(new_session)
                     await send_whatsapp_message_async(phone_number, _SESSION_RESET_MESSAGE, config)
                 except Exception as e:
-                    log_warning(f"Failed to persist /new session: {e}", exc_info=True)
+                    log_warning(f"Failed to persist /new session: {e}")
                     await send_whatsapp_message_async(phone_number, _ERROR_MESSAGE, config)
                 return
 
@@ -281,7 +281,7 @@ def attach_routes(
                     if sessions:
                         session_id = sessions[0].session_id
                 except Exception as e:
-                    log_warning(f"Session lookup failed, using default: {e}", exc_info=True)
+                    log_warning(f"Session lookup failed, using default: {e}")
 
             # Download media from Meta servers and wrap as Agno media objects
             media_kwargs, skipped_media = await download_event_media_async(parsed, config)

@@ -4,7 +4,7 @@ import sys
 from typing import Any, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_warning, logger
 
 if sys.version_info >= (3, 12):
     # Apply more comprehensive monkey patch for Python 3.12 compatibility
@@ -23,8 +23,8 @@ if sys.version_info >= (3, 12):
                 # Filter out any kwargs that aren't in the signature
                 valid_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
                 return original_load_config(*args, **valid_kwargs)
-            except Exception:
-                logger.warning("Error in patched_load_config", exc_info=True)
+            except Exception as e:
+                log_warning(f"Error in patched_load_config: {e}")
                 return {}
 
         # Replace the original function with our patched version
@@ -45,8 +45,8 @@ if sys.version_info >= (3, 12):
             logger.info("Added missing get_config_header function for Docker auth compatibility")
 
         logger.info("Applied comprehensive compatibility patch for Docker client on Python 3.12")
-    except Exception:
-        logger.warning("Failed to apply Docker client compatibility patch", exc_info=True)
+    except Exception as e:
+        log_warning(f"Failed to apply Docker client compatibility patch: {e}")
 
 try:
     import docker

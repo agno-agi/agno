@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
-from agno.utils.log import logger
+from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
@@ -42,8 +42,8 @@ def get_openai_reasoning(
 
     try:
         reasoning_agent_response = reasoning_agent.run(input=messages)
-    except Exception:
-        logger.warning("Reasoning error", exc_info=True)
+    except Exception as e:
+        log_warning(f"Reasoning error: {e}")
         return None
 
     # Accumulate reasoning agent metrics into the parent run_metrics
@@ -81,8 +81,8 @@ async def aget_openai_reasoning(
 
     try:
         reasoning_agent_response = await reasoning_agent.arun(input=messages)
-    except Exception:
-        logger.warning("Reasoning error", exc_info=True)
+    except Exception as e:
+        log_warning(f"Reasoning error: {e}")
         return None
 
     # Accumulate reasoning agent metrics into the parent run_metrics
@@ -149,8 +149,8 @@ def get_openai_reasoning_stream(
                         if not reasoning_content:
                             reasoning_content = event.reasoning_content
                             yield (event.reasoning_content, None)
-    except Exception:
-        logger.warning("Reasoning error", exc_info=True)
+    except Exception as e:
+        log_warning(f"Reasoning error: {e}")
         return
 
     # Yield final message
@@ -205,8 +205,8 @@ async def aget_openai_reasoning_stream(
                         if not reasoning_content:
                             reasoning_content = event.reasoning_content
                             yield (event.reasoning_content, None)
-    except Exception:
-        logger.warning("Reasoning error", exc_info=True)
+    except Exception as e:
+        log_warning(f"Reasoning error: {e}")
         return
 
     # Yield final message

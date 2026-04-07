@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 
 
 class CsvTools(Toolkit):
@@ -46,8 +46,8 @@ class CsvTools(Toolkit):
                 import duckdb  # noqa: F401
 
                 tools.append(self.query_csv_file)
-            except ImportError:
-                logger.warning("`duckdb` not installed. Query functionality disabled.", exc_info=True)
+            except ImportError as e:
+                log_warning(f"`duckdb` not installed. Query functionality disabled.: {e}")
 
         super().__init__(name="csv_tools", tools=tools, **kwargs)
 

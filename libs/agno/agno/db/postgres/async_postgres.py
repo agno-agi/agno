@@ -1231,7 +1231,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 await sess.execute(table.delete())
 
         except Exception as e:
-            log_warning(f"Exception deleting all memories: {e}", exc_info=True)
+            log_warning(f"Exception deleting all memories: {e}")
 
     # -- Cultural Knowledge methods --
     async def clear_cultural_knowledge(self) -> None:
@@ -1470,7 +1470,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return deserialize_cultural_knowledge(db_row)
 
         except Exception as e:
-            log_warning("Exception upserting cultural knowledge", exc_info=True)
+            log_warning(f"Exception upserting cultural knowledge: {e}")
             raise e
 
     async def get_user_memory_stats(
@@ -1819,7 +1819,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return [dict(row._mapping) for row in records], latest_updated_at
 
         except Exception as e:
-            log_warning(f"Exception getting metrics: {e}", exc_info=True)
+            log_warning(f"Exception getting metrics: {e}")
             return [], None
 
     # -- Knowledge methods --

@@ -110,7 +110,7 @@ def apply_sorting(
         return sorted_records
 
     except Exception as e:
-        log_warning(f"Error sorting Redis records: {e}", exc_info=True)
+        log_warning(f"Error sorting Redis records: {e}")
         return records
 
 

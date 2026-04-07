@@ -116,7 +116,7 @@ def _handle_agent_exception(a_exc: AgentRunException, additional_input: Optional
                 try:
                     additional_input.append(Message(**m))
                 except Exception as e:
-                    log_warning(f"Failed to convert dict to Message: {e}", exc_info=True)
+                    log_warning(f"Failed to convert dict to Message: {e}")
 
     if a_exc.stop_execution:
         for m in additional_input:
@@ -247,8 +247,7 @@ class Model(ABC):
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
-                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s...",
-                        exc_info=True,
+                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s...: {e}",
                     )
 
                     sleep(delay)
@@ -296,8 +295,7 @@ class Model(ABC):
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
-                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s...",
-                        exc_info=True,
+                        f"Model provider error (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. Retrying in {delay}s...: {e}",
                     )
 
                     await asyncio.sleep(delay)
@@ -347,9 +345,8 @@ class Model(ABC):
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
-                        f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. "
-                        f"Retrying in {delay}s...",
-                        exc_info=True,
+                        f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. : {e}"
+                        f"Retrying in {delay}s...: {e}",
                     )
 
                     sleep(delay)
@@ -401,9 +398,8 @@ class Model(ABC):
                 if attempt < self.retries:
                     delay = self._get_retry_delay(attempt)
                     log_warning(
-                        f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. "
-                        f"Retrying in {delay}s...",
-                        exc_info=True,
+                        f"Model provider error during stream (attempt {attempt + 1}/{self.retries + 1}): {last_exception}. : {e}"
+                        f"Retrying in {delay}s...: {e}",
                     )
 
                     await asyncio.sleep(delay)
@@ -859,11 +855,10 @@ class Model(ABC):
                 try:
                     self.client.close()  # type: ignore
                     self.client = None
-                except AttributeError:
+                except AttributeError as e:
                     log_warning(
-                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
-                        " please upgrade Gemini to the latest version: pip install -U google-genai",
-                        exc_info=True,
+                        f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
+                        f" please upgrade Gemini to the latest version: pip install -U google-genai: {e}",
                     )
 
         return model_response
@@ -1081,11 +1076,10 @@ class Model(ABC):
                 try:
                     await self.client.aio.aclose()  # type: ignore
                     self.client = None
-                except AttributeError:
+                except AttributeError as e:
                     log_warning(
-                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
-                        " please upgrade Gemini to the latest version: pip install -U google-genai",
-                        exc_info=True,
+                        f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
+                        f" please upgrade Gemini to the latest version: pip install -U google-genai: {e}",
                     )
 
         return model_response
@@ -1571,11 +1565,10 @@ class Model(ABC):
                 try:
                     self.client.close()  # type: ignore
                     self.client = None
-                except AttributeError:
+                except AttributeError as e:
                     log_warning(
-                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
-                        " please upgrade Gemini to the latest version: pip install -U google-genai",
-                        exc_info=True,
+                        f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
+                        f" please upgrade Gemini to the latest version: pip install -U google-genai: {e}",
                     )
 
     async def aprocess_response_stream(
@@ -1849,11 +1842,10 @@ class Model(ABC):
                 try:
                     await self.client.aio.aclose()  # type: ignore
                     self.client = None
-                except AttributeError:
+                except AttributeError as e:
                     log_warning(
-                        "Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,"
-                        " please upgrade Gemini to the latest version: pip install -U google-genai",
-                        exc_info=True,
+                        f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
+                        f" please upgrade Gemini to the latest version: pip install -U google-genai: {e}",
                     )
 
     def _populate_assistant_message_from_stream_data(

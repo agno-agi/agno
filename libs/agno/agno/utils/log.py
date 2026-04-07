@@ -32,18 +32,6 @@ class ColoredRichHandler(RichHandler):
         super().__init__(*args, **kwargs)
         self.source_type = source_type
 
-    def emit(self, record: logging.LogRecord) -> None:
-        """Strip exc_info from warnings when log_tracebacks is off.
-
-        Error-level logs (from log_exception / logger.exception) always
-        show tracebacks.  Warning-level logs only show tracebacks when
-        AGNO_LOG_TRACEBACKS=true.
-        """
-        if record.exc_info and not log_tracebacks and record.levelno <= logging.WARNING:
-            record.exc_info = None
-            record.exc_text = None
-        super().emit(record)
-
     def get_level_text(self, record: logging.LogRecord) -> Text:
         # Return empty Text if message is empty
         if not record.msg:
@@ -225,7 +213,15 @@ def log_info(msg, center: bool = False, symbol: str = "*", *args, **kwargs):
 
 
 def log_warning(msg, *args, **kwargs):
+    """Log a warning. When called inside an except block and AGNO_LOG_TRACEBACKS
+    is enabled, the traceback is automatically included — no need to pass
+    exc_info=True at the call site.
+    """
+    import sys
+
     global logger
+    if "exc_info" not in kwargs and log_tracebacks and sys.exc_info()[0] is not None:
+        kwargs["exc_info"] = True
     logger.warning(msg, *args, **kwargs)
 
 

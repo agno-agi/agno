@@ -51,10 +51,9 @@ def audio_to_message(audio: Sequence[Audio]) -> List[Dict[str, Any]]:
                                 f"Could not determine audio format from URL path: {parsed_url.path}. Defaulting."
                             )
                             audio_format = "wav"
-                    except Exception:
+                    except Exception as e:
                         log_warning(
-                            f"Could not determine audio format from URL: {audio_snippet.url}. Defaulting.",
-                            exc_info=True,
+                            f"Could not determine audio format from URL: {audio_snippet.url}. Defaulting.: {e}",
                         )
 
                         audio_format = "wav"  # Default if guessing fails

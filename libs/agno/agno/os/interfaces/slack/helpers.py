@@ -104,7 +104,7 @@ async def resolve_slack_user(async_client: Any, slack_user_id: str) -> Tuple[str
 
         return (resolved_id, display_name)
     except Exception as e:
-        log_warning(f"Failed to resolve Slack user {slack_user_id}: {e}", exc_info=True)
+        log_warning(f"Failed to resolve Slack user {slack_user_id}: {e}")
         return (slack_user_id, None)
 
 
@@ -116,7 +116,7 @@ async def resolve_channel_name(async_client: Any, channel_id: str) -> Optional[s
         # API returns "" for unnamed channels; normalize to None
         return channel.get("name") or None
     except Exception as e:
-        log_warning(f"Failed to resolve channel name for {channel_id}: {e}", exc_info=True)
+        log_warning(f"Failed to resolve channel name for {channel_id}: {e}")
         return None
 
 

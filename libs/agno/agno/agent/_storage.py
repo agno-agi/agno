@@ -131,7 +131,7 @@ def read_session(
         import traceback
 
         traceback.print_exc(limit=3)
-        log_warning(f"Error getting session from db: {e}", exc_info=True)
+        log_warning(f"Error getting session from db: {e}")
         return None
 
 
@@ -152,7 +152,7 @@ async def aread_session(
         import traceback
 
         traceback.print_exc(limit=3)
-        log_warning(f"Error getting session from db: {e}", exc_info=True)
+        log_warning(f"Error getting session from db: {e}")
         return None
 
 
@@ -169,7 +169,7 @@ def upsert_session(
         import traceback
 
         traceback.print_exc(limit=3)
-        log_warning(f"Error upserting session into db: {e}", exc_info=True)
+        log_warning(f"Error upserting session into db: {e}")
         return None
 
 
@@ -190,7 +190,7 @@ async def aupsert_session(
         import traceback
 
         traceback.print_exc(limit=3)
-        log_warning(f"Error upserting session into db: {e}", exc_info=True)
+        log_warning(f"Error upserting session into db: {e}")
         return None
 
 
@@ -553,7 +553,7 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
                     serialized_tools.append(tool)
             except Exception as e:
                 # Skip tools that can't be serialized
-                log_warning(f"Could not serialize tool {tool}: {e}", exc_info=True)
+                log_warning(f"Could not serialize tool {tool}: {e}")
         if serialized_tools:
             config["tools"] = serialized_tools
 

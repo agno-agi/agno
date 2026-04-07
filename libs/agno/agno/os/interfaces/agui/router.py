@@ -1,6 +1,6 @@
 """Async router handling exposing an Agno Agent or Team in an AG-UI compatible format."""
 
-import logging
+from agno.utils.log import log_exception
 import uuid
 from typing import AsyncIterator, Optional, Union
 
@@ -27,9 +27,6 @@ from agno.os.interfaces.agui.utils import (
 )
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
-
-logger = logging.getLogger(__name__)
-
 
 async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     """Run the contextual Agent, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
@@ -70,7 +67,7 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
 
     # Emit a RunErrorEvent if any error occurs
     except Exception as e:
-        logger.error("Error running agent", exc_info=True)
+        log_exception("Error running agent")
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 
@@ -108,7 +105,7 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
             yield event
 
     except Exception as e:
-        logger.error("Error running team", exc_info=True)
+        log_exception("Error running team")
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 

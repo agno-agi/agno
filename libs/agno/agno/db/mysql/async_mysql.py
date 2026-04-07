@@ -1351,7 +1351,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 await sess.execute(table.delete())
 
         except Exception as e:
-            log_warning(f"Exception deleting all memories: {e}", exc_info=True)
+            log_warning(f"Exception deleting all memories: {e}")
 
     # -- Cultural Knowledge methods --
     async def clear_cultural_knowledge(self) -> None:
@@ -1367,7 +1367,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 await sess.execute(table.delete())
 
         except Exception as e:
-            log_warning(f"Exception deleting all cultural knowledge: {e}", exc_info=True)
+            log_warning(f"Exception deleting all cultural knowledge: {e}")
 
     async def delete_cultural_knowledge(self, id: str) -> None:
         """Delete cultural knowledge by ID.
@@ -1386,7 +1386,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 await sess.execute(stmt)
 
         except Exception as e:
-            log_warning("Exception deleting cultural knowledge", exc_info=True)
+            log_warning(f"Exception deleting cultural knowledge: {e}")
             raise e
 
     async def get_cultural_knowledge(
@@ -1423,7 +1423,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return deserialize_cultural_knowledge_from_db(db_row)
 
         except Exception as e:
-            log_warning("Exception reading cultural knowledge", exc_info=True)
+            log_warning(f"Exception reading cultural knowledge: {e}")
             raise e
 
     async def get_all_cultural_knowledge(
@@ -1496,7 +1496,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
 
         except Exception as e:
-            log_warning("Exception reading all cultural knowledge", exc_info=True)
+            log_warning(f"Exception reading all cultural knowledge: {e}")
             raise e
 
     async def upsert_cultural_knowledge(
@@ -1570,7 +1570,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return deserialize_cultural_knowledge_from_db(db_row)
 
         except Exception as e:
-            log_warning("Exception upserting cultural knowledge", exc_info=True)
+            log_warning(f"Exception upserting cultural knowledge: {e}")
             raise e
 
     async def get_user_memory_stats(
@@ -1990,7 +1990,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return [dict(row._mapping) for row in records], latest_updated_at
 
         except Exception as e:
-            log_warning(f"Exception getting metrics: {e}", exc_info=True)
+            log_warning(f"Exception getting metrics: {e}")
             return [], None
 
     # -- Knowledge methods --

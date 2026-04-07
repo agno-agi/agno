@@ -43,7 +43,7 @@ def create_collection_indexes(client: Client, collection_name: str, collection_t
             log_debug(f"Collection '{collection_name}' initialized")
 
     except Exception as e:
-        log_warning(f"Error processing indexes for {collection_type} collection: {e}", exc_info=True)
+        log_warning(f"Error processing indexes for {collection_type} collection: {e}")
 
 
 def _create_composite_indexes(client: Client, collection_name: str, composite_indexes: List[Dict[str, Any]]) -> None:
@@ -95,7 +95,7 @@ def _create_composite_indexes(client: Client, collection_name: str, composite_in
                     log_exception("Error creating composite index")
 
     except Exception as e:
-        log_warning(f"Error initializing Firestore Admin client for composite indexes: {e}", exc_info=True)
+        log_warning(f"Error initializing Firestore Admin client for composite indexes: {e}")
         log_info("Fallback: You can create composite indexes manually via Firebase Console or gcloud CLI")
 
 
@@ -155,7 +155,7 @@ def apply_sorting_to_records(
 
         return sorted_records
     except Exception as e:
-        log_warning(f"Error sorting Firestore records: {e}", exc_info=True)
+        log_warning(f"Error sorting Firestore records: {e}")
         return records
 
 

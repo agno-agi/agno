@@ -1124,7 +1124,7 @@ class DynamoDb(BaseDb):
         except Exception as e:
             from agno.utils.log import log_warning
 
-            log_warning("Exception deleting all memories", exc_info=True)
+            log_warning(f"Exception deleting all memories: {e}")
             raise e
 
     # --- Metrics ---

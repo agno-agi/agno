@@ -7,7 +7,7 @@ try:
     from agno.models.anthropic import Claude
     from agno.models.google import Gemini
     from agno.models.openai import OpenAIChat
-    from agno.utils.log import logger
+    from agno.utils.log import log_warning, logger
 except ImportError:
     raise ImportError("`agno` not installed. Please install using `pip install agno`")
 
@@ -254,8 +254,8 @@ def _load_session(session_id: str, model_id: str, agent_creation_callback: Calla
             else:
                 logger.warning(f"No session found in database for session_id: {session_id}")
 
-        except Exception:
-            logger.warning("Could not load chat history", exc_info=True)
+        except Exception as e:
+            log_warning(f"Could not load chat history: {e}")
 
         st.rerun()
 
@@ -280,7 +280,7 @@ def display_response(agent: Agent, question: str) -> None:
                         if hasattr(resp_chunk, "tool") and resp_chunk.tool:
                             display_tool_calls(tool_calls_container, [resp_chunk.tool])
                     except Exception as tool_error:
-                        logger.warning(f"Error displaying tool calls: {tool_error}", exc_info=True)
+                        log_warning(f"Error displaying tool calls: {tool_error}")
 
                     if resp_chunk.content is not None:
                         content = str(resp_chunk.content)
@@ -297,7 +297,7 @@ def display_response(agent: Agent, question: str) -> None:
                     else:
                         add_message("assistant", response)
                 except Exception as add_msg_error:
-                    logger.warning(f"Error adding message with tools: {add_msg_error}", exc_info=True)
+                    log_warning(f"Error adding message with tools: {add_msg_error}")
                     add_message("assistant", response)
 
             except Exception as e:

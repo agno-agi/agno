@@ -375,7 +375,7 @@ class PineconeDb(VectorDb):
                     logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    logger.warning("Async batch embedding failed, falling back to individual embeddings", exc_info=True)
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -564,7 +564,7 @@ class PineconeDb(VectorDb):
             self.index.delete(ids=[id])
             return True
         except Exception as e:
-            log_warning(f"Error deleting document with ID {id}: {e}", exc_info=True)
+            log_warning(f"Error deleting document with ID {id}: {e}")
             return False
 
     def delete_by_name(self, name: str) -> bool:
@@ -574,7 +574,7 @@ class PineconeDb(VectorDb):
             self.index.delete(filter={"name": {"$eq": name}})
             return True
         except Exception as e:
-            log_warning(f"Error deleting documents with name {name}: {e}", exc_info=True)
+            log_warning(f"Error deleting documents with name {name}: {e}")
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
@@ -588,7 +588,7 @@ class PineconeDb(VectorDb):
             self.index.delete(filter=filter_conditions)
             return True
         except Exception as e:
-            log_warning(f"Error deleting documents with metadata {metadata}: {e}", exc_info=True)
+            log_warning(f"Error deleting documents with metadata {metadata}: {e}")
             return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
@@ -598,7 +598,7 @@ class PineconeDb(VectorDb):
             self.index.delete(filter={"content_id": {"$eq": content_id}})
             return True
         except Exception as e:
-            log_warning(f"Error deleting documents with content_id {content_id}: {e}", exc_info=True)
+            log_warning(f"Error deleting documents with content_id {content_id}: {e}")
             return False
 
     def get_count(self) -> int:
@@ -609,7 +609,7 @@ class PineconeDb(VectorDb):
             # The stats include total_vector_count which gives us the count
             return stats.total_vector_count
         except Exception as e:
-            log_warning(f"Error getting document count: {e}", exc_info=True)
+            log_warning(f"Error getting document count: {e}")
             return 0
 
     def id_exists(self, id: str) -> bool:
@@ -625,7 +625,7 @@ class PineconeDb(VectorDb):
             response = self.index.fetch(ids=[id], namespace=self.namespace)
             return len(response.vectors) > 0
         except Exception as e:
-            log_warning(f"Error checking if ID {id} exists: {e}", exc_info=True)
+            log_warning(f"Error checking if ID {id} exists: {e}")
             return False
 
     def content_hash_exists(self, content_hash: str) -> bool:
@@ -653,7 +653,7 @@ class PineconeDb(VectorDb):
             )
             return len(response.matches) > 0
         except Exception as e:
-            log_warning(f"Error checking if content_hash {content_hash} exists: {e}", exc_info=True)
+            log_warning(f"Error checking if content_hash {content_hash} exists: {e}")
             return False
 
     def _delete_by_content_hash(self, content_hash: str) -> bool:
@@ -670,7 +670,7 @@ class PineconeDb(VectorDb):
             self.index.delete(filter={"content_hash": {"$eq": content_hash}}, namespace=self.namespace)
             return True
         except Exception as e:
-            log_warning(f"Error deleting documents with content_hash {content_hash}: {e}", exc_info=True)
+            log_warning(f"Error deleting documents with content_hash {content_hash}: {e}")
             return False
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:

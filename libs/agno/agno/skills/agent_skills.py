@@ -45,7 +45,7 @@ class Skills:
             except SkillValidationError:
                 raise  # Re-raise validation errors as hard failures
             except Exception as e:
-                log_warning(f"Error loading skills from {loader}: {e}", exc_info=True)
+                log_warning(f"Error loading skills from {loader}: {e}")
 
         log_debug(f"Loaded {len(self._skills)} total skills")
 

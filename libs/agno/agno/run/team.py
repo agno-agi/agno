@@ -13,7 +13,6 @@ from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.run.requirement import RunRequirement
-from agno.utils.log import log_error
 from agno.utils.media import (
     reconstruct_audio_list,
     reconstruct_files,
@@ -21,6 +20,7 @@ from agno.utils.media import (
     reconstruct_response_audio,
     reconstruct_videos,
 )
+from agno.utils.log import log_exception
 
 
 @dataclass
@@ -897,7 +897,7 @@ class TeamRunOutput:
         try:
             _dict = self.to_dict()
         except Exception:
-            log_error("Failed to convert response to json", exc_info=True)
+            log_exception("Failed to convert response to json")
             raise
 
         if indent is None:

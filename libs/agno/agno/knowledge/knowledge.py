@@ -948,7 +948,7 @@ class Knowledge(RemoteKnowledge):
                     return None
 
             except Exception as e:
-                log_warning(f"Cannot create {reader_type} reader: {e}", exc_info=True)
+                log_warning(f"Cannot create {reader_type} reader: {e}")
                 return None
 
         return self.readers.get(reader_type)
@@ -1383,7 +1383,7 @@ class Knowledge(RemoteKnowledge):
                     try:
                         content.size = path.stat().st_size
                     except (OSError, IOError) as e:
-                        log_warning(f"Could not get file size for {path}: {e}", exc_info=True)
+                        log_warning(f"Could not get file size for {path}: {e}")
                         content.size = 0
 
                 if not content.id:
@@ -1468,7 +1468,7 @@ class Knowledge(RemoteKnowledge):
                     try:
                         content.size = path.stat().st_size
                     except (OSError, IOError) as e:
-                        log_warning(f"Could not get file size for {path}: {e}", exc_info=True)
+                        log_warning(f"Could not get file size for {path}: {e}")
                         content.size = 0
 
                 if not content.id:
@@ -1558,7 +1558,7 @@ class Knowledge(RemoteKnowledge):
             content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             await self._aupdate_content(content)
-            log_warning(f"Invalid URL: {content.url}", exc_info=True)
+            log_warning(f"Invalid URL: {content.url}: {e}")
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
@@ -1709,7 +1709,7 @@ class Knowledge(RemoteKnowledge):
             content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             self._update_content(content)
-            log_warning(f"Invalid URL: {content.url}", exc_info=True)
+            log_warning(f"Invalid URL: {content.url}: {e}")
 
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)
@@ -2272,7 +2272,7 @@ class Knowledge(RemoteKnowledge):
             try:
                 return str(value)
             except Exception as e:
-                log_warning(f"Failed to convert {field_name} to string, using default: {e}", exc_info=True)
+                log_warning(f"Failed to convert {field_name} to string, using default: {e}")
                 return default
 
         # Already a string, return as-is
@@ -3058,7 +3058,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                 docs = self.search(query=query, filters=knowledge_filters)
             except Exception as e:
                 retrieval_timer.stop()
-                log_warning("Knowledge search failed", exc_info=True)
+                log_warning(f"Knowledge search failed: {e}")
                 return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
@@ -3095,7 +3095,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                 docs = await self.asearch(query=query, filters=knowledge_filters)
             except Exception as e:
                 retrieval_timer.stop()
-                log_warning("Knowledge search failed", exc_info=True)
+                log_warning(f"Knowledge search failed: {e}")
                 return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
@@ -3182,7 +3182,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                 docs = self.search(query=query, filters=search_filters)
             except Exception as e:
                 retrieval_timer.stop()
-                log_warning("Knowledge search failed", exc_info=True)
+                log_warning(f"Knowledge search failed: {e}")
                 return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
@@ -3241,7 +3241,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                 docs = await self.asearch(query=query, filters=search_filters)
             except Exception as e:
                 retrieval_timer.stop()
-                log_warning("Knowledge search failed", exc_info=True)
+                log_warning(f"Knowledge search failed: {e}")
                 return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:

@@ -343,7 +343,7 @@ class MongoDb(VectorDb):
 
                 except errors.OperationFailure as e:
                     if "Duplicate Index" in str(e) and attempt < max_retries - 1:
-                        logger.warning(f"Index already exists, retrying... (attempt {attempt + 1})", exc_info=True)
+                        log_warning(f"Index already exists, retrying... (attempt {attempt + 1}): {e}")
                         time.sleep(retry_delay * (attempt + 1))
                         continue
                     logger.exception("Failed to create search index")
@@ -550,7 +550,7 @@ class MongoDb(VectorDb):
                 if self.wait_after_insert_in_seconds and self.wait_after_insert_in_seconds > 0:
                     time.sleep(self.wait_after_insert_in_seconds)
             except errors.BulkWriteError as e:
-                logger.warning(f"Bulk write error while inserting documents: {e.details}", exc_info=True)
+                log_warning(f"Bulk write error while inserting documents: {e.details}: {e}")
             except Exception:
                 logger.exception("Error inserting documents")
 
@@ -1054,7 +1054,7 @@ class MongoDb(VectorDb):
                     logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    logger.warning("Async batch embedding failed, falling back to individual embeddings", exc_info=True)
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -1078,7 +1078,7 @@ class MongoDb(VectorDb):
                 if self.wait_after_insert_in_seconds and self.wait_after_insert_in_seconds > 0:
                     await asyncio.sleep(self.wait_after_insert_in_seconds)
             except errors.BulkWriteError as e:
-                logger.warning(f"Bulk write error while inserting documents: {e.details}", exc_info=True)
+                log_warning(f"Bulk write error while inserting documents: {e.details}: {e}")
             except Exception:
                 logger.exception("Error inserting documents asynchronously")
 
@@ -1119,7 +1119,7 @@ class MongoDb(VectorDb):
                     logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    logger.warning("Async batch embedding failed, falling back to individual embeddings", exc_info=True)
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)

@@ -82,7 +82,7 @@ class TextReader(Reader):
                     async with aiofiles.open(file, "r", encoding=self.encoding or "utf-8") as f:
                         file_contents = await f.read()
                 except ImportError as e:
-                    log_warning(f"aiofiles not installed, using synchronous file I/O: {e}", exc_info=True)
+                    log_warning(f"aiofiles not installed, using synchronous file I/O: {e}")
                     file_contents = file.read_text(encoding=self.encoding or "utf-8")
             else:
                 log_debug(f"Reading uploaded file asynchronously: {getattr(file, 'name', 'BytesIO')}")

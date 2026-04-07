@@ -65,10 +65,9 @@ class SchedulePoller:
                     asyncio.gather(*self._in_flight, return_exceptions=True),
                     timeout=self.stop_timeout,
                 )
-            except asyncio.TimeoutError:
+            except asyncio.TimeoutError as e:
                 log_warning(
-                    f"Timed out waiting for {len(self._in_flight)} in-flight tasks during shutdown",
-                    exc_info=True,
+                    f"Timed out waiting for {len(self._in_flight)} in-flight tasks during shutdown: {e}",
                 )
 
             self._in_flight.clear()

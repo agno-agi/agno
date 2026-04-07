@@ -843,7 +843,7 @@ class OpenAIChat(Model):
             try:
                 model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
             except Exception as e:
-                log_warning(f"Error processing tool calls: {e}", exc_info=True)
+                log_warning(f"Error processing tool calls: {e}")
 
         # Add audio transcript to content if available
         response_audio: Optional[ChatCompletionAudio] = response_message.audio
@@ -869,7 +869,7 @@ class OpenAIChat(Model):
                         transcript=response_message.audio.transcript,
                     )
             except Exception as e:
-                log_warning(f"Error processing audio: {e}", exc_info=True)
+                log_warning(f"Error processing audio: {e}")
 
         if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:  # type: ignore
             model_response.reasoning_content = response_message.reasoning_content  # type: ignore
@@ -970,7 +970,7 @@ class OpenAIChat(Model):
                                 mime_type="pcm16",
                             )
                     except Exception as e:
-                        log_warning(f"Error processing audio: {e}", exc_info=True)
+                        log_warning(f"Error processing audio: {e}")
 
         # Add usage metrics if present
         if self._should_collect_metrics(response_delta) and response_delta.usage is not None:

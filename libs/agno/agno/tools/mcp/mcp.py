@@ -262,7 +262,7 @@ class MCPTools(Toolkit):
                     # Function takes no parameters
                     return header_provider()
         except Exception as e:
-            log_warning(f"Error calling header_provider: {e}", exc_info=True)
+            log_warning(f"Error calling header_provider: {e}")
             return {}
 
     async def _cleanup_stale_sessions(self) -> None:

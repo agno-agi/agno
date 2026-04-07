@@ -17,10 +17,9 @@ except ImportError:
 
 try:
     import aioboto3
-except ImportError:
+except ImportError as e:
     log_warning(
-        "`aioboto3` not installed. Async methods will not be available. Install via `pip install aioboto3`.",
-        exc_info=True,
+        f"`aioboto3` not installed. Async methods will not be available. Install via `pip install aioboto3`.: {e}",
     )
 
     aioboto3 = None
@@ -322,7 +321,7 @@ class AwsBedrockEmbedder(Embedder):
             log_warning("No embeddings found in response")
             return []
         except Exception as e:
-            log_warning(f"Error extracting embeddings: {e}", exc_info=True)
+            log_warning(f"Error extracting embeddings: {e}")
             return []
 
     def response(self, text: str) -> Dict[str, Any]:

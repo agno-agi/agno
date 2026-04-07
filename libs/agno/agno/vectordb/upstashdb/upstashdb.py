@@ -562,7 +562,7 @@ class UpstashVectorDb(VectorDb):
                     logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    logger.warning("Async batch embedding failed, falling back to individual embeddings", exc_info=True)
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)

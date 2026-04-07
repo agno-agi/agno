@@ -163,7 +163,7 @@ class RemoteAgent(BaseRemote):
             try:
                 return json.loads(self._agent_config.tools["tools"]) if self._agent_config.tools else None
             except Exception as e:
-                log_warning(f"Failed to load tools for agent {self.agent_id}: {e}", exc_info=True)
+                log_warning(f"Failed to load tools for agent {self.agent_id}: {e}")
                 return None
         return None
 

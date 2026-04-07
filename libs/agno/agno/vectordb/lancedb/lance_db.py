@@ -399,15 +399,14 @@ class LanceDb(VectorDb):
                     logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    logger.warning("Async batch embedding failed, falling back to individual embeddings", exc_info=True)
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     results = await asyncio.gather(*embed_tasks, return_exceptions=True)
                     # Log any embedding failures (they will be re-tried in sync insert)
                     for i, result in enumerate(results):
                         if isinstance(result, Exception):
                             log_warning(
-                                f"Async embedding failed for document {i}, will retry in sync insert",
-                                exc_info=True,
+                                f"Async embedding failed for document {i}, will retry in sync insert: {e}",
                             )
 
         else:
@@ -465,17 +464,14 @@ class LanceDb(VectorDb):
                     if is_rate_limit:
                         raise e
                     else:
-                        logger.warning(
-                            "Async batch embedding failed, falling back to individual embeddings",
-                            exc_info=True,
-                        )
+                        log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
 
                         embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                         results = await asyncio.gather(*embed_tasks, return_exceptions=True)
                         # Log any embedding failures (they will be re-tried in sync upsert)
                         for i, result in enumerate(results):
                             if isinstance(result, Exception):
-                                log_warning(f"Async embedding failed for document {i}, will retry in sync upsert")
+                                log_warning(f"Async embedding failed for document {i}, will retry in sync upsert: {e}")
             else:
                 embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                 results = await asyncio.gather(*embed_tasks, return_exceptions=True)

@@ -111,7 +111,7 @@ class MultiMCPTools(Toolkit):
                 # Just verify we can inspect the signature - no parameter requirements
                 inspect.signature(header_provider)
             except Exception as e:
-                log_warning(f"Could not validate header_provider signature: {e}", exc_info=True)
+                log_warning(f"Could not validate header_provider signature: {e}")
 
         if server_params_list is None and commands is None and urls is None:
             raise ValueError("Either server_params_list or commands or urls must be provided")
@@ -253,7 +253,7 @@ class MultiMCPTools(Toolkit):
                     # Function takes no parameters
                     return header_provider()
         except Exception as e:
-            log_warning(f"Error calling header_provider: {e}", exc_info=True)
+            log_warning(f"Error calling header_provider: {e}")
             return {}
 
     async def _cleanup_stale_sessions(self) -> None:

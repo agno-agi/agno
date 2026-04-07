@@ -143,7 +143,7 @@ class DaytonaTools(Toolkit):
                 "SSL certificate verification is disabled",
             )
         except ImportError as e:
-            log_warning(f"Could not import daytona_api_client.Configuration for SSL patching: {e}", exc_info=True)
+            log_warning(f"Could not import daytona_api_client.Configuration for SSL patching: {e}")
 
     def _get_working_directory(self, agent: Union[Agent, Team]) -> str:
         """Get the current working directory from agent session state."""
@@ -206,7 +206,7 @@ class DaytonaTools(Toolkit):
             return sandbox
         except Exception as e:
             if self.auto_create_sandbox:
-                log_warning("Error in sandbox management. Creating new sandbox.", exc_info=True)
+                log_warning(f"Error in sandbox management. Creating new sandbox.: {e}")
                 return self._create_new_sandbox(agent)
             else:
                 raise e

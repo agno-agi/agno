@@ -442,7 +442,7 @@ class HuggingFace(Model):
                 if parsed_object is not None:
                     model_response.parsed = parsed_object
         except Exception as e:
-            log_warning(f"Error retrieving structured outputs: {e}", exc_info=True)
+            log_warning(f"Error retrieving structured outputs: {e}")
 
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response)

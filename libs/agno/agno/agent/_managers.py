@@ -58,7 +58,7 @@ def make_memories(
                 try:
                     parsed_messages.append(Message(**_im))
                 except Exception as e:
-                    log_warning(f"Failed to validate message during memory update: {e}", exc_info=True)
+                    log_warning(f"Failed to validate message during memory update: {e}")
             else:
                 log_warning(f"Unsupported message type: {type(_im)}")
                 continue
@@ -113,7 +113,7 @@ async def amake_memories(
                 try:
                     parsed_messages.append(Message(**_im))
                 except Exception as e:
-                    log_warning(f"Failed to validate message during memory update: {e}", exc_info=True)
+                    log_warning(f"Failed to validate message during memory update: {e}")
             else:
                 log_warning(f"Unsupported message type: {type(_im)}")
                 continue
@@ -409,7 +409,7 @@ def process_learnings(
         )
         log_debug("Learning extraction completed.")
     except Exception as e:
-        log_warning(f"Error processing learnings: {e}", exc_info=True)
+        log_warning(f"Error processing learnings: {e}")
     return collector
 
 
@@ -439,7 +439,7 @@ async def aprocess_learnings(
         )
         log_debug("Learning extraction completed.")
     except Exception as e:
-        log_warning(f"Error processing learnings: {e}", exc_info=True)
+        log_warning(f"Error processing learnings: {e}")
     return collector
 
 

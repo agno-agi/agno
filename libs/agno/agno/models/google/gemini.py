@@ -444,7 +444,7 @@ class Gemini(Model):
                 )
                 total = response.total_tokens or 0
             except Exception as e:
-                log_warning(f"Gemini count_tokens API failed. Falling back to tiktoken-based estimation.: {e}", exc_info=True)
+                log_warning(f"Gemini count_tokens API failed. Falling back to tiktoken-based estimation.: {e}")
                 return super().count_tokens(messages, tools, output_schema)
 
             # Add estimated tokens for system instruction (not supported by Google AI Studio API)
@@ -496,7 +496,7 @@ class Gemini(Model):
                 )
                 total = response.total_tokens or 0
             except Exception as e:
-                log_warning(f"Gemini count_tokens API failed. Falling back to tiktoken-based estimation.: {e}", exc_info=True)
+                log_warning(f"Gemini count_tokens API failed. Falling back to tiktoken-based estimation.: {e}")
                 return await super().acount_tokens(messages, tools, output_schema)
 
             # Add estimated tokens for system instruction
@@ -838,7 +838,7 @@ class Gemini(Model):
                                 if video_file is not None:
                                     message_parts.insert(0, video_file)
                     except Exception as e:
-                        log_warning(f"Failed to load video from {message.videos}: {e}", exc_info=True)
+                        log_warning(f"Failed to load video from {message.videos}: {e}")
                         continue
 
                 # Add audio to the message for the model
@@ -860,7 +860,7 @@ class Gemini(Model):
                                 if audio_content:
                                     message_parts.append(audio_content)
                     except Exception as e:
-                        log_warning(f"Failed to load audio from {message.audio}: {e}", exc_info=True)
+                        log_warning(f"Failed to load audio from {message.audio}: {e}")
                         continue
 
                 # Add files to the message for the model
@@ -916,7 +916,7 @@ class Gemini(Model):
                 if remote_file_name:
                     existing_audio_upload = self.get_client().files.get(name=remote_file_name)
             except Exception as e:
-                log_warning(f"Error getting file {remote_file_name}: {e}", exc_info=True)
+                log_warning(f"Error getting file {remote_file_name}: {e}")
 
             if existing_audio_upload and existing_audio_upload.state and existing_audio_upload.state.name == "SUCCESS":
                 audio_file = existing_audio_upload
@@ -969,7 +969,7 @@ class Gemini(Model):
                 if remote_file_name:
                     existing_video_upload = self.get_client().files.get(name=remote_file_name)
             except Exception as e:
-                log_warning(f"Error getting file {remote_file_name}: {e}", exc_info=True)
+                log_warning(f"Error getting file {remote_file_name}: {e}")
 
             if existing_video_upload and existing_video_upload.state and existing_video_upload.state.name == "SUCCESS":
                 video_file = existing_video_upload
@@ -1059,7 +1059,7 @@ class Gemini(Model):
                         if clean_file_name:
                             remote_file = self.get_client().files.get(name=clean_file_name)
                     except Exception as e:
-                        log_warning(f"Error getting file {clean_file_name}: {e}", exc_info=True)
+                        log_warning(f"Error getting file {clean_file_name}: {e}")
 
                     if (
                         remote_file

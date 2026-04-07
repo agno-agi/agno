@@ -235,7 +235,7 @@ class PgVector(VectorDb):
                         log_debug(f"Creating schema: {self.schema}")
                         sess.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.schema};"))
                     except Exception as e:
-                        log_warning(f"Could not create schema {self.schema}: {e}", exc_info=True)
+                        log_warning(f"Could not create schema {self.schema}: {e}")
             log_debug(f"Creating table: {self.table_name}")
             self.table.create(self.db_engine)
 
@@ -567,7 +567,7 @@ class PgVector(VectorDb):
                     log_exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    log_warning("Async batch embedding failed, falling back to individual embeddings", exc_info=True)
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
                     results = await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -579,8 +579,7 @@ class PgVector(VectorDb):
                             # If it's an event loop closure error, log it but don't fail
                             if "Event loop is closed" in error_msg or "RuntimeError" in type(result).__name__:
                                 log_warning(
-                                    f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}",
-                                    exc_info=True,
+                                    f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}: {e}",
                                 )
 
                             else:

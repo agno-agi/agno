@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple
 
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.utils.log import logger
+from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
@@ -26,8 +26,8 @@ def get_ai_foundry_reasoning(
 ) -> Optional[Message]:
     try:
         reasoning_agent_response = reasoning_agent.run(input=messages)
-    except Exception:
-        logger.warning("Reasoning error", exc_info=True)
+    except Exception as e:
+        log_warning(f"Reasoning error: {e}")
         return None
 
     # Accumulate reasoning agent metrics into the parent run_metrics
@@ -60,8 +60,8 @@ async def aget_ai_foundry_reasoning(
 ) -> Optional[Message]:
     try:
         reasoning_agent_response = await reasoning_agent.arun(input=messages)
-    except Exception:
-        logger.warning("Reasoning error", exc_info=True)
+    except Exception as e:
+        log_warning(f"Reasoning error: {e}")
         return None
 
     # Accumulate reasoning agent metrics into the parent run_metrics
@@ -118,8 +118,8 @@ def get_ai_foundry_reasoning_stream(
                         yield (event.content, None)
                 elif event.event == RunEvent.run_completed:
                     pass
-    except Exception:
-        logger.warning("Reasoning error", exc_info=True)
+    except Exception as e:
+        log_warning(f"Reasoning error: {e}")
         return
 
     # Yield final message
@@ -164,8 +164,8 @@ async def aget_ai_foundry_reasoning_stream(
                         yield (event.content, None)
                 elif event.event == RunEvent.run_completed:
                     pass
-    except Exception:
-        logger.warning("Reasoning error", exc_info=True)
+    except Exception as e:
+        log_warning(f"Reasoning error: {e}")
         return
 
     # Yield final message

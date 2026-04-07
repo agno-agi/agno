@@ -424,8 +424,7 @@ class Qdrant(VectorDb):
                         raise e
                     else:
                         log_warning(
-                            "Async batch embedding failed, falling back to individual embeddings",
-                            exc_info=True,
+                            f"Async batch embedding failed, falling back to individual embeddings: {e}",
                         )
 
                         # Fall back to individual embedding
@@ -857,7 +856,7 @@ class Qdrant(VectorDb):
                 return False
 
         except Exception as e:
-            log_warning(f"Error deleting points with name {name}: {e}", exc_info=True)
+            log_warning(f"Error deleting points with name {name}: {e}")
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
@@ -901,7 +900,7 @@ class Qdrant(VectorDb):
                 return False
 
         except Exception as e:
-            log_warning(f"Error deleting points with metadata {metadata}: {e}", exc_info=True)
+            log_warning(f"Error deleting points with metadata {metadata}: {e}")
             return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
@@ -939,7 +938,7 @@ class Qdrant(VectorDb):
                 return False
 
         except Exception as e:
-            log_warning(f"Error deleting points with content_id {content_id}: {e}", exc_info=True)
+            log_warning(f"Error deleting points with content_id {content_id}: {e}")
             return False
 
     def id_exists(self, id: str) -> bool:
@@ -1024,7 +1023,7 @@ class Qdrant(VectorDb):
                 return False
 
         except Exception as e:
-            log_warning(f"Error deleting points with content_hash {content_hash}: {e}", exc_info=True)
+            log_warning(f"Error deleting points with content_hash {content_hash}: {e}")
             return False
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:

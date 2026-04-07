@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import log_exception, logger
+from agno.utils.log import log_exception, log_warning, logger
 
 try:
     import importlib.metadata as metadata
@@ -106,8 +106,8 @@ class OllamaEmbedder(Embedder):
                 logger.warning(f"Expected embedding dimension {self.dimensions}, but got {len(embedding)}")
                 return []
             return embedding
-        except Exception:
-            logger.warning("Failed to get embedding", exc_info=True)
+        except Exception as e:
+            log_warning(f"Failed to get embedding: {e}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
@@ -143,8 +143,8 @@ class OllamaEmbedder(Embedder):
                 logger.warning(f"Expected embedding dimension {self.dimensions}, but got {len(embedding)}")
                 return []
             return embedding
-        except Exception:
-            logger.warning("Error getting embedding", exc_info=True)
+        except Exception as e:
+            log_warning(f"Error getting embedding: {e}")
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:

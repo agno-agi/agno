@@ -327,8 +327,8 @@ class AgentAsJudgeEval(BaseEval):
                         )
                     else:
                         self.on_fail(evaluation)
-                except Exception:
-                    logger.warning("on_fail callback error", exc_info=True)
+                except Exception as e:
+                    log_warning(f"on_fail callback error: {e}")
 
             return evaluation
         except Exception:
@@ -390,8 +390,8 @@ class AgentAsJudgeEval(BaseEval):
                         await self.on_fail(evaluation)
                     else:
                         self.on_fail(evaluation)
-                except Exception:
-                    logger.warning("on_fail callback error", exc_info=True)
+                except Exception as e:
+                    log_warning(f"on_fail callback error: {e}")
 
             return evaluation
         except Exception:

@@ -242,10 +242,9 @@ class Step:
                     try:
                         # Deep copy to isolate mutable state between concurrent requests
                         agent = registry_agent.deep_copy()
-                    except Exception:
+                    except Exception as e:
                         log_warning(
-                            f"deep_copy() failed for registry agent '{agent_id}', using shared instance",
-                            exc_info=True,
+                            f"deep_copy() failed for registry agent '{agent_id}', using shared instance: {e}",
                         )
 
                         agent = registry_agent
@@ -272,10 +271,9 @@ class Step:
                     try:
                         # Deep copy to isolate mutable state between concurrent requests
                         team = registry_team.deep_copy()
-                    except Exception:
+                    except Exception as e:
                         log_warning(
-                            f"deep_copy() failed for registry team '{team_id}', using shared instance",
-                            exc_info=True,
+                            f"deep_copy() failed for registry team '{team_id}', using shared instance: {e}",
                         )
 
                         team = registry_team
@@ -731,7 +729,7 @@ class Step:
 
             except Exception as e:
                 self.retry_count = attempt + 1
-                logger.warning(f"Step {self.name} failed (attempt {attempt + 1})", exc_info=True)
+                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -1054,7 +1052,7 @@ class Step:
                 return
             except Exception as e:
                 self.retry_count = attempt + 1
-                logger.warning(f"Step {self.name} failed (attempt {attempt + 1})", exc_info=True)
+                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -1306,7 +1304,7 @@ class Step:
 
             except Exception as e:
                 self.retry_count = attempt + 1
-                logger.warning(f"Step {self.name} failed (attempt {attempt + 1})", exc_info=True)
+                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -1622,7 +1620,7 @@ class Step:
 
             except Exception as e:
                 self.retry_count = attempt + 1
-                logger.warning(f"Step {self.name} failed (attempt {attempt + 1})", exc_info=True)
+                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:

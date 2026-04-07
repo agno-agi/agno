@@ -225,7 +225,7 @@ class ChromaDb(VectorDb):
                 log_debug(f"ChromaDB max batch size: {max_size}")
             except Exception as e:
                 # Fallback to conservative value if query fails
-                log_warning(f"Could not query ChromaDB max batch size. Using fallback: 100: {e}", exc_info=True)
+                log_warning(f"Could not query ChromaDB max batch size. Using fallback: 100: {e}")
                 self._batch_size = 100
         return self._batch_size
 
@@ -413,7 +413,7 @@ class ChromaDb(VectorDb):
                     logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    logger.warning("Async batch embedding failed, falling back to individual embeddings", exc_info=True)
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -607,7 +607,7 @@ class ChromaDb(VectorDb):
                     logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    logger.warning("Async batch embedding failed, falling back to individual embeddings", exc_info=True)
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -716,7 +716,7 @@ class ChromaDb(VectorDb):
             try:
                 search_results = self.reranker.rerank(query=query, documents=search_results)
             except Exception as e:
-                log_warning(f"Reranker failed, returning unranked results: {e}", exc_info=True)
+                log_warning(f"Reranker failed, returning unranked results: {e}")
 
         log_info(f"Found {len(search_results)} documents")
         return search_results
@@ -1421,9 +1421,8 @@ class ChromaDb(VectorDb):
                 if "object of type 'int' has no len()" in str(te):
                     # Known issue with ChromaDB 0.5.0 - internal bug
                     # As a workaround, assume content doesn't exist to allow processing to continue
-                    logger.warning(
-                        f"ChromaDB internal error (version 0.5.0 bug): {te}. Assuming content_hash '{content_hash}' does not exist.",
-                        exc_info=True,
+                    log_warning(
+                        f"ChromaDB internal error (version 0.5.0 bug): {te}. Assuming content_hash '{content_hash}' does not exist."
                     )
 
                     return False
@@ -1493,7 +1492,6 @@ class ChromaDb(VectorDb):
                 if "object of type 'int' has no len()" in str(te):
                     log_warning(
                         f"ChromaDB internal error (version 0.5.0 bug): {te}. Cannot update metadata for content_id '{content_id}'.",
-                        exc_info=True,
                     )
 
                     return

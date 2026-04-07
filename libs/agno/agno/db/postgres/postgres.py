@@ -2492,7 +2492,7 @@ class PostgresDb(BaseDb):
                 sess.execute(table.delete())
 
         except Exception as e:
-            log_warning("Exception deleting all cultural knowledge", exc_info=True)
+            log_warning(f"Exception deleting all cultural knowledge: {e}")
             raise e
 
     def delete_cultural_knowledge(self, id: str) -> None:

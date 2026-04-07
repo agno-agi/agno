@@ -70,7 +70,7 @@ def create_schema(session: Session, db_schema: str) -> None:
         # MySQL uses CREATE DATABASE instead of CREATE SCHEMA
         session.execute(text(f"CREATE DATABASE IF NOT EXISTS {db_schema};"))
     except Exception as e:
-        log_warning(f"Could not create database {db_schema}: {e}", exc_info=True)
+        log_warning(f"Could not create database {db_schema}: {e}")
 
 
 def is_table_available(session: Session, table_name: str, db_schema: str) -> bool:
@@ -434,7 +434,7 @@ async def acreate_schema(session: AsyncSession, db_schema: str) -> None:
         # MySQL uses CREATE DATABASE instead of CREATE SCHEMA
         await session.execute(text(f"CREATE DATABASE IF NOT EXISTS `{db_schema}`;"))
     except Exception as e:
-        log_warning(f"Could not create database {db_schema}: {e}", exc_info=True)
+        log_warning(f"Could not create database {db_schema}: {e}")
 
 
 async def ais_table_available(session: AsyncSession, table_name: str, db_schema: str) -> bool:

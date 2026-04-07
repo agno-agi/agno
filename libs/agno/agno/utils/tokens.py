@@ -31,7 +31,7 @@ def _get_tiktoken_encoding(model_id: str):
         except KeyError:
             return tiktoken.get_encoding("o200k_base")
     except ImportError as e:
-        log_warning(f"tiktoken not installed. Please install it using `pip install tiktoken`.: {e}", exc_info=True)
+        log_warning(f"tiktoken not installed. Please install it using `pip install tiktoken`.: {e}")
         return None
 
 
@@ -56,7 +56,7 @@ def _get_hf_tokenizer(model_id: str):
 
         return None
     except ImportError as e:
-        log_warning(f"tokenizers not installed. Please install it using `pip install tokenizers`.: {e}", exc_info=True)
+        log_warning(f"tokenizers not installed. Please install it using `pip install tokenizers`.: {e}")
         return None
     except Exception:
         return None

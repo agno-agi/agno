@@ -1329,7 +1329,7 @@ class Workflow:
                 session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
             return session if isinstance(session, (WorkflowSession, type(None))) else None
         except Exception as e:
-            log_warning(f"Error getting session from db: {e}", exc_info=True)
+            log_warning(f"Error getting session from db: {e}")
             return None
 
     def _read_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
@@ -1340,7 +1340,7 @@ class Workflow:
             session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
             return session if isinstance(session, (WorkflowSession, type(None))) else None
         except Exception as e:
-            log_warning(f"Error getting session from db: {e}", exc_info=True)
+            log_warning(f"Error getting session from db: {e}")
             return None
 
     async def _aupsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
@@ -1351,7 +1351,7 @@ class Workflow:
             result = await self.db.upsert_session(session=session)  # type: ignore
             return result if isinstance(result, (WorkflowSession, type(None))) else None
         except Exception as e:
-            log_warning(f"Error upserting session into db: {e}", exc_info=True)
+            log_warning(f"Error upserting session into db: {e}")
             return None
 
     def _upsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
@@ -1362,7 +1362,7 @@ class Workflow:
             result = self.db.upsert_session(session=session)
             return result if isinstance(result, (WorkflowSession, type(None))) else None
         except Exception as e:
-            log_warning(f"Error upserting session into db: {e}", exc_info=True)
+            log_warning(f"Error upserting session into db: {e}")
             return None
 
     def _update_metadata(self, session: WorkflowSession):
@@ -2449,12 +2449,9 @@ class Workflow:
             else:
                 # For regular async functions, await the result
                 return await func(**call_kwargs)  # type: ignore
-        except TypeError:
+        except TypeError as e:
             # If signature inspection fails, fall back to original method
-            logger.warning(
-                "Async function signature inspection failed. Falling back to original calling convention.",
-                exc_info=True,
-            )
+            log_warning(f"Async function signature inspection failed. Falling back to original calling convention.: {e}")
 
             if isasyncgenfunction(func):
                 # For async generators, use the same signature inspection logic in fallback
@@ -7298,7 +7295,7 @@ class Workflow:
                         try:
                             fields_for_new_workflow[f.name] = copy(field_value)
                         except Exception as e:
-                            log_warning(f"Failed to copy field: {f.name}: {e}", exc_info=True)
+                            log_warning(f"Failed to copy field: {f.name}: {e}")
                             fields_for_new_workflow[f.name] = field_value
                 # For pydantic models, attempt a model_copy
                 elif isinstance(field_value, BaseModel):

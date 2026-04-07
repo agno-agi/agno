@@ -8,7 +8,7 @@ from agno.media import Audio, Image, Video
 from agno.models.response import FileType
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 
 try:
     import requests
@@ -156,8 +156,8 @@ class ModelsLabTools(Toolkit):
 
                 time.sleep(1)
 
-            except RequestException:
-                logger.warning(f"Error during fetch attempt {seconds_waited}", exc_info=True)
+            except RequestException as e:
+                log_warning(f"Error during fetch attempt {seconds_waited}: {e}")
 
         return False
 

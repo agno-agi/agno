@@ -8,7 +8,7 @@ from uuid import uuid4
 from agno.media import File
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_warning, logger
 
 try:
     from reportlab.lib.pagesizes import letter
@@ -17,12 +17,9 @@ try:
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
     PDF_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     PDF_AVAILABLE = False
-    logger.warning(
-        "reportlab not installed. PDF generation will not be available. Install with: pip install reportlab",
-        exc_info=True,
-    )
+    log_warning(f"reportlab not installed. PDF generation will not be available. Install with: pip install reportlab: {e}")
 
 
 class FileGenerationTools(Toolkit):

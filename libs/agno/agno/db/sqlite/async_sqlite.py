@@ -275,7 +275,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     log_debug(f"Created index: {idx.name} for table {table_name}")
 
                 except Exception as e:
-                    log_warning(f"Error creating index {idx.name}: {e}", exc_info=True)
+                    log_warning(f"Error creating index {idx.name}: {e}")
 
             # Store the schema version for the created table
             if table_name != self.versions_table_name and table_created:
@@ -887,7 +887,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     return WorkflowSession.from_dict(session_raw)
 
         except Exception as e:
-            log_warning("Exception upserting into table", exc_info=True)
+            log_warning(f"Exception upserting into table: {e}")
             raise e
 
     async def upsert_sessions(
@@ -1600,7 +1600,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         except Exception as e:
             from agno.utils.log import log_warning
 
-            log_warning("Exception deleting all memories", exc_info=True)
+            log_warning(f"Exception deleting all memories: {e}")
             raise e
 
     # -- Metrics methods --

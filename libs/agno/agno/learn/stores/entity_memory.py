@@ -2681,7 +2681,7 @@ class EntityMemoryStore(LearningStore):
                 log_debug("EntityMemoryStore: Extraction saved entities")
 
         except Exception as e:
-            log_warning(f"EntityMemoryStore.extract_and_save failed: {e}", exc_info=True)
+            log_warning(f"EntityMemoryStore.extract_and_save failed: {e}")
 
     async def aextract_and_save(
         self,
@@ -2729,7 +2729,7 @@ class EntityMemoryStore(LearningStore):
                 log_debug("EntityMemoryStore: Extraction saved entities")
 
         except Exception as e:
-            log_warning(f"EntityMemoryStore.aextract_and_save failed: {e}", exc_info=True)
+            log_warning(f"EntityMemoryStore.aextract_and_save failed: {e}")
 
     def _get_extraction_system_message(self) -> "Message":
         """Get system message for extraction."""
@@ -3080,7 +3080,7 @@ class EntityMemoryStore(LearningStore):
                 func.strict = True
                 functions.append(func)
             except Exception as e:
-                log_warning(f"Could not add function {tool}: {e}", exc_info=True)
+                log_warning(f"Could not add function {tool}: {e}")
 
         return functions
 

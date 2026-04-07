@@ -162,7 +162,7 @@ async def _download_media(media_id: str, media_label: str, config: WhatsAppConfi
         mime_type = metadata.get("mime_type")
     except httpx.HTTPError as e:
         reason = f"{media_label} (metadata fetch failed: {e})"
-        log_warning(f"Media download skipped: {reason}", exc_info=True)
+        log_warning(f"Media download skipped: {reason}: {e}")
         return _MediaResult(skip_reason=reason)
 
     try:
@@ -172,7 +172,7 @@ async def _download_media(media_id: str, media_label: str, config: WhatsAppConfi
             return _MediaResult(content=resp.content, mime_type=mime_type)
     except httpx.HTTPError as e:
         reason = f"{media_label} (download failed: {e})"
-        log_warning(f"Media download skipped: {reason}", exc_info=True)
+        log_warning(f"Media download skipped: {reason}: {e}")
         return _MediaResult(skip_reason=reason)
 
 

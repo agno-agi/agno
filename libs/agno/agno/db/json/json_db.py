@@ -744,7 +744,7 @@ class JsonDb(BaseDb):
             return UserMemory.from_dict(memory_dict)
 
         except Exception as e:
-            log_warning("Exception upserting user memory", exc_info=True)
+            log_warning(f"Exception upserting user memory: {e}")
             raise e
 
     def upsert_memories(
@@ -794,7 +794,7 @@ class JsonDb(BaseDb):
             self._write_json_file(self.memory_table_name, [])
 
         except Exception as e:
-            log_warning("Exception deleting all memories", exc_info=True)
+            log_warning(f"Exception deleting all memories: {e}")
             raise e
 
     # -- Metrics methods --
@@ -863,7 +863,7 @@ class JsonDb(BaseDb):
             return results
 
         except Exception as e:
-            log_warning("Exception refreshing metrics", exc_info=True)
+            log_warning(f"Exception refreshing metrics: {e}")
             raise e
 
     def _get_metrics_calculation_starting_date(self, metrics: List[Dict[str, Any]]) -> Optional[date]:

@@ -168,7 +168,7 @@ class JWTValidator:
                     # If no kid, use a default key (for single-key JWKS)
                     self.jwks_keys["_default"] = jwk
             except Exception as e:
-                log_warning(f"Failed to parse JWKS key: {e}", exc_info=True)
+                log_warning(f"Failed to parse JWKS key: {e}")
 
     def validate_token(
         self, token: str, expected_audience: Optional[Union[str, Iterable[str]]] = None
@@ -827,26 +827,26 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.authenticated = True
 
         except jwt.InvalidAudienceError as e:
-            log_warning(f"Invalid token audience - expected: {expected_audience}: {e}", exc_info=True)
+            log_warning(f"Invalid token audience - expected: {expected_audience}: {e}")
             return self._create_error_response(
                 401, "Invalid token audience - token not valid for this AgentOS instance", origin, cors_allowed_origins
             )
         except jwt.ExpiredSignatureError as e:
             if self.validate:
-                log_warning(f"Token has expired: {e}", exc_info=True)
+                log_warning(f"Token has expired: {e}")
                 return self._create_error_response(401, "Token has expired", origin, cors_allowed_origins)
             request.state.authenticated = False
             request.state.token = token
 
         except jwt.InvalidTokenError as e:
             if self.validate:
-                log_warning("Invalid token", exc_info=True)
+                log_warning(f"Invalid token: {e}")
                 return self._create_error_response(401, f"Invalid token: {str(e)}", origin, cors_allowed_origins)
             request.state.authenticated = False
             request.state.token = token
         except Exception as e:
             if self.validate:
-                log_warning("Error decoding token", exc_info=True)
+                log_warning(f"Error decoding token: {e}")
                 return self._create_error_response(401, f"Error decoding token: {str(e)}", origin, cors_allowed_origins)
             request.state.authenticated = False
             request.state.token = token

@@ -31,7 +31,7 @@ def create_collection_indexes(collection: Collection, collection_type: str) -> N
                 collection.create_index([(key, 1)], unique=unique)
 
     except Exception as e:
-        log_warning(f"Error creating indexes for {collection_type} collection: {e}", exc_info=True)
+        log_warning(f"Error creating indexes for {collection_type} collection: {e}")
 
 
 async def create_collection_indexes_async(collection: Any, collection_type: str) -> None:
@@ -48,7 +48,7 @@ async def create_collection_indexes_async(collection: Any, collection_type: str)
                 await collection.create_index([(key, 1)], unique=unique)
 
     except Exception as e:
-        log_warning(f"Error creating indexes for {collection_type} collection: {e}", exc_info=True)
+        log_warning(f"Error creating indexes for {collection_type} collection: {e}")
 
 
 def apply_sorting(

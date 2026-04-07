@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Optional, Union
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalRunRecord, EvalType
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_warning
 
 if TYPE_CHECKING:
     from agno.eval.accuracy import AccuracyResult
@@ -116,5 +116,5 @@ def store_result_in_file(
         if not fn_path.parent.exists():
             fn_path.parent.mkdir(parents=True, exist_ok=True)
         fn_path.write_text(json.dumps(asdict(result), indent=4))
-    except Exception:
-        logger.warning("Failed to save result to file", exc_info=True)
+    except Exception as e:
+        log_warning(f"Failed to save result to file: {e}")
