@@ -344,6 +344,7 @@ class TestSessionSchema:
         assert schema.session_type == "workflow"
         assert schema.workflow_id == "w1"
 
+
 class TestBackwardsCompatibility:
     """Sessions created by older SDK versions without session_type field should still work."""
 
@@ -388,7 +389,6 @@ class TestBackwardsCompatibility:
         types = {s["session_id"]: s.get("session_type") for s in data}
         assert types[f"old-agent-{uid}"] == "agent"
         assert types[f"old-team-{uid}"] == "team"
-
 
 
 class TestGetSessionRunById:
@@ -911,6 +911,7 @@ class TestPaginationEdgeCases:
         assert len(data) >= 1
         assert any("Agent" in s.get("session_name", "") for s in data)
 
+
 class TestDetectSessionType:
     """Unit tests for detect_session_type function."""
 
@@ -987,9 +988,7 @@ class TestResolveSessionType:
         )
         db.upsert_session(session)
 
-        resolved_type, raw = asyncio.run(
-            resolve_session_type(db, f"resolve-{uid}", None)
-        )
+        resolved_type, raw = asyncio.run(resolve_session_type(db, f"resolve-{uid}", None))
         assert resolved_type == SessionType.TEAM
         assert raw is not None
         assert raw["team_id"] == "t1"
