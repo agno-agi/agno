@@ -73,7 +73,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import load_token, save_token, google_authenticate
+from agno.tools.google.auth import google_authenticate, load_token, save_token
 from agno.utils.log import log_debug, log_error
 
 try:

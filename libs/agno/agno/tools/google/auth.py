@@ -237,18 +237,22 @@ class GoogleAuth(Toolkit):
 
     def authenticate_google(
         self,
-        services: List[Literal["gmail", "calendar", "drive", "sheets", "slides"]],
+        services: Optional[List[Literal["gmail", "calendar", "drive", "sheets", "slides"]]] = None,
         run_context: Optional[Any] = None,
     ) -> str:
         """
         Get the Google OAuth URL for the user to authenticate their Google account.
+        Requests access for all registered services by default so the user only
+        needs to complete one OAuth consent flow.
 
         Args:
-            services (List[str]): Google services to authenticate.
+            services (List[str]): Google services to authenticate. Defaults to all registered services.
 
         Returns:
             str: JSON string containing the OAuth URL or error message
         """
+        if not services:
+            services = list(self._services.keys())
         scopes: Set[str] = set()
         for service in services:
             if service in self._services:
@@ -337,17 +341,22 @@ class GoogleAuth(Toolkit):
         log_info(f"OAuth complete for user={user_id}, services={services}")
         return {"status": "ok", "user_id": user_id, "services": services}
 
-    def get_oauth_router(self) -> Any:
+    def get_oauth_router(self, db: Optional[Any] = None) -> Any:
         """Create a FastAPI APIRouter with the /google/oauth/callback endpoint.
 
-        The router closes over this GoogleAuth instance. _db must be wired
-        (via AgentOS init-time binding or explicit db= param) before the
-        callback fires, otherwise token storage silently skips.
+        The router closes over this GoogleAuth instance.
+
+        Args:
+            db: Optional database to use for token storage. Sets ``_db``
+                on this instance so the callback can persist tokens.
 
         Usage:
             google_auth = GoogleAuth(client_id="...")
-            app.include_router(google_auth.get_oauth_router())
+            app.include_router(google_auth.get_oauth_router(db=my_db))
         """
+        if db is not None and self._db is None:
+            self._db = db
+
         from html import escape
 
         from fastapi import APIRouter, Request

@@ -386,6 +386,11 @@ def parse_tools(
             log_debug(f"Included builtin tool {tool}")
 
         elif isinstance(tool, Toolkit):
+            # Per-user isolation: clone toolkit when user_id is set so each
+            # run gets its own creds/service state. No-op for single-user.
+            if run_context and run_context.user_id is not None:
+                tool = tool._clone_for_run()
+
             # For each function in the toolkit and process entrypoint
             toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
             for name, _func in toolkit_functions.items():
@@ -393,6 +398,15 @@ def parse_tools(
                     continue
                 _function_names.append(name)
                 _func = _func.model_copy(deep=True)
+                # Rebind entrypoint to current tool instance (clone or original).
+                # model_copy shallow-copies entrypoint (function.py:246), leaving
+                # it bound to the original toolkit. Use `name` (the registered
+                # tool name) rather than entrypoint.__name__ which may differ
+                # for custom-named or @tool-decorated methods.
+                if _func.entrypoint is not None:
+                    bound = getattr(tool, name, None)
+                    if bound is not None:
+                        _func.entrypoint = bound
                 _func._agent = agent
                 if agent._team is not None:
                     _func._team = agent._team

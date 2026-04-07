@@ -3805,9 +3805,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             token_id = self._auth_token_id(provider, user_id, service)
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    result = (
-                        await sess.execute(select(table).where(table.c.id == token_id))
-                    ).fetchone()
+                    result = (await sess.execute(select(table).where(table.c.id == token_id))).fetchone()
                     return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting auth token: {e}")
