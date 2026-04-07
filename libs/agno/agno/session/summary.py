@@ -74,6 +74,12 @@ class SessionSummaryManager:
     # Whether session summaries were created in the last run
     summaries_updated: bool = False
 
+    # Number of recent runs to include in the summary. None means all runs.
+    last_n_runs: Optional[int] = None
+
+    # Maximum number of messages to include in the summary conversation. None means no limit.
+    conversation_limit: Optional[int] = None
+
     def get_response_format(self, model: "Model") -> Union[Dict[str, Any], Type[BaseModel]]:  # type: ignore
         if model.supports_native_structured_outputs:
             return SessionSummaryResponse
@@ -151,7 +157,10 @@ class SessionSummaryManager:
         response_format = self.get_response_format(self.model)
 
         system_message = self.get_system_message(
-            conversation=session.get_messages(),  # type: ignore
+            conversation=session.get_messages(  # type: ignore
+                last_n_runs=self.last_n_runs,
+                limit=self.conversation_limit,
+            ),
             response_format=response_format,
         )
 
