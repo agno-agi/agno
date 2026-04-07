@@ -342,7 +342,7 @@ class CultureManager:
                 _functions.append(func)
                 log_debug(f"Added function {func.name}")
             except Exception as e:
-                log_warning(f"Could not add function {tool}: {e}")
+                log_warning(f"Could not add function {tool}: {str(e)}")
 
         return _functions
 
@@ -700,8 +700,8 @@ class CultureManager:
             self.db.clear_cultural_knowledge()
             return "Cultural knowledge cleared successfully"
         except Exception as e:
-            log_warning(f"Error clearing cultural knowledge in db: {e}")
-            return f"Error clearing cultural knowledge: {e}"
+            log_warning(f"Error clearing cultural knowledge in db: {str(e)}")
+            return "Error clearing cultural knowledge"
 
     async def _aclear_db_knowledge(self) -> str:
         """Use this function to clear all cultural knowledge from the database."""
@@ -712,8 +712,8 @@ class CultureManager:
             await self.db.clear_cultural_knowledge()
             return "Cultural knowledge cleared successfully"
         except Exception as e:
-            log_warning(f"Error clearing cultural knowledge in db: {e}")
-            return f"Error clearing cultural knowledge: {e}"
+            log_warning(f"Error clearing cultural knowledge in db: {str(e)}")
+            return "Error clearing cultural knowledge"
 
     def _delete_db_knowledge(self, knowledge_id: str) -> str:
         """Use this function to delete a cultural knowledge from the database."""
@@ -724,8 +724,8 @@ class CultureManager:
             self.db.delete_cultural_knowledge(id=knowledge_id)
             return "Cultural knowledge deleted successfully"
         except Exception as e:
-            log_warning(f"Error deleting cultural knowledge in db: {e}")
-            return f"Error deleting cultural knowledge: {e}"
+            log_warning(f"Error deleting cultural knowledge in db: {str(e)}")
+            return "Error deleting cultural knowledge"
 
     async def _adelete_db_knowledge(self, knowledge_id: str) -> str:
         """Use this function to delete a cultural knowledge from the database."""
@@ -736,8 +736,8 @@ class CultureManager:
             await self.db.delete_cultural_knowledge(id=knowledge_id)
             return "Cultural knowledge deleted successfully"
         except Exception as e:
-            log_warning(f"Error deleting cultural knowledge in db: {e}")
-            return f"Error deleting cultural knowledge: {e}"
+            log_warning(f"Error deleting cultural knowledge in db: {str(e)}")
+            return "Error deleting cultural knowledge"
 
     def _upsert_db_knowledge(self, knowledge: CulturalKnowledge) -> str:
         """Use this function to add a cultural knowledge to the database."""
@@ -748,8 +748,8 @@ class CultureManager:
             self.db.upsert_cultural_knowledge(cultural_knowledge=knowledge)
             return "Cultural knowledge added successfully"
         except Exception as e:
-            log_warning(f"Error storing cultural knowledge in db: {e}")
-            return f"Error adding cultural knowledge: {e}"
+            log_warning(f"Error storing cultural knowledge in db: {str(e)}")
+            return "Error adding cultural knowledge"
 
     # -* Get DB Tools -*-
     def _get_db_tools(
@@ -791,8 +791,8 @@ class CultureManager:
                 log_debug(f"Cultural knowledge added: {knowledge_id}")
                 return "Cultural knowledge added successfully"
             except Exception as e:
-                log_warning(f"Error storing cultural knowledge in db: {e}")
-                return f"Error adding cultural knowledge: {e}"
+                log_warning(f"Error storing cultural knowledge in db: {str(e)}")
+                return "Error adding cultural knowledge"
 
         def update_cultural_knowledge(
             knowledge_id: str,
@@ -826,8 +826,8 @@ class CultureManager:
                 log_debug("Cultural knowledge updated")
                 return "Cultural knowledge updated successfully"
             except Exception as e:
-                log_warning(f"Error storing cultural knowledge in db: {e}")
-                return f"Error adding cultural knowledge: {e}"
+                log_warning(f"Error storing cultural knowledge in db: {str(e)}")
+                return "Error adding cultural knowledge"
 
         def delete_cultural_knowledge(knowledge_id: str) -> str:
             """Use this function to delete a single cultural knowledge from the database.
@@ -841,8 +841,8 @@ class CultureManager:
                 log_debug("Cultural knowledge deleted")
                 return "Cultural knowledge deleted successfully"
             except Exception as e:
-                log_warning(f"Error deleting cultural knowledge in db: {e}")
-                return f"Error deleting cultural knowledge: {e}"
+                log_warning(f"Error deleting cultural knowledge in db: {str(e)}")
+                return "Error deleting cultural knowledge"
 
         def clear_cultural_knowledge() -> str:
             """Use this function to remove all (or clear all) cultural knowledge from the database.
@@ -903,8 +903,8 @@ class CultureManager:
                 log_debug(f"Cultural knowledge added: {knowledge_id}")
                 return "Cultural knowledge added successfully"
             except Exception as e:
-                log_warning(f"Error storing cultural knowledge in db: {e}")
-                return f"Error adding cultural knowledge: {e}"
+                log_warning(f"Error storing cultural knowledge in db: {str(e)}")
+                return "Error adding cultural knowledge"
 
         async def update_cultural_knowledge(
             knowledge_id: str,
@@ -938,8 +938,8 @@ class CultureManager:
                 log_debug("Cultural knowledge updated")
                 return "Cultural knowledge updated successfully"
             except Exception as e:
-                log_warning(f"Error storing cultural knowledge in db: {e}")
-                return f"Error updating cultural knowledge: {e}"
+                log_warning(f"Error storing cultural knowledge in db: {str(e)}")
+                return "Error updating cultural knowledge"
 
         async def delete_cultural_knowledge(knowledge_id: str) -> str:
             """Use this function to delete a single cultural knowledge from the database.
@@ -953,8 +953,8 @@ class CultureManager:
                 log_debug("Cultural knowledge deleted")
                 return "Cultural knowledge deleted successfully"
             except Exception as e:
-                log_warning(f"Error deleting cultural knowledge in db: {e}")
-                return f"Error deleting cultural knowledge: {e}"
+                log_warning(f"Error deleting cultural knowledge in db: {str(e)}")
+                return "Error deleting cultural knowledge"
 
         async def clear_cultural_knowledge() -> str:
             """Use this function to remove all (or clear all) cultural knowledge from the database.

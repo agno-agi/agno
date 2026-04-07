@@ -83,7 +83,7 @@ def _convert_dependencies_to_string(team: Team, context: Dict[str, Any]) -> str:
     try:
         return json.dumps(context, indent=2, default=str)
     except (TypeError, ValueError, OverflowError) as e:
-        log_warning(f"Failed to convert context to JSON: {e}")
+        log_warning(f"Failed to convert context to JSON: {str(e)}")
         # Attempt a fallback conversion for non-serializable objects
         sanitized_context = {}
         for key, value in context.items():
@@ -92,14 +92,14 @@ def _convert_dependencies_to_string(team: Team, context: Dict[str, Any]) -> str:
                 json.dumps({key: value}, default=str)
                 sanitized_context[key] = value
             except Exception as e:
-                log_error(f"Failed to serialize to JSON: {e}")
+                log_error(f"Failed to serialize to JSON: {str(e)}")
                 # If serialization fails, convert to string representation
                 sanitized_context[key] = str(value)
 
         try:
             return json.dumps(sanitized_context, indent=2)
         except Exception as e:
-            log_error(f"Failed to convert sanitized context to JSON: {e}")
+            log_error(f"Failed to convert sanitized context to JSON: {str(e)}")
             return str(context)
 
 
@@ -140,7 +140,7 @@ def deep_copy(team: Team, *, update: Optional[Dict[str, Any]] = None) -> Team:
             try:
                 fields_for_new_team[f.name] = _deep_copy_field(team, f.name, field_value)
             except Exception as e:
-                log_warning(f"Failed to deep copy field '{f.name}': {e}. Using original value.")
+                log_warning(f"Failed to deep copy field '{f.name}'. Using original value.: {str(e)}")
                 fields_for_new_team[f.name] = field_value
 
     # Update fields if provided
@@ -153,7 +153,7 @@ def deep_copy(team: Team, *, update: Optional[Dict[str, Any]] = None) -> Team:
         log_debug(f"Created new {team.__class__.__name__}")
         return new_team
     except Exception as e:
-        log_error(f"Failed to create deep copy of {team.__class__.__name__}: {e}")
+        log_error(f"Failed to create deep copy of {team.__class__.__name__}: {str(e)}")
         raise
 
 
@@ -201,7 +201,7 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
             return copied_tools
         except Exception as e:
             # If entire tools processing fails, log and return original list
-            log_warning(f"Failed to process tools for deep copy: {e}")
+            log_warning(f"Failed to process tools for deep copy: {str(e)}")
             return field_value
 
     # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
@@ -216,6 +216,7 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
         "session_summary_manager",
         "compression_manager",
         "learning",
+        "skills",
     ):
         return field_value
 
@@ -227,7 +228,7 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
             try:
                 return copy(field_value)
             except Exception as e:
-                log_warning(f"Failed to copy field: {field_name} - {e}")
+                log_warning(f"Failed to copy field: {field_name}: {str(e)}")
                 return field_value
 
     # For pydantic models, attempt a model_copy
@@ -238,7 +239,7 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
             try:
                 return field_value.model_copy(deep=False)
             except Exception as e:
-                log_warning(f"Failed to copy field: {field_name} - {e}")
+                log_warning(f"Failed to copy field: {field_name}: {str(e)}")
                 return field_value
 
     # For other types, attempt a shallow copy first
