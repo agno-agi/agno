@@ -12,11 +12,11 @@ from agno.models.openai import OpenAIChat
 
 # ---------------------------------------------------------------------------
 # Basic: pass a list of fallback models directly
-# The primary model uses an invalid ID so it will fail,
-# then the fallback (Claude) handles the request.
+# The primary model points to an unreachable server so it will fail
+# with a connection error, then the fallback (Claude) handles the request.
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-invalid"),
+    model=OpenAIChat(id="gpt-4o", base_url="http://localhost:1/v1", retries=0),
     fallback_models=[Claude(id="claude-sonnet-4-20250514")],
 )
 

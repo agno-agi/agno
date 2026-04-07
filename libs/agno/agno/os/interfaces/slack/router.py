@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import (
+    build_run_metadata,
     download_event_files_async,
     extract_event_context,
     resolve_channel_name,
@@ -193,8 +194,7 @@ def attach_routes(
             run_kwargs: Dict[str, Any] = {
                 "user_id": resolved_user_id,
                 "session_id": session_id,
-                "metadata": {"user_name": display_name, "user_email": resolved_user_id} if display_name else None,
-                # Channel name for LLM context, channel_id for tool calls
+                "metadata": build_run_metadata(display_name, resolved_user_id, ctx),
                 "dependencies": {
                     "Slack channel": f"#{channel_name}" if channel_name else ctx["channel_id"],
                     "Slack channel_id": ctx["channel_id"],
@@ -318,8 +318,7 @@ def attach_routes(
                 "stream_events": True,
                 "user_id": resolved_user_id,
                 "session_id": session_id,
-                "metadata": {"user_name": display_name, "user_email": resolved_user_id} if display_name else None,
-                # Channel name for LLM context, channel_id for tool calls
+                "metadata": build_run_metadata(display_name, resolved_user_id, ctx),
                 "dependencies": {
                     "Slack channel": f"#{channel_name}" if channel_name else ctx["channel_id"],
                     "Slack channel_id": ctx["channel_id"],

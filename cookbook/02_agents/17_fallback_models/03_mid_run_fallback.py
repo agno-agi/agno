@@ -18,10 +18,11 @@ from agno.models.openai import OpenAIChat
 
 
 def break_model(agent: Agent) -> str:
-    """Tool that corrupts the executing model's id mid-run."""
-    # Mutate the actual model instance so the next API call in the
-    # response() loop hits an invalid model id.
-    agent.model.id = "gpt-4o-invalid"  # type: ignore[union-attr]
+    """Tool that corrupts the executing model mid-run."""
+    # Point the model at an unreachable server and clear the cached client
+    # so the next API call in the response() loop fails with a connection error.
+    agent.model.base_url = "http://localhost:1/v1"  # type: ignore[union-attr]
+    agent.model.client = None  # type: ignore[union-attr]
     return "Tool executed successfully."
 
 

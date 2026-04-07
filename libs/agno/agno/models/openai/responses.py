@@ -709,7 +709,10 @@ class OpenAIResponses(Model):
 
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_message = exc.response.json().get("error", {})
+            except Exception:
+                error_message = exc.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -726,7 +729,10 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
             log_error(f"API status error from OpenAI API: {exc}")
-            error_body = exc.response.json().get("error", {})
+            try:
+                error_body = exc.response.json().get("error", {})
+            except Exception:
+                error_body = exc.response.text
             error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
                 error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
@@ -785,7 +791,10 @@ class OpenAIResponses(Model):
 
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_message = exc.response.json().get("error", {})
+            except Exception:
+                error_message = exc.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -802,7 +811,10 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
             log_error(f"API status error from OpenAI API: {exc}")
-            error_body = exc.response.json().get("error", {})
+            try:
+                error_body = exc.response.json().get("error", {})
+            except Exception:
+                error_body = exc.response.text
             error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
                 error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
@@ -865,7 +877,10 @@ class OpenAIResponses(Model):
 
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_message = exc.response.json().get("error", {})
+            except Exception:
+                error_message = exc.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -882,7 +897,10 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
             log_error(f"API status error from OpenAI API: {exc}")
-            error_body = exc.response.json().get("error", {})
+            try:
+                error_body = exc.response.json().get("error", {})
+            except Exception:
+                error_body = exc.response.text
             error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
                 error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
@@ -942,7 +960,10 @@ class OpenAIResponses(Model):
 
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_message = exc.response.json().get("error", {})
+            except Exception:
+                error_message = exc.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -959,7 +980,10 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
             log_error(f"API status error from OpenAI API: {exc}")
-            error_body = exc.response.json().get("error", {})
+            try:
+                error_body = exc.response.json().get("error", {})
+            except Exception:
+                error_body = exc.response.text
             error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
                 error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
