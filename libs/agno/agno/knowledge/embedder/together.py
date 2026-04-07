@@ -7,7 +7,7 @@ from agno.knowledge.embedder.openai import OpenAIEmbedder
 
 @dataclass
 class TogetherEmbedder(OpenAIEmbedder):
-    id: str = "togethercomputer/m2-bert-80M-32k-retrieval"
-    dimensions: int = 768
+    id: str = "intfloat/multilingual-e5-large-instruct"
+    dimensions: int = 1024
     api_key: Optional[str] = getenv("TOGETHER_API_KEY")
     base_url: str = "https://api.together.xyz/v1"
