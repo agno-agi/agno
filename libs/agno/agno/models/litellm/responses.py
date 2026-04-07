@@ -1,4 +1,4 @@
-﻿import copy
+import copy
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Union
@@ -231,9 +231,8 @@ class LiteLLMResponses(OpenResponses):
                 model_response, tool_use = self._parse_provider_response_delta(chunk, assistant_message,
                                                                                tool_use)  # type: ignore
                 yield model_response
-
-            assistant_message.metrics.stop_timer()
-
         except Exception as e:
             log_error(f"Error in streaming response: {e}")
             raise
+        finally:
+            assistant_message.metrics.stop_timer()

@@ -3047,3 +3047,11 @@ class Model(ABC):
                     setattr(new_model, k, v)
 
         return new_model
+
+
+class SupportsInternalToolFieldsMixin:
+    def _supports_internal_tool_fields(self) -> bool:
+        if hasattr(self, "provider"):
+            return self.provider not in ["AIMLAPI", "Fireworks", "Nvidia", "VLLM"]
+        else:
+            return False

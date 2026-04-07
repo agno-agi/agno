@@ -8,7 +8,7 @@ from typing_extensions import Literal
 
 from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
 from agno.media import File
-from agno.models.base import Model
+from agno.models.base import Model, SupportsInternalToolFieldsMixin
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
@@ -28,7 +28,7 @@ except ImportError as e:
 
 
 @dataclass
-class OpenAIResponses(Model):
+class OpenAIResponses(Model, SupportsInternalToolFieldsMixin):
     """
     A class for interacting with OpenAI models using the Responses API.
 
@@ -96,9 +96,6 @@ class OpenAIResponses(Model):
     def _using_reasoning_model(self) -> bool:
         """Return True if the contextual used model is a known reasoning model."""
         return self.id.startswith("o3") or self.id.startswith("o4-mini") or self.id.startswith("gpt-5")
-
-    def _supports_internal_tool_fields(self) -> bool:
-        return self.provider not in ["AIMLAPI", "Fireworks", "Nvidia", "VLLM"]
 
     def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
         """Set the reasoning request parameter."""
@@ -1087,6 +1084,8 @@ class OpenAIResponses(Model):
             elif output.type == "function_call":
                 if model_response.tool_calls is None:
                     model_response.tool_calls = []
+                if not hasattr(output, "arguments"):
+                    log_warning("Function call missing required field `arguments`. Some vendors may not strictly follow the standard, omitting this field when there's no arguments. ")
                 model_response.tool_calls.append(
                     {
                         "id": output.id,

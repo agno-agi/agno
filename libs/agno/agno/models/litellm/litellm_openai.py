@@ -1,13 +1,10 @@
 from dataclasses import dataclass, field
 from os import getenv
-from typing import Any, Dict, Optional, Union
-
-import httpx
+from typing import Any, Dict, Optional
 
 from agno.exceptions import ModelAuthenticationError
 from agno.models.openai import OpenResponses
 from agno.models.openai.like import OpenAILike
-
 
 
 @dataclass
