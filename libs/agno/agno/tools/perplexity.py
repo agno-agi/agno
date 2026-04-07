@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 try:
     import httpx
@@ -40,7 +40,7 @@ class PerplexitySearch(Toolkit):
     ):
         self.api_key = api_key or getenv("PERPLEXITY_API_KEY")
         if not self.api_key:
-            logger.error("PERPLEXITY_API_KEY not set. Please set the PERPLEXITY_API_KEY environment variable.")
+            log_error("PERPLEXITY_API_KEY not set. Please set the PERPLEXITY_API_KEY environment variable.")
 
         self.base_url = "https://api.perplexity.ai"
         self.max_results = max_results
@@ -113,7 +113,7 @@ class PerplexitySearch(Toolkit):
             return parsed
 
         except Exception as e:
-            logger.error(f"Perplexity search failed: {e}")
+            logger.exception("Perplexity search failed")
             return json.dumps({"error": str(e)})
 
     async def asearch(self, query: str, max_results: Optional[int] = None) -> str:
@@ -173,5 +173,5 @@ class PerplexitySearch(Toolkit):
             return parsed
 
         except Exception as e:
-            logger.error(f"Perplexity search failed: {e}")
+            logger.exception("Perplexity search failed")
             return json.dumps({"error": str(e)})

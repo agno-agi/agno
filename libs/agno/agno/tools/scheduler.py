@@ -175,7 +175,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            logger.error(f"Failed to create schedule: {e}")
+            logger.exception("Failed to create schedule")
             return json.dumps({"error": str(e)})
 
     def list_schedules(self, enabled_only: bool = False) -> str:
@@ -204,7 +204,7 @@ class SchedulerTools(Toolkit):
             ]
             return json.dumps({"schedules": result, "count": len(result)})
         except Exception as e:
-            logger.error(f"Failed to list schedules: {e}")
+            logger.exception("Failed to list schedules")
             return json.dumps({"error": str(e)})
 
     def get_schedule(self, schedule_id: str) -> str:
@@ -234,7 +234,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            logger.error(f"Failed to get schedule: {e}")
+            logger.exception("Failed to get schedule")
             return json.dumps({"error": str(e)})
 
     def delete_schedule(self, schedule_id: str) -> str:
@@ -252,7 +252,7 @@ class SchedulerTools(Toolkit):
                 return json.dumps({"status": "deleted", "id": schedule_id})
             return json.dumps({"error": f"Schedule not found or could not be deleted: {schedule_id}"})
         except Exception as e:
-            logger.error(f"Failed to delete schedule: {e}")
+            logger.exception("Failed to delete schedule")
             return json.dumps({"error": str(e)})
 
     def enable_schedule(self, schedule_id: str) -> str:
@@ -277,7 +277,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            logger.error(f"Failed to enable schedule: {e}")
+            logger.exception("Failed to enable schedule")
             return json.dumps({"error": str(e)})
 
     def disable_schedule(self, schedule_id: str) -> str:
@@ -302,7 +302,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            logger.error(f"Failed to disable schedule: {e}")
+            logger.exception("Failed to disable schedule")
             return json.dumps({"error": str(e)})
 
     def get_schedule_runs(self, schedule_id: str, limit: int = 10) -> str:
@@ -329,7 +329,7 @@ class SchedulerTools(Toolkit):
             ]
             return json.dumps({"runs": result, "count": len(result)})
         except Exception as e:
-            logger.error(f"Failed to get schedule runs: {e}")
+            logger.exception("Failed to get schedule runs")
             return json.dumps({"error": str(e)})
 
     # ------------------------------------------------------------------
@@ -407,7 +407,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            logger.error(f"Failed to create schedule: {e}")
+            logger.exception("Failed to create schedule")
             return json.dumps({"error": str(e)})
 
     async def alist_schedules(self, enabled_only: bool = False) -> str:
@@ -436,7 +436,7 @@ class SchedulerTools(Toolkit):
             ]
             return json.dumps({"schedules": result, "count": len(result)})
         except Exception as e:
-            logger.error(f"Failed to list schedules: {e}")
+            logger.exception("Failed to list schedules")
             return json.dumps({"error": str(e)})
 
     async def aget_schedule(self, schedule_id: str) -> str:
@@ -466,7 +466,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            logger.error(f"Failed to get schedule: {e}")
+            logger.exception("Failed to get schedule")
             return json.dumps({"error": str(e)})
 
     async def adelete_schedule(self, schedule_id: str) -> str:
@@ -484,7 +484,7 @@ class SchedulerTools(Toolkit):
                 return json.dumps({"status": "deleted", "id": schedule_id})
             return json.dumps({"error": f"Schedule not found or could not be deleted: {schedule_id}"})
         except Exception as e:
-            logger.error(f"Failed to delete schedule: {e}")
+            logger.exception("Failed to delete schedule")
             return json.dumps({"error": str(e)})
 
     async def aenable_schedule(self, schedule_id: str) -> str:
@@ -509,7 +509,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            logger.error(f"Failed to enable schedule: {e}")
+            logger.exception("Failed to enable schedule")
             return json.dumps({"error": str(e)})
 
     async def adisable_schedule(self, schedule_id: str) -> str:
@@ -534,7 +534,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            logger.error(f"Failed to disable schedule: {e}")
+            logger.exception("Failed to disable schedule")
             return json.dumps({"error": str(e)})
 
     async def aget_schedule_runs(self, schedule_id: str, limit: int = 10) -> str:
@@ -561,5 +561,5 @@ class SchedulerTools(Toolkit):
             ]
             return json.dumps({"runs": result, "count": len(result)})
         except Exception as e:
-            logger.error(f"Failed to get schedule runs: {e}")
+            logger.exception("Failed to get schedule runs")
             return json.dumps({"error": str(e)})

@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agno.media import File, Image
 from agno.models.message import Message
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 
 try:
     from anthropic.types import (
@@ -13,6 +13,60 @@ try:
     )
 except ImportError:
     raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")
+
+
+# Models that support assistant message prefill. This is a closed set —
+# prefill was deprecated starting with Claude 4.6 and all future models
+# are expected to reject it.
+_PREFILL_SUPPORTED_PREFIXES = (
+    "claude-3-",
+    "claude-sonnet-4-0",
+    "claude-sonnet-4-1",
+    "claude-sonnet-4-2",
+    "claude-sonnet-4-5",
+    "claude-opus-4-0",
+    "claude-opus-4-1",
+    "claude-opus-4-2",
+    "claude-opus-4-5",
+    "claude-haiku-4-0",
+    "claude-haiku-4-1",
+    "claude-haiku-4-2",
+    "claude-haiku-4-5",
+)
+
+# Aliases like "claude-sonnet-4" point to the latest version in that family
+# (currently 4-0, which supports prefill). These must be exact matches — a
+# startswith check would incorrectly match "claude-sonnet-4-6".
+_PREFILL_SUPPORTED_ALIASES = {
+    "claude-sonnet-4",
+    "claude-opus-4",
+    "claude-haiku-4",
+}
+
+
+def supports_prefill(model_id: str) -> bool:
+    """Return True if the given model ID supports assistant message prefill.
+
+    Handles provider-specific ID formats:
+      - Anthropic direct:  "claude-sonnet-4-5-20250929"
+      - Bedrock:           "us.anthropic.claude-sonnet-4-6-v1:0"
+      - Vertex AI:         "claude-sonnet-4@20250514"
+      - LiteLLM:           "anthropic/claude-sonnet-4-6"
+    """
+    # Strip LiteLLM provider prefix (e.g. "anthropic/claude-sonnet-4-6")
+    core_id = model_id.split("/")[-1] if "/" in model_id else model_id
+    # Strip Bedrock prefix (e.g. "us.anthropic.claude-sonnet-4-6-v1:0")
+    core_id = core_id.split("anthropic.")[-1] if "anthropic." in core_id else core_id
+    # Strip Vertex AI version suffix (e.g. "claude-sonnet-4@20250514")
+    core_id = core_id.split("@")[0] if "@" in core_id else core_id
+    # Strip Bedrock version suffix (e.g. "claude-sonnet-4-5-20250929-v1:0")
+    if ":0" in core_id:
+        core_id = core_id.split("-v")[0] if "-v" in core_id else core_id.split(":")[0]
+
+    if not core_id.startswith("claude"):
+        return True  # Non-Claude models are unaffected — don't inject trailing messages
+
+    return core_id in _PREFILL_SUPPORTED_ALIASES or core_id.startswith(_PREFILL_SUPPORTED_PREFIXES)
 
 
 @dataclass
@@ -143,7 +197,7 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         }
 
     except Exception as e:
-        log_error(f"Error processing image: {e}")
+        log_error(f"Error processing image: {str(e)}")
         return None
 
 
@@ -159,7 +213,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
         "text/csv": "text",
         "text/html": "text",
         "text/css": "text",
-        "text/md": "text",
+        "text/markdown": "text",
         "text/xml": "text",
         "text/rtf": "text",
         "text/javascript": "text",
@@ -213,7 +267,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
                     "type": "document",
                     "source": {
                         "type": "text",
-                        "media_type": "text/plain",
+                        "media_type": media_type,
                         "data": raw_bytes.decode("utf-8", errors="replace"),
                     },
                     "citations": {"enabled": True},
@@ -242,7 +296,7 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
                 "type": "document",
                 "source": {
                     "type": "text",
-                    "media_type": "text/plain",
+                    "media_type": media_type,
                     "data": file.content.decode("utf-8", errors="replace"),
                 },
                 "citations": {"enabled": True},
@@ -263,7 +317,10 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
 
 
 def format_messages(
-    messages: List[Message], compress_tool_results: bool = False
+    messages: List[Message],
+    compress_tool_results: bool = False,
+    append_trailing_user_message: Optional[bool] = False,
+    trailing_user_message_content: str = "continue",
 ) -> Tuple[List[Dict[str, Union[str, list]]], str]:
     """
     Process the list of messages and separate them into API messages and system messages.
@@ -271,6 +328,9 @@ def format_messages(
     Args:
         messages (List[Message]): The list of messages to process.
         compress_tool_results: Whether to compress tool results.
+        append_trailing_user_message: If True, append a dummy user message when the conversation
+            ends with an assistant turn. Required for models that do not support assistant prefill.
+        trailing_user_message_content: The text content of the injected trailing user message.
 
     Returns:
         Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
@@ -400,7 +460,39 @@ def format_messages(
         else:
             merged_messages.append(msg)
 
+    # Claude 4.6+ models do not support assistant message prefill.
+    # Append a trailing user turn so the request ends with a user message.
+    if append_trailing_user_message and merged_messages and merged_messages[-1]["role"] == "assistant":
+        log_info("Appending trailing user message because this model does not support assistant message prefill")
+        merged_messages.append({"role": "user", "content": [{"type": "text", "text": trailing_user_message_content}]})
+
     return merged_messages, " ".join(system_messages)
+
+
+def _ensure_additional_properties_false(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """Recursively ensure all object schemas have additionalProperties: false.
+
+    Anthropic's API requires this on all object-type schemas, not just the root.
+    """
+    if not isinstance(schema, dict):
+        return schema
+
+    result = schema.copy()
+
+    # Only set additionalProperties: false on structured object schemas (those with "properties").
+    # Dict-type schemas use additionalProperties as a value type schema, so leave those alone.
+    if "properties" in result:
+        result["additionalProperties"] = False
+
+    for key, value in result.items():
+        if key == "properties" and isinstance(value, dict):
+            result[key] = {k: _ensure_additional_properties_false(v) for k, v in value.items()}
+        elif key == "items" and isinstance(value, dict):
+            result[key] = _ensure_additional_properties_false(value)
+        elif key in ("anyOf", "allOf", "oneOf") and isinstance(value, list):
+            result[key] = [_ensure_additional_properties_false(v) if isinstance(v, dict) else v for v in value]
+
+    return result
 
 
 def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
@@ -426,7 +518,8 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
         input_properties: Dict[str, Any] = {}
         for param_name, param_info in properties.items():
             # Preserve the complete schema structure for complex types
-            input_properties[param_name] = param_info.copy()
+            # and recursively ensure additionalProperties: false on nested objects
+            input_properties[param_name] = _ensure_additional_properties_false(param_info.copy())
 
             # Ensure description is present (default to empty if missing)
             if "description" not in input_properties[param_name]:
