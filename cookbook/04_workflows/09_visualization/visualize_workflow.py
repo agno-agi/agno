@@ -6,9 +6,9 @@ Demonstrates generating Mermaid diagrams from workflows using ``workflow.visuali
 
 Outputs:
 - Mermaid source text (always available, zero extra deps)
-- SVG file (requires ``pip install agno[visualize]``)
-- PNG file (requires ``pip install agno[visualize]``)
-- Opens in default image viewer (requires ``pip install agno[visualize]``)
+- SVG file (uses httpx, works out of the box)
+- PNG file (uses httpx, works out of the box)
+- Opens in default image viewer (requires Pillow)
 
 Customization:
 - direction: "TD" (top-down) or "LR" (left-right)

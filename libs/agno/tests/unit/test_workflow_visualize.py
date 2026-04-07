@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from agno.agent import Agent
-from agno.visualize import WorkflowVisualization, generate_mermaid
+from agno.visualize import DEFAULT_INK_SERVER, WorkflowVisualization, generate_mermaid
 from agno.workflow import Condition, Loop, Parallel, Router, Step, Steps, Workflow
 
 # ---------------------------------------------------------------------------
@@ -381,3 +381,40 @@ class TestImportGuards:
         viz = wf.visualize()
         mermaid_text = viz.to_mermaid()
         assert len(mermaid_text) > 0
+
+
+# ---------------------------------------------------------------------------
+# Ink server configuration
+# ---------------------------------------------------------------------------
+
+
+class TestInkServer:
+    def test_default_ink_server(self):
+        assert DEFAULT_INK_SERVER == "https://mermaid.ink"
+
+    def test_viz_uses_default_server(self):
+        viz = WorkflowVisualization("flowchart TD\n    A-->B\n")
+        assert viz._ink_server == "https://mermaid.ink"
+
+    def test_viz_custom_ink_server(self):
+        viz = WorkflowVisualization("flowchart TD\n    A-->B\n", ink_server="https://my-mermaid.example.com")
+        assert viz._ink_server == "https://my-mermaid.example.com"
+
+    def test_viz_strips_trailing_slash(self):
+        viz = WorkflowVisualization("flowchart TD\n    A-->B\n", ink_server="https://my-mermaid.example.com/")
+        assert viz._ink_server == "https://my-mermaid.example.com"
+
+    def test_workflow_visualize_passes_ink_server(self):
+        wf = Workflow(name="Ink Test", steps=[_step("X")])
+        viz = wf.visualize(ink_server="https://custom.ink")
+        assert viz._ink_server == "https://custom.ink"
+
+    def test_env_var_fallback(self, monkeypatch):
+        monkeypatch.setenv("MERMAID_INK_SERVER", "https://env-server.example.com")
+        viz = WorkflowVisualization("flowchart TD\n    A-->B\n")
+        assert viz._ink_server == "https://env-server.example.com"
+
+    def test_explicit_overrides_env_var(self, monkeypatch):
+        monkeypatch.setenv("MERMAID_INK_SERVER", "https://env-server.example.com")
+        viz = WorkflowVisualization("flowchart TD\n    A-->B\n", ink_server="https://explicit.example.com")
+        assert viz._ink_server == "https://explicit.example.com"

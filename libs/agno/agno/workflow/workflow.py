@@ -6659,12 +6659,19 @@ class Workflow:
                 **kwargs,
             )
 
-    def visualize(self, direction: str = "TD", color: str = "default") -> "WorkflowVisualization":
+    def visualize(
+        self,
+        direction: str = "TD",
+        color: str = "default",
+        ink_server: Optional[str] = None,
+    ) -> "WorkflowVisualization":
         """Generate a visual representation of the workflow as a Mermaid flowchart.
 
         Args:
             direction: Mermaid layout direction — ``"TD"`` (top-down, default) or ``"LR"`` (left-right).
             color: Color flavor — ``"default"``, ``"monotone"``, or ``"black"``.
+            ink_server: Base URL of a mermaid-ink server for SVG/PNG rendering.
+                Falls back to the ``MERMAID_INK_SERVER`` env var, then ``https://mermaid.ink``.
 
         Returns:
             A :class:`~agno.visualize.WorkflowVisualization` instance with
@@ -6673,7 +6680,7 @@ class Workflow:
         from agno.visualize import WorkflowVisualization, generate_mermaid
 
         mermaid_text = generate_mermaid(self.steps, workflow_name=self.name, direction=direction, color=color)
-        return WorkflowVisualization(mermaid_text, workflow_name=self.name)
+        return WorkflowVisualization(mermaid_text, workflow_name=self.name, ink_server=ink_server)
 
     def _prepare_steps(self):
         """Prepare the steps for execution"""

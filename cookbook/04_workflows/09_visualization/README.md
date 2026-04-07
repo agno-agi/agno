@@ -7,11 +7,12 @@ Generate Mermaid flowcharts from Agno workflows. Every step type is supported: S
 | Feature | Details |
 |---------|---------|
 | **Mermaid source** | Always available, zero extra dependencies |
-| **SVG export** | Requires `pip install agno[visualize]` |
-| **PNG export** | Requires `pip install agno[visualize]` |
-| **Image viewer** | Opens in default OS viewer via `show()` |
+| **SVG export** | Uses `httpx` (core dep) — works out of the box |
+| **PNG export** | Uses `httpx` (core dep) — works out of the box |
+| **Image viewer** | Opens in default OS viewer via `show()` — requires `Pillow` |
 | **Directions** | `"TD"` (top-down) or `"LR"` (left-right) |
 | **Color flavors** | `"default"`, `"monotone"`, `"black"` |
+| **Ink server** | Configurable via param or `MERMAID_INK_SERVER` env var |
 
 ## Quick Start
 
@@ -29,13 +30,19 @@ print(viz.to_mermaid())
 
 ## Install
 
-Mermaid text generation works out of the box. For SVG/PNG/viewer rendering:
+Mermaid text generation, SVG export, and PNG export work out of the box (`httpx` is a core agno dependency).
+
+For the `show()` image viewer:
+
+```bash
+pip install Pillow
+```
+
+Or install via the optional extra:
 
 ```bash
 pip install agno[visualize]
 ```
-
-This installs `mermaid-py` (renders via mermaid.ink API) and `Pillow` (for `show()`).
 
 ## Export Methods
 
@@ -45,13 +52,13 @@ viz = workflow.visualize()
 # Raw Mermaid source (always works, no network needed)
 mermaid_text = viz.to_mermaid()
 
-# Save to SVG file
+# Save to SVG file (uses httpx, works out of the box)
 viz.to_svg("workflow.svg")
 
-# Save to PNG file
+# Save to PNG file (uses httpx, works out of the box)
 viz.to_png("workflow.png")
 
-# Open in default image viewer
+# Open in default image viewer (requires Pillow)
 viz.show()
 ```
 
@@ -100,6 +107,21 @@ from agno.visualize import AVAILABLE_FLAVORS
 print(AVAILABLE_FLAVORS)  # ['default', 'monotone', 'black']
 ```
 
+### Ink Server
+
+SVG and PNG rendering uses the [mermaid.ink](https://mermaid.ink) API. You can point to a self-hosted instance:
+
+```python
+# Per-call
+viz = workflow.visualize(ink_server="https://mermaid.my-company.com")
+
+# Or via environment variable
+# export MERMAID_INK_SERVER=https://mermaid.my-company.com
+viz = workflow.visualize()  # picks up env var automatically
+```
+
+Priority: explicit `ink_server` param > `MERMAID_INK_SERVER` env var > `https://mermaid.ink`.
+
 ## Supported Step Types
 
 Each step type renders with a distinct Mermaid shape:
@@ -120,7 +142,7 @@ The visualize module lives at `agno.visualize` and is designed to extend beyond 
 
 ```
 agno/visualize/
-    __init__.py      # Public API: WorkflowVisualization, generate_mermaid, AVAILABLE_FLAVORS
+    __init__.py      # Public API: WorkflowVisualization, generate_mermaid, AVAILABLE_FLAVORS, DEFAULT_INK_SERVER
     _themes.py       # Color palettes (default, monotone, black)
     _utils.py        # Shared helpers: _IdCounter, _SHAPE, _sanitize
     _renderer.py     # WorkflowVisualization class (to_mermaid, to_svg, to_png, show)
