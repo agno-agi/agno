@@ -60,4 +60,8 @@ class WikipediaTools(Toolkit):
             )
 
         log_info(f"Searching wikipedia for: {query}")
-        return json.dumps(Document(name=query, content=wikipedia.summary(query)).to_dict())
+        try:
+            return json.dumps(Document(name=query, content=wikipedia.summary(query)).to_dict())
+        except Exception as e:
+            log_debug(f"Wikipedia search failed for query '{query}': {e}")
+            return json.dumps({"error": f"Wikipedia search failed: {e}"})
