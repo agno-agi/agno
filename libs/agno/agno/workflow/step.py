@@ -2189,7 +2189,6 @@ class Step:
         background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute a nested workflow as a step with streaming"""
-        from agno.run.workflow import WorkflowCompletedEvent
         from agno.workflow.workflow import Workflow
 
         if not isinstance(self.workflow, Workflow):
@@ -2449,7 +2448,6 @@ class Step:
         background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute a nested workflow as a step with async streaming"""
-        from agno.run.workflow import WorkflowCompletedEvent
         from agno.workflow.workflow import Workflow
 
         if not isinstance(self.workflow, Workflow):
