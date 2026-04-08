@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import contextvars
 import inspect
-import threading
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
@@ -49,7 +49,9 @@ if TYPE_CHECKING:
 
 # Maximum nesting depth for nested workflow execution to prevent circular references or stack overflow.
 _MAX_NESTED_WORKFLOW_DEPTH = 10
-_nested_workflow_depth: threading.local = threading.local()
+# Use ContextVar instead of threading.local so depth is isolated per coroutine/task,
+# not per thread. This prevents concurrent async workflows from interfering with each other.
+_nested_workflow_depth: contextvars.ContextVar[int] = contextvars.ContextVar("_nested_workflow_depth", default=0)
 
 StepExecutor = Callable[
     [StepInput],
@@ -2081,13 +2083,13 @@ class Step:
             raise ValueError("Workflow executor is not a Workflow instance")
 
         # Guard against circular or excessively deep nesting
-        current_depth = getattr(_nested_workflow_depth, "value", 0)
+        current_depth = _nested_workflow_depth.get()
         if current_depth >= _MAX_NESTED_WORKFLOW_DEPTH:
             raise ValueError(
                 f"Step '{self.name}': Maximum nested workflow depth ({_MAX_NESTED_WORKFLOW_DEPTH}) exceeded. "
                 "This may indicate circular workflow nesting."
             )
-        _nested_workflow_depth.value = current_depth + 1
+        _nested_workflow_depth.set(current_depth + 1)
 
         try:
             return self._execute_nested_workflow_inner(
@@ -2100,7 +2102,7 @@ class Step:
                 background_tasks=background_tasks,
             )
         finally:
-            _nested_workflow_depth.value = current_depth
+            _nested_workflow_depth.set(current_depth)
 
     def _execute_nested_workflow_inner(
         self,
@@ -2194,13 +2196,13 @@ class Step:
             raise ValueError("Workflow executor is not a Workflow instance")
 
         # Guard against circular or excessively deep nesting
-        current_depth = getattr(_nested_workflow_depth, "value", 0)
+        current_depth = _nested_workflow_depth.get()
         if current_depth >= _MAX_NESTED_WORKFLOW_DEPTH:
             raise ValueError(
                 f"Step '{self.name}': Maximum nested workflow depth ({_MAX_NESTED_WORKFLOW_DEPTH}) exceeded. "
                 "This may indicate circular workflow nesting."
             )
-        _nested_workflow_depth.value = current_depth + 1
+        _nested_workflow_depth.set(current_depth + 1)
 
         try:
             yield from self._execute_nested_workflow_stream_inner(
@@ -2214,7 +2216,7 @@ class Step:
                 background_tasks=background_tasks,
             )
         finally:
-            _nested_workflow_depth.value = current_depth
+            _nested_workflow_depth.set(current_depth)
 
     def _execute_nested_workflow_stream_inner(
         self,
@@ -2341,13 +2343,13 @@ class Step:
             raise ValueError("Workflow executor is not a Workflow instance")
 
         # Guard against circular or excessively deep nesting
-        current_depth = getattr(_nested_workflow_depth, "value", 0)
+        current_depth = _nested_workflow_depth.get()
         if current_depth >= _MAX_NESTED_WORKFLOW_DEPTH:
             raise ValueError(
                 f"Step '{self.name}': Maximum nested workflow depth ({_MAX_NESTED_WORKFLOW_DEPTH}) exceeded. "
                 "This may indicate circular workflow nesting."
             )
-        _nested_workflow_depth.value = current_depth + 1
+        _nested_workflow_depth.set(current_depth + 1)
 
         try:
             return await self._aexecute_nested_workflow_inner(
@@ -2360,7 +2362,7 @@ class Step:
                 background_tasks=background_tasks,
             )
         finally:
-            _nested_workflow_depth.value = current_depth
+            _nested_workflow_depth.set(current_depth)
 
     async def _aexecute_nested_workflow_inner(
         self,
@@ -2454,13 +2456,13 @@ class Step:
             raise ValueError("Workflow executor is not a Workflow instance")
 
         # Guard against circular or excessively deep nesting
-        current_depth = getattr(_nested_workflow_depth, "value", 0)
+        current_depth = _nested_workflow_depth.get()
         if current_depth >= _MAX_NESTED_WORKFLOW_DEPTH:
             raise ValueError(
                 f"Step '{self.name}': Maximum nested workflow depth ({_MAX_NESTED_WORKFLOW_DEPTH}) exceeded. "
                 "This may indicate circular workflow nesting."
             )
-        _nested_workflow_depth.value = current_depth + 1
+        _nested_workflow_depth.set(current_depth + 1)
 
         try:
             async for event in self._aexecute_nested_workflow_stream_inner(
@@ -2475,7 +2477,7 @@ class Step:
             ):
                 yield event
         finally:
-            _nested_workflow_depth.value = current_depth
+            _nested_workflow_depth.set(current_depth)
 
     async def _aexecute_nested_workflow_stream_inner(
         self,

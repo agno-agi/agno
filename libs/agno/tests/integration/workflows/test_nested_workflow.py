@@ -1455,7 +1455,7 @@ def test_nested_workflow_max_depth_guard(shared_db):
     from agno.workflow.step import _MAX_NESTED_WORKFLOW_DEPTH, _nested_workflow_depth
 
     # Simulate being at max depth already
-    _nested_workflow_depth.value = _MAX_NESTED_WORKFLOW_DEPTH
+    _nested_workflow_depth.set(_MAX_NESTED_WORKFLOW_DEPTH)
 
     inner = Workflow(
         name="Inner Workflow",
@@ -1475,5 +1475,5 @@ def test_nested_workflow_max_depth_guard(shared_db):
         assert nested_output.success is False
         assert "Maximum nested workflow depth" in (nested_output.error or "")
     finally:
-        # Clean up thread-local state
-        _nested_workflow_depth.value = 0
+        # Clean up context var state
+        _nested_workflow_depth.set(0)
