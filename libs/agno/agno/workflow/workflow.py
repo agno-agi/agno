@@ -4667,6 +4667,10 @@ class Workflow:
 
         # Detect post-execution review (step already ran)
         is_post_execution_review = any(req.is_post_execution for req in (run_response.step_requirements or []))
+        # Detect loop iteration review specifically (confirmed = continue loop, not advance past it)
+        is_loop_iteration_review = any(
+            req.is_post_execution and req.step_type == "Loop" for req in (run_response.step_requirements or [])
+        )
         retry_step = False
 
         # Check if any step was rejected
@@ -4860,7 +4864,18 @@ class Workflow:
 
         # Determine start index based on pause type and decision
         start_index = paused_step_index
-        if skip_rejected_step and is_post_execution_review:
+        if is_loop_iteration_review and not rejected_steps:
+            # Loop iteration review confirmed: re-execute the loop to continue iterations.
+            # Remove the partial loop output so the loop can produce a new complete output.
+            kwargs["remove_last_output"] = True
+            # Extract iteration info from the paused step output to resume from
+            if run_response.step_results:
+                paused_output = run_response.step_results[-1]
+                if isinstance(paused_output, StepOutput) and paused_output.steps:
+                    kwargs["loop_resume_from_iteration"] = len(paused_output.steps)
+                    kwargs["loop_previous_results"] = [[s] for s in paused_output.steps]
+            start_index = paused_step_index  # Re-execute the Loop step
+        elif skip_rejected_step and is_post_execution_review:
             # Post-execution review rejected with skip: discard the output, advance to next
             kwargs["remove_last_output"] = True
             start_index = paused_step_index + 1
@@ -5091,6 +5106,14 @@ class Workflow:
                         return workflow_run_response
 
                 try:
+                    # Build extra kwargs for Loop resume if applicable
+                    extra_kwargs: Dict[str, Any] = {}
+                    if isinstance(step, Loop) and i == start_step_index:
+                        if kwargs.get("loop_resume_from_iteration"):
+                            extra_kwargs["resume_from_iteration"] = kwargs["loop_resume_from_iteration"]
+                        if kwargs.get("loop_previous_results"):
+                            extra_kwargs["previous_iteration_results"] = kwargs["loop_previous_results"]
+
                     step_output = step.execute(  # type: ignore[union-attr]
                         step_input,
                         session_id=session.session_id,
@@ -5104,6 +5127,7 @@ class Workflow:
                         else None,
                         num_history_runs=self.num_history_runs,
                         background_tasks=background_tasks,
+                        **extra_kwargs,
                     )
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
@@ -5849,6 +5873,10 @@ class Workflow:
 
         # Detect post-execution review (step already ran)
         is_post_execution_review = any(req.is_post_execution for req in (run_response.step_requirements or []))
+        # Detect loop iteration review specifically (confirmed = continue loop, not advance past it)
+        is_loop_iteration_review = any(
+            req.is_post_execution and req.step_type == "Loop" for req in (run_response.step_requirements or [])
+        )
         retry_step = False
 
         # Check if any step was rejected
@@ -6040,8 +6068,16 @@ class Workflow:
 
         # Determine start index based on pause type and decision
         start_index = paused_step_index
-        if skip_rejected_step and is_post_execution_review:
-            # Post-execution review rejected with skip: discard the output, advance to next
+        if is_loop_iteration_review and not rejected_steps:
+            # Loop iteration review confirmed: re-execute the loop to continue iterations
+            kwargs["remove_last_output"] = True
+            if run_response.step_results:
+                paused_output = run_response.step_results[-1]
+                if isinstance(paused_output, StepOutput) and paused_output.steps:
+                    kwargs["loop_resume_from_iteration"] = len(paused_output.steps)
+                    kwargs["loop_previous_results"] = [[s] for s in paused_output.steps]
+            start_index = paused_step_index
+        elif skip_rejected_step and is_post_execution_review:
             kwargs["remove_last_output"] = True
             start_index = paused_step_index + 1
         elif skip_rejected_step or error_should_skip:
@@ -6262,6 +6298,14 @@ class Workflow:
                         return workflow_run_response
 
                 try:
+                    # Build extra kwargs for Loop resume if applicable
+                    extra_kwargs: Dict[str, Any] = {}
+                    if isinstance(step, Loop) and i == start_step_index:
+                        if kwargs.get("loop_resume_from_iteration"):
+                            extra_kwargs["resume_from_iteration"] = kwargs["loop_resume_from_iteration"]
+                        if kwargs.get("loop_previous_results"):
+                            extra_kwargs["previous_iteration_results"] = kwargs["loop_previous_results"]
+
                     step_output = await step.aexecute(  # type: ignore[union-attr]
                         step_input,
                         session_id=session.session_id,
@@ -6275,6 +6319,7 @@ class Workflow:
                         else None,
                         num_history_runs=self.num_history_runs,
                         background_tasks=background_tasks,
+                        **extra_kwargs,
                     )
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy

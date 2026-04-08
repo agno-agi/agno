@@ -407,16 +407,25 @@ class Loop:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        resume_from_iteration: int = 0,
+        previous_iteration_results: Optional[List[List[StepOutput]]] = None,
     ) -> StepOutput:
-        """Execute loop steps with iteration control - mirrors workflow execution logic"""
+        """Execute loop steps with iteration control - mirrors workflow execution logic
+
+        Args:
+            resume_from_iteration: Skip iterations before this number (used when
+                resuming after a per-iteration review pause).
+            previous_iteration_results: Results from already-completed iterations
+                (used when resuming to preserve previous work).
+        """
         # Use workflow logger for loop orchestration
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
 
         # Prepare steps first
         self._prepare_steps()
 
-        all_results = []
-        iteration = 0
+        all_results: List[List[StepOutput]] = list(previous_iteration_results) if previous_iteration_results else []
+        iteration = resume_from_iteration
         early_termination = False
 
         while iteration < self.max_iterations:
@@ -761,6 +770,8 @@ class Loop:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        resume_from_iteration: int = 0,
+        previous_iteration_results: Optional[List[List[StepOutput]]] = None,
     ) -> StepOutput:
         """Execute loop steps asynchronously with iteration control - mirrors workflow execution logic"""
         # Use workflow logger for async loop orchestration
@@ -771,8 +782,8 @@ class Loop:
         # Prepare steps first
         self._prepare_steps()
 
-        all_results = []
-        iteration = 0
+        all_results: List[List[StepOutput]] = list(previous_iteration_results) if previous_iteration_results else []
+        iteration = resume_from_iteration
         early_termination = False
 
         while iteration < self.max_iterations:
