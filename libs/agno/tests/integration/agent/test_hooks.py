@@ -995,3 +995,42 @@ def test_session_persistence_with_hooks(shared_db):
     assert session is not None
     assert session.runs is not None
     assert session.runs[0].messages[1].content == "This is a test run"  # type: ignore
+
+
+def test_output_check_error_propagates_to_caller():
+    """Test that OutputCheckError from post-hook propagates to the caller.
+
+    Regression test for https://github.com/agno-agi/agno/issues/7414
+    """
+    from agno.exceptions import CheckTrigger
+
+    def output_validation_hook(run_output):
+        raise OutputCheckError("Output validation failed", check_trigger=CheckTrigger.OUTPUT_NOT_ALLOWED)
+
+    agent = create_test_agent(
+        post_hooks=[output_validation_hook],
+        model_response_content="short",
+    )
+
+    with pytest.raises(OutputCheckError) as exc_info:
+        agent.run(input="Tell me something")
+
+    assert "Output validation failed" in str(exc_info.value)
+
+
+async def test_output_check_error_propagates_to_caller_async():
+    """Test that OutputCheckError from async post-hook propagates to the caller."""
+    from agno.exceptions import CheckTrigger
+
+    def output_validation_hook(run_output):
+        raise OutputCheckError("Async output validation failed", check_trigger=CheckTrigger.OUTPUT_NOT_ALLOWED)
+
+    agent = create_test_agent(
+        post_hooks=[output_validation_hook],
+        model_response_content="short",
+    )
+
+    with pytest.raises(OutputCheckError) as exc_info:
+        await agent.arun(input="Tell me something")
+
+    assert "Async output validation failed" in str(exc_info.value)
