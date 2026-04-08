@@ -1,6 +1,7 @@
 import inspect
 from copy import copy
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
 from uuid import uuid4
 
@@ -217,15 +218,15 @@ class Step:
             "requires_user_input": self.requires_user_input,
             "user_input_message": self.user_input_message,
             "user_input_schema": self.user_input_schema,
-            "on_reject": self.on_reject,
-            "on_error": self.on_error,
+            "on_reject": self.on_reject.value if isinstance(self.on_reject, Enum) else self.on_reject,
+            "on_error": self.on_error.value if isinstance(self.on_error, Enum) else self.on_error,
             "requires_output_review": self.requires_output_review
             if isinstance(self.requires_output_review, bool)
             else True,
             "output_review_message": self.output_review_message,
             "hitl_max_retries": self.hitl_max_retries,
             "hitl_timeout": self.hitl_timeout,
-            "on_timeout": self.on_timeout,
+            "on_timeout": self.on_timeout.value if isinstance(self.on_timeout, Enum) else self.on_timeout,
         }
 
         if self.agent is not None:
@@ -336,7 +337,7 @@ class Step:
             num_history_runs=config.get("num_history_runs", 3),
             requires_confirmation=config.get("requires_confirmation", False),
             confirmation_message=config.get("confirmation_message"),
-            on_reject=config.get("on_reject", "cancel"),
+            on_reject=config.get("on_reject", "skip"),
             requires_user_input=config.get("requires_user_input", False),
             user_input_message=config.get("user_input_message"),
             user_input_schema=config.get("user_input_schema"),

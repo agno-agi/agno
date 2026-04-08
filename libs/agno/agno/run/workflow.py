@@ -521,6 +521,7 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.step_started.value: StepStartedEvent,
     WorkflowRunEvent.step_completed.value: StepCompletedEvent,
     WorkflowRunEvent.step_paused.value: StepPausedEvent,
+    WorkflowRunEvent.step_output_review.value: StepOutputReviewEvent,
     WorkflowRunEvent.step_error.value: StepErrorEvent,
     WorkflowRunEvent.loop_execution_started.value: LoopExecutionStartedEvent,
     WorkflowRunEvent.loop_iteration_started.value: LoopIterationStartedEvent,

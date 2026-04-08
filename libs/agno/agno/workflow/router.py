@@ -106,6 +106,15 @@ class Router:
     confirmation_message: Optional[str] = None
     on_reject: Union[OnReject, str] = OnReject.skip
 
+    # HITL parameters for post-execution output review
+    # If True, the router will execute the selected branch, then pause for human review.
+    # Approve -> continue to next workflow step
+    # Reject (on_reject=retry) -> discard output, re-pause for user route selection
+    # Cancel -> cancel the workflow
+    requires_output_review: bool = False
+    output_review_message: Optional[str] = None
+    hitl_max_retries: int = 3
+
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
             "type": "Router",
@@ -136,6 +145,11 @@ class Router:
         result["requires_confirmation"] = self.requires_confirmation
         result["confirmation_message"] = self.confirmation_message
         result["on_reject"] = str(self.on_reject)
+
+        # Add output review HITL fields
+        result["requires_output_review"] = self.requires_output_review
+        result["output_review_message"] = self.output_review_message
+        result["hitl_max_retries"] = self.hitl_max_retries
 
         return result
 
@@ -198,6 +212,51 @@ class Router:
                 requires_user_input=False,
                 step_input=step_input,
             )
+
+    def create_output_review_requirement(
+        self,
+        step_index: int,
+        step_input: StepInput,
+        step_output: StepOutput,
+        retry_count: int = 0,
+    ) -> StepRequirement:
+        """Create a StepRequirement for post-execution output review on a Router.
+
+        The router has already executed a branch. The user reviews the output and can:
+        - Approve (confirm) -> continue to the next workflow step
+        - Re-route (reject with on_reject=retry) -> discard output, pick a different branch
+        - Cancel (reject with on_reject=cancel) -> cancel the workflow
+
+        Args:
+            step_index: Index of the router in the workflow.
+            step_input: The input that was used for the router.
+            step_output: The output produced by the executed branch.
+            retry_count: Number of times a different branch has been selected.
+
+        Returns:
+            StepRequirement configured for post-execution output review.
+        """
+        step_name = self.name or f"router_{step_index + 1}"
+        choice_names = self._get_choice_names()
+        message = self.output_review_message or f"Review output of router '{step_name}'?"
+
+        return StepRequirement(
+            step_id=str(uuid4()),
+            step_name=step_name,
+            step_index=step_index,
+            step_type="Router",
+            requires_output_review=True,
+            output_review_message=message,
+            requires_confirmation=True,
+            confirmation_message=message,
+            on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
+            step_output=step_output,
+            is_post_execution=True,
+            retry_count=retry_count,
+            max_retries=self.hitl_max_retries,
+            # Include available choices so the user can re-route on reject
+            available_choices=choice_names,
+        )
 
     @classmethod
     def from_dict(
@@ -264,6 +323,9 @@ class Router:
             requires_confirmation=data.get("requires_confirmation", False),
             confirmation_message=data.get("confirmation_message"),
             on_reject=data.get("on_reject", OnReject.skip),
+            requires_output_review=data.get("requires_output_review", False),
+            output_review_message=data.get("output_review_message"),
+            hitl_max_retries=data.get("hitl_max_retries", 3),
         )
 
     def _prepare_single_step(self, step: Any) -> Any:
