@@ -21,6 +21,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.workflow.step import Step
+from agno.workflow.types import OnTimeout
 from agno.workflow.workflow import Workflow
 
 draft_agent = Agent(
@@ -45,7 +46,7 @@ workflow = Workflow(
             requires_output_review=True,
             output_review_message="Review the draft (auto-approves in 5 seconds)",
             hitl_timeout=5,  # 5 second timeout
-            on_timeout="approve",  # Auto-approve when timeout expires
+            on_timeout=OnTimeout.approve,  # Auto-approve when timeout expires
         ),
         Step(
             name="send_email",

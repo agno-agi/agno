@@ -14,6 +14,7 @@ The human can:
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
+from agno.workflow import OnReject
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
@@ -38,6 +39,7 @@ workflow = Workflow(
             agent=draft_agent,
             requires_output_review=True,
             output_review_message="Review and optionally edit the email draft",
+            on_reject=OnReject.cancel,
         ),
         Step(
             name="send_email",
@@ -66,6 +68,7 @@ if run_output.is_paused:
             print("Output replaced with your edit.")
         else:
             requirement.reject()
+            print("Draft rejected - cancelling workflow.")
 
     run_output = workflow.continue_run(run_output)
 
