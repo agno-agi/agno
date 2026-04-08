@@ -1544,6 +1544,8 @@ class GcsJsonDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -1559,6 +1561,8 @@ class GcsJsonDb(BaseDb):
             end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
+            sort_by: Field to sort by (default: created_at).
+            sort_order: Sort order - "asc" or "desc" (default: desc).
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
@@ -1602,8 +1606,10 @@ class GcsJsonDb(BaseDb):
 
             total_count = len(filtered)
 
-            # Sort by start_time desc
-            filtered.sort(key=lambda x: x.get("start_time", ""), reverse=True)
+            # Sort by specified field
+            _sort_by = sort_by or "created_at"
+            _reverse = sort_order != "asc"
+            filtered.sort(key=lambda x: x.get(_sort_by, ""), reverse=_reverse)
 
             # Apply pagination
             if limit and page:
@@ -1634,6 +1640,8 @@ class GcsJsonDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -1704,8 +1712,9 @@ class GcsJsonDb(BaseDb):
             stats_list = list(session_stats.values())
             total_count = len(stats_list)
 
-            # Sort by last_trace_at desc
-            stats_list.sort(key=lambda x: x.get("last_trace_at", ""), reverse=True)
+            # Sort by last_trace_at
+            _reverse = sort_order != "asc"
+            stats_list.sort(key=lambda x: x.get("last_trace_at", ""), reverse=_reverse)
 
             # Apply pagination
             if limit and page:

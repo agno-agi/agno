@@ -1240,6 +1240,8 @@ class InMemoryDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters.
 
@@ -1271,6 +1273,8 @@ class InMemoryDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 

@@ -2631,6 +2631,8 @@ class SingleStoreDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters.
 
@@ -2646,6 +2648,8 @@ class SingleStoreDb(BaseDb):
             end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
+            sort_by: Field to sort by (default: created_at).
+            sort_order: Sort order - "asc" or "desc" (default: desc).
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
@@ -2697,7 +2701,12 @@ class SingleStoreDb(BaseDb):
 
                 # Apply pagination
                 offset = (page - 1) * limit if page and limit else 0
-                paginated_stmt = base_stmt.order_by(table.c.start_time.desc()).limit(limit).offset(offset)
+                _sort_by = sort_by or "created_at"
+                sort_column = getattr(table.c, _sort_by, table.c.created_at)
+                if sort_order == "asc":
+                    paginated_stmt = base_stmt.order_by(sort_column.asc()).limit(limit).offset(offset)
+                else:
+                    paginated_stmt = base_stmt.order_by(sort_column.desc()).limit(limit).offset(offset)
 
                 results = sess.execute(paginated_stmt).fetchall()
 
@@ -2718,6 +2727,8 @@ class SingleStoreDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2730,6 +2741,8 @@ class SingleStoreDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            sort_by: Field to sort by (default: created_at).
+            sort_order: Sort order - "asc" or "desc" (default: desc).
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -2788,7 +2801,11 @@ class SingleStoreDb(BaseDb):
 
                 # Apply pagination and ordering
                 offset = (page - 1) * limit if page and limit else 0
-                paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
+                sort_col = func.max(table.c.created_at)
+                if sort_order == "asc":
+                    paginated_stmt = base_stmt.order_by(sort_col.asc()).limit(limit).offset(offset)
+                else:
+                    paginated_stmt = base_stmt.order_by(sort_col.desc()).limit(limit).offset(offset)
 
                 results = sess.execute(paginated_stmt).fetchall()
                 log_debug(f"Returning page {page} with {len(results)} session stats")

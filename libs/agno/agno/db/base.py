@@ -439,6 +439,8 @@ class BaseDb(ABC):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -457,6 +459,8 @@ class BaseDb(ABC):
             filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
                 Supports composable queries with AND/OR/NOT logic and operators
                 like EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH.
+            sort_by: Field to sort by (e.g., 'created_at', 'start_time'). Defaults to 'created_at'.
+            sort_order: Sort order ('asc' or 'desc'). Defaults to 'desc'.
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces with datetime fields, total count).
@@ -475,6 +479,8 @@ class BaseDb(ABC):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -488,6 +494,8 @@ class BaseDb(ABC):
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
             filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+            sort_by: Field to sort by (e.g., 'created_at'). Defaults to 'created_at'.
+            sort_order: Sort order ('asc' or 'desc'). Defaults to 'desc'.
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -1440,6 +1448,8 @@ class AsyncBaseDb(ABC):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -1458,6 +1468,8 @@ class AsyncBaseDb(ABC):
             filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
                 Supports composable queries with AND/OR/NOT logic and operators
                 like EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH.
+            sort_by: Field to sort by (e.g., 'created_at', 'start_time'). Defaults to 'created_at'.
+            sort_order: Sort order ('asc' or 'desc'). Defaults to 'desc'.
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces with datetime fields, total count).
@@ -1476,6 +1488,8 @@ class AsyncBaseDb(ABC):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -1489,6 +1503,8 @@ class AsyncBaseDb(ABC):
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
             filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+            sort_by: Field to sort by (e.g., 'created_at'). Defaults to 'created_at'.
+            sort_order: Sort order ('asc' or 'desc'). Defaults to 'desc'.
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).

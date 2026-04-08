@@ -1891,6 +1891,8 @@ class RedisDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters.
 
@@ -1906,6 +1908,8 @@ class RedisDb(BaseDb):
             end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
+            sort_by: Field to sort by (default: created_at).
+            sort_order: Sort order - "asc" or "desc" (default: desc).
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
@@ -1951,8 +1955,10 @@ class RedisDb(BaseDb):
 
             total_count = len(filtered_traces)
 
-            # Sort by start_time descending
-            filtered_traces.sort(key=lambda x: x.get("start_time", ""), reverse=True)
+            # Sort by specified field
+            _sort_by = sort_by or "created_at"
+            _reverse = sort_order != "asc"
+            filtered_traces.sort(key=lambda x: x.get(_sort_by, ""), reverse=_reverse)
 
             # Apply pagination
             paginated_traces = apply_pagination(records=filtered_traces, limit=limit, page=page)
@@ -1981,6 +1987,8 @@ class RedisDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -1993,6 +2001,8 @@ class RedisDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            sort_by: Field to sort by (default: last_trace_at).
+            sort_order: Sort order - "asc" or "desc" (default: desc).
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -2049,9 +2059,10 @@ class RedisDb(BaseDb):
                 if created_at > session_stats[trace_session_id]["last_trace_at"]:
                     session_stats[trace_session_id]["last_trace_at"] = created_at
 
-            # Convert to list and sort by last_trace_at descending
+            # Convert to list and sort
             stats_list = list(session_stats.values())
-            stats_list.sort(key=lambda x: x.get("last_trace_at", ""), reverse=True)
+            _reverse = sort_order != "asc"
+            stats_list.sort(key=lambda x: x.get("last_trace_at", ""), reverse=_reverse)
 
             total_count = len(stats_list)
 

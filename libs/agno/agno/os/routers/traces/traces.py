@@ -22,6 +22,7 @@ from agno.os.schema import (
     NotFoundResponse,
     PaginatedResponse,
     PaginationInfo,
+    SortOrder,
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
@@ -132,6 +133,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         ),
         page: int = Query(default=1, description="Page number (1-indexed)", ge=0),
         limit: int = Query(default=20, description="Number of traces per page", ge=1),
+        sort_by: Optional[str] = Query(default="created_at", description="Field to sort traces by"),
+        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query traces from"),
     ):
         """Get list of traces with optional filters and pagination"""
@@ -155,6 +158,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 end_time=end_time,
                 limit=limit,
                 page=page,
+                sort_by=sort_by,
+                sort_order=sort_order.value if sort_order else None,
                 db_id=db_id,
                 headers=headers,
             )
@@ -179,6 +184,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     end_time=end_time_dt,
                     limit=limit,
                     page=page,
+                    sort_by=sort_by,
+                    sort_order=sort_order.value if sort_order else None,
                 )
             else:
                 traces, total_count = db.get_traces(
@@ -193,6 +200,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     end_time=end_time_dt,
                     limit=limit,
                     page=page,
+                    sort_by=sort_by,
+                    sort_order=sort_order.value if sort_order else None,
                 )
 
             end_time_ms = time_module.time() * 1000
@@ -479,6 +488,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         ),
         page: int = Query(default=1, description="Page number (1-indexed)", ge=1),
         limit: int = Query(default=20, description="Number of sessions per page", ge=1),
+        sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
+        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
     ):
         """Get trace statistics grouped by session"""
@@ -499,6 +510,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 end_time=end_time,
                 limit=limit,
                 page=page,
+                sort_by=sort_by,
+                sort_order=sort_order.value if sort_order else None,
                 db_id=db_id,
                 headers=headers,
             )
@@ -520,6 +533,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     end_time=end_time_dt,
                     limit=limit,
                     page=page,
+                    sort_by=sort_by,
+                    sort_order=sort_order.value if sort_order else None,
                 )
             else:
                 stats_list, total_count = db.get_trace_stats(
@@ -531,6 +546,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                     end_time=end_time_dt,
                     limit=limit,
                     page=page,
+                    sort_by=sort_by,
+                    sort_order=sort_order.value if sort_order else None,
                 )
 
             end_time_ms = time_module.time() * 1000
@@ -634,6 +651,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 group_by=body.group_by.value,
                 limit=body.limit,
                 page=body.page,
+                sort_by=body.sort_by,
+                sort_order=body.sort_order.value if body.sort_order else None,
                 db_id=db_id,
                 headers=headers,
             )
@@ -657,12 +676,16 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                         filter_expr=filter_expr_dict,
                         limit=body.limit,
                         page=body.page,
+                        sort_by=body.sort_by,
+                        sort_order=body.sort_order.value if body.sort_order else None,
                     )
                 else:
                     stats_list, total_count = db.get_trace_stats(
                         filter_expr=filter_expr_dict,
                         limit=body.limit,
                         page=body.page,
+                        sort_by=body.sort_by,
+                        sort_order=body.sort_order.value if body.sort_order else None,
                     )
 
                 end_time_ms = time_module.time() * 1000
@@ -704,12 +727,16 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                         filter_expr=filter_expr_dict,
                         limit=body.limit,
                         page=body.page,
+                        sort_by=body.sort_by,
+                        sort_order=body.sort_order.value if body.sort_order else None,
                     )
                 else:
                     traces, total_count = db.get_traces(
                         filter_expr=filter_expr_dict,
                         limit=body.limit,
                         page=body.page,
+                        sort_by=body.sort_by,
+                        sort_order=body.sort_order.value if body.sort_order else None,
                     )
 
                 end_time_ms = time_module.time() * 1000

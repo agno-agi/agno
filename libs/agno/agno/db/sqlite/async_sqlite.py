@@ -2703,6 +2703,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -2719,6 +2721,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
             filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+            sort_by: Column name to sort by (default: created_at).
+            sort_order: Sort order, "asc" or "desc" (default: desc).
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
@@ -2780,7 +2784,13 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                 # Apply pagination
                 offset = (page - 1) * limit if page and limit else 0
-                paginated_stmt = base_stmt.order_by(table.c.start_time.desc()).limit(limit).offset(offset)
+                # Apply sorting
+                _sort_by = sort_by or "created_at"
+                sort_column = getattr(table.c, _sort_by, table.c.created_at)
+                if sort_order == "asc":
+                    paginated_stmt = base_stmt.order_by(sort_column.asc()).limit(limit).offset(offset)
+                else:
+                    paginated_stmt = base_stmt.order_by(sort_column.desc()).limit(limit).offset(offset)
 
                 result = await sess.execute(paginated_stmt)
                 results = result.fetchall()
@@ -2803,6 +2813,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2816,6 +2828,8 @@ class AsyncSqliteDb(AsyncBaseDb):
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
             filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+            sort_by: Column name to sort by (default: created_at).
+            sort_order: Sort order, "asc" or "desc" (default: desc).
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -2881,7 +2895,12 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                 # Apply pagination and ordering
                 offset = (page - 1) * limit if page and limit else 0
-                paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
+                # Apply sorting
+                sort_col = func.max(table.c.created_at)
+                if sort_order == "asc":
+                    paginated_stmt = base_stmt.order_by(sort_col.asc()).limit(limit).offset(offset)
+                else:
+                    paginated_stmt = base_stmt.order_by(sort_col.desc()).limit(limit).offset(offset)
 
                 result = await sess.execute(paginated_stmt)
                 results = result.fetchall()

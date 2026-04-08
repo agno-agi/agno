@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from agno.os.schema import SortOrder
 from agno.os.utils import format_duration_ms
 
 
@@ -461,6 +462,8 @@ class TraceSearchRequest(BaseModel):
     )
     page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
     limit: int = Field(default=20, ge=1, le=100, description="Number of traces per page (max 100)")
+    sort_by: Optional[str] = Field(default="created_at", description="Field to sort traces by (e.g., 'created_at', 'start_time')")
+    sort_order: Optional[SortOrder] = Field(default=SortOrder.DESC, description="Sort order (asc or desc)")
 
 
 class FilterFieldSchema(BaseModel):

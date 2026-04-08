@@ -2664,6 +2664,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -2731,7 +2733,13 @@ class AsyncMySQLDb(AsyncBaseDb):
 
                 # Apply pagination
                 offset = (page - 1) * limit if page and limit else 0
-                paginated_stmt = base_stmt.order_by(table.c.start_time.desc()).limit(limit).offset(offset)
+                # Apply sorting
+                _sort_by = sort_by or "created_at"
+                sort_column = getattr(table.c, _sort_by, table.c.created_at)
+                if sort_order == "asc":
+                    paginated_stmt = base_stmt.order_by(sort_column.asc()).limit(limit).offset(offset)
+                else:
+                    paginated_stmt = base_stmt.order_by(sort_column.desc()).limit(limit).offset(offset)
 
                 result = await sess.execute(paginated_stmt)
                 results = result.fetchall()
@@ -2753,6 +2761,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2817,7 +2827,12 @@ class AsyncMySQLDb(AsyncBaseDb):
 
                 # Apply pagination and ordering
                 offset = (page - 1) * limit if page and limit else 0
-                paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
+                # Apply sorting
+                sort_col = func.max(table.c.created_at)
+                if sort_order == "asc":
+                    paginated_stmt = base_stmt.order_by(sort_col.asc()).limit(limit).offset(offset)
+                else:
+                    paginated_stmt = base_stmt.order_by(sort_col.desc()).limit(limit).offset(offset)
 
                 result = await sess.execute(paginated_stmt)
                 results = result.fetchall()

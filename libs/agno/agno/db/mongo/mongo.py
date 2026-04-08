@@ -2356,6 +2356,8 @@ class MongoDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -2371,6 +2373,8 @@ class MongoDb(BaseDb):
             end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
+            sort_by: Field to sort by (default: "created_at").
+            sort_order: Sort order, "asc" or "desc" (default: "desc").
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
@@ -2413,9 +2417,13 @@ class MongoDb(BaseDb):
             # Get total count
             total_count = collection.count_documents(query)
 
+            # Apply sorting
+            _sort_by = sort_by or "created_at"
+            _sort_direction = 1 if sort_order == "asc" else -1
+
             # Apply pagination
             skip = ((page or 1) - 1) * (limit or 20)
-            cursor = collection.find(query).sort("start_time", -1).skip(skip).limit(limit or 20)
+            cursor = collection.find(query).sort(_sort_by, _sort_direction).skip(skip).limit(limit or 20)
 
             results = list(cursor)
 
@@ -2452,6 +2460,8 @@ class MongoDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2464,6 +2474,8 @@ class MongoDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            sort_by: Field to sort by (default: "last_trace_at").
+            sort_order: Sort order, "asc" or "desc" (default: "desc").
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -2494,6 +2506,10 @@ class MongoDb(BaseDb):
                 else:
                     match_stage["created_at"] = {"$lte": end_time.isoformat()}
 
+            # Apply sorting
+            _sort_by = sort_by or "last_trace_at"
+            _sort_direction = 1 if sort_order == "asc" else -1
+
             # Build aggregation pipeline
             pipeline: List[Dict[str, Any]] = [
                 {"$match": match_stage},
@@ -2509,7 +2525,7 @@ class MongoDb(BaseDb):
                         "last_trace_at": {"$max": "$created_at"},
                     }
                 },
-                {"$sort": {"last_trace_at": -1}},
+                {"$sort": {_sort_by: _sort_direction}},
             ]
 
             # Get total count

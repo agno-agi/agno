@@ -1619,6 +1619,8 @@ class SurrealDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -1634,6 +1636,8 @@ class SurrealDb(BaseDb):
             end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
+            sort_by: Field to sort by (default: start_time).
+            sort_order: Sort order - "asc" or "desc" (default: desc).
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
@@ -1669,7 +1673,9 @@ class SurrealDb(BaseDb):
             total_count = self._count(table, where_clause, where_vars)
 
             # Query with pagination
-            order_limit_start_clause = order_limit_start("start_time", "DESC", limit, page)
+            _sort_by = sort_by or "start_time"
+            _sort_order = sort_order.upper() if sort_order else "DESC"
+            order_limit_start_clause = order_limit_start(_sort_by, _sort_order, limit, page)
             query = dedent(f"""
                 SELECT * FROM {table}
                 {where_clause}
@@ -1709,6 +1715,8 @@ class SurrealDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -1721,6 +1729,8 @@ class SurrealDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            sort_by: Field to sort by (default: last_trace_at).
+            sort_order: Sort order - "asc" or "desc" (default: desc).
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -1760,7 +1770,9 @@ class SurrealDb(BaseDb):
             total_count = count_result.get("total", 0) if count_result else 0
 
             # Query with aggregation
-            order_limit_start_clause = order_limit_start("last_trace_at", "DESC", limit, page)
+            _sort_by = sort_by or "last_trace_at"
+            _sort_order = sort_order.upper() if sort_order else "DESC"
+            order_limit_start_clause = order_limit_start(_sort_by, _sort_order, limit, page)
             query = dedent(f"""
                 SELECT
                     session_id,

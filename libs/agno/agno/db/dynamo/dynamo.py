@@ -2322,6 +2322,8 @@ class DynamoDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters.
 
@@ -2337,6 +2339,8 @@ class DynamoDb(BaseDb):
             end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
+            sort_by: Field to sort by (default: created_at).
+            sort_order: Sort order - "asc" or "desc" (default: desc).
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
@@ -2416,7 +2420,7 @@ class DynamoDb(BaseDb):
                     "IndexName": gsi_name,
                     "KeyConditionExpression": key_condition,
                     "ExpressionAttributeValues": {**key_values, **filter_values},
-                    "ScanIndexForward": False,  # Descending order by start_time
+                    "ScanIndexForward": sort_order == "asc",  # False = descending, True = ascending
                 }
                 if gsi_name == "status-start_time-index":
                     expression_attr_names["#status"] = "status"
@@ -2452,8 +2456,10 @@ class DynamoDb(BaseDb):
             # Deserialize items
             traces_data = [deserialize_from_dynamodb_item(item) for item in items]
 
-            # Sort by start_time descending
-            traces_data.sort(key=lambda x: x.get("start_time", ""), reverse=True)
+            # Sort by specified field
+            _sort_by = sort_by or "created_at"
+            _reverse = sort_order != "asc"
+            traces_data.sort(key=lambda x: x.get(_sort_by, ""), reverse=_reverse)
 
             # Get total count
             total_count = len(traces_data)
@@ -2486,6 +2492,8 @@ class DynamoDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2498,6 +2506,8 @@ class DynamoDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            sort_by: Field to sort by (default: last_trace_at).
+            sort_order: Sort order - "asc" or "desc" (default: desc).
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -2586,9 +2596,10 @@ class DynamoDb(BaseDb):
                     if created_at > session_stats[session_id]["last_trace_at"]:
                         session_stats[session_id]["last_trace_at"] = created_at
 
-            # Convert to list and sort by last_trace_at descending
+            # Convert to list and sort
             stats_list = list(session_stats.values())
-            stats_list.sort(key=lambda x: x.get("last_trace_at", ""), reverse=True)
+            _reverse = sort_order != "asc"
+            stats_list.sort(key=lambda x: x.get("last_trace_at", ""), reverse=_reverse)
 
             # Convert datetime strings to datetime objects
             for stat in stats_list:
