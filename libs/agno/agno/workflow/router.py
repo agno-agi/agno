@@ -121,7 +121,9 @@ class Router:
     human_review: Optional[HumanReview] = None
 
     def __post_init__(self) -> None:
-        # Build HITL config - explicit hitl= takes priority over flat params
+        # Router uses __post_init__ (not __init__) because it's a pure dataclass
+        # without a manual __init__. Step and Loop have manual __init__ methods
+        # where HumanReview is built directly.
         if self.human_review is not None:
             pass  # Use the explicit hitl
         else:

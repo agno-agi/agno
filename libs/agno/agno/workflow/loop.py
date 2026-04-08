@@ -123,9 +123,11 @@ class Loop:
                 iteration_review_message=iteration_review_message,
             )
 
-        # Validate: output review not supported on Loop
+        # Validate: output review and user input not supported on Loop
         if self.human_review.requires_output_review and self.human_review.requires_output_review is not False:
             raise ValueError("requires_output_review is not supported on Loop. Use it on Step or Router instead.")
+        if self.human_review.requires_user_input:
+            raise ValueError("requires_user_input is not supported on Loop. Use it on Step or Router instead.")
 
         # Store HITL fields as attributes for backward compatibility
         self.requires_confirmation = self.human_review.requires_confirmation
