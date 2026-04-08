@@ -539,6 +539,7 @@ class LiteLLM(Model):
                 metrics.audio_output_tokens = getattr(completion_details, "audio_tokens", 0) or 0
 
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+        metrics.audio_total_tokens = metrics.audio_input_tokens + metrics.audio_output_tokens
 
         return metrics
 
