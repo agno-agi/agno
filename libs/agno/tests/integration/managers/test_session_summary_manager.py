@@ -798,11 +798,23 @@ def test_team_get_messages_limit_zero(multi_run_team_session):
 
 def test_session_summary_manager_rejects_negative_last_n_runs(model):
     """Test that SessionSummaryManager raises ValueError for negative last_n_runs."""
-    with pytest.raises(ValueError, match="last_n_runs must be non-negative"):
+    with pytest.raises(ValueError, match="last_n_runs must be a positive integer"):
         SessionSummaryManager(model=model, last_n_runs=-1)
+
+
+def test_session_summary_manager_rejects_zero_last_n_runs(model):
+    """Test that SessionSummaryManager raises ValueError for zero last_n_runs."""
+    with pytest.raises(ValueError, match="last_n_runs must be a positive integer"):
+        SessionSummaryManager(model=model, last_n_runs=0)
 
 
 def test_session_summary_manager_rejects_negative_conversation_limit(model):
     """Test that SessionSummaryManager raises ValueError for negative conversation_limit."""
-    with pytest.raises(ValueError, match="conversation_limit must be non-negative"):
+    with pytest.raises(ValueError, match="conversation_limit must be a positive integer"):
         SessionSummaryManager(model=model, conversation_limit=-1)
+
+
+def test_session_summary_manager_rejects_zero_conversation_limit(model):
+    """Test that SessionSummaryManager raises ValueError for zero conversation_limit."""
+    with pytest.raises(ValueError, match="conversation_limit must be a positive integer"):
+        SessionSummaryManager(model=model, conversation_limit=0)
