@@ -765,3 +765,44 @@ def test_team_get_messages_all_runs(multi_run_team_session):
     contents = [m.content for m in messages]
     for i in range(1, 6):
         assert any(f"run {i}" in c for c in contents)
+
+
+# ---------------------------------------------------------------------------
+# Boundary value tests for last_n_runs and limit
+# ---------------------------------------------------------------------------
+
+
+def test_agent_get_messages_last_n_runs_zero(multi_run_agent_session):
+    """Test that last_n_runs=0 returns an empty list."""
+    messages = multi_run_agent_session.get_messages(last_n_runs=0)
+    assert messages == []
+
+
+def test_agent_get_messages_limit_zero(multi_run_agent_session):
+    """Test that limit=0 returns an empty list."""
+    messages = multi_run_agent_session.get_messages(limit=0)
+    assert messages == []
+
+
+def test_team_get_messages_last_n_runs_zero(multi_run_team_session):
+    """Test that last_n_runs=0 returns an empty list for team sessions."""
+    messages = multi_run_team_session.get_messages(last_n_runs=0)
+    assert messages == []
+
+
+def test_team_get_messages_limit_zero(multi_run_team_session):
+    """Test that limit=0 returns an empty list for team sessions."""
+    messages = multi_run_team_session.get_messages(limit=0)
+    assert messages == []
+
+
+def test_session_summary_manager_rejects_negative_last_n_runs(model):
+    """Test that SessionSummaryManager raises ValueError for negative last_n_runs."""
+    with pytest.raises(ValueError, match="last_n_runs must be non-negative"):
+        SessionSummaryManager(model=model, last_n_runs=-1)
+
+
+def test_session_summary_manager_rejects_negative_conversation_limit(model):
+    """Test that SessionSummaryManager raises ValueError for negative conversation_limit."""
+    with pytest.raises(ValueError, match="conversation_limit must be non-negative"):
+        SessionSummaryManager(model=model, conversation_limit=-1)

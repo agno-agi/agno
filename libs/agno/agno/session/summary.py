@@ -80,6 +80,12 @@ class SessionSummaryManager:
     # Maximum number of messages to include in the summary conversation. None means no limit.
     conversation_limit: Optional[int] = None
 
+    def __post_init__(self) -> None:
+        if self.last_n_runs is not None and self.last_n_runs < 0:
+            raise ValueError(f"last_n_runs must be non-negative, got {self.last_n_runs}")
+        if self.conversation_limit is not None and self.conversation_limit < 0:
+            raise ValueError(f"conversation_limit must be non-negative, got {self.conversation_limit}")
+
     def get_response_format(self, model: "Model") -> Union[Dict[str, Any], Type[BaseModel]]:  # type: ignore
         if model.supports_native_structured_outputs:
             return SessionSummaryResponse
