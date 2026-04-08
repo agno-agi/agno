@@ -33,6 +33,20 @@ class OnReject(str, Enum):
     retry = "retry"
 
 
+class OnTimeout(str, Enum):
+    """Action to take when a HITL pause times out.
+
+    Attributes:
+        cancel: Cancel the workflow when the timeout expires (default).
+        skip: Skip the timed-out step and continue with the next step.
+        approve: Auto-approve the step output and continue.
+    """
+
+    cancel = "cancel"
+    skip = "skip"
+    approve = "approve"
+
+
 class OnError(str, Enum):
     """Action to take when a step encounters an error during execution.
 
@@ -648,7 +662,7 @@ class StepRequirement:
 
     # Timeout / expiration
     timeout_at: Optional[datetime] = None
-    on_timeout: str = "cancel"  # "cancel", "skip", or "approve"
+    on_timeout: Union[OnTimeout, str] = OnTimeout.cancel
 
     def confirm(self) -> None:
         """Confirm the step execution."""
@@ -860,7 +874,7 @@ class StepRequirement:
             "max_retries": self.max_retries,
             # Timeout
             "timeout_at": self.timeout_at.isoformat() if self.timeout_at else None,
-            "on_timeout": self.on_timeout,
+            "on_timeout": self.on_timeout.value if isinstance(self.on_timeout, OnTimeout) else self.on_timeout,
         }
         if self.user_input_schema is not None:
             result["user_input_schema"] = [f.to_dict() for f in self.user_input_schema]

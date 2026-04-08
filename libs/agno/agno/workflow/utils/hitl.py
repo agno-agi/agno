@@ -245,7 +245,14 @@ def check_output_review_status(
     if callable(requires_review):
         try:
             requires_review = requires_review(step_output)
-        except Exception:
+        except Exception as e:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "requires_output_review predicate raised %s: %s — defaulting to no review",
+                type(e).__name__,
+                e,
+            )
             requires_review = False
 
     if not requires_review:

@@ -34,6 +34,7 @@ from agno.workflow.types import (
     ErrorRequirement,
     OnError,
     OnReject,
+    OnTimeout,
     StepInput,
     StepOutput,
     StepRequirement,
@@ -110,7 +111,7 @@ class Step:
     # Timeout for HITL responses in seconds (None = wait indefinitely)
     hitl_timeout: Optional[int] = None
     # Action when timeout expires: "cancel", "skip", or "approve"
-    on_timeout: str = "cancel"
+    on_timeout: Union[OnTimeout, str] = OnTimeout.cancel
 
     _retry_count: int = 0
 
@@ -138,7 +139,7 @@ class Step:
         output_review_message: Optional[str] = None,
         hitl_max_retries: int = 3,
         hitl_timeout: Optional[int] = None,
-        on_timeout: str = "cancel",
+        on_timeout: Union[OnTimeout, str] = OnTimeout.cancel,
     ):
         # Auto-detect HITL metadata from @hitl decorator on executor function
         if executor is not None:

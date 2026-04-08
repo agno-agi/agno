@@ -1919,6 +1919,8 @@ class Workflow:
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     # Post-execution output review check
+                    # Note: apply_post_execution_pause_state appends step_output to
+                    # collected_step_outputs, so we return before the normal output storage below.
                     if isinstance(step, Step):
                         review_result = check_output_review_status(step, i, step_input, step_output)
                         if review_result.should_pause:
@@ -2154,6 +2156,7 @@ class Workflow:
 
                     # Execute step with streaming and yield all events
                     step_error_occurred = False
+                    step_output = None
                     step_error_exception = None
                     try:
                         for event in step.execute_stream(  # type: ignore[union-attr]
@@ -2294,7 +2297,7 @@ class Workflow:
                             raise step_error_exception
 
                     # Post-execution output review check
-                    if not step_error_occurred and "step_output" in locals() and isinstance(step, Step):
+                    if not step_error_occurred and step_output is not None and isinstance(step, Step):
                         review_result = check_output_review_status(step, i, step_input, step_output)
                         if review_result.should_pause:
                             apply_post_execution_pause_state(
@@ -2327,7 +2330,7 @@ class Workflow:
                     # Loop iteration review check
                     if (
                         not step_error_occurred
-                        and "step_output" in locals()
+                        and step_output is not None
                         and getattr(step_output, "requires_iteration_review_pause", False)
                     ):
                         req = step_output.iteration_review_requirement
@@ -2993,6 +2996,7 @@ class Workflow:
 
                     # Execute step with streaming and yield all events
                     step_error_occurred = False
+                    step_output = None
                     step_error_exception = None
                     try:
                         async for event in step.aexecute_stream(  # type: ignore[union-attr]
@@ -3143,7 +3147,7 @@ class Workflow:
                             raise step_error_exception
 
                     # Post-execution output review check
-                    if not step_error_occurred and "step_output" in locals() and isinstance(step, Step):
+                    if not step_error_occurred and step_output is not None and isinstance(step, Step):
                         review_result = check_output_review_status(step, i, step_input, step_output)
                         if review_result.should_pause:
                             apply_post_execution_pause_state(
@@ -3178,7 +3182,7 @@ class Workflow:
                     # Loop iteration review check
                     if (
                         not step_error_occurred
-                        and "step_output" in locals()
+                        and step_output is not None
                         and getattr(step_output, "requires_iteration_review_pause", False)
                     ):
                         req = step_output.iteration_review_requirement
@@ -4878,6 +4882,7 @@ class Workflow:
             user_input = kwargs.get("user_input")
             router_selection = kwargs.get("router_selection")
             rejection_feedback = kwargs.get("rejection_feedback")
+            retry_count = kwargs.get("retry_count", 0)
 
             # Handle edited output from post-execution review
             edited_output = kwargs.get("edited_output")
@@ -5106,7 +5111,9 @@ class Workflow:
 
                 # Post-execution output review check
                 if isinstance(step, Step):
-                    review_result = check_output_review_status(step, i, step_input, step_output)
+                    review_result = check_output_review_status(
+                        step, i, step_input, step_output, retry_count=retry_count
+                    )
                     if review_result.should_pause:
                         apply_post_execution_pause_state(
                             workflow_run_response,
@@ -5218,6 +5225,7 @@ class Workflow:
             user_input = kwargs.get("user_input")
             router_selection = kwargs.get("router_selection")
             rejection_feedback = kwargs.get("rejection_feedback")
+            retry_count = kwargs.get("retry_count", 0)
 
             # Handle edited output from post-execution review
             edited_output = kwargs.get("edited_output")
@@ -5444,6 +5452,7 @@ class Workflow:
                 # Execute step with streaming
                 step_error_occurred = False
                 step_error_exception = None
+                step_output = None
                 try:
                     for event in step.execute_stream(  # type: ignore[union-attr]
                         step_input,
@@ -5561,8 +5570,10 @@ class Workflow:
                         raise step_error_exception
 
                 # Post-execution output review check
-                if not step_error_occurred and "step_output" in locals() and isinstance(step, Step):
-                    review_result = check_output_review_status(step, i, step_input, step_output)
+                if not step_error_occurred and step_output is not None and isinstance(step, Step):
+                    review_result = check_output_review_status(
+                        step, i, step_input, step_output, retry_count=retry_count
+                    )
                     if review_result.should_pause:
                         apply_post_execution_pause_state(
                             workflow_run_response,
@@ -5592,7 +5603,7 @@ class Workflow:
                 # Loop iteration review check
                 if (
                     not step_error_occurred
-                    and "step_output" in locals()
+                    and step_output is not None
                     and getattr(step_output, "requires_iteration_review_pause", False)
                 ):
                     req = step_output.iteration_review_requirement
@@ -6045,6 +6056,7 @@ class Workflow:
             user_input = kwargs.get("user_input")
             router_selection = kwargs.get("router_selection")
             rejection_feedback = kwargs.get("rejection_feedback")
+            retry_count = kwargs.get("retry_count", 0)
 
             # Handle edited output from post-execution review
             edited_output = kwargs.get("edited_output")
@@ -6249,7 +6261,9 @@ class Workflow:
 
                 # Post-execution output review check
                 if isinstance(step, Step):
-                    review_result = check_output_review_status(step, i, step_input, step_output)
+                    review_result = check_output_review_status(
+                        step, i, step_input, step_output, retry_count=retry_count
+                    )
                     if review_result.should_pause:
                         apply_post_execution_pause_state(
                             workflow_run_response,
@@ -6361,6 +6375,7 @@ class Workflow:
             user_input = kwargs.get("user_input")
             router_selection = kwargs.get("router_selection")
             rejection_feedback = kwargs.get("rejection_feedback")
+            retry_count = kwargs.get("retry_count", 0)
 
             # Handle edited output from post-execution review
             edited_output = kwargs.get("edited_output")
@@ -6589,6 +6604,7 @@ class Workflow:
                 # Execute step with streaming
                 step_error_occurred = False
                 step_error_exception = None
+                step_output = None
                 try:
                     async for event in step.aexecute_stream(  # type: ignore[union-attr]
                         step_input,
@@ -6706,8 +6722,10 @@ class Workflow:
                         raise step_error_exception
 
                 # Post-execution output review check
-                if not step_error_occurred and "step_output" in locals() and isinstance(step, Step):
-                    review_result = check_output_review_status(step, i, step_input, step_output)
+                if not step_error_occurred and step_output is not None and isinstance(step, Step):
+                    review_result = check_output_review_status(
+                        step, i, step_input, step_output, retry_count=retry_count
+                    )
                     if review_result.should_pause:
                         apply_post_execution_pause_state(
                             workflow_run_response,
@@ -6737,7 +6755,7 @@ class Workflow:
                 # Loop iteration review check
                 if (
                     not step_error_occurred
-                    and "step_output" in locals()
+                    and step_output is not None
                     and getattr(step_output, "requires_iteration_review_pause", False)
                 ):
                     req = step_output.iteration_review_requirement

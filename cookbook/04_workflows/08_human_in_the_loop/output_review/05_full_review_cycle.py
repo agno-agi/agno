@@ -110,7 +110,26 @@ print(f"\n{'=' * 65}")
 print("  Demo 2: CANCEL")
 print("=" * 65)
 
-run_output = workflow.run("Summarise the benefits of morning exercise.")
+# Separate workflow with on_reject=cancel for the cancel demo
+cancel_workflow = Workflow(
+    name="hitl_cancel_workflow",
+    db=SqliteDb(db_file="tmp/hitl_full_review_cancel.db"),
+    steps=[
+        Step(
+            name="agent_a",
+            agent=agent_a,
+            requires_output_review=True,
+            output_review_message="Review Agent A's draft",
+            on_reject=OnReject.cancel,
+        ),
+        Step(
+            name="agent_b",
+            agent=agent_b,
+        ),
+    ],
+)
+
+run_output = cancel_workflow.run("Summarise the benefits of morning exercise.")
 
 if run_output.is_paused:
     for req in run_output.steps_requiring_output_review:
@@ -120,9 +139,7 @@ if run_output.is_paused:
         print("\n  -> Simulating decision: CANCEL")
         req.reject()
 
-    # Override on_reject to cancel for this demo
-    run_output.step_requirements[0].on_reject = "cancel"
-    run_output = workflow.continue_run(run_output)
+    run_output = cancel_workflow.continue_run(run_output)
 
 print(f"\n[RESULT] Status: {run_output.status}")
 print(f"  Content: {run_output.content}")
