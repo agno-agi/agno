@@ -789,8 +789,12 @@ class StepRequirement:
 
     @property
     def needs_confirmation(self) -> bool:
-        """Check if this requirement still needs confirmation"""
+        """Check if this requirement still needs confirmation (excludes output review)"""
         if self.confirmed is not None:
+            return False
+        # Output review uses requires_confirmation internally but should not
+        # appear in the confirmation-specific list
+        if self.requires_output_review:
             return False
         return self.requires_confirmation
 
@@ -909,7 +913,11 @@ class StepRequirement:
 
         timeout_at = None
         if data.get("timeout_at"):
-            timeout_at = datetime.fromisoformat(data["timeout_at"])
+            raw = data["timeout_at"]
+            # Replace 'Z' suffix with '+00:00' for Python < 3.11 compatibility
+            if isinstance(raw, str) and raw.endswith("Z"):
+                raw = raw[:-1] + "+00:00"
+            timeout_at = datetime.fromisoformat(raw)
 
         return cls(
             step_id=data["step_id"],

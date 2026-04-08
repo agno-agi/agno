@@ -1921,7 +1921,7 @@ class Workflow:
                     # Post-execution output review check
                     # Note: apply_post_execution_pause_state appends step_output to
                     # collected_step_outputs, so we return before the normal output storage below.
-                    if isinstance(step, Step):
+                    if step_output is not None and isinstance(step, Step):
                         review_result = check_output_review_status(step, i, step_input, step_output)
                         if review_result.should_pause:
                             apply_post_execution_pause_state(
@@ -2757,7 +2757,7 @@ class Workflow:
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     # Post-execution output review check
-                    if isinstance(step, Step):
+                    if step_output is not None and isinstance(step, Step):
                         review_result = check_output_review_status(step, i, step_input, step_output)
                         if review_result.should_pause:
                             apply_post_execution_pause_state(
@@ -5199,7 +5199,7 @@ class Workflow:
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                 # Post-execution output review check
-                if isinstance(step, Step):
+                if step_output is not None and isinstance(step, Step):
                     review_result = check_output_review_status(
                         step, i, step_input, step_output, retry_count=retry_count
                     )
@@ -6435,7 +6435,7 @@ class Workflow:
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                 # Post-execution output review check
-                if isinstance(step, Step):
+                if step_output is not None and isinstance(step, Step):
                     review_result = check_output_review_status(
                         step, i, step_input, step_output, retry_count=retry_count
                     )

@@ -321,7 +321,9 @@ def apply_post_execution_pause_state(
     # Store the output before pausing so it survives the pause/resume cycle
     if previous_step_outputs is not None and step_name:
         previous_step_outputs[step_name] = step_output
-    collected_step_outputs.append(step_output)
+    # Guard against double-append (streaming paths may have already appended the output)
+    if not collected_step_outputs or collected_step_outputs[-1] is not step_output:
+        collected_step_outputs.append(step_output)
 
     workflow_run_response.status = RunStatus.paused
     workflow_run_response.paused_step_index = step_index
