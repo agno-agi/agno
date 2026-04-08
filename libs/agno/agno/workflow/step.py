@@ -776,13 +776,16 @@ class Step:
                             else:
                                 final_message = f"User preferences:\n{user_input_str}"
 
-                        # Append rejection feedback if available (from HITL retry)
+                        # Append previous output and rejection feedback if available (from HITL retry)
+                        if step_input.additional_data and step_input.additional_data.get("previous_output"):
+                            prev_output = step_input.additional_data["previous_output"]
+                            if final_message:
+                                final_message = f"{final_message}\n\nYour previous output:\n{prev_output}"
+                            else:
+                                final_message = f"Your previous output:\n{prev_output}"
                         if step_input.additional_data and step_input.additional_data.get("rejection_feedback"):
                             feedback = step_input.additional_data["rejection_feedback"]
-                            if final_message:
-                                final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
-                            else:
-                                final_message = f"Feedback from reviewer:\n{feedback}"
+                            final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
 
                         response = self.active_executor.run(  # type: ignore
                             input=final_message,  # type: ignore
@@ -1066,13 +1069,16 @@ class Step:
                             else:
                                 final_message = f"User preferences:\n{user_input_str}"
 
-                        # Append rejection feedback if available (from HITL retry)
+                        # Append previous output and rejection feedback if available (from HITL retry)
+                        if step_input.additional_data and step_input.additional_data.get("previous_output"):
+                            prev_output = step_input.additional_data["previous_output"]
+                            if final_message:
+                                final_message = f"{final_message}\n\nYour previous output:\n{prev_output}"
+                            else:
+                                final_message = f"Your previous output:\n{prev_output}"
                         if step_input.additional_data and step_input.additional_data.get("rejection_feedback"):
                             feedback = step_input.additional_data["rejection_feedback"]
-                            if final_message:
-                                final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
-                            else:
-                                final_message = f"Feedback from reviewer:\n{feedback}"
+                            final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
 
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
                             input=final_message,
@@ -1367,13 +1373,16 @@ class Step:
                             else:
                                 final_message = f"User preferences:\n{user_input_str}"
 
-                        # Append rejection feedback if available (from HITL retry)
+                        # Append previous output and rejection feedback if available (from HITL retry)
+                        if step_input.additional_data and step_input.additional_data.get("previous_output"):
+                            prev_output = step_input.additional_data["previous_output"]
+                            if final_message:
+                                final_message = f"{final_message}\n\nYour previous output:\n{prev_output}"
+                            else:
+                                final_message = f"Your previous output:\n{prev_output}"
                         if step_input.additional_data and step_input.additional_data.get("rejection_feedback"):
                             feedback = step_input.additional_data["rejection_feedback"]
-                            if final_message:
-                                final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
-                            else:
-                                final_message = f"Feedback from reviewer:\n{feedback}"
+                            final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
 
                         response = await self.active_executor.arun(  # type: ignore
                             input=final_message,  # type: ignore
@@ -1651,13 +1660,16 @@ class Step:
                             else:
                                 final_message = f"User preferences:\n{user_input_str}"
 
-                        # Append rejection feedback if available (from HITL retry)
+                        # Append previous output and rejection feedback if available (from HITL retry)
+                        if step_input.additional_data and step_input.additional_data.get("previous_output"):
+                            prev_output = step_input.additional_data["previous_output"]
+                            if final_message:
+                                final_message = f"{final_message}\n\nYour previous output:\n{prev_output}"
+                            else:
+                                final_message = f"Your previous output:\n{prev_output}"
                         if step_input.additional_data and step_input.additional_data.get("rejection_feedback"):
                             feedback = step_input.additional_data["rejection_feedback"]
-                            if final_message:
-                                final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
-                            else:
-                                final_message = f"Feedback from reviewer:\n{feedback}"
+                            final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
 
                         response_stream = self.active_executor.arun(  # type: ignore
                             input=final_message,

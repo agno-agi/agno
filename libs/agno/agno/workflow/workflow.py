@@ -4722,6 +4722,9 @@ class Workflow:
                     kwargs["retry_count"] = rejected_step.retry_count + 1
                     if rejected_step.rejection_feedback:
                         kwargs["rejection_feedback"] = rejected_step.rejection_feedback
+                    # Pass the previous output so the agent can see what it produced
+                    if rejected_step.step_output and rejected_step.step_output.content:
+                        kwargs["previous_output"] = str(rejected_step.step_output.content)
                     log_debug(
                         f"Step '{rejected_step.step_name}' was rejected with on_reject='retry' "
                         f"(attempt {rejected_step.retry_count + 1})"
@@ -4987,11 +4990,15 @@ class Workflow:
                         step_input.additional_data = {}
                     step_input.additional_data["user_input"] = user_input
 
-                # Inject rejection feedback for retry
+                # Inject rejection feedback and previous output for retry
                 if i == start_step_index and rejection_feedback:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["rejection_feedback"] = rejection_feedback
+                if i == start_step_index and kwargs.get("previous_output"):
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["previous_output"] = kwargs["previous_output"]
 
                 # For loop iteration resume: forward the last iteration's output as input
                 # so the loop continues refining from where it left off
@@ -5347,11 +5354,15 @@ class Workflow:
                         step_input.additional_data = {}
                     step_input.additional_data["user_input"] = user_input
 
-                # Inject rejection feedback for retry
+                # Inject rejection feedback and previous output for retry
                 if i == start_step_index and rejection_feedback:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["rejection_feedback"] = rejection_feedback
+                if i == start_step_index and kwargs.get("previous_output"):
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["previous_output"] = kwargs["previous_output"]
 
                 # For loop iteration resume: forward the last iteration's output as input
                 # so the loop continues refining from where it left off
@@ -5967,6 +5978,8 @@ class Workflow:
                     kwargs["retry_count"] = rejected_step.retry_count + 1
                     if rejected_step.rejection_feedback:
                         kwargs["rejection_feedback"] = rejected_step.rejection_feedback
+                    if rejected_step.step_output and rejected_step.step_output.content:
+                        kwargs["previous_output"] = str(rejected_step.step_output.content)
                     log_debug(
                         f"Step '{rejected_step.step_name}' was rejected with on_reject='retry' "
                         f"(attempt {rejected_step.retry_count + 1})"
@@ -6223,11 +6236,15 @@ class Workflow:
                         step_input.additional_data = {}
                     step_input.additional_data["user_input"] = user_input
 
-                # Inject rejection feedback for retry
+                # Inject rejection feedback and previous output for retry
                 if i == start_step_index and rejection_feedback:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["rejection_feedback"] = rejection_feedback
+                if i == start_step_index and kwargs.get("previous_output"):
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["previous_output"] = kwargs["previous_output"]
 
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -6556,11 +6573,15 @@ class Workflow:
                         step_input.additional_data = {}
                     step_input.additional_data["user_input"] = user_input
 
-                # Inject rejection feedback for retry
+                # Inject rejection feedback and previous output for retry
                 if i == start_step_index and rejection_feedback:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["rejection_feedback"] = rejection_feedback
+                if i == start_step_index and kwargs.get("previous_output"):
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["previous_output"] = kwargs["previous_output"]
 
                 # For loop iteration resume: forward the last iteration's output as input
                 # so the loop continues refining from where it left off
