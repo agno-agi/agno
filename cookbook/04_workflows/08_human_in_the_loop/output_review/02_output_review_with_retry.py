@@ -69,7 +69,7 @@ while run_output.is_paused:
         else:
             feedback = input("What should change? ")
             requirement.reject(feedback=feedback)
-            print(f"Rejected with feedback. Retrying...")
+            print("Rejected with feedback. Retrying...")
 
     run_output = workflow.continue_run(run_output)
 

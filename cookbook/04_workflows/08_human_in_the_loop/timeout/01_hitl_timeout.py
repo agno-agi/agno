@@ -71,7 +71,7 @@ if run_output.is_paused:
 
     # When continue_run is called, it checks timeout and auto-resolves
     run_output = workflow.continue_run(run_output)
-    print(f"\nAuto-resolved by timeout!")
+    print("\nAuto-resolved by timeout!")
 
 print(f"\nFinal status: {run_output.status}")
 print(f"Final output: {run_output.content}")
