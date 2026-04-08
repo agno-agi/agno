@@ -564,33 +564,29 @@ async def test_stream_ends_without_completion_event():
 
 @pytest.mark.asyncio
 async def test_reasoning_events_handling():
-    """Test that reasoning events are properly converted to step events"""
-    from agno.run.agent import RunEvent
+    """Test that reasoning events emit proper REASONING_* AG-UI events"""
+    from agno.run.agent import (
+        ReasoningCompletedEvent,
+        ReasoningContentDeltaEvent,
+        ReasoningStartedEvent,
+        RunCompletedEvent,
+    )
 
     async def mock_stream_with_reasoning():
-        # Start reasoning
-        reasoning_start = RunContentEvent()
-        reasoning_start.event = RunEvent.reasoning_started
-        reasoning_start.content = ""
-        yield reasoning_start
+        yield ReasoningStartedEvent()
 
-        # Some reasoning content
-        reasoning_content = RunContentEvent()
-        reasoning_content.event = RunEvent.run_content
-        reasoning_content.content = "Thinking about this problem..."
-        yield reasoning_content
+        delta = ReasoningContentDeltaEvent()
+        delta.reasoning_content = "Thinking about this problem..."
+        yield delta
 
-        # End reasoning
-        reasoning_end = RunContentEvent()
-        reasoning_end.event = RunEvent.reasoning_completed
-        reasoning_end.content = ""
-        yield reasoning_end
+        yield ReasoningCompletedEvent()
 
-        # Complete run
-        completed_response = RunContentEvent()
-        completed_response.event = RunEvent.run_completed
-        completed_response.content = ""
-        yield completed_response
+        # Text response after reasoning
+        text = RunContentEvent()
+        text.content = "The answer is 42."
+        yield text
+
+        yield RunCompletedEvent()
 
     events = []
     async for event in async_stream_agno_response_as_agui_events(mock_stream_with_reasoning(), "thread_1", "run_1"):
@@ -598,11 +594,22 @@ async def test_reasoning_events_handling():
 
     event_types = [event.type for event in events]
 
-    # Should have step events for reasoning
-    assert EventType.STEP_STARTED in event_types, "Should have STEP_STARTED for reasoning"
-    assert EventType.STEP_FINISHED in event_types, "Should have STEP_FINISHED for reasoning"
+    # Should have REASONING_* events (not generic STEP events)
+    assert EventType.REASONING_START in event_types, "Should have REASONING_START"
+    assert EventType.REASONING_MESSAGE_START in event_types, "Should have REASONING_MESSAGE_START"
+    assert EventType.REASONING_MESSAGE_CONTENT in event_types, "Should have REASONING_MESSAGE_CONTENT"
+    assert EventType.REASONING_MESSAGE_END in event_types, "Should have REASONING_MESSAGE_END"
+    assert EventType.REASONING_END in event_types, "Should have REASONING_END"
 
-    # Should have text content during reasoning
+    # Verify correct ordering: START before CONTENT before END
+    r_start = event_types.index(EventType.REASONING_START)
+    r_msg_start = event_types.index(EventType.REASONING_MESSAGE_START)
+    r_content = event_types.index(EventType.REASONING_MESSAGE_CONTENT)
+    r_msg_end = event_types.index(EventType.REASONING_MESSAGE_END)
+    r_end = event_types.index(EventType.REASONING_END)
+    assert r_start < r_msg_start < r_content < r_msg_end < r_end
+
+    # Should have text content after reasoning
     assert EventType.TEXT_MESSAGE_CONTENT in event_types
     assert EventType.RUN_FINISHED in event_types
 
