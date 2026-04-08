@@ -865,12 +865,6 @@ class Loop:
                         success=True,
                         steps=flattened_so_far,
                         requires_iteration_review_pause=True,
-                        iteration_review_requirement=self.create_iteration_review_requirement(
-                            step_index=0,
-                            iteration=iteration - 1,
-                            step_input=step_input,
-                            iteration_output=last_iter_output,
-                        ),
                     )
 
             # Carry forward output to next iteration
