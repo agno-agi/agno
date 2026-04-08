@@ -14,6 +14,7 @@ The human can:
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
+from agno.workflow import OnReject
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
@@ -40,6 +41,7 @@ workflow = Workflow(
             agent=draft_agent,
             requires_output_review=True,
             output_review_message="Review the email draft before sending",
+            on_reject=OnReject.cancel,  # Reject = cancel workflow (don't send the email)
         ),
         Step(
             name="send_email",

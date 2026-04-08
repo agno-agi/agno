@@ -4859,7 +4859,11 @@ class Workflow:
 
         # Determine start index based on pause type and decision
         start_index = paused_step_index
-        if skip_rejected_step or error_should_skip:
+        if skip_rejected_step and is_post_execution_review:
+            # Post-execution review rejected with skip: discard the output, advance to next
+            kwargs["remove_last_output"] = True
+            start_index = paused_step_index + 1
+        elif skip_rejected_step or error_should_skip:
             start_index = paused_step_index + 1
         elif is_post_execution_review and not retry_step:
             # Post-execution review confirmed/edited: step already ran, advance to next
@@ -6034,7 +6038,11 @@ class Workflow:
 
         # Determine start index based on pause type and decision
         start_index = paused_step_index
-        if skip_rejected_step or error_should_skip:
+        if skip_rejected_step and is_post_execution_review:
+            # Post-execution review rejected with skip: discard the output, advance to next
+            kwargs["remove_last_output"] = True
+            start_index = paused_step_index + 1
+        elif skip_rejected_step or error_should_skip:
             start_index = paused_step_index + 1
         elif is_post_execution_review and not retry_step:
             start_index = paused_step_index + 1
