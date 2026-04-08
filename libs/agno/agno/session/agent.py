@@ -128,7 +128,7 @@ class AgentSession:
             agent_id: The id of the agent to get the messages from.
             team_id: The id of the team to get the messages from.
             last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
-            last_n_messages: The number of messages to return, counting from the latest. Defaults to all messages.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
             skip_roles: Skip messages with these roles.
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
