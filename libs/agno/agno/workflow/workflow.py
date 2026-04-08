@@ -4640,17 +4640,8 @@ class Workflow:
         if step_requirements is not None:
             run_response.step_requirements = step_requirements
 
-        # Validate that all step requirements are resolved
-        if run_response.active_step_requirements:
-            unresolved = [req.step_name for req in run_response.active_step_requirements]
-            raise ValueError(f"Cannot continue run - unresolved step requirements: {unresolved}")
-
-        # Validate that all error requirements are resolved
-        if run_response.active_error_requirements:
-            unresolved = [req.step_name for req in run_response.active_error_requirements]
-            raise ValueError(f"Cannot continue run - unresolved error requirements: {unresolved}")
-
-        # Check for timeout on all step requirements
+        # Check for timeout on all step requirements (must run before validation
+        # so timed-out requirements are auto-resolved before we check for unresolved ones)
         for step_req in run_response.step_requirements or []:
             timeout_action = check_timeout(step_req)
             if timeout_action is not None:
@@ -4663,6 +4654,16 @@ class Workflow:
                 else:  # "cancel"
                     step_req.confirmed = False
                     step_req.on_reject = "cancel"
+
+        # Validate that all step requirements are resolved (after timeout auto-resolution)
+        if run_response.active_step_requirements:
+            unresolved = [req.step_name for req in run_response.active_step_requirements]
+            raise ValueError(f"Cannot continue run - unresolved step requirements: {unresolved}")
+
+        # Validate that all error requirements are resolved
+        if run_response.active_error_requirements:
+            unresolved = [req.step_name for req in run_response.active_error_requirements]
+            raise ValueError(f"Cannot continue run - unresolved error requirements: {unresolved}")
 
         # Detect post-execution review (step already ran)
         is_post_execution_review = any(req.is_post_execution for req in (run_response.step_requirements or []))
@@ -5821,17 +5822,8 @@ class Workflow:
         if step_requirements is not None:
             run_response.step_requirements = step_requirements
 
-        # Validate that all requirements are resolved
-        if run_response.active_step_requirements:
-            unresolved = [req.step_name for req in run_response.active_step_requirements]
-            raise ValueError(f"Cannot continue run - unresolved step requirements: {unresolved}")
-
-        # Validate that all error requirements are resolved
-        if run_response.active_error_requirements:
-            unresolved = [req.step_name for req in run_response.active_error_requirements]
-            raise ValueError(f"Cannot continue run - unresolved error requirements: {unresolved}")
-
-        # Check for timeout on all step requirements
+        # Check for timeout on all step requirements (must run before validation
+        # so timed-out requirements are auto-resolved before we check for unresolved ones)
         for step_req in run_response.step_requirements or []:
             timeout_action = check_timeout(step_req)
             if timeout_action is not None:
@@ -5844,6 +5836,16 @@ class Workflow:
                 else:  # "cancel"
                     step_req.confirmed = False
                     step_req.on_reject = "cancel"
+
+        # Validate that all step requirements are resolved (after timeout auto-resolution)
+        if run_response.active_step_requirements:
+            unresolved = [req.step_name for req in run_response.active_step_requirements]
+            raise ValueError(f"Cannot continue run - unresolved step requirements: {unresolved}")
+
+        # Validate that all error requirements are resolved
+        if run_response.active_error_requirements:
+            unresolved = [req.step_name for req in run_response.active_error_requirements]
+            raise ValueError(f"Cannot continue run - unresolved error requirements: {unresolved}")
 
         # Detect post-execution review (step already ran)
         is_post_execution_review = any(req.is_post_execution for req in (run_response.step_requirements or []))

@@ -2,13 +2,15 @@
 Loop Iteration Review Example
 
 This example demonstrates per-iteration review in a Loop component.
-After each iteration completes, the workflow pauses for human review
-before starting the next iteration.
+After each iteration completes, the workflow pauses for human review.
 
-The human can:
-- Confirm: Continue to the next iteration
-- Reject with on_reject=OnReject.skip: Stop the loop early
-- Reject with on_reject=OnReject.cancel: Cancel the entire workflow
+The reviewer confirms to accept the current iteration's output and
+stop the loop. If more refinement is desired, the loop should be
+configured with more iterations and no review gate.
+
+Note: This feature pauses after each iteration for review. Confirming
+the review stops the loop and keeps the output. Rejecting cancels
+the workflow.
 """
 
 from agno.agent import Agent
@@ -40,8 +42,8 @@ workflow = Workflow(
             max_iterations=5,
             forward_iteration_output=True,
             requires_iteration_review=True,
-            iteration_review_message="Review this iteration. Continue refining?",
-            on_reject=OnReject.skip,  # Stop loop early if rejected
+            iteration_review_message="Review this iteration. Accept the result?",
+            on_reject=OnReject.cancel,
         ),
     ],
 )
@@ -58,12 +60,12 @@ while run_output.is_paused:
             f"\nCurrent output:\n{requirement.step_output.content if requirement.step_output else 'N/A'}"
         )
 
-        choice = input("\nContinue refining? (yes/no): ").strip().lower()
+        choice = input("\nAccept this result? (yes/no): ").strip().lower()
         if choice in ("yes", "y"):
             requirement.confirm()
         else:
             requirement.reject()
-            print("Stopping refinement loop.")
+            print("Workflow cancelled.")
 
     run_output = workflow.continue_run(run_output)
 
