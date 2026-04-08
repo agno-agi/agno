@@ -4883,6 +4883,8 @@ class Workflow:
                 paused_output = run_response.step_results[-1]
                 if isinstance(paused_output, StepOutput) and paused_output.steps:
                     kwargs["loop_resume_from_iteration"] = len(paused_output.steps)
+                    # Note: this assumes single-step iterations (wraps each StepOutput
+                    # in its own list). Multi-step loop iterations would need grouping.
                     kwargs["loop_previous_results"] = [[s] for s in paused_output.steps]
             start_index = paused_step_index  # Re-execute the Loop step
             # Reset flags so the generic rejection handling below doesn't also fire
@@ -6133,6 +6135,8 @@ class Workflow:
                 paused_output = run_response.step_results[-1]
                 if isinstance(paused_output, StepOutput) and paused_output.steps:
                     kwargs["loop_resume_from_iteration"] = len(paused_output.steps)
+                    # Note: this assumes single-step iterations (wraps each StepOutput
+                    # in its own list). Multi-step loop iterations would need grouping.
                     kwargs["loop_previous_results"] = [[s] for s in paused_output.steps]
             start_index = paused_step_index
             skip_rejected_step = False
@@ -6245,6 +6249,21 @@ class Workflow:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["previous_output"] = kwargs["previous_output"]
+
+                # For loop iteration resume: forward the last iteration's output as input
+                # so the loop continues refining from where it left off
+                if (
+                    i == start_step_index
+                    and isinstance(step, Loop)
+                    and getattr(step, "forward_iteration_output", False)
+                    and kwargs.get("loop_previous_results")
+                ):
+                    prev_results = kwargs["loop_previous_results"]
+                    if prev_results and prev_results[-1]:
+                        last_iter_output = prev_results[-1][-1]
+                        if hasattr(last_iter_output, "content") and last_iter_output.content:
+                            step_input.previous_step_content = last_iter_output.content
+                            step_input.input = last_iter_output.content
 
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
