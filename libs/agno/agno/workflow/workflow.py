@@ -1921,7 +1921,7 @@ class Workflow:
                     # Post-execution output review check
                     # Note: apply_post_execution_pause_state appends step_output to
                     # collected_step_outputs, so we return before the normal output storage below.
-                    if step_output is not None and isinstance(step, Step):
+                    if step_output is not None and isinstance(step, (Step, Router)):
                         review_result = check_output_review_status(step, i, step_input, step_output)
                         if review_result.should_pause:
                             apply_post_execution_pause_state(
@@ -2304,7 +2304,7 @@ class Workflow:
                             raise step_error_exception
 
                     # Post-execution output review check
-                    if not step_error_occurred and step_output is not None and isinstance(step, Step):
+                    if not step_error_occurred and step_output is not None and isinstance(step, (Step, Router)):
                         review_result = check_output_review_status(step, i, step_input, step_output)
                         if review_result.should_pause:
                             apply_post_execution_pause_state(
@@ -2757,7 +2757,7 @@ class Workflow:
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     # Post-execution output review check
-                    if step_output is not None and isinstance(step, Step):
+                    if step_output is not None and isinstance(step, (Step, Router)):
                         review_result = check_output_review_status(step, i, step_input, step_output)
                         if review_result.should_pause:
                             apply_post_execution_pause_state(
@@ -3167,7 +3167,7 @@ class Workflow:
                             raise step_error_exception
 
                     # Post-execution output review check
-                    if not step_error_occurred and step_output is not None and isinstance(step, Step):
+                    if not step_error_occurred and step_output is not None and isinstance(step, (Step, Router)):
                         review_result = check_output_review_status(step, i, step_input, step_output)
                         if review_result.should_pause:
                             apply_post_execution_pause_state(
@@ -4671,6 +4671,10 @@ class Workflow:
         is_loop_iteration_review = any(
             req.is_post_execution and req.step_type == "Loop" for req in (run_response.step_requirements or [])
         )
+        # Detect router output review (reject = re-route to a different branch)
+        is_router_output_review = any(
+            req.is_post_execution and req.step_type == "Router" for req in (run_response.step_requirements or [])
+        )
         retry_step = False
 
         # Check if any step was rejected
@@ -4899,6 +4903,11 @@ class Workflow:
         elif is_post_execution_review and not retry_step:
             # Post-execution review confirmed/edited: step already ran, advance to next
             start_index = paused_step_index + 1
+        elif is_router_output_review and retry_step:
+            # Router output review rejected with retry: discard output, re-pause for user route selection
+            kwargs["remove_last_output"] = True
+            kwargs["router_reroute"] = True
+            start_index = paused_step_index
         elif is_post_execution_review and retry_step:
             # Post-execution review rejected with retry: re-run the same step
             kwargs["remove_last_output"] = True
@@ -5059,6 +5068,19 @@ class Workflow:
                     kwargs["execute_else_branch"] = False
                     continue
 
+                # Handle Router re-route: pause for user route selection after review rejection
+                if i == start_step_index and isinstance(step, Router) and kwargs.get("router_reroute"):
+                    log_debug(f"Router '{step_name}' re-routing: pausing for user route selection")
+                    kwargs["router_reroute"] = False  # Clear flag
+                    reroute_pause = step_pause_status(step, i, step_input, "Router", for_route_selection=True)
+                    if not reroute_pause.should_pause:
+                        # Router doesn't have requires_user_input, create requirement manually
+                        reroute_req = step.create_step_requirement(i, step_input, for_route_selection=True)
+                        reroute_pause = StepPauseResult(should_pause=True, step_requirement=reroute_req)
+                    apply_pause_state(workflow_run_response, i, step_name, collected_step_outputs, reroute_pause)
+                    save_paused_session(self, session, workflow_run_response)
+                    return workflow_run_response
+
                 # Handle Router with user selection - execute only the selected steps
                 if i == start_step_index and isinstance(step, Router) and router_selection:
                     log_debug(f"Router '{step_name}' executing with user selection: {router_selection}")
@@ -5117,6 +5139,20 @@ class Workflow:
                     if step_output.stop:
                         logger.info(f"Early termination requested by router {step_name}")
                         break
+
+                    # Post-execution review check for Router after user-selected branch executes
+                    if isinstance(step, Router):
+                        review_result = check_output_review_status(
+                            step, i, step_input, step_output, retry_count=retry_count
+                        )
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response, i, step_name,
+                                collected_step_outputs, review_result, step_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            save_paused_session(self, session, workflow_run_response)
+                            return workflow_run_response
 
                     # Clear router_selection after using it
                     router_selection = None
@@ -5199,7 +5235,7 @@ class Workflow:
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                 # Post-execution output review check
-                if step_output is not None and isinstance(step, Step):
+                if step_output is not None and isinstance(step, (Step, Router)):
                     review_result = check_output_review_status(
                         step, i, step_input, step_output, retry_count=retry_count
                     )
@@ -5452,6 +5488,21 @@ class Workflow:
                     kwargs["execute_else_branch"] = False
                     continue
 
+                # Handle Router re-route: pause for user route selection after review rejection (streaming)
+                if i == start_step_index and isinstance(step, Router) and kwargs.get("router_reroute"):
+                    log_debug(f"Router '{step_name}' re-routing: pausing for user route selection (streaming)")
+                    kwargs["router_reroute"] = False
+                    reroute_pause = step_pause_status(step, i, step_input, "Router", for_route_selection=True)
+                    if not reroute_pause.should_pause:
+                        reroute_req = step.create_step_requirement(i, step_input, for_route_selection=True)
+                        reroute_pause = StepPauseResult(should_pause=True, step_requirement=reroute_req)
+                    apply_pause_state(workflow_run_response, i, step_name, collected_step_outputs, reroute_pause)
+                    req = reroute_pause.step_requirement
+                    paused_event = create_router_paused_event(workflow_run_response, step_name, i, reroute_pause)
+                    yield self._handle_event(paused_event, workflow_run_response)
+                    save_paused_session(self, session, workflow_run_response)
+                    return
+
                 # Handle Router with user selection - execute only the selected steps (streaming)
                 if i == start_step_index and isinstance(step, Router) and router_selection:
                     log_debug(f"Router '{step_name}' executing with user selection (streaming): {router_selection}")
@@ -5533,6 +5584,34 @@ class Workflow:
                     output_videos.extend(final_router_output.videos or [])
                     output_audio.extend(final_router_output.audio or [])
                     output_files.extend(final_router_output.files or [])
+
+                    # Post-execution review check for Router after user-selected branch (streaming)
+                    if isinstance(step, Router):
+                        review_result = check_output_review_status(
+                            step, i, step_input, final_router_output, retry_count=retry_count
+                        )
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response, i, step_name,
+                                collected_step_outputs, review_result, final_router_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            review_event = StepOutputReviewEvent(
+                                run_id=workflow_run_response.run_id or "",
+                                workflow_name=workflow_run_response.workflow_name,
+                                workflow_id=workflow_run_response.workflow_id,
+                                session_id=workflow_run_response.session_id,
+                                step_name=step_name,
+                                step_index=i,
+                                output_review_message=getattr(
+                                    review_result.step_requirement, "output_review_message", None
+                                )
+                                if review_result.step_requirement
+                                else None,
+                            )
+                            yield self._handle_event(review_event, workflow_run_response)
+                            save_paused_session(self, session, workflow_run_response)
+                            return
 
                     continue  # Move to next step
 
@@ -5683,7 +5762,7 @@ class Workflow:
                         raise step_error_exception
 
                 # Post-execution output review check
-                if not step_error_occurred and step_output is not None and isinstance(step, Step):
+                if not step_error_occurred and step_output is not None and isinstance(step, (Step, Router)):
                     review_result = check_output_review_status(
                         step, i, step_input, step_output, retry_count=retry_count
                     )
@@ -5929,6 +6008,10 @@ class Workflow:
         # Detect loop iteration review specifically (confirmed = continue loop, not advance past it)
         is_loop_iteration_review = any(
             req.is_post_execution and req.step_type == "Loop" for req in (run_response.step_requirements or [])
+        )
+        # Detect router output review (reject = re-route to a different branch)
+        is_router_output_review = any(
+            req.is_post_execution and req.step_type == "Router" for req in (run_response.step_requirements or [])
         )
         retry_step = False
 
@@ -6309,6 +6392,18 @@ class Workflow:
                     kwargs["execute_else_branch"] = False
                     continue
 
+                # Handle Router re-route: pause for user route selection after review rejection (async)
+                if i == start_step_index and isinstance(step, Router) and kwargs.get("router_reroute"):
+                    log_debug(f"Router '{step_name}' re-routing: pausing for user route selection (async)")
+                    kwargs["router_reroute"] = False
+                    reroute_pause = step_pause_status(step, i, step_input, "Router", for_route_selection=True)
+                    if not reroute_pause.should_pause:
+                        reroute_req = step.create_step_requirement(i, step_input, for_route_selection=True)
+                        reroute_pause = StepPauseResult(should_pause=True, step_requirement=reroute_req)
+                    apply_pause_state(workflow_run_response, i, step_name, collected_step_outputs, reroute_pause)
+                    await asave_paused_session(self, session, workflow_run_response)
+                    return workflow_run_response
+
                 # Handle Router with user selection - execute only the selected steps (async)
                 if i == start_step_index and isinstance(step, Router) and router_selection:
                     log_debug(f"Router '{step_name}' executing with user selection (async): {router_selection}")
@@ -6362,6 +6457,20 @@ class Workflow:
                     output_videos.extend(step_output.videos or [])
                     output_audio.extend(step_output.audio or [])
                     output_files.extend(step_output.files or [])
+
+                    # Post-execution review check for Router after user-selected branch (async)
+                    if isinstance(step, Router):
+                        review_result = check_output_review_status(
+                            step, i, step_input, step_output, retry_count=retry_count
+                        )
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response, i, step_name,
+                                collected_step_outputs, review_result, step_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            await asave_paused_session(self, session, workflow_run_response)
+                            return workflow_run_response
 
                     continue  # Move to next step
 
@@ -6435,7 +6544,7 @@ class Workflow:
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                 # Post-execution output review check
-                if step_output is not None and isinstance(step, Step):
+                if step_output is not None and isinstance(step, (Step, Router)):
                     review_result = check_output_review_status(
                         step, i, step_input, step_output, retry_count=retry_count
                     )
@@ -6688,6 +6797,20 @@ class Workflow:
                     kwargs["execute_else_branch"] = False
                     continue
 
+                # Handle Router re-route: pause for user route selection after review rejection (async streaming)
+                if i == start_step_index and isinstance(step, Router) and kwargs.get("router_reroute"):
+                    log_debug(f"Router '{step_name}' re-routing: pausing for user route selection (async streaming)")
+                    kwargs["router_reroute"] = False
+                    reroute_pause = step_pause_status(step, i, step_input, "Router", for_route_selection=True)
+                    if not reroute_pause.should_pause:
+                        reroute_req = step.create_step_requirement(i, step_input, for_route_selection=True)
+                        reroute_pause = StepPauseResult(should_pause=True, step_requirement=reroute_req)
+                    apply_pause_state(workflow_run_response, i, step_name, collected_step_outputs, reroute_pause)
+                    paused_event = create_router_paused_event(workflow_run_response, step_name, i, reroute_pause)
+                    yield self._handle_event(paused_event, workflow_run_response)
+                    await asave_paused_session(self, session, workflow_run_response)
+                    return
+
                 # Handle Router with user selection - execute only the selected steps (async streaming)
                 if i == start_step_index and isinstance(step, Router) and router_selection:
                     log_debug(
@@ -6771,6 +6894,34 @@ class Workflow:
                     output_videos.extend(final_router_output.videos or [])
                     output_audio.extend(final_router_output.audio or [])
                     output_files.extend(final_router_output.files or [])
+
+                    # Post-execution review check for Router after user-selected branch (streaming)
+                    if isinstance(step, Router):
+                        review_result = check_output_review_status(
+                            step, i, step_input, final_router_output, retry_count=retry_count
+                        )
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response, i, step_name,
+                                collected_step_outputs, review_result, final_router_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            review_event = StepOutputReviewEvent(
+                                run_id=workflow_run_response.run_id or "",
+                                workflow_name=workflow_run_response.workflow_name,
+                                workflow_id=workflow_run_response.workflow_id,
+                                session_id=workflow_run_response.session_id,
+                                step_name=step_name,
+                                step_index=i,
+                                output_review_message=getattr(
+                                    review_result.step_requirement, "output_review_message", None
+                                )
+                                if review_result.step_requirement
+                                else None,
+                            )
+                            yield self._handle_event(review_event, workflow_run_response)
+                            save_paused_session(self, session, workflow_run_response)
+                            return
 
                     continue  # Move to next step
 
@@ -6921,7 +7072,7 @@ class Workflow:
                         raise step_error_exception
 
                 # Post-execution output review check
-                if not step_error_occurred and step_output is not None and isinstance(step, Step):
+                if not step_error_occurred and step_output is not None and isinstance(step, (Step, Router)):
                     review_result = check_output_review_status(
                         step, i, step_input, step_output, retry_count=retry_count
                     )

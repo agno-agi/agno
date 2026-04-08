@@ -426,3 +426,238 @@ class TestStepOutputIterationReview:
             requires_iteration_review_pause=True,
         )
         assert output.requires_iteration_review_pause is True
+
+
+# =============================================================================
+# Router post-execution output review
+# =============================================================================
+
+# --- Helper executors ---
+
+
+def _quick_fn(step_input: StepInput) -> StepOutput:
+    return StepOutput(content="Quick result: basic analysis done")
+
+
+def _deep_fn(step_input: StepInput) -> StepOutput:
+    return StepOutput(content="Deep result: comprehensive analysis done")
+
+
+def _report_fn(step_input: StepInput) -> StepOutput:
+    prev = step_input.previous_step_content or ""
+    return StepOutput(content=f"Report: {prev}")
+
+
+def _make_router_review_workflow(session_id: str):
+    """Create a workflow with a Router that has output review."""
+    from agno.db.sqlite import SqliteDb
+    from agno.workflow.router import Router
+    from agno.workflow.workflow import Workflow
+
+    return Workflow(
+        name="test_router_review",
+        db=SqliteDb(db_file="tmp/test_router_review.db"),
+        steps=[
+            Router(
+                name="analysis",
+                selector=lambda si: [Step(name="quick", executor=_quick_fn)],
+                choices=[
+                    Step(name="quick", description="Fast", executor=_quick_fn),
+                    Step(name="deep", description="Thorough", executor=_deep_fn),
+                ],
+                requires_output_review=True,
+                output_review_message="Approve the analysis?",
+                on_reject=OnReject.retry,
+                hitl_max_retries=2,
+            ),
+            Step(name="report", executor=_report_fn),
+        ],
+    )
+
+
+class TestRouterOutputReviewFields:
+    """Tests for Router output review dataclass fields."""
+
+    def test_router_output_review_defaults(self):
+        from agno.workflow.router import Router
+
+        router = Router(name="test", choices=[Step(name="a", executor=_quick_fn)])
+        assert router.requires_output_review is False
+        assert router.output_review_message is None
+        assert router.hitl_max_retries == 3
+
+    def test_router_output_review_set(self):
+        from agno.workflow.router import Router
+
+        router = Router(
+            name="test",
+            choices=[Step(name="a", executor=_quick_fn)],
+            requires_output_review=True,
+            output_review_message="Review?",
+            on_reject=OnReject.retry,
+            hitl_max_retries=5,
+        )
+        assert router.requires_output_review is True
+        assert router.output_review_message == "Review?"
+        assert router.on_reject == OnReject.retry
+        assert router.hitl_max_retries == 5
+
+    def test_router_to_dict_includes_review_fields(self):
+        from agno.workflow.router import Router
+
+        router = Router(
+            name="test",
+            choices=[Step(name="a", executor=_quick_fn)],
+            requires_output_review=True,
+            output_review_message="Review?",
+            hitl_max_retries=5,
+        )
+        d = router.to_dict()
+        assert d["requires_output_review"] is True
+        assert d["output_review_message"] == "Review?"
+        assert d["hitl_max_retries"] == 5
+
+
+class TestRouterCreateOutputReviewRequirement:
+    """Tests for Router.create_output_review_requirement()."""
+
+    def test_creates_correct_requirement(self):
+        from agno.workflow.router import Router
+
+        router = Router(
+            name="my_router",
+            choices=[
+                Step(name="quick", executor=_quick_fn),
+                Step(name="deep", executor=_deep_fn),
+            ],
+            requires_output_review=True,
+            output_review_message="Review this?",
+            on_reject=OnReject.retry,
+            hitl_max_retries=3,
+        )
+        step_input = StepInput(input="test")
+        step_output = StepOutput(step_name="my_router", content="Router completed")
+
+        req = router.create_output_review_requirement(
+            step_index=0, step_input=step_input, step_output=step_output, retry_count=1
+        )
+
+        assert req.requires_output_review is True
+        assert req.requires_confirmation is True
+        assert req.output_review_message == "Review this?"
+        assert req.is_post_execution is True
+        assert req.step_type == "Router"
+        assert req.step_output is step_output
+        assert req.on_reject == "retry"
+        assert req.retry_count == 1
+        assert req.max_retries == 3
+        assert req.available_choices == ["quick", "deep"]
+
+
+class TestRouterOutputReviewWorkflow:
+    """Integration tests for Router output review in a full workflow."""
+
+    def test_router_pauses_for_review(self):
+        wf = _make_router_review_workflow("pauses")
+        run = wf.run("test", session_id="pauses")
+
+        assert run.is_paused
+        assert len(run.steps_requiring_output_review) == 1
+        req = run.steps_requiring_output_review[0]
+        assert req.step_type == "Router"
+        assert req.step_output is not None
+        assert req.available_choices == ["quick", "deep"]
+
+    def test_approve_continues_to_next_step(self):
+        wf = _make_router_review_workflow("approve")
+        run = wf.run("test", session_id="approve")
+
+        assert run.is_paused
+        run.steps_requiring_output_review[0].confirm()
+        run = wf.continue_run(run)
+
+        assert run.status == RunStatus.completed
+        assert "Report:" in str(run.content)
+        assert "Quick result" in str(run.content)
+
+    def test_reject_reroutes_to_selection(self):
+        wf = _make_router_review_workflow("reroute")
+        run = wf.run("test", session_id="reroute")
+
+        assert run.is_paused
+        run.steps_requiring_output_review[0].reject()
+        run = wf.continue_run(run)
+
+        # Should now be paused for route selection
+        assert run.is_paused
+        assert len(run.steps_requiring_route) == 1
+        assert run.steps_requiring_route[0].available_choices == ["quick", "deep"]
+
+    def test_reroute_then_approve(self):
+        wf = _make_router_review_workflow("reroute_approve")
+        run = wf.run("test", session_id="reroute_approve")
+
+        # First review (quick)
+        assert run.is_paused
+        run.steps_requiring_output_review[0].reject()
+        run = wf.continue_run(run)
+
+        # Route selection
+        assert run.is_paused
+        run.steps_requiring_route[0].select("deep")
+        run = wf.continue_run(run)
+
+        # Second review (deep)
+        assert run.is_paused
+        assert len(run.steps_requiring_output_review) == 1
+        run.steps_requiring_output_review[0].confirm()
+        run = wf.continue_run(run)
+
+        # Complete
+        assert run.status == RunStatus.completed
+        assert "Deep result" in str(run.content)
+
+    def test_cancel_stops_workflow(self):
+        wf = _make_router_review_workflow("cancel")
+        run = wf.run("test", session_id="cancel")
+
+        assert run.is_paused
+        req = run.steps_requiring_output_review[0]
+        req.reject()
+        req.on_reject = "cancel"
+        run = wf.continue_run(run)
+
+        assert run.is_cancelled
+
+
+class TestRouterOutputReviewStreaming:
+    """Tests for Router output review in streaming mode."""
+
+    def test_streaming_emits_review_event(self):
+        from agno.run.workflow import StepOutputReviewEvent
+
+        wf = _make_router_review_workflow("stream_event")
+        events = list(wf.run("test", session_id="stream_event", stream=True, stream_events=True))
+
+        review_events = [e for e in events if isinstance(e, StepOutputReviewEvent)]
+        assert len(review_events) == 1
+        assert review_events[0].step_name == "analysis"
+        assert review_events[0].requires_output_review is True
+
+    def test_streaming_approve_completes(self):
+        wf = _make_router_review_workflow("stream_approve")
+
+        # Consume initial stream
+        list(wf.run("test", session_id="stream_approve", stream=True, stream_events=True))
+
+        session = wf.get_session(session_id="stream_approve")
+        run = session.runs[-1]
+        assert run.is_paused
+
+        run.steps_requiring_output_review[0].confirm()
+        list(wf.continue_run(run, stream=True, stream_events=True))
+
+        session = wf.get_session(session_id="stream_approve")
+        run = session.runs[-1]
+        assert run.status == RunStatus.completed
+        assert "Report:" in str(run.content)
