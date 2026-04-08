@@ -1193,6 +1193,84 @@ def test_nested_workflow_step_executor_runs_serialization(shared_db):
     assert nested_run_dict.get("parent_run_id") == response.run_id
 
 
+def test_three_level_serialization_round_trip(shared_db):
+    """Test that 3-level nested workflow serializes and deserializes with step_executor_runs intact."""
+    level3 = Workflow(
+        name="Level 3",
+        steps=[Step(name="l3_step", executor=step_a)],
+    )
+
+    level2 = Workflow(
+        name="Level 2",
+        steps=[Step(name="l2_nested", workflow=level3)],
+    )
+
+    level1 = Workflow(
+        name="Level 1",
+        db=shared_db,
+        steps=[Step(name="l1_nested", workflow=level2)],
+    )
+
+    response = level1.run(input="test")
+    response_dict = response.to_dict()
+
+    # Level 1 step_executor_runs should contain Level 2 run
+    assert "step_executor_runs" in response_dict
+    l2_run = response_dict["step_executor_runs"][0]
+    assert l2_run.get("workflow_name") == "Level 2"
+    assert l2_run.get("parent_run_id") == response.run_id
+
+    # Level 2 step_executor_runs should contain Level 3 run
+    assert "step_executor_runs" in l2_run
+    l3_run = l2_run["step_executor_runs"][0]
+    assert l3_run.get("workflow_name") == "Level 3"
+    assert l3_run.get("parent_run_id") == l2_run["run_id"]
+
+    # Round-trip: deserialize and check structure is preserved
+    restored = WorkflowRunOutput.from_dict(response_dict)
+    status_val = restored.status.value if hasattr(restored.status, "value") else restored.status
+    assert status_val == "COMPLETED"
+    assert restored.step_executor_runs is not None
+    assert len(restored.step_executor_runs) >= 1
+
+    # The restored Level 2 run should itself have step_executor_runs with Level 3
+    l2_restored = restored.step_executor_runs[0]
+    assert isinstance(l2_restored, WorkflowRunOutput)
+    assert l2_restored.workflow_name == "Level 2"
+    assert l2_restored.step_executor_runs is not None
+    assert len(l2_restored.step_executor_runs) >= 1
+
+
+def test_from_dict_depth_guard():
+    """Test that from_dict stops recursing at MAX_NESTED_DEPTH to prevent infinite loops."""
+    # Build a deeply nested dict structure that exceeds the depth limit
+    deepest = {
+        "run_id": "deep",
+        "workflow_name": "Deep",
+        "workflow_id": "deep",
+        "parent_run_id": "parent",
+        "status": "COMPLETED",
+        "content_type": "str",
+    }
+
+    # Nest it MAX_NESTED_DEPTH + 1 times
+    current = deepest
+    for i in range(WorkflowRunOutput._MAX_NESTED_DEPTH + 1):
+        current = {
+            "run_id": f"level_{i}",
+            "workflow_name": f"Level {i}",
+            "workflow_id": f"level-{i}",
+            "parent_run_id": f"parent_{i}",
+            "status": "COMPLETED",
+            "content_type": "str",
+            "step_executor_runs": [current],
+        }
+
+    # Should not raise — depth guard should prevent infinite recursion
+    result = WorkflowRunOutput.from_dict(current)
+    assert isinstance(result, WorkflowRunOutput)
+
+
 # ============================================================================
 # EDGE CASES
 # ============================================================================
