@@ -10,6 +10,11 @@ from ag_ui.core import (
     BaseEvent,
     CustomEvent,
     EventType,
+    ReasoningEndEvent,
+    ReasoningMessageContentEvent,
+    ReasoningMessageEndEvent,
+    ReasoningMessageStartEvent,
+    ReasoningStartEvent,
     RunFinishedEvent,
     StepFinishedEvent,
     StepStartedEvent,
@@ -197,7 +202,8 @@ def _create_events_from_chunk(
     message_id: str,
     message_started: bool,
     event_buffer: EventBuffer,
-) -> Tuple[List[BaseEvent], bool, str]:
+    reasoning_message_id: Optional[str] = None,
+) -> Tuple[List[BaseEvent], bool, str, Optional[str]]:
     """
     Process a single chunk and return events to emit + updated message_started state.
 
@@ -206,9 +212,10 @@ def _create_events_from_chunk(
         message_id: Current message identifier
         message_started: Whether a message is currently active
         event_buffer: Event buffer for tracking tool call state
+        reasoning_message_id: Current reasoning message identifier (if active)
 
     Returns:
-        Tuple of (events_to_emit, new_message_started_state, message_id)
+        Tuple of (events_to_emit, new_message_started_state, message_id, reasoning_message_id)
     """
     events_to_emit: List[BaseEvent] = []
 
@@ -327,12 +334,40 @@ def _create_events_from_chunk(
                     events_to_emit.append(result_event)
 
     # Handle reasoning
-    elif chunk.event == RunEvent.reasoning_started:
-        step_started_event = StepStartedEvent(type=EventType.STEP_STARTED, step_name="reasoning")
-        events_to_emit.append(step_started_event)
-    elif chunk.event == RunEvent.reasoning_completed:
-        step_finished_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
-        events_to_emit.append(step_finished_event)
+    elif chunk.event == RunEvent.reasoning_started or chunk.event == TeamRunEvent.reasoning_started:
+        reasoning_message_id = str(uuid.uuid4())
+        events_to_emit.append(StepStartedEvent(type=EventType.STEP_STARTED, step_name="reasoning"))
+        events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_message_id))
+        events_to_emit.append(
+            ReasoningMessageStartEvent(
+                type=EventType.REASONING_MESSAGE_START, message_id=reasoning_message_id, role="reasoning"
+            )
+        )
+    elif chunk.event in (
+        RunEvent.reasoning_step,
+        TeamRunEvent.reasoning_step,
+        RunEvent.reasoning_content_delta,
+        TeamRunEvent.reasoning_content_delta,
+    ):
+        # Both reasoning_step (accumulated) and reasoning_content_delta (streaming)
+        # carry reasoning text — map both to REASONING_MESSAGE_CONTENT
+        if reasoning_message_id is None:
+            reasoning_message_id = str(uuid.uuid4())
+        reasoning_content = chunk.reasoning_content  # type: ignore[union-attr]
+        if reasoning_content:
+            events_to_emit.append(
+                ReasoningMessageContentEvent(
+                    type=EventType.REASONING_MESSAGE_CONTENT, message_id=reasoning_message_id, delta=reasoning_content
+                )
+            )
+    elif chunk.event == RunEvent.reasoning_completed or chunk.event == TeamRunEvent.reasoning_completed:
+        if reasoning_message_id is not None:
+            events_to_emit.append(
+                ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id=reasoning_message_id)
+            )
+            events_to_emit.append(ReasoningEndEvent(type=EventType.REASONING_END, message_id=reasoning_message_id))
+            reasoning_message_id = None
+            events_to_emit.append(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning"))
 
     # Handle custom events
     elif chunk.event == RunEvent.custom_event:
@@ -351,7 +386,7 @@ def _create_events_from_chunk(
         custom_event = CustomEvent(name=custom_event_name, value=custom_event_value)
         events_to_emit.append(custom_event)
 
-    return events_to_emit, message_started, message_id
+    return events_to_emit, message_started, message_id, reasoning_message_id
 
 
 def _create_completion_events(
@@ -361,9 +396,18 @@ def _create_completion_events(
     message_id: str,
     thread_id: str,
     run_id: str,
+    reasoning_message_id: Optional[str] = None,
 ) -> List[BaseEvent]:
     """Create events for run completion."""
     events_to_emit: List[BaseEvent] = []
+
+    # Close orphaned reasoning session if stream ended mid-reasoning
+    if reasoning_message_id is not None:
+        events_to_emit.append(
+            ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id=reasoning_message_id)
+        )
+        events_to_emit.append(ReasoningEndEvent(type=EventType.REASONING_END, message_id=reasoning_message_id))
+        events_to_emit.append(StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning"))
 
     # End remaining active tool calls if needed
     for tool_call_id in list(event_buffer.active_tool_call_ids):
@@ -465,6 +509,7 @@ def stream_agno_response_as_agui_events(
     message_started = False
     event_buffer = EventBuffer()
     stream_completed = False
+    reasoning_message_id: Optional[str] = None
 
     completion_chunk = None
 
@@ -480,8 +525,8 @@ def stream_agno_response_as_agui_events(
             stream_completed = True
         else:
             # Process regular chunk immediately
-            events_from_chunk, message_started, message_id = _create_events_from_chunk(
-                chunk, message_id, message_started, event_buffer
+            events_from_chunk, message_started, message_id, reasoning_message_id = _create_events_from_chunk(
+                chunk, message_id, message_started, event_buffer, reasoning_message_id
             )
 
             for event in events_from_chunk:
@@ -492,7 +537,7 @@ def stream_agno_response_as_agui_events(
     # Process ONLY completion cleanup events, not content from completion chunk
     if completion_chunk:
         completion_events = _create_completion_events(
-            completion_chunk, event_buffer, message_started, message_id, thread_id, run_id
+            completion_chunk, event_buffer, message_started, message_id, thread_id, run_id, reasoning_message_id
         )
         for event in completion_events:
             events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
@@ -525,6 +570,7 @@ async def async_stream_agno_response_as_agui_events(
     message_started = False
     event_buffer = EventBuffer()
     stream_completed = False
+    reasoning_message_id: Optional[str] = None
 
     completion_chunk = None
 
@@ -540,8 +586,8 @@ async def async_stream_agno_response_as_agui_events(
             stream_completed = True
         else:
             # Process regular chunk immediately
-            events_from_chunk, message_started, message_id = _create_events_from_chunk(
-                chunk, message_id, message_started, event_buffer
+            events_from_chunk, message_started, message_id, reasoning_message_id = _create_events_from_chunk(
+                chunk, message_id, message_started, event_buffer, reasoning_message_id
             )
 
             for event in events_from_chunk:
@@ -552,7 +598,7 @@ async def async_stream_agno_response_as_agui_events(
     # Process ONLY completion cleanup events, not content from completion chunk
     if completion_chunk:
         completion_events = _create_completion_events(
-            completion_chunk, event_buffer, message_started, message_id, thread_id, run_id
+            completion_chunk, event_buffer, message_started, message_id, thread_id, run_id, reasoning_message_id
         )
         for event in completion_events:
             events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
