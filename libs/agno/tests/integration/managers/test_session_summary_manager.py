@@ -8,8 +8,10 @@ import pytest
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.run.agent import Message, RunOutput
+from agno.run.team import TeamRunOutput
 from agno.session.agent import AgentSession
 from agno.session.summary import SessionSummary, SessionSummaryManager, SessionSummaryResponse
+from agno.session.team import TeamSession
 
 
 @pytest.fixture
@@ -682,3 +684,84 @@ async def test_acreate_session_summary_with_last_n_runs(model, multi_run_agent_s
         system_msg = call_args.kwargs["messages"][0].content
         assert "run 5" in system_msg
         assert "run 1" not in system_msg
+
+
+# ---------------------------------------------------------------------------
+# Tests for TeamSession get_messages with last_n_runs and limit
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def multi_run_team_session():
+    """Create a team session with multiple runs for testing last_n_runs and conversation_limit."""
+    from agno.run.base import RunStatus
+
+    runs = []
+    for i in range(5):
+        messages = [
+            Message(role="user", content=f"User message from run {i + 1}"),
+            Message(role="assistant", content=f"Assistant response from run {i + 1}"),
+        ]
+        runs.append(
+            TeamRunOutput(
+                team_id="test_team",
+                run_id=f"run_{i + 1}",
+                messages=messages,
+                status=RunStatus.completed,
+            )
+        )
+
+    session = TeamSession(
+        session_id="test_multi_run_team_session",
+        team_id="test_team",
+        runs=runs,
+    )
+    return session
+
+
+def test_team_get_messages_with_last_n_runs(multi_run_team_session):
+    """Test that TeamSession.get_messages respects last_n_runs."""
+    messages = multi_run_team_session.get_messages(last_n_runs=2)
+
+    contents = [m.content for m in messages]
+    # Should only have messages from runs 4 and 5
+    assert any("run 4" in c for c in contents)
+    assert any("run 5" in c for c in contents)
+    assert not any("run 1" in c for c in contents)
+    assert not any("run 2" in c for c in contents)
+    assert not any("run 3" in c for c in contents)
+
+
+def test_team_get_messages_with_limit(multi_run_team_session):
+    """Test that TeamSession.get_messages respects limit."""
+    messages = multi_run_team_session.get_messages(limit=4)
+
+    assert len(messages) == 4
+    contents = [m.content for m in messages]
+    # Should have the last 4 messages (from runs 4 and 5)
+    assert any("run 5" in c for c in contents)
+    assert any("run 4" in c for c in contents)
+    assert not any("run 1" in c for c in contents)
+
+
+def test_team_get_messages_composes_last_n_runs_and_limit(multi_run_team_session):
+    """Test that TeamSession.get_messages applies last_n_runs before limit."""
+    # last_n_runs=2 limits to runs 4 and 5 (4 messages)
+    # limit=3 then takes the last 3 of those 4 messages
+    messages = multi_run_team_session.get_messages(last_n_runs=2, limit=3)
+
+    assert len(messages) == 3
+    contents = [m.content for m in messages]
+    for content in contents:
+        assert "run 1" not in content
+        assert "run 2" not in content
+        assert "run 3" not in content
+
+
+def test_team_get_messages_all_runs(multi_run_team_session):
+    """Test that TeamSession.get_messages returns all runs when no limits set."""
+    messages = multi_run_team_session.get_messages()
+
+    contents = [m.content for m in messages]
+    for i in range(1, 6):
+        assert any(f"run {i}" in c for c in contents)

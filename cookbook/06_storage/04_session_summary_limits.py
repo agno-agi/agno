@@ -58,14 +58,29 @@ agent_by_messages = Agent(
 # Run
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Simulate a multi-turn conversation
-    agent = agent_by_runs
+    # --- Option 1: Limit by runs ---
+    print("=== Limiting by last_n_runs ===")
+    agent_by_runs.print_response("Hi, my name is John and I work at Acme Corp")
+    agent_by_runs.print_response("We are building a new product for data analytics")
+    agent_by_runs.print_response("The stack is Python, FastAPI, and PostgreSQL")
+    agent_by_runs.print_response("Our deadline is end of Q2")
+    agent_by_runs.print_response(
+        "Can you summarize what you know about me and my project?"
+    )
 
-    agent.print_response("Hi, my name is John and I work at Acme Corp")
-    agent.print_response("We are building a new product for data analytics")
-    agent.print_response("The stack is Python, FastAPI, and PostgreSQL")
-    agent.print_response("Our deadline is end of Q2")
-    agent.print_response("Can you summarize what you know about me and my project?")
+    summary = agent_by_runs.get_session_summary(session_id="summary_limit_runs")
+    print("Session summary (by runs):", summary)
 
-    summary = agent.get_session_summary(session_id="summary_limit_runs")
-    print("Session summary:", summary)
+    # --- Option 2: Limit by message count ---
+    print("\n=== Limiting by conversation_limit ===")
+    agent_by_messages.print_response("Hi, my name is Jane and I work at Globex")
+    agent_by_messages.print_response(
+        "We are migrating our infrastructure to Kubernetes"
+    )
+    agent_by_messages.print_response("The main challenge is stateful services")
+    agent_by_messages.print_response(
+        "Can you summarize what you know about me and my project?"
+    )
+
+    summary = agent_by_messages.get_session_summary(session_id="summary_limit_messages")
+    print("Session summary (by messages):", summary)
