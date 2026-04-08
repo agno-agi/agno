@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -23,11 +24,27 @@ class OnReject(str, Enum):
         skip: Skip the rejected step and continue with the next step in the workflow.
         cancel: Cancel the entire workflow when the step is rejected.
         else_branch: For Condition only - execute the else_steps branch when rejected.
+        retry: Re-execute the rejected step (optionally with feedback).
     """
 
     skip = "skip"
     cancel = "cancel"
     else_branch = "else"
+    retry = "retry"
+
+
+class OnTimeout(str, Enum):
+    """Action to take when a HITL pause times out.
+
+    Attributes:
+        cancel: Cancel the workflow when the timeout expires (default).
+        skip: Skip the timed-out step and continue with the next step.
+        approve: Auto-approve the step output and continue.
+    """
+
+    cancel = "cancel"
+    skip = "skip"
+    approve = "approve"
 
 
 class OnError(str, Enum):
@@ -362,6 +379,11 @@ class StepOutput:
 
     steps: Optional[List["StepOutput"]] = None
 
+    # Loop iteration review: signals the workflow to pause for per-iteration review.
+    # This is a transient flag — NOT serialized. It is cleared after the workflow
+    # processes it.
+    requires_iteration_review_pause: bool = False
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         # Handle the unified content field
@@ -623,13 +645,53 @@ class StepRequirement:
     # The step input that was prepared before pausing
     step_input: Optional["StepInput"] = None
 
+    # Post-execution output review fields
+    requires_output_review: bool = False
+    output_review_message: Optional[str] = None
+    step_output: Optional["StepOutput"] = None  # The executed output available for review
+    is_post_execution: bool = False  # True when this is a post-execution pause (step already ran)
+
+    # Rejection feedback (used with OnReject.retry to provide context to the agent)
+    rejection_feedback: Optional[str] = None
+
+    # Edited output (human modifies step output before continuing)
+    edited_output: Optional[Any] = None
+
+    # Retry tracking
+    retry_count: int = 0
+    max_retries: Optional[int] = None
+
+    # Timeout / expiration
+    timeout_at: Optional[datetime] = None
+    on_timeout: Union[OnTimeout, str] = OnTimeout.cancel
+
     def confirm(self) -> None:
-        """Confirm the step execution"""
+        """Confirm the step execution."""
         self.confirmed = True
 
-    def reject(self) -> None:
-        """Reject the step execution"""
+    def reject(self, feedback: Optional[str] = None) -> None:
+        """Reject the step execution.
+
+        Args:
+            feedback: Optional feedback explaining why the step was rejected.
+                      When used with on_reject=OnReject.retry, this feedback
+                      is passed to the agent on the next attempt.
+        """
         self.confirmed = False
+        if feedback is not None:
+            self.rejection_feedback = feedback
+
+    def edit(self, new_output: Any) -> None:
+        """Accept the step with modifications.
+
+        Marks the step as confirmed but replaces the step output with
+        the human-provided content before continuing the workflow.
+
+        Args:
+            new_output: The modified output to use instead of the original step output.
+        """
+        self.confirmed = True
+        self.edited_output = new_output
 
     def set_user_input(self, validate: bool = True, **kwargs) -> None:
         """Set user input values.
@@ -727,10 +789,28 @@ class StepRequirement:
 
     @property
     def needs_confirmation(self) -> bool:
-        """Check if this requirement still needs confirmation"""
+        """Check if this requirement still needs confirmation (excludes output review)"""
         if self.confirmed is not None:
             return False
+        # Output review uses requires_confirmation internally but should not
+        # appear in the confirmation-specific list
+        if self.requires_output_review:
+            return False
         return self.requires_confirmation
+
+    @property
+    def needs_output_review(self) -> bool:
+        """Check if this requirement still needs output review"""
+        if self.confirmed is not None:
+            return False
+        return self.requires_output_review
+
+    @property
+    def is_timed_out(self) -> bool:
+        """Check if this requirement has exceeded its timeout."""
+        if self.timeout_at is None:
+            return False
+        return datetime.now(timezone.utc) >= self.timeout_at
 
     @property
     def needs_user_input(self) -> bool:
@@ -757,6 +837,8 @@ class StepRequirement:
     def is_resolved(self) -> bool:
         """Check if this requirement has been resolved"""
         if self.requires_confirmation and self.confirmed is None:
+            return False
+        if self.requires_output_review and self.confirmed is None:
             return False
         if self.requires_user_input and self.needs_user_input:
             return False
@@ -786,11 +868,32 @@ class StepRequirement:
             "available_choices": self.available_choices,
             "allow_multiple_selections": self.allow_multiple_selections,
             "selected_choices": self.selected_choices,
+            # Post-execution output review
+            "requires_output_review": self.requires_output_review,
+            "output_review_message": self.output_review_message,
+            "is_post_execution": self.is_post_execution,
+            # Rejection feedback
+            "rejection_feedback": self.rejection_feedback,
+            # Retry tracking
+            "retry_count": self.retry_count,
+            "max_retries": self.max_retries,
+            # Timeout
+            "timeout_at": self.timeout_at.isoformat() if self.timeout_at else None,
+            "on_timeout": self.on_timeout.value if isinstance(self.on_timeout, OnTimeout) else self.on_timeout,
         }
         if self.user_input_schema is not None:
             result["user_input_schema"] = [f.to_dict() for f in self.user_input_schema]
         if self.step_input is not None:
             result["step_input"] = self.step_input.to_dict()
+        if self.step_output is not None:
+            result["step_output"] = self.step_output.to_dict()
+        if self.edited_output is not None:
+            if isinstance(self.edited_output, BaseModel):
+                result["edited_output"] = self.edited_output.model_dump(exclude_none=True, mode="json")
+            elif isinstance(self.edited_output, (dict, list)):
+                result["edited_output"] = self.edited_output
+            else:
+                result["edited_output"] = str(self.edited_output)
         return result
 
     @classmethod
@@ -803,6 +906,18 @@ class StepRequirement:
         user_input_schema = None
         if data.get("user_input_schema"):
             user_input_schema = [UserInputField.from_dict(f) for f in data["user_input_schema"]]
+
+        step_output = None
+        if data.get("step_output"):
+            step_output = StepOutput.from_dict(data["step_output"])
+
+        timeout_at = None
+        if data.get("timeout_at"):
+            raw = data["timeout_at"]
+            # Replace 'Z' suffix with '+00:00' for Python < 3.11 compatibility
+            if isinstance(raw, str) and raw.endswith("Z"):
+                raw = raw[:-1] + "+00:00"
+            timeout_at = datetime.fromisoformat(raw)
 
         return cls(
             step_id=data["step_id"],
@@ -822,6 +937,21 @@ class StepRequirement:
             allow_multiple_selections=data.get("allow_multiple_selections", False),
             selected_choices=data.get("selected_choices"),
             step_input=step_input,
+            # Post-execution output review
+            requires_output_review=data.get("requires_output_review", False),
+            output_review_message=data.get("output_review_message"),
+            step_output=step_output,
+            is_post_execution=data.get("is_post_execution", False),
+            # Rejection feedback
+            rejection_feedback=data.get("rejection_feedback"),
+            # Edited output
+            edited_output=data.get("edited_output"),
+            # Retry tracking
+            retry_count=data.get("retry_count", 0),
+            max_retries=data.get("max_retries"),
+            # Timeout
+            timeout_at=timeout_at,
+            on_timeout=data.get("on_timeout", "cancel"),
         )
 
 

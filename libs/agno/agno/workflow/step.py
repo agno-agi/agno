@@ -1,6 +1,7 @@
 import inspect
 from copy import copy
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
 from uuid import uuid4
 
@@ -34,6 +35,7 @@ from agno.workflow.types import (
     ErrorRequirement,
     OnError,
     OnReject,
+    OnTimeout,
     StepInput,
     StepOutput,
     StepRequirement,
@@ -98,6 +100,20 @@ class Step:
     # OnError.pause triggers HITL allowing user to retry or skip the failed step
     on_error: Union[OnError, str] = OnError.skip
 
+    # Post-execution output review: pause after the step runs so a human can review the output
+    # Can be a bool or a callable that receives StepOutput and returns bool (conditional review)
+    requires_output_review: Union[bool, Callable[["StepOutput"], bool]] = False
+    # Message to display to the reviewer when output review is requested
+    output_review_message: Optional[str] = None
+
+    # Maximum number of HITL retry attempts (applies when on_reject=OnReject.retry)
+    hitl_max_retries: int = 3
+
+    # Timeout for HITL responses in seconds (None = wait indefinitely)
+    hitl_timeout: Optional[int] = None
+    # Action when timeout expires: "cancel", "skip", or "approve"
+    on_timeout: Union[OnTimeout, str] = OnTimeout.cancel
+
     _retry_count: int = 0
 
     def __init__(
@@ -120,6 +136,11 @@ class Step:
         user_input_message: Optional[str] = None,
         user_input_schema: Optional[List[Dict[str, Any]]] = None,
         on_error: Union[OnError, str] = OnError.skip,
+        requires_output_review: Union[bool, Callable[["StepOutput"], bool]] = False,
+        output_review_message: Optional[str] = None,
+        hitl_max_retries: int = 3,
+        hitl_timeout: Optional[int] = None,
+        on_timeout: Union[OnTimeout, str] = OnTimeout.cancel,
     ):
         # Auto-detect HITL metadata from @hitl decorator on executor function
         if executor is not None:
@@ -167,6 +188,11 @@ class Step:
         self.user_input_message = user_input_message
         self.user_input_schema = user_input_schema
         self.on_error = on_error
+        self.requires_output_review = requires_output_review
+        self.output_review_message = output_review_message
+        self.hitl_max_retries = hitl_max_retries
+        self.hitl_timeout = hitl_timeout
+        self.on_timeout = on_timeout
         self.step_id = step_id
 
         if step_id is None:
@@ -192,8 +218,15 @@ class Step:
             "requires_user_input": self.requires_user_input,
             "user_input_message": self.user_input_message,
             "user_input_schema": self.user_input_schema,
-            "on_reject": self.on_reject,
-            "on_error": self.on_error,
+            "on_reject": self.on_reject.value if isinstance(self.on_reject, Enum) else self.on_reject,
+            "on_error": self.on_error.value if isinstance(self.on_error, Enum) else self.on_error,
+            "requires_output_review": self.requires_output_review
+            if isinstance(self.requires_output_review, bool)
+            else True,
+            "output_review_message": self.output_review_message,
+            "hitl_max_retries": self.hitl_max_retries,
+            "hitl_timeout": self.hitl_timeout,
+            "on_timeout": self.on_timeout.value if isinstance(self.on_timeout, Enum) else self.on_timeout,
         }
 
         if self.agent is not None:
@@ -304,11 +337,16 @@ class Step:
             num_history_runs=config.get("num_history_runs", 3),
             requires_confirmation=config.get("requires_confirmation", False),
             confirmation_message=config.get("confirmation_message"),
-            on_reject=config.get("on_reject", "cancel"),
+            on_reject=config.get("on_reject", "skip"),
             requires_user_input=config.get("requires_user_input", False),
             user_input_message=config.get("user_input_message"),
             user_input_schema=config.get("user_input_schema"),
             on_error=config.get("on_error", "fail"),
+            requires_output_review=config.get("requires_output_review", False),
+            output_review_message=config.get("output_review_message"),
+            hitl_max_retries=config.get("hitl_max_retries", 3),
+            hitl_timeout=config.get("hitl_timeout"),
+            on_timeout=config.get("on_timeout", "cancel"),
             agent=agent,
             team=team,
             executor=executor,
@@ -364,7 +402,13 @@ class Step:
         Returns:
             StepRequirement configured for this step's HITL needs.
         """
+        from datetime import datetime, timedelta, timezone
+
         user_input_schema = self._normalize_user_input_schema() if self.requires_user_input else None
+
+        timeout_at = None
+        if self.hitl_timeout is not None:
+            timeout_at = datetime.now(timezone.utc) + timedelta(seconds=self.hitl_timeout)
 
         return StepRequirement(
             step_id=self.step_id or str(uuid4()),
@@ -378,6 +422,9 @@ class Step:
             user_input_message=self.user_input_message,
             user_input_schema=user_input_schema,
             step_input=step_input,
+            max_retries=self.hitl_max_retries,
+            timeout_at=timeout_at,
+            on_timeout=self.on_timeout,
         )
 
     def create_error_requirement(
@@ -401,6 +448,51 @@ class Step:
             error_message=str(error),
             error_type=type(error).__name__,
             retry_count=self._retry_count,
+        )
+
+    def create_output_review_requirement(
+        self,
+        step_index: int,
+        step_input: StepInput,
+        step_output: "StepOutput",
+        retry_count: int = 0,
+    ) -> StepRequirement:
+        """Create a StepRequirement for post-execution output review.
+
+        Args:
+            step_index: Index of the step in the workflow.
+            step_input: The input that was used for the step.
+            step_output: The output produced by the step (for review).
+            retry_count: Number of times this step has been retried.
+
+        Returns:
+            StepRequirement configured for post-execution output review.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        timeout_at = None
+        if self.hitl_timeout is not None:
+            timeout_at = datetime.now(timezone.utc) + timedelta(seconds=self.hitl_timeout)
+
+        message = self.output_review_message or f"Review output of step '{self.name or 'step'}'?"
+
+        return StepRequirement(
+            step_id=self.step_id or str(uuid4()),
+            step_name=self.name or f"step_{step_index + 1}",
+            step_index=step_index,
+            step_type="Step",
+            requires_output_review=True,
+            output_review_message=message,
+            requires_confirmation=True,
+            confirmation_message=message,
+            on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
+            step_input=step_input,
+            step_output=step_output,
+            is_post_execution=True,
+            retry_count=retry_count,
+            max_retries=self.hitl_max_retries,
+            timeout_at=timeout_at,
+            on_timeout=self.on_timeout,
         )
 
     def _normalize_user_input_schema(self) -> Optional[List[UserInputField]]:
@@ -685,6 +777,17 @@ class Step:
                             else:
                                 final_message = f"User preferences:\n{user_input_str}"
 
+                        # Append previous output and rejection feedback if available (from HITL retry)
+                        if step_input.additional_data and step_input.additional_data.get("previous_output"):
+                            prev_output = step_input.additional_data["previous_output"]
+                            if final_message:
+                                final_message = f"{final_message}\n\nYour previous output:\n{prev_output}"
+                            else:
+                                final_message = f"Your previous output:\n{prev_output}"
+                        if step_input.additional_data and step_input.additional_data.get("rejection_feedback"):
+                            feedback = step_input.additional_data["rejection_feedback"]
+                            final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
+
                         response = self.active_executor.run(  # type: ignore
                             input=final_message,  # type: ignore
                             images=images,
@@ -966,6 +1069,17 @@ class Step:
                                 final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
                             else:
                                 final_message = f"User preferences:\n{user_input_str}"
+
+                        # Append previous output and rejection feedback if available (from HITL retry)
+                        if step_input.additional_data and step_input.additional_data.get("previous_output"):
+                            prev_output = step_input.additional_data["previous_output"]
+                            if final_message:
+                                final_message = f"{final_message}\n\nYour previous output:\n{prev_output}"
+                            else:
+                                final_message = f"Your previous output:\n{prev_output}"
+                        if step_input.additional_data and step_input.additional_data.get("rejection_feedback"):
+                            feedback = step_input.additional_data["rejection_feedback"]
+                            final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
 
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
                             input=final_message,
@@ -1260,6 +1374,17 @@ class Step:
                             else:
                                 final_message = f"User preferences:\n{user_input_str}"
 
+                        # Append previous output and rejection feedback if available (from HITL retry)
+                        if step_input.additional_data and step_input.additional_data.get("previous_output"):
+                            prev_output = step_input.additional_data["previous_output"]
+                            if final_message:
+                                final_message = f"{final_message}\n\nYour previous output:\n{prev_output}"
+                            else:
+                                final_message = f"Your previous output:\n{prev_output}"
+                        if step_input.additional_data and step_input.additional_data.get("rejection_feedback"):
+                            feedback = step_input.additional_data["rejection_feedback"]
+                            final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
+
                         response = await self.active_executor.arun(  # type: ignore
                             input=final_message,  # type: ignore
                             images=images,
@@ -1535,6 +1660,17 @@ class Step:
                                 final_message = f"{final_message}\n\nUser preferences:\n{user_input_str}"
                             else:
                                 final_message = f"User preferences:\n{user_input_str}"
+
+                        # Append previous output and rejection feedback if available (from HITL retry)
+                        if step_input.additional_data and step_input.additional_data.get("previous_output"):
+                            prev_output = step_input.additional_data["previous_output"]
+                            if final_message:
+                                final_message = f"{final_message}\n\nYour previous output:\n{prev_output}"
+                            else:
+                                final_message = f"Your previous output:\n{prev_output}"
+                        if step_input.additional_data and step_input.additional_data.get("rejection_feedback"):
+                            feedback = step_input.additional_data["rejection_feedback"]
+                            final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
 
                         response_stream = self.active_executor.arun(  # type: ignore
                             input=final_message,

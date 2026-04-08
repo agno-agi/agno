@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 from time import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
@@ -45,6 +45,7 @@ class WorkflowRunEvent(str, Enum):
     step_started = "StepStarted"
     step_completed = "StepCompleted"
     step_paused = "StepPaused"
+    step_output_review = "StepOutputReview"
     step_error = "StepError"
 
     loop_execution_started = "LoopExecutionStarted"
@@ -239,6 +240,20 @@ class StepPausedEvent(BaseWorkflowRunOutputEvent):
     # User input fields
     requires_user_input: bool = False
     user_input_message: Optional[str] = None
+
+
+@dataclass
+class StepOutputReviewEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when step output requires human review before continuing."""
+
+    event: str = WorkflowRunEvent.step_output_review.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    step_id: Optional[str] = None
+
+    # Output review fields
+    output_review_message: Optional[str] = None
+    requires_output_review: bool = True
 
 
 @dataclass
@@ -476,6 +491,7 @@ WorkflowRunOutputEvent = Union[
     StepStartedEvent,
     StepCompletedEvent,
     StepPausedEvent,
+    StepOutputReviewEvent,
     StepErrorEvent,
     LoopExecutionStartedEvent,
     LoopIterationStartedEvent,
@@ -505,6 +521,7 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.step_started.value: StepStartedEvent,
     WorkflowRunEvent.step_completed.value: StepCompletedEvent,
     WorkflowRunEvent.step_paused.value: StepPausedEvent,
+    WorkflowRunEvent.step_output_review.value: StepOutputReviewEvent,
     WorkflowRunEvent.step_error.value: StepErrorEvent,
     WorkflowRunEvent.loop_execution_started.value: LoopExecutionStartedEvent,
     WorkflowRunEvent.loop_iteration_started.value: LoopIterationStartedEvent,
@@ -616,6 +633,13 @@ class WorkflowRunOutput:
         return [req for req in self.step_requirements if req.needs_confirmation]
 
     @property
+    def steps_requiring_output_review(self) -> List["StepRequirement"]:
+        """Get step requirements that need output review"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if req.needs_output_review]
+
+    @property
     def steps_requiring_user_input(self) -> List["StepRequirement"]:
         """Get step requirements that need user input (custom fields, not route selection)"""
         if not self.step_requirements:
@@ -644,27 +668,32 @@ class WorkflowRunOutput:
         return [req for req in self.error_requirements if req.needs_decision]
 
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {
-            k: v
-            for k, v in asdict(self).items()
-            if v is not None
-            and k
-            not in [
-                "metadata",
-                "images",
-                "videos",
-                "audio",
-                "files",
-                "response_audio",
-                "step_results",
-                "step_executor_runs",
-                "events",
-                "metrics",
-                "workflow_agent_run",
-                "step_requirements",
-                "error_requirements",
-            ]
+        # Note: we avoid asdict(self) here because it recursively walks ALL dataclass
+        # fields including step_requirements/step_results which may contain deep or
+        # circular references (e.g., StepRequirement.step_output with nested StepOutputs).
+        # Instead, we manually build the dict from field values.
+        _skip_fields = {
+            "metadata",
+            "images",
+            "videos",
+            "audio",
+            "files",
+            "response_audio",
+            "step_results",
+            "step_executor_runs",
+            "events",
+            "metrics",
+            "workflow_agent_run",
+            "step_requirements",
+            "error_requirements",
         }
+        _dict = {}
+        for f in fields(self):
+            if f.name in _skip_fields:
+                continue
+            v = getattr(self, f.name)
+            if v is not None:
+                _dict[f.name] = v
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
