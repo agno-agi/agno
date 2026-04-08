@@ -179,7 +179,8 @@ class Router:
             result["user_input_schema"] = self.user_input_schema
 
         # Add HITL config
-        result["hitl"] = self.hitl.to_dict()
+        if self.hitl:
+            result["hitl"] = self.hitl.to_dict()
 
         return result
 
