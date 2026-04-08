@@ -6229,6 +6229,11 @@ class Workflow:
             start_index = paused_step_index + 1
         elif skip_rejected_step or error_should_skip:
             start_index = paused_step_index + 1
+        elif is_router_output_review and retry_step:
+            # Router output review rejected with retry: discard output, re-pause for user route selection
+            kwargs["remove_last_output"] = True
+            kwargs["router_reroute"] = True
+            start_index = paused_step_index
         elif is_post_execution_review and not retry_step:
             start_index = paused_step_index + 1
         elif is_post_execution_review and retry_step:

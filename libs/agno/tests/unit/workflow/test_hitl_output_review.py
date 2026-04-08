@@ -661,3 +661,161 @@ class TestRouterOutputReviewStreaming:
         run = session.runs[-1]
         assert run.status == RunStatus.completed
         assert "Report:" in str(run.content)
+
+
+# =============================================================================
+# Async tests for Router output review
+# =============================================================================
+
+
+def _make_async_router_review_workflow(session_id: str):
+    """Create an async-compatible workflow with a Router that has output review."""
+    from agno.db.sqlite import SqliteDb
+    from agno.workflow.router import Router
+    from agno.workflow.workflow import Workflow
+
+    return Workflow(
+        name="test_async_router_review",
+        db=SqliteDb(db_file="tmp/test_async_router_review.db"),
+        steps=[
+            Router(
+                name="analysis",
+                selector=lambda si: [Step(name="quick", executor=_quick_fn)],
+                choices=[
+                    Step(name="quick", description="Fast", executor=_quick_fn),
+                    Step(name="deep", description="Thorough", executor=_deep_fn),
+                ],
+                requires_output_review=True,
+                output_review_message="Approve the analysis?",
+                on_reject=OnReject.retry,
+                hitl_max_retries=2,
+            ),
+            Step(name="report", executor=_report_fn),
+        ],
+    )
+
+
+class TestRouterOutputReviewAsync:
+    """Async tests for Router output review — mirrors sync tests to catch async-only bugs."""
+
+    async def test_async_router_pauses_for_review(self):
+        wf = _make_async_router_review_workflow("async_pauses")
+        run = await wf.arun("test", session_id="async_pauses")
+
+        assert run.is_paused
+        assert len(run.steps_requiring_output_review) == 1
+        req = run.steps_requiring_output_review[0]
+        assert req.step_type == "Router"
+        assert req.available_choices == ["quick", "deep"]
+
+    async def test_async_approve_continues(self):
+        wf = _make_async_router_review_workflow("async_approve")
+        run = await wf.arun("test", session_id="async_approve")
+
+        assert run.is_paused
+        run.steps_requiring_output_review[0].confirm()
+        run = await wf.acontinue_run(run)
+
+        assert run.status == RunStatus.completed
+        assert "Report:" in str(run.content)
+        assert "Quick result" in str(run.content)
+
+    async def test_async_reject_reroutes(self):
+        wf = _make_async_router_review_workflow("async_reroute")
+        run = await wf.arun("test", session_id="async_reroute")
+
+        assert run.is_paused
+        run.steps_requiring_output_review[0].reject()
+        run = await wf.acontinue_run(run)
+
+        # Should be paused for route selection
+        assert run.is_paused
+        assert len(run.steps_requiring_route) == 1
+        assert run.steps_requiring_route[0].available_choices == ["quick", "deep"]
+
+    async def test_async_reroute_then_approve(self):
+        wf = _make_async_router_review_workflow("async_full")
+        run = await wf.arun("test", session_id="async_full")
+
+        # First review (quick)
+        assert run.is_paused
+        run.steps_requiring_output_review[0].reject()
+        run = await wf.acontinue_run(run)
+
+        # Route selection
+        assert run.is_paused
+        run.steps_requiring_route[0].select("deep")
+        run = await wf.acontinue_run(run)
+
+        # Second review (deep)
+        assert run.is_paused
+        assert len(run.steps_requiring_output_review) == 1
+        run.steps_requiring_output_review[0].confirm()
+        run = await wf.acontinue_run(run)
+
+        assert run.status == RunStatus.completed
+        assert "Deep result" in str(run.content)
+
+    async def test_async_cancel(self):
+        wf = _make_async_router_review_workflow("async_cancel")
+        run = await wf.arun("test", session_id="async_cancel")
+
+        assert run.is_paused
+        req = run.steps_requiring_output_review[0]
+        req.reject()
+        req.on_reject = "cancel"
+        run = await wf.acontinue_run(run)
+
+        assert run.is_cancelled
+
+    async def test_async_streaming_emits_review_event(self):
+        from agno.run.workflow import StepOutputReviewEvent
+
+        wf = _make_async_router_review_workflow("async_stream")
+        events = []
+        async for event in wf.arun("test", session_id="async_stream", stream=True, stream_events=True):
+            events.append(event)
+
+        review_events = [e for e in events if isinstance(e, StepOutputReviewEvent)]
+        assert len(review_events) == 1
+        assert review_events[0].step_name == "analysis"
+
+    async def test_async_streaming_reroute_then_approve(self):
+        wf = _make_async_router_review_workflow("async_stream_full")
+
+        # Initial run — stream until paused
+        async for _ in wf.arun("test", session_id="async_stream_full", stream=True, stream_events=True):
+            pass
+
+        session = wf.get_session(session_id="async_stream_full")
+        run = session.runs[-1]
+        assert run.is_paused
+
+        # Reject -> re-route
+        run.steps_requiring_output_review[0].reject()
+        async for _ in await wf.acontinue_run(run, stream=True, stream_events=True):
+            pass
+
+        session = wf.get_session(session_id="async_stream_full")
+        run = session.runs[-1]
+        assert run.is_paused
+        assert len(run.steps_requiring_route) == 1
+
+        # Select deep
+        run.steps_requiring_route[0].select("deep")
+        async for _ in await wf.acontinue_run(run, stream=True, stream_events=True):
+            pass
+
+        session = wf.get_session(session_id="async_stream_full")
+        run = session.runs[-1]
+        assert run.is_paused
+
+        # Approve deep
+        run.steps_requiring_output_review[0].confirm()
+        async for _ in await wf.acontinue_run(run, stream=True, stream_events=True):
+            pass
+
+        session = wf.get_session(session_id="async_stream_full")
+        run = session.runs[-1]
+        assert run.status == RunStatus.completed
+        assert "Deep result" in str(run.content)
