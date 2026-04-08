@@ -34,8 +34,8 @@ from agno.team import Team
 from agno.utils.log import log_debug, log_warning, logger, use_agent_logger, use_team_logger, use_workflow_logger
 from agno.utils.merge_dict import merge_dictionaries
 from agno.workflow.types import (
-    HITL,
     ErrorRequirement,
+    HumanReview,
     OnError,
     OnReject,
     OnTimeout,
@@ -155,7 +155,7 @@ class Step:
         hitl_max_retries: int = 3,
         hitl_timeout: Optional[int] = None,
         on_timeout: Union[OnTimeout, str] = OnTimeout.cancel,
-        hitl: Optional[HITL] = None,
+        human_review: Optional[HumanReview] = None,
     ):
         # Auto-detect HITL metadata from @hitl decorator on executor function
         if executor is not None:
@@ -198,10 +198,10 @@ class Step:
         self.add_workflow_history = add_workflow_history
         self.num_history_runs = num_history_runs
         # Build HITL config - explicit hitl= takes priority over flat params
-        if hitl is not None:
-            self.hitl = hitl
+        if human_review is not None:
+            self.human_review = human_review
         else:
-            self.hitl = HITL(
+            self.human_review = HumanReview(
                 requires_confirmation=requires_confirmation,
                 confirmation_message=confirmation_message,
                 requires_user_input=requires_user_input,
@@ -217,23 +217,23 @@ class Step:
             )
 
         # Validate: iteration review not supported on Step
-        if self.hitl.requires_iteration_review:
+        if self.human_review.requires_iteration_review:
             raise ValueError("requires_iteration_review is not supported on Step. Use it on Loop instead.")
 
         # Store HITL fields as attributes for backward compatibility
-        # These read from self.hitl so there's one source of truth
-        self.requires_confirmation = self.hitl.requires_confirmation
-        self.confirmation_message = self.hitl.confirmation_message
-        self.on_reject = self.hitl.on_reject
-        self.requires_user_input = self.hitl.requires_user_input
-        self.user_input_message = self.hitl.user_input_message
-        self.user_input_schema = self.hitl.user_input_schema
-        self.on_error = self.hitl.on_error
-        self.requires_output_review = self.hitl.requires_output_review
-        self.output_review_message = self.hitl.output_review_message
-        self.hitl_max_retries = self.hitl.max_retries
-        self.hitl_timeout = self.hitl.timeout
-        self.on_timeout = self.hitl.on_timeout
+        # These read from self.human_review so there's one source of truth
+        self.requires_confirmation = self.human_review.requires_confirmation
+        self.confirmation_message = self.human_review.confirmation_message
+        self.on_reject = self.human_review.on_reject
+        self.requires_user_input = self.human_review.requires_user_input
+        self.user_input_message = self.human_review.user_input_message
+        self.user_input_schema = self.human_review.user_input_schema
+        self.on_error = self.human_review.on_error
+        self.requires_output_review = self.human_review.requires_output_review
+        self.output_review_message = self.human_review.output_review_message
+        self.hitl_max_retries = self.human_review.max_retries
+        self.hitl_timeout = self.human_review.timeout
+        self.on_timeout = self.human_review.on_timeout
         self.step_id = step_id
 
         if step_id is None:
@@ -254,7 +254,7 @@ class Step:
             "strict_input_validation": self.strict_input_validation,
             "add_workflow_history": self.add_workflow_history,
             "num_history_runs": self.num_history_runs,
-            "hitl": self.hitl.to_dict(),
+            "human_review": self.human_review.to_dict(),
         }
 
         if self.agent is not None:
@@ -381,11 +381,11 @@ class Step:
             executor = registry.get_function(config["executor_ref"])
 
         # HITL config
-        if config.get("hitl"):
-            hitl = HITL.from_dict(config["hitl"])
+        if config.get("human_review"):
+            human_review = HumanReview.from_dict(config["human_review"])
         else:
             # Backward compat: build HITL from flat keys
-            hitl = HITL(
+            human_review = HumanReview(
                 requires_confirmation=config.get("requires_confirmation", False),
                 confirmation_message=config.get("confirmation_message"),
                 on_reject=config.get("on_reject", "skip"),
@@ -409,7 +409,7 @@ class Step:
             strict_input_validation=config.get("strict_input_validation", False),
             add_workflow_history=config.get("add_workflow_history"),
             num_history_runs=config.get("num_history_runs", 3),
-            hitl=hitl,
+            human_review=human_review,
             agent=agent,
             team=team,
             executor=executor,

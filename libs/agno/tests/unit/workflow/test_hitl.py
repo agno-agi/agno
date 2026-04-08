@@ -503,8 +503,8 @@ class TestStepHITLConfiguration:
 
         data = step.to_dict()
 
-        assert "hitl" in data
-        hitl = data["hitl"]
+        assert "human_review" in data
+        hitl = data["human_review"]
         assert hitl["requires_confirmation"] is True
         assert hitl["confirmation_message"] == "Confirm?"
         assert hitl["requires_user_input"] is True

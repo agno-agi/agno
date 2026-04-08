@@ -21,7 +21,7 @@ from agno.db.sqlite import SqliteDb
 from agno.workflow import OnReject
 from agno.workflow.router import Router
 from agno.workflow.step import Step
-from agno.workflow.types import HITL, StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 
@@ -97,7 +97,7 @@ workflow = Workflow(
                 ),
             ],
             # Post-execution review via HITL config: human reviews output, can re-route
-            hitl=HITL(
+            human_review=HumanReview(
                 requires_output_review=True,
                 output_review_message="Review the analysis result. Approve, or pick a different analysis type?",
                 on_reject=OnReject.retry,

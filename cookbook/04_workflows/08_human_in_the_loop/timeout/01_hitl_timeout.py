@@ -1,7 +1,7 @@
 """
 HITL Timeout Example
 
-This example demonstrates timeout handling for HITL pauses using the HITL
+This example demonstrates timeout handling for HITL pauses using the HumanReview
 config class. When a step pauses for human review, a timeout can be set so
 the workflow doesn't wait forever.
 
@@ -21,7 +21,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.workflow.step import Step
-from agno.workflow.types import HITL, OnTimeout
+from agno.workflow.types import HumanReview, OnTimeout
 from agno.workflow.workflow import Workflow
 
 draft_agent = Agent(
@@ -43,7 +43,7 @@ workflow = Workflow(
         Step(
             name="draft_email",
             agent=draft_agent,
-            hitl=HITL(
+            human_review=HumanReview(
                 requires_output_review=True,
                 output_review_message="Review the draft (auto-approves in 5 seconds)",
                 timeout=5,  # 5 second timeout

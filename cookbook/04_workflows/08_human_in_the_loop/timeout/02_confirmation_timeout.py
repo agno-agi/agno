@@ -23,7 +23,7 @@ import time
 from agno.db.sqlite import SqliteDb
 from agno.workflow import OnReject
 from agno.workflow.step import Step
-from agno.workflow.types import HITL, OnTimeout, StepInput, StepOutput
+from agno.workflow.types import HumanReview, OnTimeout, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 
@@ -54,7 +54,7 @@ workflow = Workflow(
         Step(
             name="delete_records",
             executor=delete_old_records,
-            hitl=HITL(
+            human_review=HumanReview(
                 # Pre-execution confirmation: pauses BEFORE the step runs
                 requires_confirmation=True,
                 confirmation_message="About to delete old records. Proceed?",

@@ -62,7 +62,7 @@ class OnError(str, Enum):
 
 
 @dataclass
-class HITL:
+class HumanReview:
     """Human-in-the-loop configuration for workflow components.
 
     Groups all HITL parameters into a single config object instead of
@@ -124,7 +124,7 @@ class HITL:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "HITL":
+    def from_dict(cls, data: Dict[str, Any]) -> "HumanReview":
         """Create HITL from dictionary."""
         return cls(
             requires_confirmation=data.get("requires_confirmation", False),

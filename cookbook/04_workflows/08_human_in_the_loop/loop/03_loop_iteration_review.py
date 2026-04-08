@@ -22,7 +22,7 @@ from agno.models.openai import OpenAIChat
 from agno.workflow import OnReject
 from agno.workflow.loop import Loop
 from agno.workflow.step import Step
-from agno.workflow.types import HITL
+from agno.workflow.types import HumanReview
 from agno.workflow.workflow import Workflow
 
 refine_agent = Agent(
@@ -46,7 +46,7 @@ workflow = Workflow(
             ],
             max_iterations=5,
             forward_iteration_output=True,
-            hitl=HITL(
+            human_review=HumanReview(
                 requires_iteration_review=True,
                 iteration_review_message="Review this iteration.",
                 on_reject=OnReject.retry,  # Reject = try another iteration

@@ -13,7 +13,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.workflow import OnReject
 from agno.workflow.step import Step
-from agno.workflow.types import HITL, StepOutput
+from agno.workflow.types import HumanReview, StepOutput
 from agno.workflow.workflow import Workflow
 
 
@@ -46,7 +46,7 @@ workflow = Workflow(
         Step(
             name="draft_email",
             agent=draft_agent,
-            hitl=HITL(
+            human_review=HumanReview(
                 # Pass a callable instead of a bool — only pauses when the predicate returns True
                 requires_output_review=needs_review,
                 output_review_message="Long email detected - please review before sending",

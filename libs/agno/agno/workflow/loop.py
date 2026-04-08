@@ -19,7 +19,7 @@ from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_loop_end_condition, is_cel_expression
 from agno.workflow.step import Step
-from agno.workflow.types import HITL, OnReject, StepInput, StepOutput, StepRequirement, StepType
+from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput, StepRequirement, StepType
 
 WorkflowSteps = List[
     Union[
@@ -102,7 +102,7 @@ class Loop:
         on_reject: Union[OnReject, str] = OnReject.skip,
         requires_iteration_review: bool = False,
         iteration_review_message: Optional[str] = None,
-        hitl: Optional[HITL] = None,
+        human_review: Optional[HumanReview] = None,
     ):
         self.steps = steps
         self.name = name
@@ -112,10 +112,10 @@ class Loop:
         self.forward_iteration_output = forward_iteration_output
 
         # Build HITL config - explicit hitl= takes priority over flat params
-        if hitl is not None:
-            self.hitl = hitl
+        if human_review is not None:
+            self.human_review = human_review
         else:
-            self.hitl = HITL(
+            self.human_review = HumanReview(
                 requires_confirmation=requires_confirmation,
                 confirmation_message=confirmation_message,
                 on_reject=on_reject,
@@ -124,15 +124,15 @@ class Loop:
             )
 
         # Validate: output review not supported on Loop
-        if self.hitl.requires_output_review and self.hitl.requires_output_review is not False:
+        if self.human_review.requires_output_review and self.human_review.requires_output_review is not False:
             raise ValueError("requires_output_review is not supported on Loop. Use it on Step or Router instead.")
 
         # Store HITL fields as attributes for backward compatibility
-        self.requires_confirmation = self.hitl.requires_confirmation
-        self.confirmation_message = self.hitl.confirmation_message
-        self.on_reject = self.hitl.on_reject
-        self.requires_iteration_review = self.hitl.requires_iteration_review
-        self.iteration_review_message = self.hitl.iteration_review_message
+        self.requires_confirmation = self.human_review.requires_confirmation
+        self.confirmation_message = self.human_review.confirmation_message
+        self.on_reject = self.human_review.on_reject
+        self.requires_iteration_review = self.human_review.requires_iteration_review
+        self.iteration_review_message = self.human_review.iteration_review_message
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -158,7 +158,7 @@ class Loop:
         result["forward_iteration_output"] = self.forward_iteration_output
 
         # Add HITL config
-        result["hitl"] = self.hitl.to_dict()
+        result["human_review"] = self.human_review.to_dict()
 
         return result
 
@@ -274,11 +274,11 @@ class Loop:
                     raise ValueError(f"Registry required to deserialize end_condition function '{end_condition_data}'")
 
         # HITL config
-        if data.get("hitl"):
-            hitl = HITL.from_dict(data["hitl"])
+        if data.get("human_review"):
+            human_review = HumanReview.from_dict(data["human_review"])
         else:
             # Backward compat: build HITL from flat keys
-            hitl = HITL(
+            human_review = HumanReview(
                 requires_confirmation=data.get("requires_confirmation", False),
                 confirmation_message=data.get("confirmation_message"),
                 on_reject=data.get("on_reject", "skip"),
@@ -293,7 +293,7 @@ class Loop:
             max_iterations=data.get("max_iterations", 3),
             end_condition=end_condition,
             forward_iteration_output=data.get("forward_iteration_output", False),
-            hitl=hitl,
+            human_review=human_review,
         )
 
     def _evaluate_end_condition(self, iteration_results: List[StepOutput], current_iteration: int = 0) -> bool:

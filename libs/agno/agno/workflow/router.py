@@ -18,7 +18,7 @@ from agno.utils.log import log_debug, log_error, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_router_selector, is_cel_expression
 from agno.workflow.step import Step
 from agno.workflow.types import (
-    HITL,
+    HumanReview,
     OnReject,
     StepInput,
     StepOutput,
@@ -118,14 +118,14 @@ class Router:
     hitl_max_retries: int = 3
 
     # Consolidated HITL config (takes priority over flat params above)
-    hitl: Optional[HITL] = None
+    human_review: Optional[HumanReview] = None
 
     def __post_init__(self) -> None:
         # Build HITL config - explicit hitl= takes priority over flat params
-        if self.hitl is not None:
+        if self.human_review is not None:
             pass  # Use the explicit hitl
         else:
-            self.hitl = HITL(
+            self.human_review = HumanReview(
                 requires_user_input=self.requires_user_input,
                 user_input_message=self.user_input_message,
                 user_input_schema=self.user_input_schema,
@@ -138,19 +138,19 @@ class Router:
             )
 
         # Validate: iteration review not supported on Router
-        if self.hitl.requires_iteration_review:
+        if self.human_review.requires_iteration_review:
             raise ValueError("requires_iteration_review is not supported on Router. Use it on Loop instead.")
 
         # Store HITL fields as attributes for backward compatibility
-        self.requires_user_input = self.hitl.requires_user_input
-        self.user_input_message = self.hitl.user_input_message
-        self.user_input_schema = self.hitl.user_input_schema
-        self.requires_confirmation = self.hitl.requires_confirmation
-        self.confirmation_message = self.hitl.confirmation_message
-        self.on_reject = self.hitl.on_reject
-        self.requires_output_review = self.hitl.requires_output_review
-        self.output_review_message = self.hitl.output_review_message
-        self.hitl_max_retries = self.hitl.max_retries
+        self.requires_user_input = self.human_review.requires_user_input
+        self.user_input_message = self.human_review.user_input_message
+        self.user_input_schema = self.human_review.user_input_schema
+        self.requires_confirmation = self.human_review.requires_confirmation
+        self.confirmation_message = self.human_review.confirmation_message
+        self.on_reject = self.human_review.on_reject
+        self.requires_output_review = self.human_review.requires_output_review
+        self.output_review_message = self.human_review.output_review_message
+        self.hitl_max_retries = self.human_review.max_retries
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -178,9 +178,9 @@ class Router:
         if self.user_input_schema:
             result["user_input_schema"] = self.user_input_schema
 
-        # Add HITL config
-        if self.hitl:
-            result["hitl"] = self.hitl.to_dict()
+        # Add human review config
+        if self.human_review:
+            result["human_review"] = self.human_review.to_dict()
 
         return result
 
@@ -343,11 +343,11 @@ class Router:
             raise ValueError(f"Invalid selector type in data: {type(selector_data).__name__}")
 
         # HITL config
-        if data.get("hitl"):
-            hitl = HITL.from_dict(data["hitl"])
+        if data.get("human_review"):
+            human_review = HumanReview.from_dict(data["human_review"])
         else:
             # Backward compat: build HITL from flat keys
-            hitl = HITL(
+            human_review = HumanReview(
                 requires_user_input=data.get("requires_user_input", False),
                 user_input_message=data.get("user_input_message"),
                 user_input_schema=data.get("user_input_schema"),
@@ -365,7 +365,7 @@ class Router:
             name=data.get("name"),
             description=data.get("description"),
             allow_multiple_selections=data.get("allow_multiple_selections", False),
-            hitl=hitl,
+            human_review=human_review,
         )
 
     def _prepare_single_step(self, step: Any) -> Any:

@@ -16,7 +16,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.workflow import OnReject
 from agno.workflow.step import Step
-from agno.workflow.types import HITL
+from agno.workflow.types import HumanReview
 from agno.workflow.workflow import Workflow
 
 draft_agent = Agent(
@@ -38,7 +38,7 @@ workflow = Workflow(
         Step(
             name="draft_email",
             agent=draft_agent,
-            hitl=HITL(
+            human_review=HumanReview(
                 requires_output_review=True,
                 output_review_message="Review and optionally edit the email draft",
                 on_reject=OnReject.cancel,
