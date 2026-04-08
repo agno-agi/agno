@@ -6,6 +6,7 @@ Observability examples for tracing and monitoring Agno agents, teams, and workfl
 
 - `agent_ops.py`
 - `arize_phoenix_moving_traces_to_different_projects.py`
+- `asqav_via_openinference.py`
 - `arize_phoenix_via_openinference.py`
 - `arize_phoenix_via_openinference_local.py`
 - `atla_op.py`
