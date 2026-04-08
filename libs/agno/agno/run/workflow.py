@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 from time import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
@@ -667,27 +667,32 @@ class WorkflowRunOutput:
         return [req for req in self.error_requirements if req.needs_decision]
 
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {
-            k: v
-            for k, v in asdict(self).items()
-            if v is not None
-            and k
-            not in [
-                "metadata",
-                "images",
-                "videos",
-                "audio",
-                "files",
-                "response_audio",
-                "step_results",
-                "step_executor_runs",
-                "events",
-                "metrics",
-                "workflow_agent_run",
-                "step_requirements",
-                "error_requirements",
-            ]
+        # Note: we avoid asdict(self) here because it recursively walks ALL dataclass
+        # fields including step_requirements/step_results which may contain deep or
+        # circular references (e.g., StepRequirement.step_output with nested StepOutputs).
+        # Instead, we manually build the dict from field values.
+        _skip_fields = {
+            "metadata",
+            "images",
+            "videos",
+            "audio",
+            "files",
+            "response_audio",
+            "step_results",
+            "step_executor_runs",
+            "events",
+            "metrics",
+            "workflow_agent_run",
+            "step_requirements",
+            "error_requirements",
         }
+        _dict = {}
+        for f in fields(self):
+            if f.name in _skip_fields:
+                continue
+            v = getattr(self, f.name)
+            if v is not None:
+                _dict[f.name] = v
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status

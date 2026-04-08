@@ -419,17 +419,10 @@ class TestStepOutputIterationReview:
     def test_default_no_review(self):
         output = StepOutput(content="test")
         assert output.requires_iteration_review_pause is False
-        assert output.iteration_review_requirement is None
 
     def test_with_review_flag(self):
-        req = StepRequirement(
-            step_id="step-1",
-            requires_output_review=True,
-        )
         output = StepOutput(
             content="iteration result",
             requires_iteration_review_pause=True,
-            iteration_review_requirement=req,
         )
         assert output.requires_iteration_review_pause is True
-        assert output.iteration_review_requirement is req

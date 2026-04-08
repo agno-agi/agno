@@ -1937,22 +1937,29 @@ class Workflow:
                             return workflow_run_response
 
                     # Loop iteration review check
-                    if getattr(step_output, "requires_iteration_review_pause", False):
-                        req = step_output.iteration_review_requirement
-                        if req:
-                            req.step_index = i
-                            pause_result = StepPauseResult(should_pause=True, step_requirement=req)
-                            apply_post_execution_pause_state(
-                                workflow_run_response,
-                                i,
-                                step_name,
-                                collected_step_outputs,
-                                pause_result,
-                                step_output,
-                                previous_step_outputs=previous_step_outputs,
-                            )
-                            save_paused_session(self, session, workflow_run_response)
-                            return workflow_run_response
+                    if getattr(step_output, "requires_iteration_review_pause", False) and isinstance(step, Loop):
+                        # Build the review requirement from the Loop — not stored on StepOutput
+                        # to avoid circular references during serialization (asdict recursion).
+                        last_iter = step_output.steps[-1] if step_output.steps else step_output
+                        iteration_num = len(step_output.steps) - 1 if step_output.steps else 0
+                        req = step.create_iteration_review_requirement(
+                            step_index=i,
+                            iteration=iteration_num,
+                            step_input=step_input,
+                            iteration_output=last_iter,
+                        )
+                        pause_result = StepPauseResult(should_pause=True, step_requirement=req)
+                        apply_post_execution_pause_state(
+                            workflow_run_response,
+                            i,
+                            step_name,
+                            collected_step_outputs,
+                            pause_result,
+                            step_output,
+                            previous_step_outputs=previous_step_outputs,
+                        )
+                        save_paused_session(self, session, workflow_run_response)
+                        return workflow_run_response
 
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
@@ -2332,33 +2339,39 @@ class Workflow:
                         not step_error_occurred
                         and step_output is not None
                         and getattr(step_output, "requires_iteration_review_pause", False)
+                        and isinstance(step, Loop)
                     ):
-                        req = step_output.iteration_review_requirement
-                        if req:
-                            req.step_index = i
-                            pause_result = StepPauseResult(should_pause=True, step_requirement=req)
-                            apply_post_execution_pause_state(
-                                workflow_run_response,
-                                i,
-                                step_name,
-                                collected_step_outputs,
-                                pause_result,
-                                step_output,
-                                previous_step_outputs=previous_step_outputs,
-                            )
-                            review_event = StepOutputReviewEvent(
-                                run_id=workflow_run_response.run_id or "",
-                                workflow_name=workflow_run_response.workflow_name,
-                                workflow_id=workflow_run_response.workflow_id,
-                                session_id=workflow_run_response.session_id,
-                                step_name=step_name,
-                                step_index=i,
-                                step_id=getattr(step, "step_id", None),
-                                output_review_message=getattr(req, "output_review_message", None),
-                            )
-                            yield self._handle_event(review_event, workflow_run_response)
-                            save_paused_session(self, session, workflow_run_response)
-                            return
+                        last_iter = step_output.steps[-1] if step_output.steps else step_output
+                        iteration_num = len(step_output.steps) - 1 if step_output.steps else 0
+                        req = step.create_iteration_review_requirement(
+                            step_index=i,
+                            iteration=iteration_num,
+                            step_input=step_input,
+                            iteration_output=last_iter,
+                        )
+                        pause_result = StepPauseResult(should_pause=True, step_requirement=req)
+                        apply_post_execution_pause_state(
+                            workflow_run_response,
+                            i,
+                            step_name,
+                            collected_step_outputs,
+                            pause_result,
+                            step_output,
+                            previous_step_outputs=previous_step_outputs,
+                        )
+                        review_event = StepOutputReviewEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_name=workflow_run_response.workflow_name,
+                            workflow_id=workflow_run_response.workflow_id,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            step_id=getattr(step, "step_id", None),
+                            output_review_message=getattr(req, "output_review_message", None),
+                        )
+                        yield self._handle_event(review_event, workflow_run_response)
+                        save_paused_session(self, session, workflow_run_response)
+                        return
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -2760,22 +2773,29 @@ class Workflow:
                             return workflow_run_response
 
                     # Loop iteration review check
-                    if getattr(step_output, "requires_iteration_review_pause", False):
-                        req = step_output.iteration_review_requirement
-                        if req:
-                            req.step_index = i
-                            pause_result = StepPauseResult(should_pause=True, step_requirement=req)
-                            apply_post_execution_pause_state(
-                                workflow_run_response,
-                                i,
-                                step_name,
-                                collected_step_outputs,
-                                pause_result,
-                                step_output,
-                                previous_step_outputs=previous_step_outputs,
-                            )
-                            await asave_paused_session(self, workflow_session, workflow_run_response)
-                            return workflow_run_response
+                    if getattr(step_output, "requires_iteration_review_pause", False) and isinstance(step, Loop):
+                        # Build the review requirement from the Loop — not stored on StepOutput
+                        # to avoid circular references during serialization (asdict recursion).
+                        last_iter = step_output.steps[-1] if step_output.steps else step_output
+                        iteration_num = len(step_output.steps) - 1 if step_output.steps else 0
+                        req = step.create_iteration_review_requirement(
+                            step_index=i,
+                            iteration=iteration_num,
+                            step_input=step_input,
+                            iteration_output=last_iter,
+                        )
+                        pause_result = StepPauseResult(should_pause=True, step_requirement=req)
+                        apply_post_execution_pause_state(
+                            workflow_run_response,
+                            i,
+                            step_name,
+                            collected_step_outputs,
+                            pause_result,
+                            step_output,
+                            previous_step_outputs=previous_step_outputs,
+                        )
+                        await asave_paused_session(self, workflow_session, workflow_run_response)
+                        return workflow_run_response
 
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
@@ -3184,35 +3204,41 @@ class Workflow:
                         not step_error_occurred
                         and step_output is not None
                         and getattr(step_output, "requires_iteration_review_pause", False)
+                        and isinstance(step, Loop)
                     ):
-                        req = step_output.iteration_review_requirement
-                        if req:
-                            req.step_index = i
-                            pause_result = StepPauseResult(should_pause=True, step_requirement=req)
-                            apply_post_execution_pause_state(
-                                workflow_run_response,
-                                i,
-                                step_name,
-                                collected_step_outputs,
-                                pause_result,
-                                step_output,
-                                previous_step_outputs=previous_step_outputs,
-                            )
-                            review_event = StepOutputReviewEvent(
-                                run_id=workflow_run_response.run_id or "",
-                                workflow_name=workflow_run_response.workflow_name,
-                                workflow_id=workflow_run_response.workflow_id,
-                                session_id=workflow_run_response.session_id,
-                                step_name=step_name,
-                                step_index=i,
-                                step_id=getattr(step, "step_id", None),
-                                output_review_message=getattr(req, "output_review_message", None),
-                            )
-                            yield self._handle_event(
-                                review_event, workflow_run_response, websocket_handler=websocket_handler
-                            )
-                            await asave_paused_session(self, workflow_session, workflow_run_response)
-                            return
+                        last_iter = step_output.steps[-1] if step_output.steps else step_output
+                        iteration_num = len(step_output.steps) - 1 if step_output.steps else 0
+                        req = step.create_iteration_review_requirement(
+                            step_index=i,
+                            iteration=iteration_num,
+                            step_input=step_input,
+                            iteration_output=last_iter,
+                        )
+                        pause_result = StepPauseResult(should_pause=True, step_requirement=req)
+                        apply_post_execution_pause_state(
+                            workflow_run_response,
+                            i,
+                            step_name,
+                            collected_step_outputs,
+                            pause_result,
+                            step_output,
+                            previous_step_outputs=previous_step_outputs,
+                        )
+                        review_event = StepOutputReviewEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_name=workflow_run_response.workflow_name,
+                            workflow_id=workflow_run_response.workflow_id,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            step_id=getattr(step, "step_id", None),
+                            output_review_message=getattr(req, "output_review_message", None),
+                        )
+                        yield self._handle_event(
+                            review_event, workflow_run_response, websocket_handler=websocket_handler
+                        )
+                        await asave_paused_session(self, workflow_session, workflow_run_response)
+                        return
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -5128,22 +5154,27 @@ class Workflow:
                         return workflow_run_response
 
                 # Loop iteration review check
-                if getattr(step_output, "requires_iteration_review_pause", False):
-                    req = step_output.iteration_review_requirement
-                    if req:
-                        req.step_index = i
-                        pause_result = StepPauseResult(should_pause=True, step_requirement=req)
-                        apply_post_execution_pause_state(
-                            workflow_run_response,
-                            i,
-                            step_name,
-                            collected_step_outputs,
-                            pause_result,
-                            step_output,
-                            previous_step_outputs=previous_step_outputs,
-                        )
-                        save_paused_session(self, session, workflow_run_response)
-                        return workflow_run_response
+                if getattr(step_output, "requires_iteration_review_pause", False) and isinstance(step, Loop):
+                    last_iter = step_output.steps[-1] if step_output.steps else step_output
+                    iteration_num = len(step_output.steps) - 1 if step_output.steps else 0
+                    req = step.create_iteration_review_requirement(
+                        step_index=i,
+                        iteration=iteration_num,
+                        step_input=step_input,
+                        iteration_output=last_iter,
+                    )
+                    pause_result = StepPauseResult(should_pause=True, step_requirement=req)
+                    apply_post_execution_pause_state(
+                        workflow_run_response,
+                        i,
+                        step_name,
+                        collected_step_outputs,
+                        pause_result,
+                        step_output,
+                        previous_step_outputs=previous_step_outputs,
+                    )
+                    save_paused_session(self, session, workflow_run_response)
+                    return workflow_run_response
 
                 previous_step_outputs[step_name] = step_output
                 collected_step_outputs.append(step_output)
@@ -5605,33 +5636,39 @@ class Workflow:
                     not step_error_occurred
                     and step_output is not None
                     and getattr(step_output, "requires_iteration_review_pause", False)
+                    and isinstance(step, Loop)
                 ):
-                    req = step_output.iteration_review_requirement
-                    if req:
-                        req.step_index = i
-                        pause_result = StepPauseResult(should_pause=True, step_requirement=req)
-                        apply_post_execution_pause_state(
-                            workflow_run_response,
-                            i,
-                            step_name,
-                            collected_step_outputs,
-                            pause_result,
-                            step_output,
-                            previous_step_outputs=previous_step_outputs,
-                        )
-                        review_event = StepOutputReviewEvent(
-                            run_id=workflow_run_response.run_id or "",
-                            workflow_name=workflow_run_response.workflow_name,
-                            workflow_id=workflow_run_response.workflow_id,
-                            session_id=workflow_run_response.session_id,
-                            step_name=step_name,
-                            step_index=i,
-                            step_id=getattr(step, "step_id", None),
-                            output_review_message=getattr(req, "output_review_message", None),
-                        )
-                        yield self._handle_event(review_event, workflow_run_response)
-                        save_paused_session(self, session, workflow_run_response)
-                        return
+                    last_iter = step_output.steps[-1] if step_output.steps else step_output
+                    iteration_num = len(step_output.steps) - 1 if step_output.steps else 0
+                    req = step.create_iteration_review_requirement(
+                        step_index=i,
+                        iteration=iteration_num,
+                        step_input=step_input,
+                        iteration_output=last_iter,
+                    )
+                    pause_result = StepPauseResult(should_pause=True, step_requirement=req)
+                    apply_post_execution_pause_state(
+                        workflow_run_response,
+                        i,
+                        step_name,
+                        collected_step_outputs,
+                        pause_result,
+                        step_output,
+                        previous_step_outputs=previous_step_outputs,
+                    )
+                    review_event = StepOutputReviewEvent(
+                        run_id=workflow_run_response.run_id or "",
+                        workflow_name=workflow_run_response.workflow_name,
+                        workflow_id=workflow_run_response.workflow_id,
+                        session_id=workflow_run_response.session_id,
+                        step_name=step_name,
+                        step_index=i,
+                        step_id=getattr(step, "step_id", None),
+                        output_review_message=getattr(req, "output_review_message", None),
+                    )
+                    yield self._handle_event(review_event, workflow_run_response)
+                    save_paused_session(self, session, workflow_run_response)
+                    return
 
                 if early_termination:
                     break
@@ -6278,22 +6315,27 @@ class Workflow:
                         return workflow_run_response
 
                 # Loop iteration review check
-                if getattr(step_output, "requires_iteration_review_pause", False):
-                    req = step_output.iteration_review_requirement
-                    if req:
-                        req.step_index = i
-                        pause_result = StepPauseResult(should_pause=True, step_requirement=req)
-                        apply_post_execution_pause_state(
-                            workflow_run_response,
-                            i,
-                            step_name,
-                            collected_step_outputs,
-                            pause_result,
-                            step_output,
-                            previous_step_outputs=previous_step_outputs,
-                        )
-                        await asave_paused_session(self, session, workflow_run_response)
-                        return workflow_run_response
+                if getattr(step_output, "requires_iteration_review_pause", False) and isinstance(step, Loop):
+                    last_iter = step_output.steps[-1] if step_output.steps else step_output
+                    iteration_num = len(step_output.steps) - 1 if step_output.steps else 0
+                    req = step.create_iteration_review_requirement(
+                        step_index=i,
+                        iteration=iteration_num,
+                        step_input=step_input,
+                        iteration_output=last_iter,
+                    )
+                    pause_result = StepPauseResult(should_pause=True, step_requirement=req)
+                    apply_post_execution_pause_state(
+                        workflow_run_response,
+                        i,
+                        step_name,
+                        collected_step_outputs,
+                        pause_result,
+                        step_output,
+                        previous_step_outputs=previous_step_outputs,
+                    )
+                    await asave_paused_session(self, session, workflow_run_response)
+                    return workflow_run_response
 
                 previous_step_outputs[step_name] = step_output
                 collected_step_outputs.append(step_output)
@@ -6757,33 +6799,39 @@ class Workflow:
                     not step_error_occurred
                     and step_output is not None
                     and getattr(step_output, "requires_iteration_review_pause", False)
+                    and isinstance(step, Loop)
                 ):
-                    req = step_output.iteration_review_requirement
-                    if req:
-                        req.step_index = i
-                        pause_result = StepPauseResult(should_pause=True, step_requirement=req)
-                        apply_post_execution_pause_state(
-                            workflow_run_response,
-                            i,
-                            step_name,
-                            collected_step_outputs,
-                            pause_result,
-                            step_output,
-                            previous_step_outputs=previous_step_outputs,
-                        )
-                        review_event = StepOutputReviewEvent(
-                            run_id=workflow_run_response.run_id or "",
-                            workflow_name=workflow_run_response.workflow_name,
-                            workflow_id=workflow_run_response.workflow_id,
-                            session_id=workflow_run_response.session_id,
-                            step_name=step_name,
-                            step_index=i,
-                            step_id=getattr(step, "step_id", None),
-                            output_review_message=getattr(req, "output_review_message", None),
-                        )
-                        yield self._handle_event(review_event, workflow_run_response)
-                        await asave_paused_session(self, session, workflow_run_response)
-                        return
+                    last_iter = step_output.steps[-1] if step_output.steps else step_output
+                    iteration_num = len(step_output.steps) - 1 if step_output.steps else 0
+                    req = step.create_iteration_review_requirement(
+                        step_index=i,
+                        iteration=iteration_num,
+                        step_input=step_input,
+                        iteration_output=last_iter,
+                    )
+                    pause_result = StepPauseResult(should_pause=True, step_requirement=req)
+                    apply_post_execution_pause_state(
+                        workflow_run_response,
+                        i,
+                        step_name,
+                        collected_step_outputs,
+                        pause_result,
+                        step_output,
+                        previous_step_outputs=previous_step_outputs,
+                    )
+                    review_event = StepOutputReviewEvent(
+                        run_id=workflow_run_response.run_id or "",
+                        workflow_name=workflow_run_response.workflow_name,
+                        workflow_id=workflow_run_response.workflow_id,
+                        session_id=workflow_run_response.session_id,
+                        step_name=step_name,
+                        step_index=i,
+                        step_id=getattr(step, "step_id", None),
+                        output_review_message=getattr(req, "output_review_message", None),
+                    )
+                    yield self._handle_event(review_event, workflow_run_response)
+                    await asave_paused_session(self, session, workflow_run_response)
+                    return
 
                 if early_termination:
                     break

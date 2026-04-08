@@ -379,9 +379,10 @@ class StepOutput:
 
     steps: Optional[List["StepOutput"]] = None
 
-    # Loop iteration review: signals the workflow to pause for per-iteration review
+    # Loop iteration review: signals the workflow to pause for per-iteration review.
+    # This is a transient flag — NOT serialized. It is cleared after the workflow
+    # processes it.
     requires_iteration_review_pause: bool = False
-    iteration_review_requirement: Optional["StepRequirement"] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""

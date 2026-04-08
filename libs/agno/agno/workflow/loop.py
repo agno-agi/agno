@@ -499,12 +499,6 @@ class Loop:
                         success=True,
                         steps=flattened_so_far,
                         requires_iteration_review_pause=True,
-                        iteration_review_requirement=self.create_iteration_review_requirement(
-                            step_index=0,  # Will be overridden by workflow
-                            iteration=iteration - 1,
-                            step_input=step_input,
-                            iteration_output=last_iter_output,
-                        ),
                     )
 
             # Carry forward output to next iteration
@@ -712,12 +706,6 @@ class Loop:
                         success=True,
                         steps=flattened_so_far,
                         requires_iteration_review_pause=True,
-                        iteration_review_requirement=self.create_iteration_review_requirement(
-                            step_index=step_index if isinstance(step_index, int) else 0,
-                            iteration=iteration - 1,
-                            step_input=step_input,
-                            iteration_output=last_iter_output,
-                        ),
                     )
                     yield review_output
                     return
@@ -1079,12 +1067,6 @@ class Loop:
                         success=True,
                         steps=flattened_so_far,
                         requires_iteration_review_pause=True,
-                        iteration_review_requirement=self.create_iteration_review_requirement(
-                            step_index=step_index if isinstance(step_index, int) else 0,
-                            iteration=iteration - 1,
-                            step_input=step_input,
-                            iteration_output=last_iter_output,
-                        ),
                     )
                     yield review_output
                     return

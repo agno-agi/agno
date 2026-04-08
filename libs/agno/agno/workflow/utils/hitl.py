@@ -314,6 +314,10 @@ def apply_post_execution_pause_state(
         step_output: The output from the executed step.
         previous_step_outputs: Dict of step name -> output (updated if provided).
     """
+    # Clear transient loop iteration review flag before storing.
+    if getattr(step_output, "requires_iteration_review_pause", False):
+        step_output.requires_iteration_review_pause = False
+
     # Store the output before pausing so it survives the pause/resume cycle
     if previous_step_outputs is not None and step_name:
         previous_step_outputs[step_name] = step_output
