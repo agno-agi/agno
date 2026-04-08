@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextvars
 import inspect
 from copy import deepcopy
 from dataclasses import dataclass
@@ -45,6 +46,12 @@ from agno.workflow.types import (
 
 if TYPE_CHECKING:
     from agno.workflow.workflow import Workflow
+
+# Maximum nesting depth for nested workflow execution to prevent circular references or stack overflow.
+_MAX_NESTED_WORKFLOW_DEPTH = 10
+# Use ContextVar instead of threading.local so depth is isolated per coroutine/task,
+# not per thread. This prevents concurrent async workflows from interfering with each other.
+_nested_workflow_depth: contextvars.ContextVar[int] = contextvars.ContextVar("_nested_workflow_depth", default=0)
 
 StepExecutor = Callable[
     [StepInput],
@@ -602,7 +609,9 @@ class Step:
             step_input.workflow_session = workflow_session
 
         # Create session_state copy once to avoid duplication.
-        # Consider both run_context.session_state and session_state.
+        # run_context.session_state is shared intentionally across steps in the same workflow,
+        # so we use a direct reference. The session_state parameter (used for nested workflows)
+        # is deepcopied to prevent cross-workflow mutation.
         if run_context is not None and run_context.session_state is not None:
             session_state_copy = run_context.session_state
         else:
@@ -899,7 +908,9 @@ class Step:
             step_input.workflow_session = workflow_session
 
         # Create session_state copy once to avoid duplication.
-        # Consider both run_context.session_state and session_state.
+        # run_context.session_state is shared intentionally across steps in the same workflow,
+        # so we use a direct reference. The session_state parameter (used for nested workflows)
+        # is deepcopied to prevent cross-workflow mutation.
         if run_context is not None and run_context.session_state is not None:
             session_state_copy = run_context.session_state
         else:
@@ -1200,7 +1211,9 @@ class Step:
             step_input.workflow_session = workflow_session
 
         # Create session_state copy once to avoid duplication.
-        # Consider both run_context.session_state and session_state.
+        # run_context.session_state is shared intentionally across steps in the same workflow,
+        # so we use a direct reference. The session_state parameter (used for nested workflows)
+        # is deepcopied to prevent cross-workflow mutation.
         if run_context is not None and run_context.session_state is not None:
             session_state_copy = run_context.session_state
         else:
@@ -1465,7 +1478,9 @@ class Step:
             step_input.workflow_session = workflow_session
 
         # Create session_state copy once to avoid duplication.
-        # Consider both run_context.session_state and session_state.
+        # run_context.session_state is shared intentionally across steps in the same workflow,
+        # so we use a direct reference. The session_state parameter (used for nested workflows)
+        # is deepcopied to prevent cross-workflow mutation.
         if run_context is not None and run_context.session_state is not None:
             session_state_copy = run_context.session_state
         else:
@@ -1860,7 +1875,9 @@ class Step:
         return []
 
     def _store_executor_response(
-        self, workflow_run_response: "WorkflowRunOutput", executor_run_response: Union[RunOutput, TeamRunOutput]
+        self,
+        workflow_run_response: "WorkflowRunOutput",
+        executor_run_response: Optional[Union[RunOutput, TeamRunOutput]],
     ) -> None:
         """Store agent/team responses in step_executor_runs if enabled"""
         if executor_run_response is None:
@@ -2065,6 +2082,44 @@ class Step:
         if not isinstance(self.workflow, Workflow):
             raise ValueError("Workflow executor is not a Workflow instance")
 
+        # Guard against circular or excessively deep nesting
+        current_depth = _nested_workflow_depth.get()
+        if current_depth >= _MAX_NESTED_WORKFLOW_DEPTH:
+            raise ValueError(
+                f"Step '{self.name}': Maximum nested workflow depth ({_MAX_NESTED_WORKFLOW_DEPTH}) exceeded. "
+                "This may indicate circular workflow nesting."
+            )
+        _nested_workflow_depth.set(current_depth + 1)
+
+        try:
+            return self._execute_nested_workflow_inner(
+                step_input=step_input,
+                session_id=session_id,
+                user_id=user_id,
+                workflow_run_response=workflow_run_response,
+                session_state=session_state,
+                store_executor_outputs=store_executor_outputs,
+                background_tasks=background_tasks,
+            )
+        finally:
+            _nested_workflow_depth.set(current_depth)
+
+    def _execute_nested_workflow_inner(
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        store_executor_outputs: bool = True,
+        background_tasks: Optional[Any] = None,
+    ) -> StepOutput:
+        """Inner implementation of sync non-streaming nested workflow execution"""
+        from agno.workflow.workflow import Workflow
+
+        if not isinstance(self.workflow, Workflow):
+            raise ValueError("Workflow executor is not a Workflow instance")
+
         # Prepare the input message
         message = self._prepare_message(step_input.input, step_input.previous_step_outputs)
 
@@ -2134,6 +2189,46 @@ class Step:
         background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute a nested workflow as a step with streaming"""
+        from agno.workflow.workflow import Workflow
+
+        if not isinstance(self.workflow, Workflow):
+            raise ValueError("Workflow executor is not a Workflow instance")
+
+        # Guard against circular or excessively deep nesting
+        current_depth = _nested_workflow_depth.get()
+        if current_depth >= _MAX_NESTED_WORKFLOW_DEPTH:
+            raise ValueError(
+                f"Step '{self.name}': Maximum nested workflow depth ({_MAX_NESTED_WORKFLOW_DEPTH}) exceeded. "
+                "This may indicate circular workflow nesting."
+            )
+        _nested_workflow_depth.set(current_depth + 1)
+
+        try:
+            yield from self._execute_nested_workflow_stream_inner(
+                step_input=step_input,
+                session_id=session_id,
+                user_id=user_id,
+                workflow_run_response=workflow_run_response,
+                session_state=session_state,
+                store_executor_outputs=store_executor_outputs,
+                stream_events=stream_events,
+                background_tasks=background_tasks,
+            )
+        finally:
+            _nested_workflow_depth.set(current_depth)
+
+    def _execute_nested_workflow_stream_inner(
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        store_executor_outputs: bool = True,
+        stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
+    ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
+        """Inner implementation of sync streaming nested workflow execution"""
         from agno.run.workflow import WorkflowCompletedEvent
         from agno.workflow.workflow import Workflow
 
@@ -2176,8 +2271,14 @@ class Step:
             if session and session.runs:
                 nested_run_output = session.runs[-1]
 
+        if nested_run_output is None:
+            log_warning(
+                f"Step '{self.name}': Nested workflow '{self.workflow.name}' did not produce a run output. "
+                "The workflow may have failed before completion."
+            )
+
         # Warn if the nested workflow paused (e.g., due to HITL on an inner step)
-        if nested_run_output and nested_run_output.is_paused:
+        if nested_run_output is not None and nested_run_output.is_paused:
             logger.warning(
                 f"Step '{self.name}': Nested workflow '{self.workflow.name}' is paused "
                 "(likely due to HITL on an inner step). The parent workflow will continue "
@@ -2198,7 +2299,7 @@ class Step:
 
         # Get nested steps from the nested_run_output or from the completed event
         nested_steps: Optional[List[StepOutput]] = None
-        if nested_run_output and nested_run_output.step_results:
+        if nested_run_output is not None and nested_run_output.step_results:
             nested_steps = self._convert_workflow_step_results_to_step_outputs(nested_run_output.step_results)
         elif completed_event and completed_event.step_results:
             nested_steps = self._convert_workflow_step_results_to_step_outputs(completed_event.step_results)
@@ -2211,12 +2312,16 @@ class Step:
             executor_type="workflow",
             executor_name=self.workflow.name,
             content=nested_run_output.content
-            if nested_run_output
+            if nested_run_output is not None
             else (completed_event.content if completed_event else None),
-            step_run_id=nested_run_output.run_id if nested_run_output else None,
-            metrics=self._aggregate_workflow_metrics(nested_run_output.metrics) if nested_run_output else None,
-            success=nested_run_output.status != RunStatus.error if nested_run_output else True,
-            error=nested_run_output.error if nested_run_output and hasattr(nested_run_output, "error") else None,
+            step_run_id=nested_run_output.run_id if nested_run_output is not None else None,
+            metrics=self._aggregate_workflow_metrics(nested_run_output.metrics)
+            if nested_run_output is not None
+            else None,
+            success=nested_run_output.status != RunStatus.error if nested_run_output is not None else False,
+            error=nested_run_output.error
+            if nested_run_output is not None and hasattr(nested_run_output, "error")
+            else None,
             steps=nested_steps if nested_steps else None,
         )
 
@@ -2231,6 +2336,44 @@ class Step:
         background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute a nested workflow as a step asynchronously (non-streaming)"""
+        from agno.workflow.workflow import Workflow
+
+        if not isinstance(self.workflow, Workflow):
+            raise ValueError("Workflow executor is not a Workflow instance")
+
+        # Guard against circular or excessively deep nesting
+        current_depth = _nested_workflow_depth.get()
+        if current_depth >= _MAX_NESTED_WORKFLOW_DEPTH:
+            raise ValueError(
+                f"Step '{self.name}': Maximum nested workflow depth ({_MAX_NESTED_WORKFLOW_DEPTH}) exceeded. "
+                "This may indicate circular workflow nesting."
+            )
+        _nested_workflow_depth.set(current_depth + 1)
+
+        try:
+            return await self._aexecute_nested_workflow_inner(
+                step_input=step_input,
+                session_id=session_id,
+                user_id=user_id,
+                workflow_run_response=workflow_run_response,
+                session_state=session_state,
+                store_executor_outputs=store_executor_outputs,
+                background_tasks=background_tasks,
+            )
+        finally:
+            _nested_workflow_depth.set(current_depth)
+
+    async def _aexecute_nested_workflow_inner(
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        store_executor_outputs: bool = True,
+        background_tasks: Optional[Any] = None,
+    ) -> StepOutput:
+        """Inner implementation of async non-streaming nested workflow execution"""
         from agno.workflow.workflow import Workflow
 
         if not isinstance(self.workflow, Workflow):
@@ -2305,6 +2448,47 @@ class Step:
         background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute a nested workflow as a step with async streaming"""
+        from agno.workflow.workflow import Workflow
+
+        if not isinstance(self.workflow, Workflow):
+            raise ValueError("Workflow executor is not a Workflow instance")
+
+        # Guard against circular or excessively deep nesting
+        current_depth = _nested_workflow_depth.get()
+        if current_depth >= _MAX_NESTED_WORKFLOW_DEPTH:
+            raise ValueError(
+                f"Step '{self.name}': Maximum nested workflow depth ({_MAX_NESTED_WORKFLOW_DEPTH}) exceeded. "
+                "This may indicate circular workflow nesting."
+            )
+        _nested_workflow_depth.set(current_depth + 1)
+
+        try:
+            async for event in self._aexecute_nested_workflow_stream_inner(
+                step_input=step_input,
+                session_id=session_id,
+                user_id=user_id,
+                workflow_run_response=workflow_run_response,
+                session_state=session_state,
+                store_executor_outputs=store_executor_outputs,
+                stream_events=stream_events,
+                background_tasks=background_tasks,
+            ):
+                yield event
+        finally:
+            _nested_workflow_depth.set(current_depth)
+
+    async def _aexecute_nested_workflow_stream_inner(
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        store_executor_outputs: bool = True,
+        stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
+    ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
+        """Inner implementation of async streaming nested workflow execution"""
         from agno.run.workflow import WorkflowCompletedEvent
         from agno.workflow.workflow import Workflow
 
@@ -2347,8 +2531,14 @@ class Step:
             if session and session.runs:
                 nested_run_output = session.runs[-1]
 
+        if nested_run_output is None:
+            log_warning(
+                f"Step '{self.name}': Nested workflow '{self.workflow.name}' did not produce a run output. "
+                "The workflow may have failed before completion."
+            )
+
         # Warn if the nested workflow paused (e.g., due to HITL on an inner step)
-        if nested_run_output and nested_run_output.is_paused:
+        if nested_run_output is not None and nested_run_output.is_paused:
             logger.warning(
                 f"Step '{self.name}': Nested workflow '{self.workflow.name}' is paused "
                 "(likely due to HITL on an inner step). The parent workflow will continue "
@@ -2369,7 +2559,7 @@ class Step:
 
         # Get nested steps from the nested_run_output or from the completed event
         nested_steps: Optional[List[StepOutput]] = None
-        if nested_run_output and nested_run_output.step_results:
+        if nested_run_output is not None and nested_run_output.step_results:
             nested_steps = self._convert_workflow_step_results_to_step_outputs(nested_run_output.step_results)
         elif completed_event and completed_event.step_results:
             nested_steps = self._convert_workflow_step_results_to_step_outputs(completed_event.step_results)
@@ -2382,12 +2572,16 @@ class Step:
             executor_type="workflow",
             executor_name=self.workflow.name,
             content=nested_run_output.content
-            if nested_run_output
+            if nested_run_output is not None
             else (completed_event.content if completed_event else None),
-            step_run_id=nested_run_output.run_id if nested_run_output else None,
-            metrics=self._aggregate_workflow_metrics(nested_run_output.metrics) if nested_run_output else None,
-            success=nested_run_output.status != RunStatus.error if nested_run_output else True,
-            error=nested_run_output.error if nested_run_output and hasattr(nested_run_output, "error") else None,
+            step_run_id=nested_run_output.run_id if nested_run_output is not None else None,
+            metrics=self._aggregate_workflow_metrics(nested_run_output.metrics)
+            if nested_run_output is not None
+            else None,
+            success=nested_run_output.status != RunStatus.error if nested_run_output is not None else False,
+            error=nested_run_output.error
+            if nested_run_output is not None and hasattr(nested_run_output, "error")
+            else None,
             steps=nested_steps if nested_steps else None,
         )
 
