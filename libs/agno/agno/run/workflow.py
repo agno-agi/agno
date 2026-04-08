@@ -45,6 +45,7 @@ class WorkflowRunEvent(str, Enum):
     step_started = "StepStarted"
     step_completed = "StepCompleted"
     step_paused = "StepPaused"
+    step_output_review = "StepOutputReview"
     step_error = "StepError"
 
     loop_execution_started = "LoopExecutionStarted"
@@ -239,6 +240,20 @@ class StepPausedEvent(BaseWorkflowRunOutputEvent):
     # User input fields
     requires_user_input: bool = False
     user_input_message: Optional[str] = None
+
+
+@dataclass
+class StepOutputReviewEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when step output requires human review before continuing."""
+
+    event: str = WorkflowRunEvent.step_output_review.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    step_id: Optional[str] = None
+
+    # Output review fields
+    output_review_message: Optional[str] = None
+    requires_output_review: bool = True
 
 
 @dataclass
@@ -476,6 +491,7 @@ WorkflowRunOutputEvent = Union[
     StepStartedEvent,
     StepCompletedEvent,
     StepPausedEvent,
+    StepOutputReviewEvent,
     StepErrorEvent,
     LoopExecutionStartedEvent,
     LoopIterationStartedEvent,
@@ -614,6 +630,13 @@ class WorkflowRunOutput:
         if not self.step_requirements:
             return []
         return [req for req in self.step_requirements if req.needs_confirmation]
+
+    @property
+    def steps_requiring_output_review(self) -> List["StepRequirement"]:
+        """Get step requirements that need output review"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if req.needs_output_review]
 
     @property
     def steps_requiring_user_input(self) -> List["StepRequirement"]:

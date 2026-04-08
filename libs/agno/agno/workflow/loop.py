@@ -83,6 +83,11 @@ class Loop:
     confirmation_message: Optional[str] = None
     on_reject: Union[OnReject, str] = OnReject.skip
 
+    # HITL configuration - per-iteration review
+    # If True, the loop will pause after each iteration for human review
+    requires_iteration_review: bool = False
+    iteration_review_message: Optional[str] = None
+
     def __init__(
         self,
         steps: WorkflowSteps,
@@ -94,6 +99,8 @@ class Loop:
         requires_confirmation: bool = False,
         confirmation_message: Optional[str] = None,
         on_reject: Union[OnReject, str] = OnReject.skip,
+        requires_iteration_review: bool = False,
+        iteration_review_message: Optional[str] = None,
     ):
         self.steps = steps
         self.name = name
@@ -104,6 +111,8 @@ class Loop:
         self.requires_confirmation = requires_confirmation
         self.confirmation_message = confirmation_message
         self.on_reject = on_reject
+        self.requires_iteration_review = requires_iteration_review
+        self.iteration_review_message = iteration_review_message
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -132,6 +141,8 @@ class Loop:
         result["requires_confirmation"] = self.requires_confirmation
         result["confirmation_message"] = self.confirmation_message
         result["on_reject"] = str(self.on_reject)
+        result["requires_iteration_review"] = self.requires_iteration_review
+        result["iteration_review_message"] = self.iteration_review_message
 
         return result
 
@@ -161,6 +172,43 @@ class Loop:
             on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
             requires_user_input=False,
             step_input=step_input,
+        )
+
+    def create_iteration_review_requirement(
+        self,
+        step_index: int,
+        iteration: int,
+        step_input: StepInput,
+        iteration_output: StepOutput,
+    ) -> StepRequirement:
+        """Create a StepRequirement for per-iteration review.
+
+        Args:
+            step_index: Index of the loop in the workflow.
+            iteration: The iteration number that just completed (0-based).
+            step_input: The input used for the iteration.
+            iteration_output: The output from the completed iteration.
+
+        Returns:
+            StepRequirement configured for iteration review.
+        """
+        message = self.iteration_review_message or (
+            f"Loop '{self.name or 'loop'}' completed iteration {iteration + 1}/{self.max_iterations}. Continue?"
+        )
+
+        return StepRequirement(
+            step_id=str(uuid4()),
+            step_name=self.name or f"loop_{step_index + 1}",
+            step_index=step_index,
+            step_type="Loop",
+            requires_output_review=True,
+            output_review_message=message,
+            requires_confirmation=True,
+            confirmation_message=message,
+            on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
+            step_input=step_input,
+            step_output=iteration_output,
+            is_post_execution=True,
         )
 
     @classmethod
@@ -219,6 +267,8 @@ class Loop:
             requires_confirmation=data.get("requires_confirmation", False),
             confirmation_message=data.get("confirmation_message"),
             on_reject=data.get("on_reject", OnReject.skip),
+            requires_iteration_review=data.get("requires_iteration_review", False),
+            iteration_review_message=data.get("iteration_review_message"),
         )
 
     def _evaluate_end_condition(self, iteration_results: List[StepOutput], current_iteration: int = 0) -> bool:
@@ -432,6 +482,31 @@ class Loop:
                 log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
                 break
 
+            # Per-iteration review: pause for human review before continuing
+            if self.requires_iteration_review and iteration < self.max_iterations:
+                # Build the last iteration output for review
+                last_iter_output = iteration_results[-1] if iteration_results else None
+                if last_iter_output:
+                    flattened_so_far = []
+                    for iter_results in all_results:
+                        flattened_so_far.extend(iter_results)
+
+                    return StepOutput(
+                        step_name=self.name,
+                        step_id=str(uuid4()),
+                        step_type=StepType.LOOP,
+                        content=f"Loop {self.name} completed iteration {iteration}/{self.max_iterations}",
+                        success=True,
+                        steps=flattened_so_far,
+                        requires_iteration_review_pause=True,
+                        iteration_review_requirement=self.create_iteration_review_requirement(
+                            step_index=0,  # Will be overridden by workflow
+                            iteration=iteration - 1,
+                            step_input=step_input,
+                            iteration_output=last_iter_output,
+                        ),
+                    )
+
             # Carry forward output to next iteration
             if self.forward_iteration_output:
                 step_input = current_step_input
@@ -621,6 +696,32 @@ class Loop:
                 log_debug(f"Loop ending early at iteration {iteration}")
                 break
 
+            # Per-iteration review: pause for human review before continuing
+            if self.requires_iteration_review and iteration < self.max_iterations:
+                last_iter_output = iteration_results[-1] if iteration_results else None
+                if last_iter_output:
+                    flattened_so_far = []
+                    for iter_results in all_results:
+                        flattened_so_far.extend(iter_results)
+
+                    review_output = StepOutput(
+                        step_name=self.name,
+                        step_id=str(uuid4()),
+                        step_type=StepType.LOOP,
+                        content=f"Loop {self.name} completed iteration {iteration}/{self.max_iterations}",
+                        success=True,
+                        steps=flattened_so_far,
+                        requires_iteration_review_pause=True,
+                        iteration_review_requirement=self.create_iteration_review_requirement(
+                            step_index=step_index if isinstance(step_index, int) else 0,
+                            iteration=iteration - 1,
+                            step_input=step_input,
+                            iteration_output=last_iter_output,
+                        ),
+                    )
+                    yield review_output
+                    return
+
             # Carry forward output to next iteration
             if self.forward_iteration_output:
                 step_input = current_step_input
@@ -748,6 +849,30 @@ class Loop:
             if early_termination:
                 log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
                 break
+
+            # Per-iteration review: pause for human review before continuing (async)
+            if self.requires_iteration_review and iteration < self.max_iterations:
+                last_iter_output = iteration_results[-1] if iteration_results else None
+                if last_iter_output:
+                    flattened_so_far = []
+                    for iter_results in all_results:
+                        flattened_so_far.extend(iter_results)
+
+                    return StepOutput(
+                        step_name=self.name,
+                        step_id=str(uuid4()),
+                        step_type=StepType.LOOP,
+                        content=f"Loop {self.name} completed iteration {iteration}/{self.max_iterations}",
+                        success=True,
+                        steps=flattened_so_far,
+                        requires_iteration_review_pause=True,
+                        iteration_review_requirement=self.create_iteration_review_requirement(
+                            step_index=0,
+                            iteration=iteration - 1,
+                            step_input=step_input,
+                            iteration_output=last_iter_output,
+                        ),
+                    )
 
             # Carry forward output to next iteration
             if self.forward_iteration_output:
@@ -937,6 +1062,32 @@ class Loop:
             if not should_continue:
                 log_debug(f"Loop ending early at iteration {iteration}")
                 break
+
+            # Per-iteration review: pause for human review before continuing
+            if self.requires_iteration_review and iteration < self.max_iterations:
+                last_iter_output = iteration_results[-1] if iteration_results else None
+                if last_iter_output:
+                    flattened_so_far = []
+                    for iter_results in all_results:
+                        flattened_so_far.extend(iter_results)
+
+                    review_output = StepOutput(
+                        step_name=self.name,
+                        step_id=str(uuid4()),
+                        step_type=StepType.LOOP,
+                        content=f"Loop {self.name} completed iteration {iteration}/{self.max_iterations}",
+                        success=True,
+                        steps=flattened_so_far,
+                        requires_iteration_review_pause=True,
+                        iteration_review_requirement=self.create_iteration_review_requirement(
+                            step_index=step_index if isinstance(step_index, int) else 0,
+                            iteration=iteration - 1,
+                            step_input=step_input,
+                            iteration_output=last_iter_output,
+                        ),
+                    )
+                    yield review_output
+                    return
 
             # Carry forward output to next iteration
             if self.forward_iteration_output:
