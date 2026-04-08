@@ -4,6 +4,7 @@ import contextvars
 import inspect
 from copy import deepcopy
 from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
 from uuid import uuid4
 
