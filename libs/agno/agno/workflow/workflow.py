@@ -1473,11 +1473,6 @@ class Workflow:
         if isinstance(event, (RunOutput, TeamRunOutput)):
             return event
 
-        # Set source_workflow_id/name if not already set (first workflow to touch the event is the source)
-        if hasattr(event, "source_workflow_id") and event.source_workflow_id is None:
-            event.source_workflow_id = workflow_run_response.workflow_id
-        if hasattr(event, "source_workflow_name") and event.source_workflow_name is None:
-            event.source_workflow_name = workflow_run_response.workflow_name
         if self.store_events:
             # Check if this event type should be skipped
             if self.events_to_skip:
@@ -1577,23 +1572,31 @@ class Workflow:
         step_id = getattr(step, "step_id", None) if step else None
         step_name = getattr(step, "name", None) if step else None
 
-        # Preserve source_workflow_id/source_workflow_name: set once by the originating workflow,
-        # never overwritten by outer workflows during nested workflow enrichment.
-        if hasattr(event, "source_workflow_id") and event.source_workflow_id is None:
-            event.source_workflow_id = workflow_run_response.workflow_id
-        if hasattr(event, "source_workflow_name") and event.source_workflow_name is None:
-            event.source_workflow_name = workflow_run_response.workflow_name
-        # Increment nested_depth each time an outer workflow enriches a nested event
-        if hasattr(event, "nested_depth") and hasattr(event, "source_workflow_id"):
-            if event.source_workflow_id is not None and event.source_workflow_id != workflow_run_response.workflow_id:
-                event.nested_depth = getattr(event, "nested_depth", 0) + 1
+        # Detect nested events: if the event's workflow_id differs from the current workflow,
+        # it originated from an inner workflow and should preserve its identity.
+        is_nested_event = (
+            hasattr(event, "workflow_id")
+            and event.workflow_id is not None
+            and event.workflow_id != workflow_run_response.workflow_id
+        )
 
-        if hasattr(event, "workflow_id"):
-            event.workflow_id = workflow_run_response.workflow_id
-        if hasattr(event, "workflow_name"):
-            event.workflow_name = workflow_run_response.workflow_name
-        if hasattr(event, "workflow_run_id"):
-            event.workflow_run_id = workflow_run_response.run_id
+        # Increment nested_depth each time an outer workflow enriches a nested event
+        if is_nested_event and hasattr(event, "nested_depth"):
+            event.nested_depth = getattr(event, "nested_depth", 0) + 1
+
+        if not is_nested_event:
+            # Outer event: set workflow identity to current workflow
+            if hasattr(event, "workflow_id"):
+                event.workflow_id = workflow_run_response.workflow_id
+            if hasattr(event, "workflow_name"):
+                event.workflow_name = workflow_run_response.workflow_name
+            if hasattr(event, "workflow_run_id"):
+                event.workflow_run_id = workflow_run_response.run_id
+        else:
+            # Nested event: preserve original workflow_id/name, but update workflow_run_id
+            # for tracking which parent run processed the event
+            if hasattr(event, "workflow_run_id"):
+                event.workflow_run_id = workflow_run_response.run_id
         # Set session_id to match workflow's session_id for consistent event tracking
         if hasattr(event, "session_id") and workflow_run_response.session_id:
             event.session_id = workflow_run_response.session_id
@@ -6912,7 +6915,11 @@ class Workflow:
             step_dict = {
                 "name": step.name if hasattr(step, "name") else f"unnamed_{type(step).__name__.lower()}",
                 "description": step.description if hasattr(step, "description") else "User-defined callable step",
-                "type": (StepType.WORKFLOW if isinstance(step, Workflow) else STEP_TYPE_MAPPING.get(type(step), StepType.STEP)).value,
+                "type": (
+                    StepType.WORKFLOW
+                    if isinstance(step, Workflow)
+                    else STEP_TYPE_MAPPING.get(type(step), StepType.STEP)
+                ).value,
             }
 
             # Handle agent/team/tools

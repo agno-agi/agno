@@ -239,6 +239,12 @@ def test_nested_workflow_with_loop_inside(shared_db):
 
     assert response.status.value == "COMPLETED"
     assert len(response.step_results) == 2
+    # Nested step should be a workflow type with loop output
+    assert response.step_results[0].step_type == StepType.WORKFLOW
+    assert response.step_results[0].executor_type == "workflow"
+    assert "looped" in response.step_results[0].content
+    # After step should chain from nested output
+    assert "StepB:" in response.step_results[1].content
 
 
 def test_nested_workflow_with_parallel_inside(shared_db):
@@ -267,6 +273,14 @@ def test_nested_workflow_with_parallel_inside(shared_db):
 
     assert response.status.value == "COMPLETED"
     assert len(response.step_results) == 2
+    nested = response.step_results[0]
+    assert nested.step_type == StepType.WORKFLOW
+    assert nested.executor_type == "workflow"
+    # Parallel output should contain results from both branches
+    assert nested.content is not None
+    assert nested.steps is not None
+    # After step should receive content from nested
+    assert "StepB:" in response.step_results[1].content
 
 
 def test_nested_workflow_with_router_inside(shared_db):
@@ -298,6 +312,12 @@ def test_nested_workflow_with_router_inside(shared_db):
 
     assert response.status.value == "COMPLETED"
     assert len(response.step_results) == 2
+    nested = response.step_results[0]
+    assert nested.step_type == StepType.WORKFLOW
+    assert nested.executor_type == "workflow"
+    # Router should have selected route_a (our selector always returns route_a)
+    assert "StepA:" in nested.content
+    assert "StepB:" in response.step_results[1].content
 
 
 # ============================================================================
@@ -328,6 +348,11 @@ def test_workflow_as_condition_step(shared_db):
     response = outer.run(input="test")
 
     assert response.status.value == "COMPLETED"
+    assert len(response.step_results) >= 2
+    # The condition's nested workflow should have produced content with StepA
+    assert "StepA:" in response.content or any("StepA:" in str(sr.content) for sr in response.step_results)
+    # After step should have run
+    assert any("StepB:" in str(sr.content) for sr in response.step_results)
 
 
 def test_workflow_as_loop_step(shared_db):
@@ -354,18 +379,35 @@ def test_workflow_as_loop_step(shared_db):
     response = outer.run(input="test")
 
     assert response.status.value == "COMPLETED"
+    assert len(response.step_results) >= 2
+    # After step should have received output from the loop
+    assert any("StepB:" in str(sr.content) for sr in response.step_results)
 
 
 def test_workflow_as_parallel_step(shared_db):
-    """Test using a workflow inside a Parallel step."""
+    """Test using two workflows inside a Parallel step, verifying both execute."""
+
+    def set_key_a(step_input: StepInput, session_state: dict) -> StepOutput:
+        session_state["key_a"] = "value_a"
+        return StepOutput(content="from_A")
+
+    def set_key_b(step_input: StepInput, session_state: dict) -> StepOutput:
+        session_state["key_b"] = "value_b"
+        return StepOutput(content="from_B")
+
     inner_a = Workflow(
         name="Inner A",
-        steps=[Step(name="a_step", executor=lambda x: StepOutput(content="from_A"))],
+        steps=[Step(name="a_step", executor=set_key_a)],
     )
     inner_b = Workflow(
         name="Inner B",
-        steps=[Step(name="b_step", executor=lambda x: StepOutput(content="from_B"))],
+        steps=[Step(name="b_step", executor=set_key_b)],
     )
+
+    def read_keys(step_input: StepInput, session_state: dict) -> StepOutput:
+        a = session_state.get("key_a", "MISSING")
+        b = session_state.get("key_b", "MISSING")
+        return StepOutput(content=f"a={a}, b={b}")
 
     outer = Workflow(
         name="Outer Workflow",
@@ -376,13 +418,19 @@ def test_workflow_as_parallel_step(shared_db):
                 Step(name="nested_b", workflow=inner_b),
                 name="parallel_nested",
             ),
-            Step(name="after", executor=step_b),
+            Step(name="after", executor=read_keys),
         ],
     )
 
     response = outer.run(input="test")
 
     assert response.status.value == "COMPLETED"
+    assert len(response.step_results) >= 2
+    # Parallel output should contain results from both branches
+    parallel_result = response.step_results[0]
+    assert parallel_result.content is not None
+    assert "from_A" in parallel_result.content
+    assert "from_B" in parallel_result.content
 
 
 # ============================================================================
@@ -472,22 +520,22 @@ def test_nested_workflow_streaming_event_order_and_source(shared_db):
 
     # Verify event types in order
     expected_types = [
-        WorkflowStartedEvent,   # 1. outer start
-        StepStartedEvent,       # 2. outer/nested start
-        WorkflowStartedEvent,   # 3. inner start
-        StepStartedEvent,       # 4. inner/inner_step start
-        StepCompletedEvent,     # 5. inner/inner_step complete
-        StepStartedEvent,       # 6. inner/inner_summary start
-        StepCompletedEvent,     # 7. inner/inner_summary complete
-        WorkflowCompletedEvent, # 8. inner complete
-        StepCompletedEvent,     # 9. outer/nested complete
-        StepStartedEvent,       # 10. outer/final start
-        StepCompletedEvent,     # 11. outer/final complete
-        WorkflowCompletedEvent, # 12. outer complete
+        WorkflowStartedEvent,  # 1. outer start
+        StepStartedEvent,  # 2. outer/nested start
+        WorkflowStartedEvent,  # 3. inner start
+        StepStartedEvent,  # 4. inner/inner_step start
+        StepCompletedEvent,  # 5. inner/inner_step complete
+        StepStartedEvent,  # 6. inner/inner_summary start
+        StepCompletedEvent,  # 7. inner/inner_summary complete
+        WorkflowCompletedEvent,  # 8. inner complete
+        StepCompletedEvent,  # 9. outer/nested complete
+        StepStartedEvent,  # 10. outer/final start
+        StepCompletedEvent,  # 11. outer/final complete
+        WorkflowCompletedEvent,  # 12. outer complete
     ]
     for i, (ev, expected_type) in enumerate(zip(events, expected_types)):
         assert isinstance(ev, expected_type), (
-            f"Event {i+1}: expected {expected_type.__name__}, got {type(ev).__name__}"
+            f"Event {i + 1}: expected {expected_type.__name__}, got {type(ev).__name__}"
         )
 
     # Verify depth for each event
@@ -495,38 +543,41 @@ def test_nested_workflow_streaming_event_order_and_source(shared_db):
     for i, (ev, expected_depth) in enumerate(zip(events, expected_depths)):
         actual_depth = getattr(ev, "nested_depth", -1)
         assert actual_depth == expected_depth, (
-            f"Event {i+1} ({type(ev).__name__}): expected depth={expected_depth}, got {actual_depth}"
+            f"Event {i + 1} ({type(ev).__name__}): expected depth={expected_depth}, got {actual_depth}"
         )
 
-    # Verify source_workflow_name for each event
-    expected_sources = [
-        "Outer Workflow",   # 1
-        "Outer Workflow",   # 2
-        "Inner Workflow",   # 3
-        "Inner Workflow",   # 4
-        "Inner Workflow",   # 5
-        "Inner Workflow",   # 6
-        "Inner Workflow",   # 7
-        "Inner Workflow",   # 8
-        "Outer Workflow",   # 9
-        "Outer Workflow",   # 10
-        "Outer Workflow",   # 11
-        "Outer Workflow",   # 12
+    # Verify workflow_name for each event (inner events preserve inner workflow identity)
+    expected_wf_names = [
+        "Outer Workflow",  # 1
+        "Outer Workflow",  # 2
+        "Inner Workflow",  # 3
+        "Inner Workflow",  # 4
+        "Inner Workflow",  # 5
+        "Inner Workflow",  # 6
+        "Inner Workflow",  # 7
+        "Inner Workflow",  # 8
+        "Outer Workflow",  # 9
+        "Outer Workflow",  # 10
+        "Outer Workflow",  # 11
+        "Outer Workflow",  # 12
     ]
-    for i, (ev, expected_src) in enumerate(zip(events, expected_sources)):
-        actual_src = getattr(ev, "source_workflow_name", None)
-        assert actual_src == expected_src, (
-            f"Event {i+1} ({type(ev).__name__}): expected source='{expected_src}', got '{actual_src}'"
+    for i, (ev, expected_name) in enumerate(zip(events, expected_wf_names)):
+        actual_name = getattr(ev, "workflow_name", None)
+        assert actual_name == expected_name, (
+            f"Event {i + 1} ({type(ev).__name__}): expected workflow_name='{expected_name}', got '{actual_name}'"
         )
 
-    # All events should have workflow_id/name pointing to outer (enrichment)
+    # Inner events preserve inner workflow_id, outer events have outer workflow_id
     for ev in events:
-        assert ev.workflow_id == "outer-workflow", "All events should have workflow_id=outer-workflow after enrichment"
+        if ev.workflow_name == "Inner Workflow":
+            assert ev.workflow_id == "inner-workflow", "Inner events should preserve inner workflow_id"
+        else:
+            assert ev.workflow_id == "outer-workflow", "Outer events should have outer workflow_id"
 
 
 def test_nested_workflow_streaming_with_loop_events(shared_db):
     """Test that Loop events inside a nested workflow get correct depth and source."""
-    from agno.run.workflow import LoopExecutionStartedEvent, LoopExecutionCompletedEvent
+    from agno.run.workflow import LoopExecutionCompletedEvent, LoopExecutionStartedEvent
 
     inner = Workflow(
         name="Inner Workflow",
@@ -556,13 +607,13 @@ def test_nested_workflow_streaming_with_loop_events(shared_db):
 
     for ev in loop_started + loop_completed:
         assert ev.nested_depth == 1, f"Loop event depth should be 1, got {ev.nested_depth}"
-        assert ev.source_workflow_name == "Inner Workflow"
-        assert ev.workflow_id == "outer-workflow"
+        assert ev.workflow_name == "Inner Workflow"
+        assert ev.workflow_id == "inner-workflow"
 
 
 def test_nested_workflow_streaming_with_parallel_events(shared_db):
     """Test that Parallel events inside a nested workflow get correct depth and source."""
-    from agno.run.workflow import ParallelExecutionStartedEvent, ParallelExecutionCompletedEvent
+    from agno.run.workflow import ParallelExecutionCompletedEvent, ParallelExecutionStartedEvent
 
     inner = Workflow(
         name="Inner Workflow",
@@ -591,13 +642,13 @@ def test_nested_workflow_streaming_with_parallel_events(shared_db):
 
     for ev in par_started + par_completed:
         assert ev.nested_depth == 1, f"Parallel event depth should be 1, got {ev.nested_depth}"
-        assert ev.source_workflow_name == "Inner Workflow"
-        assert ev.workflow_id == "outer-workflow"
+        assert ev.workflow_name == "Inner Workflow"
+        assert ev.workflow_id == "inner-workflow"
 
 
 def test_nested_workflow_streaming_with_router_events(shared_db):
     """Test that Router events inside a nested workflow get correct depth and source."""
-    from agno.run.workflow import RouterExecutionStartedEvent, RouterExecutionCompletedEvent
+    from agno.run.workflow import RouterExecutionCompletedEvent, RouterExecutionStartedEvent
 
     inner = Workflow(
         name="Inner Workflow",
@@ -629,12 +680,12 @@ def test_nested_workflow_streaming_with_router_events(shared_db):
 
     for ev in router_started + router_completed:
         assert ev.nested_depth == 1, f"Router event depth should be 1, got {ev.nested_depth}"
-        assert ev.source_workflow_name == "Inner Workflow"
-        assert ev.workflow_id == "outer-workflow"
+        assert ev.workflow_name == "Inner Workflow"
+        assert ev.workflow_id == "inner-workflow"
 
 
 def test_nested_workflow_streaming_event_source_tracking(shared_db):
-    """Test that source_workflow_id/name and nested_depth are correctly set on events."""
+    """Test that workflow_id/name and nested_depth correctly identify inner vs outer events."""
     inner = Workflow(
         name="Inner Workflow",
         steps=[Step(name="inner_step", executor=step_a)],
@@ -658,27 +709,25 @@ def test_nested_workflow_streaming_event_source_tracking(shared_db):
         for e in events
         if hasattr(e, "nested_depth")
         and getattr(e, "nested_depth", 0) == 0
-        and getattr(e, "source_workflow_id", None) is not None
+        and getattr(e, "workflow_id", None) is not None
     ]
 
     assert len(inner_events) > 0, "Should have inner workflow events with nested_depth > 0"
     assert len(outer_events) > 0, "Should have outer workflow events with nested_depth == 0"
 
-    # Inner events: source should point to inner workflow, depth == 1
+    # Inner events: workflow_id/name preserved as inner, depth == 1
     for ev in inner_events:
-        assert ev.source_workflow_name == "Inner Workflow", f"Inner event source should be 'Inner Workflow', got {ev.source_workflow_name}"
-        assert ev.source_workflow_id == "inner-workflow"
+        assert ev.workflow_name == "Inner Workflow", (
+            f"Inner event should have workflow_name='Inner Workflow', got {ev.workflow_name}"
+        )
+        assert ev.workflow_id == "inner-workflow"
         assert ev.nested_depth == 1, f"Inner event depth should be 1, got {ev.nested_depth}"
-        # workflow_id/name should be overwritten to outer by enrichment
-        assert ev.workflow_id == "outer-workflow", f"Inner event workflow_id should be outer after enrichment, got {ev.workflow_id}"
-        assert ev.workflow_name == "Outer Workflow"
 
-    # Outer events: source should point to outer workflow, depth == 0
+    # Outer events: workflow_id/name points to outer, depth == 0
     for ev in outer_events:
-        assert ev.source_workflow_name == "Outer Workflow"
-        assert ev.source_workflow_id == "outer-workflow"
-        assert ev.nested_depth == 0
+        assert ev.workflow_name == "Outer Workflow"
         assert ev.workflow_id == "outer-workflow"
+        assert ev.nested_depth == 0
 
     # Verify we have the right event types from inner workflow
     inner_step_started = [e for e in inner_events if isinstance(e, StepStartedEvent)]
@@ -711,10 +760,10 @@ def test_three_level_nested_depth_tracking(shared_db):
 
     events = list(level1.run(input="test", stream=True, stream_events=True))
 
-    # Categorize by source
-    l1_events = [e for e in events if getattr(e, "source_workflow_name", None) == "Level 1"]
-    l2_events = [e for e in events if getattr(e, "source_workflow_name", None) == "Level 2"]
-    l3_events = [e for e in events if getattr(e, "source_workflow_name", None) == "Level 3"]
+    # Categorize by workflow_name (preserved from originating workflow)
+    l1_events = [e for e in events if getattr(e, "workflow_name", None) == "Level 1"]
+    l2_events = [e for e in events if getattr(e, "workflow_name", None) == "Level 2"]
+    l3_events = [e for e in events if getattr(e, "workflow_name", None) == "Level 3"]
 
     assert len(l1_events) > 0, "Should have Level 1 events"
     assert len(l2_events) > 0, "Should have Level 2 events"
@@ -735,7 +784,7 @@ def test_three_level_nested_depth_tracking(shared_db):
 
 def test_nested_depth_with_condition_events(shared_db):
     """Test that Condition events inside a nested workflow get correct depth."""
-    from agno.run.workflow import ConditionExecutionStartedEvent, ConditionExecutionCompletedEvent
+    from agno.run.workflow import ConditionExecutionCompletedEvent, ConditionExecutionStartedEvent
 
     inner = Workflow(
         name="Inner Workflow",
@@ -767,7 +816,7 @@ def test_nested_depth_with_condition_events(shared_db):
     # Condition events from inner workflow should have depth 1
     for ev in cond_started + cond_completed:
         assert ev.nested_depth == 1, f"Condition event depth should be 1, got {ev.nested_depth}"
-        assert ev.source_workflow_name == "Inner Workflow"
+        assert ev.workflow_name == "Inner Workflow"
 
 
 @pytest.mark.asyncio
@@ -795,7 +844,7 @@ async def test_async_nested_depth_tracking(shared_db):
     assert len(inner_events) > 0, "Async streaming should have inner events with depth > 0"
 
     for ev in inner_events:
-        assert ev.source_workflow_name == "Inner Workflow"
+        assert ev.workflow_name == "Inner Workflow"
         assert ev.nested_depth == 1
 
 
@@ -853,6 +902,179 @@ async def test_async_nested_workflow_streaming(shared_db):
 
     completed = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
     assert len(completed) >= 2  # inner + outer
+
+
+@pytest.mark.asyncio
+async def test_async_nested_workflow_with_condition(shared_db):
+    """Test async nested workflow containing a Condition step."""
+
+    async def async_cond_step(step_input: StepInput) -> StepOutput:
+        await asyncio.sleep(0.001)
+        return StepOutput(content="async_condition_met")
+
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[
+            Condition(
+                name="cond",
+                evaluator=always_true,
+                steps=[Step(name="if_step", executor=async_cond_step)],
+            ),
+        ],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[
+            Step(name="nested", workflow=inner),
+            Step(name="after", executor=async_step_b),
+        ],
+    )
+
+    response = await outer.arun(input="test")
+
+    assert response.status.value == "COMPLETED"
+    assert len(response.step_results) == 2
+    assert response.step_results[0].step_type == StepType.WORKFLOW
+    assert "async_condition_met" in response.step_results[0].content
+
+
+@pytest.mark.asyncio
+async def test_async_nested_workflow_with_loop(shared_db):
+    """Test async nested workflow containing a Loop step."""
+
+    async def async_loop_body(step_input: StepInput) -> StepOutput:
+        await asyncio.sleep(0.001)
+        return StepOutput(content="async_looped")
+
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[
+            Loop(
+                name="loop",
+                steps=[Step(name="loop_step", executor=async_loop_body)],
+                end_condition=loop_end_condition,
+                max_iterations=1,
+            ),
+        ],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[
+            Step(name="nested", workflow=inner),
+            Step(name="after", executor=async_step_b),
+        ],
+    )
+
+    response = await outer.arun(input="test")
+
+    assert response.status.value == "COMPLETED"
+    assert len(response.step_results) == 2
+    assert response.step_results[0].step_type == StepType.WORKFLOW
+    assert "async_looped" in response.step_results[0].content
+
+
+@pytest.mark.asyncio
+async def test_async_nested_workflow_with_parallel(shared_db):
+    """Test async nested workflow containing a Parallel step."""
+
+    async def async_branch_a(step_input: StepInput) -> StepOutput:
+        await asyncio.sleep(0.001)
+        return StepOutput(content="async_A")
+
+    async def async_branch_b(step_input: StepInput) -> StepOutput:
+        await asyncio.sleep(0.001)
+        return StepOutput(content="async_B")
+
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[
+            Parallel(
+                Step(name="branch_a", executor=async_branch_a),
+                Step(name="branch_b", executor=async_branch_b),
+                name="parallel",
+            ),
+        ],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[
+            Step(name="nested", workflow=inner),
+            Step(name="after", executor=async_step_b),
+        ],
+    )
+
+    response = await outer.arun(input="test")
+
+    assert response.status.value == "COMPLETED"
+    assert len(response.step_results) == 2
+    nested = response.step_results[0]
+    assert nested.step_type == StepType.WORKFLOW
+    assert nested.content is not None
+
+
+@pytest.mark.asyncio
+async def test_async_nested_workflow_serialization(shared_db):
+    """Test that async nested workflow output serializes correctly."""
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[Step(name="inner_step", executor=async_step_a)],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[Step(name="nested", workflow=inner)],
+    )
+
+    response = await outer.arun(input="test")
+
+    response_dict = response.to_dict()
+    assert response_dict["status"] == "COMPLETED"
+    assert len(response_dict["step_results"]) == 1
+    assert response_dict["step_results"][0]["executor_type"] == "workflow"
+
+    restored = WorkflowRunOutput.from_dict(response_dict)
+    status_val = restored.status.value if hasattr(restored.status, "value") else restored.status
+    assert status_val == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_async_nested_workflow_session_state(shared_db):
+    """Test session state sharing in async nested workflow."""
+
+    async def async_set_state(step_input: StepInput, session_state: dict) -> StepOutput:
+        await asyncio.sleep(0.001)
+        session_state["async_key"] = "async_value"
+        return StepOutput(content="state_set")
+
+    async def async_read_state(step_input: StepInput, session_state: dict) -> StepOutput:
+        await asyncio.sleep(0.001)
+        val = session_state.get("async_key", "NOT_FOUND")
+        return StepOutput(content=f"state_read: {val}")
+
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[Step(name="setter", executor=async_set_state)],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[
+            Step(name="nested", workflow=inner),
+            Step(name="reader", executor=async_read_state),
+        ],
+    )
+
+    response = await outer.arun(input="test")
+
+    assert "state_read: async_value" in response.step_results[1].content
 
 
 # ============================================================================
@@ -971,6 +1193,84 @@ def test_nested_workflow_step_executor_runs_serialization(shared_db):
     assert nested_run_dict.get("parent_run_id") == response.run_id
 
 
+def test_three_level_serialization_round_trip(shared_db):
+    """Test that 3-level nested workflow serializes and deserializes with step_executor_runs intact."""
+    level3 = Workflow(
+        name="Level 3",
+        steps=[Step(name="l3_step", executor=step_a)],
+    )
+
+    level2 = Workflow(
+        name="Level 2",
+        steps=[Step(name="l2_nested", workflow=level3)],
+    )
+
+    level1 = Workflow(
+        name="Level 1",
+        db=shared_db,
+        steps=[Step(name="l1_nested", workflow=level2)],
+    )
+
+    response = level1.run(input="test")
+    response_dict = response.to_dict()
+
+    # Level 1 step_executor_runs should contain Level 2 run
+    assert "step_executor_runs" in response_dict
+    l2_run = response_dict["step_executor_runs"][0]
+    assert l2_run.get("workflow_name") == "Level 2"
+    assert l2_run.get("parent_run_id") == response.run_id
+
+    # Level 2 step_executor_runs should contain Level 3 run
+    assert "step_executor_runs" in l2_run
+    l3_run = l2_run["step_executor_runs"][0]
+    assert l3_run.get("workflow_name") == "Level 3"
+    assert l3_run.get("parent_run_id") == l2_run["run_id"]
+
+    # Round-trip: deserialize and check structure is preserved
+    restored = WorkflowRunOutput.from_dict(response_dict)
+    status_val = restored.status.value if hasattr(restored.status, "value") else restored.status
+    assert status_val == "COMPLETED"
+    assert restored.step_executor_runs is not None
+    assert len(restored.step_executor_runs) >= 1
+
+    # The restored Level 2 run should itself have step_executor_runs with Level 3
+    l2_restored = restored.step_executor_runs[0]
+    assert isinstance(l2_restored, WorkflowRunOutput)
+    assert l2_restored.workflow_name == "Level 2"
+    assert l2_restored.step_executor_runs is not None
+    assert len(l2_restored.step_executor_runs) >= 1
+
+
+def test_from_dict_depth_guard():
+    """Test that from_dict stops recursing at MAX_NESTED_DEPTH to prevent infinite loops."""
+    # Build a deeply nested dict structure that exceeds the depth limit
+    deepest = {
+        "run_id": "deep",
+        "workflow_name": "Deep",
+        "workflow_id": "deep",
+        "parent_run_id": "parent",
+        "status": "COMPLETED",
+        "content_type": "str",
+    }
+
+    # Nest it MAX_NESTED_DEPTH + 1 times
+    current = deepest
+    for i in range(WorkflowRunOutput._MAX_NESTED_DEPTH + 1):
+        current = {
+            "run_id": f"level_{i}",
+            "workflow_name": f"Level {i}",
+            "workflow_id": f"level-{i}",
+            "parent_run_id": f"parent_{i}",
+            "status": "COMPLETED",
+            "content_type": "str",
+            "step_executor_runs": [current],
+        }
+
+    # Should not raise — depth guard should prevent infinite recursion
+    result = WorkflowRunOutput.from_dict(current)
+    assert isinstance(result, WorkflowRunOutput)
+
+
 # ============================================================================
 # EDGE CASES
 # ============================================================================
@@ -1054,6 +1354,89 @@ def test_nested_workflow_shared_session_state(shared_db):
 
     # The outer step should see the state set by the inner workflow
     assert "state_read: inner_value" in response.step_results[1].content
+
+
+def test_nested_workflow_error_propagation(shared_db):
+    """Test that errors in a nested workflow propagate correctly to the parent."""
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[Step(name="failing_step", executor=error_step)],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[
+            Step(name="nested", workflow=inner, skip_on_failure=True),
+            Step(name="after_error", executor=step_b),
+        ],
+    )
+
+    response = outer.run(input="test")
+
+    assert isinstance(response, WorkflowRunOutput)
+    # The nested step should have failed but been skipped
+    assert response.status.value == "COMPLETED"
+    # Should have results from both steps (the failed nested + the follow-up)
+    assert len(response.step_results) == 2
+
+
+def test_nested_workflow_stop_propagation(shared_db):
+    """Test that stop=True in a nested workflow step stops the nested workflow."""
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[
+            Step(name="stop_here", executor=stop_step),
+            Step(name="should_not_run", executor=step_a),
+        ],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[
+            Step(name="nested", workflow=inner),
+            Step(name="after_nested", executor=step_b),
+        ],
+    )
+
+    response = outer.run(input="test")
+
+    assert isinstance(response, WorkflowRunOutput)
+    # The nested workflow should have stopped, but the outer workflow should continue
+    nested_output = response.step_results[0]
+    assert nested_output.step_type == StepType.WORKFLOW
+    assert "Stopped" in (nested_output.content or "")
+
+
+def test_nested_workflow_receives_previous_step_output(shared_db):
+    """Test that a nested workflow as step 2 receives step 1's output (not original input)."""
+
+    def check_input(step_input: StepInput) -> StepOutput:
+        """Captures whatever input the nested workflow's step receives."""
+        return StepOutput(content=f"received: {step_input.input}")
+
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[Step(name="check", executor=check_input)],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[
+            Step(name="first", executor=step_a),  # Produces "StepA: hello"
+            Step(name="nested", workflow=inner),  # Should receive "StepA: hello"
+        ],
+    )
+
+    response = outer.run(input="hello")
+
+    nested_output = response.step_results[1]
+    # The inner workflow should have received step_a's output, not "hello"
+    assert "StepA: hello" in (nested_output.content or ""), (
+        f"Nested workflow should receive previous step output, got: {nested_output.content}"
+    )
 
 
 def test_step_validation_rejects_multiple_executors():
