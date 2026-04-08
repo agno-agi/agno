@@ -4,13 +4,15 @@ Loop Iteration Review Example
 This example demonstrates per-iteration review in a Loop component.
 After each iteration completes, the workflow pauses for human review.
 
-The reviewer confirms to accept the current iteration's output and
-stop the loop. If more refinement is desired, the loop should be
-configured with more iterations and no review gate.
+The reviewer can:
+- Accept (confirm): Stop the loop, keep the current output
+- Reject (try again): Run another iteration, optionally with feedback
+  The previous iteration's output is forwarded as input so the agent
+  can continue refining it.
 
-Note: This feature pauses after each iteration for review. Confirming
-the review stops the loop and keeps the output. Rejecting cancels
-the workflow.
+  Loop topology:
+    iteration 1 → [review] ─┬─ accept → done (keep output)
+                              └─ reject (with feedback) → iteration 2 → [review] → ...
 """
 
 from agno.agent import Agent
@@ -26,7 +28,8 @@ refine_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions=(
         "You refine and improve text. Each time you receive text, "
-        "make it more concise and polished. Return only the improved text."
+        "make it more concise and polished. If the reviewer provides feedback, "
+        "incorporate it. Return only the improved text."
     ),
 )
 
@@ -42,8 +45,8 @@ workflow = Workflow(
             max_iterations=5,
             forward_iteration_output=True,
             requires_iteration_review=True,
-            iteration_review_message="Review this iteration. Accept the result?",
-            on_reject=OnReject.cancel,
+            iteration_review_message="Review this iteration.",
+            on_reject=OnReject.retry,  # Reject = try another iteration
         ),
     ],
 )
@@ -63,9 +66,14 @@ while run_output.is_paused:
         choice = input("\nAccept this result? (yes/no): ").strip().lower()
         if choice in ("yes", "y"):
             requirement.confirm()
+            print("Result accepted.")
         else:
-            requirement.reject()
-            print("Workflow cancelled.")
+            feedback = input("Feedback (press Enter to skip): ").strip()
+            if feedback:
+                requirement.reject(feedback=feedback)
+            else:
+                requirement.reject()
+            print("Trying another iteration...")
 
     run_output = workflow.continue_run(run_output)
 

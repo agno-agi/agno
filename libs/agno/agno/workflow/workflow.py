@@ -4865,9 +4865,16 @@ class Workflow:
         # Determine start index based on pause type and decision
         start_index = paused_step_index
         if is_loop_iteration_review and not rejected_steps:
-            # Loop iteration review confirmed: re-execute the loop to continue iterations.
+            # Loop iteration review confirmed: human is happy with the output.
+            # Keep the loop output and advance to the next workflow step.
+            start_index = paused_step_index + 1
+        elif is_loop_iteration_review and rejected_steps and rejected_steps[0].on_reject == "retry":
+            # Loop iteration review rejected with retry: continue to next iteration.
             # Remove the partial loop output so the loop can produce a new complete output.
             kwargs["remove_last_output"] = True
+            # Pass feedback to the next iteration if provided
+            if rejected_steps[0].rejection_feedback:
+                kwargs["rejection_feedback"] = rejected_steps[0].rejection_feedback
             # Extract iteration info from the paused step output to resume from
             if run_response.step_results:
                 paused_output = run_response.step_results[-1]
@@ -4875,6 +4882,9 @@ class Workflow:
                     kwargs["loop_resume_from_iteration"] = len(paused_output.steps)
                     kwargs["loop_previous_results"] = [[s] for s in paused_output.steps]
             start_index = paused_step_index  # Re-execute the Loop step
+            # Reset flags so the generic rejection handling below doesn't also fire
+            skip_rejected_step = False
+            retry_step = False
         elif skip_rejected_step and is_post_execution_review:
             # Post-execution review rejected with skip: discard the output, advance to next
             kwargs["remove_last_output"] = True
@@ -4982,6 +4992,21 @@ class Workflow:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["rejection_feedback"] = rejection_feedback
+
+                # For loop iteration resume: forward the last iteration's output as input
+                # so the loop continues refining from where it left off
+                if (
+                    i == start_step_index
+                    and isinstance(step, Loop)
+                    and getattr(step, "forward_iteration_output", False)
+                    and kwargs.get("loop_previous_results")
+                ):
+                    prev_results = kwargs["loop_previous_results"]
+                    if prev_results and prev_results[-1]:
+                        last_iter_output = prev_results[-1][-1]
+                        if hasattr(last_iter_output, "content") and last_iter_output.content:
+                            step_input.previous_step_content = last_iter_output.content
+                            step_input.input = last_iter_output.content
 
                 # Handle Condition with on_reject="else" - execute else branch directly
                 execute_else_branch = kwargs.get("execute_else_branch", False)
@@ -5327,6 +5352,21 @@ class Workflow:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["rejection_feedback"] = rejection_feedback
+
+                # For loop iteration resume: forward the last iteration's output as input
+                # so the loop continues refining from where it left off
+                if (
+                    i == start_step_index
+                    and isinstance(step, Loop)
+                    and getattr(step, "forward_iteration_output", False)
+                    and kwargs.get("loop_previous_results")
+                ):
+                    prev_results = kwargs["loop_previous_results"]
+                    if prev_results and prev_results[-1]:
+                        last_iter_output = prev_results[-1][-1]
+                        if hasattr(last_iter_output, "content") and last_iter_output.content:
+                            step_input.previous_step_content = last_iter_output.content
+                            step_input.input = last_iter_output.content
 
                 # Handle Condition with on_reject="else" - execute else branch directly (streaming)
                 execute_else_branch = kwargs.get("execute_else_branch", False)
@@ -6069,14 +6109,21 @@ class Workflow:
         # Determine start index based on pause type and decision
         start_index = paused_step_index
         if is_loop_iteration_review and not rejected_steps:
-            # Loop iteration review confirmed: re-execute the loop to continue iterations
+            # Loop iteration review confirmed: human is happy, keep output and advance
+            start_index = paused_step_index + 1
+        elif is_loop_iteration_review and rejected_steps and rejected_steps[0].on_reject == "retry":
+            # Loop iteration review rejected with retry: continue to next iteration
             kwargs["remove_last_output"] = True
+            if rejected_steps[0].rejection_feedback:
+                kwargs["rejection_feedback"] = rejected_steps[0].rejection_feedback
             if run_response.step_results:
                 paused_output = run_response.step_results[-1]
                 if isinstance(paused_output, StepOutput) and paused_output.steps:
                     kwargs["loop_resume_from_iteration"] = len(paused_output.steps)
                     kwargs["loop_previous_results"] = [[s] for s in paused_output.steps]
             start_index = paused_step_index
+            skip_rejected_step = False
+            retry_step = False
         elif skip_rejected_step and is_post_execution_review:
             kwargs["remove_last_output"] = True
             start_index = paused_step_index + 1
@@ -6514,6 +6561,21 @@ class Workflow:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["rejection_feedback"] = rejection_feedback
+
+                # For loop iteration resume: forward the last iteration's output as input
+                # so the loop continues refining from where it left off
+                if (
+                    i == start_step_index
+                    and isinstance(step, Loop)
+                    and getattr(step, "forward_iteration_output", False)
+                    and kwargs.get("loop_previous_results")
+                ):
+                    prev_results = kwargs["loop_previous_results"]
+                    if prev_results and prev_results[-1]:
+                        last_iter_output = prev_results[-1][-1]
+                        if hasattr(last_iter_output, "content") and last_iter_output.content:
+                            step_input.previous_step_content = last_iter_output.content
+                            step_input.input = last_iter_output.content
 
                 # Handle Condition with on_reject="else" - execute else branch directly (async streaming)
                 execute_else_branch = kwargs.get("execute_else_branch", False)
