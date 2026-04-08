@@ -1448,3 +1448,32 @@ def test_step_validation_rejects_multiple_executors():
 
     with pytest.raises(ValueError, match="can only have one executor type"):
         Step(name="bad_step", agent=agent, workflow=inner)
+
+
+def test_nested_workflow_max_depth_guard(shared_db):
+    """Test that excessively deep nesting is detected and results in a failed step."""
+    from agno.workflow.step import _MAX_NESTED_WORKFLOW_DEPTH, _nested_workflow_depth
+
+    # Simulate being at max depth already
+    _nested_workflow_depth.value = _MAX_NESTED_WORKFLOW_DEPTH
+
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[Step(name="a", executor=step_a)],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[Step(name="nested", workflow=inner)],
+    )
+
+    try:
+        response = outer.run(input="test")
+        # The nested step should have failed due to depth guard
+        nested_output = response.step_results[0]
+        assert nested_output.success is False
+        assert "Maximum nested workflow depth" in (nested_output.error or "")
+    finally:
+        # Clean up thread-local state
+        _nested_workflow_depth.value = 0
