@@ -9,6 +9,7 @@ from agno.media import Audio, File, Image, Video
 from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, RunStatus
 from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
+from agno.utils.log import log_warning
 from agno.utils.media import (
     reconstruct_audio_list,
     reconstruct_files,
@@ -768,8 +769,10 @@ class WorkflowRunOutput:
 
         return _dict
 
+    _MAX_NESTED_DEPTH = 10
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "WorkflowRunOutput":
+    def from_dict(cls, data: Dict[str, Any], _depth: int = 0) -> "WorkflowRunOutput":
         # Import here to avoid circular import
         from agno.workflow.step import StepOutput
 
@@ -801,7 +804,13 @@ class WorkflowRunOutput:
                     step_executor_runs.append(RunOutput.from_dict(run_data))
                 # Nested workflow run (workflow_name is unique to WorkflowRunOutput)
                 elif "workflow_name" in run_data and "parent_run_id" in run_data:
-                    step_executor_runs.append(cls.from_dict(run_data))
+                    if _depth >= cls._MAX_NESTED_DEPTH:
+                        log_warning(
+                            f"Max nested workflow deserialization depth ({cls._MAX_NESTED_DEPTH}) reached, "
+                            f"skipping nested workflow '{run_data.get('workflow_name')}'"
+                        )
+                    else:
+                        step_executor_runs.append(cls.from_dict(run_data, _depth=_depth + 1))
                 else:
                     # Default to RunOutput for backwards compatibility
                     step_executor_runs.append(RunOutput.from_dict(run_data))

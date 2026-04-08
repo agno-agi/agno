@@ -1064,6 +1064,89 @@ def test_nested_workflow_shared_session_state(shared_db):
     assert "state_read: inner_value" in response.step_results[1].content
 
 
+def test_nested_workflow_error_propagation(shared_db):
+    """Test that errors in a nested workflow propagate correctly to the parent."""
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[Step(name="failing_step", executor=error_step)],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[
+            Step(name="nested", workflow=inner, skip_on_failure=True),
+            Step(name="after_error", executor=step_b),
+        ],
+    )
+
+    response = outer.run(input="test")
+
+    assert isinstance(response, WorkflowRunOutput)
+    # The nested step should have failed but been skipped
+    assert response.status.value == "COMPLETED"
+    # Should have results from both steps (the failed nested + the follow-up)
+    assert len(response.step_results) == 2
+
+
+def test_nested_workflow_stop_propagation(shared_db):
+    """Test that stop=True in a nested workflow step stops the nested workflow."""
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[
+            Step(name="stop_here", executor=stop_step),
+            Step(name="should_not_run", executor=step_a),
+        ],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[
+            Step(name="nested", workflow=inner),
+            Step(name="after_nested", executor=step_b),
+        ],
+    )
+
+    response = outer.run(input="test")
+
+    assert isinstance(response, WorkflowRunOutput)
+    # The nested workflow should have stopped, but the outer workflow should continue
+    nested_output = response.step_results[0]
+    assert nested_output.step_type == StepType.WORKFLOW
+    assert "Stopped" in (nested_output.content or "")
+
+
+def test_nested_workflow_receives_previous_step_output(shared_db):
+    """Test that a nested workflow as step 2 receives step 1's output (not original input)."""
+
+    def check_input(step_input: StepInput) -> StepOutput:
+        """Captures whatever input the nested workflow's step receives."""
+        return StepOutput(content=f"received: {step_input.input}")
+
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[Step(name="check", executor=check_input)],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[
+            Step(name="first", executor=step_a),  # Produces "StepA: hello"
+            Step(name="nested", workflow=inner),  # Should receive "StepA: hello"
+        ],
+    )
+
+    response = outer.run(input="hello")
+
+    nested_output = response.step_results[1]
+    # The inner workflow should have received step_a's output, not "hello"
+    assert "StepA: hello" in (nested_output.content or ""), (
+        f"Nested workflow should receive previous step output, got: {nested_output.content}"
+    )
+
+
 def test_step_validation_rejects_multiple_executors():
     """Test that Step validation rejects having both agent and workflow set."""
     from agno.agent.agent import Agent

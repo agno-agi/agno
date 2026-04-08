@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from copy import copy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
 from uuid import uuid4
@@ -606,7 +606,7 @@ class Step:
         if run_context is not None and run_context.session_state is not None:
             session_state_copy = run_context.session_state
         else:
-            session_state_copy = copy(session_state) if session_state is not None else {}
+            session_state_copy = deepcopy(session_state) if session_state is not None else {}
 
         # Execute with retries
         for attempt in range(self.max_retries + 1):
@@ -909,7 +909,7 @@ class Step:
         if run_context is not None and run_context.session_state is not None:
             session_state_copy = run_context.session_state
         else:
-            session_state_copy = copy(session_state) if session_state is not None else {}
+            session_state_copy = deepcopy(session_state) if session_state is not None else {}
 
         # Emit StepStartedEvent
         if stream_events and workflow_run_response:
@@ -1210,7 +1210,7 @@ class Step:
         if run_context is not None and run_context.session_state is not None:
             session_state_copy = run_context.session_state
         else:
-            session_state_copy = copy(session_state) if session_state is not None else {}
+            session_state_copy = deepcopy(session_state) if session_state is not None else {}
 
         # Execute with retries
         for attempt in range(self.max_retries + 1):
@@ -1475,7 +1475,7 @@ class Step:
         if run_context is not None and run_context.session_state is not None:
             session_state_copy = run_context.session_state
         else:
-            session_state_copy = copy(session_state) if session_state is not None else {}
+            session_state_copy = deepcopy(session_state) if session_state is not None else {}
 
         if stream_events and workflow_run_response:
             # Emit StepStartedEvent
@@ -1870,6 +1870,7 @@ class Step:
     ) -> None:
         """Store agent/team responses in step_executor_runs if enabled"""
         if executor_run_response is None:
+            log_warning(f"Step '{self.name}': executor produced no response to store")
             return
         if self._executor_type in ["agent", "team"]:
             # propogate the workflow run id as parent run id to the executor response
@@ -2043,12 +2044,14 @@ class Step:
         if workflow_metrics.duration is not None:
             aggregated.duration = workflow_metrics.duration
 
+        has_step_metrics = False
         for step_metric in workflow_metrics.steps.values():
             if step_metric.metrics is not None:
+                has_step_metrics = True
                 aggregated = aggregated + step_metric.metrics
 
-        # Only return if there are actual token counts
-        if aggregated.total_tokens > 0 or aggregated.duration is not None:
+        # Return aggregated metrics if any step had metrics or if duration is set
+        if has_step_metrics or aggregated.duration is not None:
             return aggregated
         return None
 
@@ -2087,6 +2090,14 @@ class Step:
             background_tasks=background_tasks,
         )
 
+        # Warn if the nested workflow paused (e.g., due to HITL on an inner step)
+        if nested_run_output.is_paused:
+            logger.warning(
+                f"Step '{self.name}': Nested workflow '{self.workflow.name}' is paused "
+                "(likely due to HITL on an inner step). The parent workflow will continue "
+                "but the paused inner step may not have executed."
+            )
+
         # Store the nested workflow run in step_executor_runs if enabled
         if store_executor_outputs and workflow_run_response is not None:
             nested_run_output.parent_run_id = workflow_run_response.run_id
@@ -2094,6 +2105,9 @@ class Step:
 
             if workflow_run_response.step_executor_runs is None:
                 workflow_run_response.step_executor_runs = []
+            # Clear events from nested output before storing to avoid duplicating
+            # data that is already captured at the outer workflow level.
+            nested_run_output.events = None
             workflow_run_response.step_executor_runs.append(nested_run_output)
 
         # Convert nested workflow's step_results to nested StepOutput objects
@@ -2168,6 +2182,14 @@ class Step:
             if session and session.runs:
                 nested_run_output = session.runs[-1]
 
+        # Warn if the nested workflow paused (e.g., due to HITL on an inner step)
+        if nested_run_output and nested_run_output.is_paused:
+            logger.warning(
+                f"Step '{self.name}': Nested workflow '{self.workflow.name}' is paused "
+                "(likely due to HITL on an inner step). The parent workflow will continue "
+                "but the paused inner step may not have executed."
+            )
+
         # Store the nested workflow run in step_executor_runs if enabled
         if store_executor_outputs and workflow_run_response is not None and nested_run_output is not None:
             nested_run_output.parent_run_id = workflow_run_response.run_id
@@ -2175,6 +2197,9 @@ class Step:
 
             if workflow_run_response.step_executor_runs is None:
                 workflow_run_response.step_executor_runs = []
+            # Clear events from nested output before storing to avoid duplicating
+            # data that is already captured at the outer workflow level.
+            nested_run_output.events = None
             workflow_run_response.step_executor_runs.append(nested_run_output)
 
         # Get nested steps from the nested_run_output or from the completed event
@@ -2236,6 +2261,14 @@ class Step:
             background_tasks=background_tasks,
         )
 
+        # Warn if the nested workflow paused (e.g., due to HITL on an inner step)
+        if nested_run_output.is_paused:
+            logger.warning(
+                f"Step '{self.name}': Nested workflow '{self.workflow.name}' is paused "
+                "(likely due to HITL on an inner step). The parent workflow will continue "
+                "but the paused inner step may not have executed."
+            )
+
         # Store the nested workflow run in step_executor_runs if enabled
         if store_executor_outputs and workflow_run_response is not None:
             nested_run_output.parent_run_id = workflow_run_response.run_id
@@ -2243,6 +2276,9 @@ class Step:
 
             if workflow_run_response.step_executor_runs is None:
                 workflow_run_response.step_executor_runs = []
+            # Clear events from nested output before storing to avoid duplicating
+            # data that is already captured at the outer workflow level.
+            nested_run_output.events = None
             workflow_run_response.step_executor_runs.append(nested_run_output)
 
         # Convert nested workflow's step_results to nested StepOutput objects
@@ -2317,6 +2353,14 @@ class Step:
             if session and session.runs:
                 nested_run_output = session.runs[-1]
 
+        # Warn if the nested workflow paused (e.g., due to HITL on an inner step)
+        if nested_run_output and nested_run_output.is_paused:
+            logger.warning(
+                f"Step '{self.name}': Nested workflow '{self.workflow.name}' is paused "
+                "(likely due to HITL on an inner step). The parent workflow will continue "
+                "but the paused inner step may not have executed."
+            )
+
         # Store the nested workflow run in step_executor_runs if enabled
         if store_executor_outputs and workflow_run_response is not None and nested_run_output is not None:
             nested_run_output.parent_run_id = workflow_run_response.run_id
@@ -2324,6 +2368,9 @@ class Step:
 
             if workflow_run_response.step_executor_runs is None:
                 workflow_run_response.step_executor_runs = []
+            # Clear events from nested output before storing to avoid duplicating
+            # data that is already captured at the outer workflow level.
+            nested_run_output.events = None
             workflow_run_response.step_executor_runs.append(nested_run_output)
 
         # Get nested steps from the nested_run_output or from the completed event
