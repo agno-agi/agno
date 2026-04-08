@@ -28,9 +28,9 @@ class OpenAIEmbedder(Embedder):
     openai_client: Optional[OpenAIClient] = None
     async_client: Optional[AsyncOpenAI] = None
     # Whether to send the 'dimensions' parameter in API requests.
-    # - None (default): auto-detect based on model id
-    # - True: always send dimensions (e.g., OpenAI text-embedding-3 models)
-    # - False: never send dimensions (e.g., Together AI, other providers that reject it)
+    # - None (default): auto-detect based on model id and base_url
+    # - True: always send dimensions (e.g., OpenAI text-embedding-3, Fireworks, Nebius)
+    # - False: never send dimensions (e.g., Together AI, providers that reject it)
     send_dimensions: Optional[bool] = None
 
     def __post_init__(self):
@@ -38,13 +38,12 @@ class OpenAIEmbedder(Embedder):
             self.dimensions = 3072 if self.id == "text-embedding-3-large" else 1536
 
         # Auto-detect send_dimensions if not explicitly set by the caller.
-        # Only text-embedding-3 models (native OpenAI) are known to accept 
-        # the 'dimensions' parameter. Providers like Together AI reject it 
-        # with HTTP 400, so we default to False for custom base_urls.
+        # Preserves existing behavior: text-embedding-3 models and any embedder
+        # with a custom base_url (Fireworks, Nebius, LangDB, etc.) send dimensions.
+        # Subclasses that don't support it (Together, OpenAILike) explicitly set False.
         if self.send_dimensions is None:
-            self.send_dimensions = bool(
-                self.id.startswith("text-embedding-3")
-            )
+            self.send_dimensions = self.id.startswith("text-embedding-3") or self.base_url is not None
+
 
 
     @property
@@ -72,6 +71,7 @@ class OpenAIEmbedder(Embedder):
             "organization": self.organization,
             "base_url": self.base_url,
         }
+
         filtered_params: Dict[str, Any] = {k: v for k, v in params.items() if v is not None}
         if self.client_params:
             filtered_params.update(self.client_params)
@@ -119,6 +119,7 @@ class OpenAIEmbedder(Embedder):
             "model": self.id,
             "encoding_format": self.encoding_format,
         }
+
         if self.user is not None:
             req["user"] = self.user
         if self.send_dimensions and self.dimensions is not None:

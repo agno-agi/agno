@@ -20,3 +20,6 @@ class LangDBEmbedder(OpenAIEmbedder):
 
         if not self.base_url:
             self.base_url = f"https://api.us-east-1.langdb.ai/{self.project_id}/v1"
+            
+        # Run parent auto-detection for dimensions and send_dimensions.
+        super().__post_init__()

@@ -7,7 +7,9 @@ from agno.knowledge.embedder.openai import OpenAIEmbedder
 
 @dataclass
 class TogetherEmbedder(OpenAIEmbedder):
-    id: str = "intfloat/multilingual-e5-large-instruct"
-    dimensions: int = 1024
+    id: str = "togethercomputer/m2-bert-80M-32k-retrieval"
+    dimensions: int = 768
     api_key: Optional[str] = getenv("TOGETHER_API_KEY")
     base_url: str = "https://api.together.xyz/v1"
+    # Together AI rejects the 'dimensions' parameter (HTTP 400).
+    send_dimensions: Optional[bool] = False

@@ -24,11 +24,12 @@ class OpenAILikeEmbedder(OpenAIEmbedder):
     id: str = "not-provided"
     dimensions: Optional[int] = 1536
     api_key: Optional[str] = "not-provided"
+    # Most OpenAI-compatible providers do not support the 'dimensions' parameter.
+    # Callers can override to True if their provider supports it.
     send_dimensions: Optional[bool] = False
 
     def __post_init__(self):
         # Skip the OpenAIEmbedder __post_init__ which sets dimensions based on known OpenAI model IDs.
         # For custom providers, the user should set dimensions explicitly.
-        # send_dimensions is already set to False by default — callers can override to True
-        # if their provider supports the dimensions parameter.
+        # send_dimensions is already set to False by default — no auto-detection needed.
         pass
