@@ -239,6 +239,12 @@ def test_nested_workflow_with_loop_inside(shared_db):
 
     assert response.status.value == "COMPLETED"
     assert len(response.step_results) == 2
+    # Nested step should be a workflow type with loop output
+    assert response.step_results[0].step_type == StepType.WORKFLOW
+    assert response.step_results[0].executor_type == "workflow"
+    assert "looped" in response.step_results[0].content
+    # After step should chain from nested output
+    assert "StepB:" in response.step_results[1].content
 
 
 def test_nested_workflow_with_parallel_inside(shared_db):
@@ -267,6 +273,14 @@ def test_nested_workflow_with_parallel_inside(shared_db):
 
     assert response.status.value == "COMPLETED"
     assert len(response.step_results) == 2
+    nested = response.step_results[0]
+    assert nested.step_type == StepType.WORKFLOW
+    assert nested.executor_type == "workflow"
+    # Parallel output should contain results from both branches
+    assert nested.content is not None
+    assert nested.steps is not None
+    # After step should receive content from nested
+    assert "StepB:" in response.step_results[1].content
 
 
 def test_nested_workflow_with_router_inside(shared_db):
@@ -298,6 +312,12 @@ def test_nested_workflow_with_router_inside(shared_db):
 
     assert response.status.value == "COMPLETED"
     assert len(response.step_results) == 2
+    nested = response.step_results[0]
+    assert nested.step_type == StepType.WORKFLOW
+    assert nested.executor_type == "workflow"
+    # Router should have selected route_a (our selector always returns route_a)
+    assert "StepA:" in nested.content
+    assert "StepB:" in response.step_results[1].content
 
 
 # ============================================================================
@@ -328,6 +348,11 @@ def test_workflow_as_condition_step(shared_db):
     response = outer.run(input="test")
 
     assert response.status.value == "COMPLETED"
+    assert len(response.step_results) >= 2
+    # The condition's nested workflow should have produced content with StepA
+    assert "StepA:" in response.content or any("StepA:" in str(sr.content) for sr in response.step_results)
+    # After step should have run
+    assert any("StepB:" in str(sr.content) for sr in response.step_results)
 
 
 def test_workflow_as_loop_step(shared_db):
@@ -354,18 +379,35 @@ def test_workflow_as_loop_step(shared_db):
     response = outer.run(input="test")
 
     assert response.status.value == "COMPLETED"
+    assert len(response.step_results) >= 2
+    # After step should have received output from the loop
+    assert any("StepB:" in str(sr.content) for sr in response.step_results)
 
 
 def test_workflow_as_parallel_step(shared_db):
-    """Test using a workflow inside a Parallel step."""
+    """Test using two workflows inside a Parallel step, verifying both execute."""
+
+    def set_key_a(step_input: StepInput, session_state: dict) -> StepOutput:
+        session_state["key_a"] = "value_a"
+        return StepOutput(content="from_A")
+
+    def set_key_b(step_input: StepInput, session_state: dict) -> StepOutput:
+        session_state["key_b"] = "value_b"
+        return StepOutput(content="from_B")
+
     inner_a = Workflow(
         name="Inner A",
-        steps=[Step(name="a_step", executor=lambda x: StepOutput(content="from_A"))],
+        steps=[Step(name="a_step", executor=set_key_a)],
     )
     inner_b = Workflow(
         name="Inner B",
-        steps=[Step(name="b_step", executor=lambda x: StepOutput(content="from_B"))],
+        steps=[Step(name="b_step", executor=set_key_b)],
     )
+
+    def read_keys(step_input: StepInput, session_state: dict) -> StepOutput:
+        a = session_state.get("key_a", "MISSING")
+        b = session_state.get("key_b", "MISSING")
+        return StepOutput(content=f"a={a}, b={b}")
 
     outer = Workflow(
         name="Outer Workflow",
@@ -376,13 +418,19 @@ def test_workflow_as_parallel_step(shared_db):
                 Step(name="nested_b", workflow=inner_b),
                 name="parallel_nested",
             ),
-            Step(name="after", executor=step_b),
+            Step(name="after", executor=read_keys),
         ],
     )
 
     response = outer.run(input="test")
 
     assert response.status.value == "COMPLETED"
+    assert len(response.step_results) >= 2
+    # Parallel output should contain results from both branches
+    parallel_result = response.step_results[0]
+    assert parallel_result.content is not None
+    assert "from_A" in parallel_result.content
+    assert "from_B" in parallel_result.content
 
 
 # ============================================================================
@@ -854,6 +902,179 @@ async def test_async_nested_workflow_streaming(shared_db):
 
     completed = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
     assert len(completed) >= 2  # inner + outer
+
+
+@pytest.mark.asyncio
+async def test_async_nested_workflow_with_condition(shared_db):
+    """Test async nested workflow containing a Condition step."""
+
+    async def async_cond_step(step_input: StepInput) -> StepOutput:
+        await asyncio.sleep(0.001)
+        return StepOutput(content="async_condition_met")
+
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[
+            Condition(
+                name="cond",
+                evaluator=always_true,
+                steps=[Step(name="if_step", executor=async_cond_step)],
+            ),
+        ],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[
+            Step(name="nested", workflow=inner),
+            Step(name="after", executor=async_step_b),
+        ],
+    )
+
+    response = await outer.arun(input="test")
+
+    assert response.status.value == "COMPLETED"
+    assert len(response.step_results) == 2
+    assert response.step_results[0].step_type == StepType.WORKFLOW
+    assert "async_condition_met" in response.step_results[0].content
+
+
+@pytest.mark.asyncio
+async def test_async_nested_workflow_with_loop(shared_db):
+    """Test async nested workflow containing a Loop step."""
+
+    async def async_loop_body(step_input: StepInput) -> StepOutput:
+        await asyncio.sleep(0.001)
+        return StepOutput(content="async_looped")
+
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[
+            Loop(
+                name="loop",
+                steps=[Step(name="loop_step", executor=async_loop_body)],
+                end_condition=loop_end_condition,
+                max_iterations=1,
+            ),
+        ],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[
+            Step(name="nested", workflow=inner),
+            Step(name="after", executor=async_step_b),
+        ],
+    )
+
+    response = await outer.arun(input="test")
+
+    assert response.status.value == "COMPLETED"
+    assert len(response.step_results) == 2
+    assert response.step_results[0].step_type == StepType.WORKFLOW
+    assert "async_looped" in response.step_results[0].content
+
+
+@pytest.mark.asyncio
+async def test_async_nested_workflow_with_parallel(shared_db):
+    """Test async nested workflow containing a Parallel step."""
+
+    async def async_branch_a(step_input: StepInput) -> StepOutput:
+        await asyncio.sleep(0.001)
+        return StepOutput(content="async_A")
+
+    async def async_branch_b(step_input: StepInput) -> StepOutput:
+        await asyncio.sleep(0.001)
+        return StepOutput(content="async_B")
+
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[
+            Parallel(
+                Step(name="branch_a", executor=async_branch_a),
+                Step(name="branch_b", executor=async_branch_b),
+                name="parallel",
+            ),
+        ],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[
+            Step(name="nested", workflow=inner),
+            Step(name="after", executor=async_step_b),
+        ],
+    )
+
+    response = await outer.arun(input="test")
+
+    assert response.status.value == "COMPLETED"
+    assert len(response.step_results) == 2
+    nested = response.step_results[0]
+    assert nested.step_type == StepType.WORKFLOW
+    assert nested.content is not None
+
+
+@pytest.mark.asyncio
+async def test_async_nested_workflow_serialization(shared_db):
+    """Test that async nested workflow output serializes correctly."""
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[Step(name="inner_step", executor=async_step_a)],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[Step(name="nested", workflow=inner)],
+    )
+
+    response = await outer.arun(input="test")
+
+    response_dict = response.to_dict()
+    assert response_dict["status"] == "COMPLETED"
+    assert len(response_dict["step_results"]) == 1
+    assert response_dict["step_results"][0]["executor_type"] == "workflow"
+
+    restored = WorkflowRunOutput.from_dict(response_dict)
+    status_val = restored.status.value if hasattr(restored.status, "value") else restored.status
+    assert status_val == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_async_nested_workflow_session_state(shared_db):
+    """Test session state sharing in async nested workflow."""
+
+    async def async_set_state(step_input: StepInput, session_state: dict) -> StepOutput:
+        await asyncio.sleep(0.001)
+        session_state["async_key"] = "async_value"
+        return StepOutput(content="state_set")
+
+    async def async_read_state(step_input: StepInput, session_state: dict) -> StepOutput:
+        await asyncio.sleep(0.001)
+        val = session_state.get("async_key", "NOT_FOUND")
+        return StepOutput(content=f"state_read: {val}")
+
+    inner = Workflow(
+        name="Inner Workflow",
+        steps=[Step(name="setter", executor=async_set_state)],
+    )
+
+    outer = Workflow(
+        name="Outer Workflow",
+        db=shared_db,
+        steps=[
+            Step(name="nested", workflow=inner),
+            Step(name="reader", executor=async_read_state),
+        ],
+    )
+
+    response = await outer.arun(input="test")
+
+    assert "state_read: async_value" in response.step_results[1].content
 
 
 # ============================================================================
