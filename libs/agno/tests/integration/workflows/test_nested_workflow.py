@@ -498,8 +498,8 @@ def test_nested_workflow_streaming_event_order_and_source(shared_db):
             f"Event {i + 1} ({type(ev).__name__}): expected depth={expected_depth}, got {actual_depth}"
         )
 
-    # Verify source_workflow_name for each event
-    expected_sources = [
+    # Verify workflow_name for each event (inner events preserve inner workflow identity)
+    expected_wf_names = [
         "Outer Workflow",  # 1
         "Outer Workflow",  # 2
         "Inner Workflow",  # 3
@@ -513,16 +513,15 @@ def test_nested_workflow_streaming_event_order_and_source(shared_db):
         "Outer Workflow",  # 11
         "Outer Workflow",  # 12
     ]
-    for i, (ev, expected_src) in enumerate(zip(events, expected_sources)):
-        actual_src = getattr(ev, "source_workflow_name", None)
-        assert actual_src == expected_src, (
-            f"Event {i + 1} ({type(ev).__name__}): expected source='{expected_src}', got '{actual_src}'"
+    for i, (ev, expected_name) in enumerate(zip(events, expected_wf_names)):
+        actual_name = getattr(ev, "workflow_name", None)
+        assert actual_name == expected_name, (
+            f"Event {i + 1} ({type(ev).__name__}): expected workflow_name='{expected_name}', got '{actual_name}'"
         )
 
-    # Outer events should have workflow_id pointing to outer, inner events should keep inner
+    # Inner events preserve inner workflow_id, outer events have outer workflow_id
     for ev in events:
-        source = getattr(ev, "source_workflow_name", None)
-        if source == "Inner Workflow":
+        if ev.workflow_name == "Inner Workflow":
             assert ev.workflow_id == "inner-workflow", "Inner events should preserve inner workflow_id"
         else:
             assert ev.workflow_id == "outer-workflow", "Outer events should have outer workflow_id"
@@ -560,7 +559,7 @@ def test_nested_workflow_streaming_with_loop_events(shared_db):
 
     for ev in loop_started + loop_completed:
         assert ev.nested_depth == 1, f"Loop event depth should be 1, got {ev.nested_depth}"
-        assert ev.source_workflow_name == "Inner Workflow"
+        assert ev.workflow_name == "Inner Workflow"
         assert ev.workflow_id == "inner-workflow"
 
 
@@ -595,7 +594,7 @@ def test_nested_workflow_streaming_with_parallel_events(shared_db):
 
     for ev in par_started + par_completed:
         assert ev.nested_depth == 1, f"Parallel event depth should be 1, got {ev.nested_depth}"
-        assert ev.source_workflow_name == "Inner Workflow"
+        assert ev.workflow_name == "Inner Workflow"
         assert ev.workflow_id == "inner-workflow"
 
 
@@ -633,12 +632,12 @@ def test_nested_workflow_streaming_with_router_events(shared_db):
 
     for ev in router_started + router_completed:
         assert ev.nested_depth == 1, f"Router event depth should be 1, got {ev.nested_depth}"
-        assert ev.source_workflow_name == "Inner Workflow"
+        assert ev.workflow_name == "Inner Workflow"
         assert ev.workflow_id == "inner-workflow"
 
 
 def test_nested_workflow_streaming_event_source_tracking(shared_db):
-    """Test that source_workflow_id/name and nested_depth are correctly set on events."""
+    """Test that workflow_id/name and nested_depth correctly identify inner vs outer events."""
     inner = Workflow(
         name="Inner Workflow",
         steps=[Step(name="inner_step", executor=step_a)],
@@ -662,31 +661,25 @@ def test_nested_workflow_streaming_event_source_tracking(shared_db):
         for e in events
         if hasattr(e, "nested_depth")
         and getattr(e, "nested_depth", 0) == 0
-        and getattr(e, "source_workflow_id", None) is not None
+        and getattr(e, "workflow_id", None) is not None
     ]
 
     assert len(inner_events) > 0, "Should have inner workflow events with nested_depth > 0"
     assert len(outer_events) > 0, "Should have outer workflow events with nested_depth == 0"
 
-    # Inner events: source should point to inner workflow, depth == 1
+    # Inner events: workflow_id/name preserved as inner, depth == 1
     for ev in inner_events:
-        assert ev.source_workflow_name == "Inner Workflow", (
-            f"Inner event source should be 'Inner Workflow', got {ev.source_workflow_name}"
+        assert ev.workflow_name == "Inner Workflow", (
+            f"Inner event should have workflow_name='Inner Workflow', got {ev.workflow_name}"
         )
-        assert ev.source_workflow_id == "inner-workflow"
+        assert ev.workflow_id == "inner-workflow"
         assert ev.nested_depth == 1, f"Inner event depth should be 1, got {ev.nested_depth}"
-        # workflow_id/name should be preserved from the inner workflow (not overwritten by outer)
-        assert ev.workflow_id == "inner-workflow", (
-            f"Inner event workflow_id should be preserved as inner, got {ev.workflow_id}"
-        )
-        assert ev.workflow_name == "Inner Workflow"
 
-    # Outer events: source should point to outer workflow, depth == 0
+    # Outer events: workflow_id/name points to outer, depth == 0
     for ev in outer_events:
-        assert ev.source_workflow_name == "Outer Workflow"
-        assert ev.source_workflow_id == "outer-workflow"
-        assert ev.nested_depth == 0
+        assert ev.workflow_name == "Outer Workflow"
         assert ev.workflow_id == "outer-workflow"
+        assert ev.nested_depth == 0
 
     # Verify we have the right event types from inner workflow
     inner_step_started = [e for e in inner_events if isinstance(e, StepStartedEvent)]
@@ -719,10 +712,10 @@ def test_three_level_nested_depth_tracking(shared_db):
 
     events = list(level1.run(input="test", stream=True, stream_events=True))
 
-    # Categorize by source
-    l1_events = [e for e in events if getattr(e, "source_workflow_name", None) == "Level 1"]
-    l2_events = [e for e in events if getattr(e, "source_workflow_name", None) == "Level 2"]
-    l3_events = [e for e in events if getattr(e, "source_workflow_name", None) == "Level 3"]
+    # Categorize by workflow_name (preserved from originating workflow)
+    l1_events = [e for e in events if getattr(e, "workflow_name", None) == "Level 1"]
+    l2_events = [e for e in events if getattr(e, "workflow_name", None) == "Level 2"]
+    l3_events = [e for e in events if getattr(e, "workflow_name", None) == "Level 3"]
 
     assert len(l1_events) > 0, "Should have Level 1 events"
     assert len(l2_events) > 0, "Should have Level 2 events"
@@ -775,7 +768,7 @@ def test_nested_depth_with_condition_events(shared_db):
     # Condition events from inner workflow should have depth 1
     for ev in cond_started + cond_completed:
         assert ev.nested_depth == 1, f"Condition event depth should be 1, got {ev.nested_depth}"
-        assert ev.source_workflow_name == "Inner Workflow"
+        assert ev.workflow_name == "Inner Workflow"
 
 
 @pytest.mark.asyncio
@@ -803,7 +796,7 @@ async def test_async_nested_depth_tracking(shared_db):
     assert len(inner_events) > 0, "Async streaming should have inner events with depth > 0"
 
     for ev in inner_events:
-        assert ev.source_workflow_name == "Inner Workflow"
+        assert ev.workflow_name == "Inner Workflow"
         assert ev.nested_depth == 1
 
 

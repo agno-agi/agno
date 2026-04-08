@@ -87,11 +87,6 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
     step_id: Optional[str] = None
     parent_step_id: Optional[str] = None
 
-    # Source workflow tracking - set once at creation, NOT overwritten during enrichment.
-    # For nested workflows, these identify the originating workflow even after
-    # the outer workflow's enrichment overwrites workflow_id/workflow_name.
-    source_workflow_id: Optional[str] = None
-    source_workflow_name: Optional[str] = None
     # Nesting depth: 0 = top-level workflow, 1 = first nested, 2 = nested-in-nested, etc.
     nested_depth: int = 0
 

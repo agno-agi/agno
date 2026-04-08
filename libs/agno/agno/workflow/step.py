@@ -840,19 +840,13 @@ class Step:
         if workflow_run_response is None:
             return event
 
-        # Track the source (originating) workflow — set once, never overwritten.
-        if hasattr(event, "source_workflow_id") and event.source_workflow_id is None:
-            event.source_workflow_id = workflow_run_response.workflow_id
-        if hasattr(event, "source_workflow_name") and event.source_workflow_name is None:
-            event.source_workflow_name = workflow_run_response.workflow_name
-
-        # For events from nested workflows (source_workflow_id already set to a different
-        # workflow), preserve the original workflow_id/workflow_run_id so consumers can
-        # correctly attribute WorkflowStartedEvent/WorkflowCompletedEvent to the inner workflow.
+        # For events from nested workflows (workflow_id already set to a different workflow),
+        # preserve the original workflow_id/workflow_run_id so consumers can correctly
+        # attribute events to the originating workflow.
         is_nested_event = (
-            hasattr(event, "source_workflow_id")
-            and event.source_workflow_id is not None
-            and event.source_workflow_id != workflow_run_response.workflow_id
+            hasattr(event, "workflow_id")
+            and event.workflow_id is not None
+            and event.workflow_id != workflow_run_response.workflow_id
         )
 
         if not is_nested_event:

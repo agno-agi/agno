@@ -2,7 +2,7 @@
 Nested Workflow Example - Event Inspection
 
 Runs a nested workflow and prints every workflow/step event with full details
-so you can see source_workflow_id, source_workflow_name, nested_depth, and
+so you can see workflow_id, workflow_name, nested_depth, and
 how inner vs outer events differ.
 """
 
@@ -74,10 +74,6 @@ def print_event_details(event: BaseWorkflowRunOutputEvent, label: str) -> None:
     print(f"{indent}  event type       : {type(event).__name__}")
     print(f"{indent}  workflow_id       : {getattr(event, 'workflow_id', None)}")
     print(f"{indent}  workflow_name     : {getattr(event, 'workflow_name', None)}")
-    print(f"{indent}  source_workflow_id: {getattr(event, 'source_workflow_id', None)}")
-    print(
-        f"{indent}  source_wf_name   : {getattr(event, 'source_workflow_name', None)}"
-    )
     print(f"{indent}  nested_depth     : {getattr(event, 'nested_depth', None)}")
     print(f"{indent}  run_id           : {getattr(event, 'run_id', None)}")
     print(f"{indent}  session_id       : {getattr(event, 'session_id', None)}")
@@ -128,7 +124,7 @@ if __name__ == "__main__":
         if isinstance(event, EVENT_TYPES):
             label = type(event).__name__
             # Tag inner vs outer
-            source = getattr(event, "source_workflow_name", None) or "?"
+            source = getattr(event, "workflow_name", None) or "?"
             current = getattr(event, "workflow_name", None) or "?"
             depth = getattr(event, "nested_depth", 0)
             if depth > 0:
@@ -145,7 +141,7 @@ if __name__ == "__main__":
     print(f"Total workflow/step events captured: {len(event_log)}")
     for i, ev in enumerate(event_log):
         depth = getattr(ev, "nested_depth", 0)
-        source = getattr(ev, "source_workflow_name", None) or "?"
+        source = getattr(ev, "workflow_name", None) or "?"
         indent = "  " * depth
         print(
             f"  {i + 1}. {indent}{type(ev).__name__:<30s} depth={depth}  source={source}"
