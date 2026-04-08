@@ -19,7 +19,7 @@ from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_loop_end_condition, is_cel_expression
 from agno.workflow.step import Step
-from agno.workflow.types import OnReject, StepInput, StepOutput, StepRequirement, StepType
+from agno.workflow.types import HITL, OnReject, StepInput, StepOutput, StepRequirement, StepType
 
 WorkflowSteps = List[
     Union[
@@ -102,6 +102,7 @@ class Loop:
         on_reject: Union[OnReject, str] = OnReject.skip,
         requires_iteration_review: bool = False,
         iteration_review_message: Optional[str] = None,
+        hitl: Optional[HITL] = None,
     ):
         self.steps = steps
         self.name = name
@@ -109,11 +110,29 @@ class Loop:
         self.max_iterations = max_iterations
         self.end_condition = end_condition
         self.forward_iteration_output = forward_iteration_output
-        self.requires_confirmation = requires_confirmation
-        self.confirmation_message = confirmation_message
-        self.on_reject = on_reject
-        self.requires_iteration_review = requires_iteration_review
-        self.iteration_review_message = iteration_review_message
+
+        # Build HITL config - explicit hitl= takes priority over flat params
+        if hitl is not None:
+            self.hitl = hitl
+        else:
+            self.hitl = HITL(
+                requires_confirmation=requires_confirmation,
+                confirmation_message=confirmation_message,
+                on_reject=on_reject,
+                requires_iteration_review=requires_iteration_review,
+                iteration_review_message=iteration_review_message,
+            )
+
+        # Validate: output review not supported on Loop
+        if self.hitl.requires_output_review and self.hitl.requires_output_review is not False:
+            raise ValueError("requires_output_review is not supported on Loop. Use it on Step or Router instead.")
+
+        # Store HITL fields as attributes for backward compatibility
+        self.requires_confirmation = self.hitl.requires_confirmation
+        self.confirmation_message = self.hitl.confirmation_message
+        self.on_reject = self.hitl.on_reject
+        self.requires_iteration_review = self.hitl.requires_iteration_review
+        self.iteration_review_message = self.hitl.iteration_review_message
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -138,12 +157,8 @@ class Loop:
 
         result["forward_iteration_output"] = self.forward_iteration_output
 
-        # Add HITL fields
-        result["requires_confirmation"] = self.requires_confirmation
-        result["confirmation_message"] = self.confirmation_message
-        result["on_reject"] = str(self.on_reject)
-        result["requires_iteration_review"] = self.requires_iteration_review
-        result["iteration_review_message"] = self.iteration_review_message
+        # Add HITL config
+        result["hitl"] = self.hitl.to_dict()
 
         return result
 
@@ -258,6 +273,19 @@ class Loop:
                 else:
                     raise ValueError(f"Registry required to deserialize end_condition function '{end_condition_data}'")
 
+        # HITL config
+        if data.get("hitl"):
+            hitl = HITL.from_dict(data["hitl"])
+        else:
+            # Backward compat: build HITL from flat keys
+            hitl = HITL(
+                requires_confirmation=data.get("requires_confirmation", False),
+                confirmation_message=data.get("confirmation_message"),
+                on_reject=data.get("on_reject", "skip"),
+                requires_iteration_review=data.get("requires_iteration_review", False),
+                iteration_review_message=data.get("iteration_review_message"),
+            )
+
         return cls(
             name=data.get("name"),
             description=data.get("description"),
@@ -265,11 +293,7 @@ class Loop:
             max_iterations=data.get("max_iterations", 3),
             end_condition=end_condition,
             forward_iteration_output=data.get("forward_iteration_output", False),
-            requires_confirmation=data.get("requires_confirmation", False),
-            confirmation_message=data.get("confirmation_message"),
-            on_reject=data.get("on_reject", OnReject.skip),
-            requires_iteration_review=data.get("requires_iteration_review", False),
-            iteration_review_message=data.get("iteration_review_message"),
+            hitl=hitl,
         )
 
     def _evaluate_end_condition(self, iteration_results: List[StepOutput], current_iteration: int = 0) -> bool:

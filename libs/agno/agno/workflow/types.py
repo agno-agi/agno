@@ -62,6 +62,89 @@ class OnError(str, Enum):
 
 
 @dataclass
+class HITL:
+    """Human-in-the-loop configuration for workflow components.
+
+    Groups all HITL parameters into a single config object instead of
+    scattering them as flat params across Step/Loop/Router constructors.
+
+    Not all fields apply to all components:
+    - requires_output_review: Step, Router (raises on Loop)
+    - requires_iteration_review: Loop only (raises on Step, Router)
+    - requires_confirmation: all components
+    - requires_user_input: Step, Router
+
+    Each component validates the config in its __init__ and raises
+    ValueError if unsupported fields are set.
+    """
+
+    # Pre-execution confirmation
+    requires_confirmation: bool = False
+    confirmation_message: Optional[str] = None
+
+    # User input collection
+    requires_user_input: bool = False
+    user_input_message: Optional[str] = None
+    user_input_schema: Optional[List[Dict[str, Any]]] = None
+
+    # Post-execution output review
+    requires_output_review: Union[bool, Any] = False  # Union[bool, Callable[[StepOutput], bool]]
+    output_review_message: Optional[str] = None
+
+    # Per-iteration review (Loop only)
+    requires_iteration_review: bool = False
+    iteration_review_message: Optional[str] = None
+
+    # Shared behavior
+    on_reject: Union[OnReject, str] = OnReject.skip
+    on_error: Union[OnError, str] = OnError.skip
+    max_retries: int = 3
+    timeout: Optional[int] = None
+    on_timeout: Union[OnTimeout, str] = OnTimeout.cancel
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "requires_confirmation": self.requires_confirmation,
+            "confirmation_message": self.confirmation_message,
+            "requires_user_input": self.requires_user_input,
+            "user_input_message": self.user_input_message,
+            "user_input_schema": self.user_input_schema,
+            "requires_output_review": self.requires_output_review
+            if isinstance(self.requires_output_review, bool)
+            else True,
+            "output_review_message": self.output_review_message,
+            "requires_iteration_review": self.requires_iteration_review,
+            "iteration_review_message": self.iteration_review_message,
+            "on_reject": self.on_reject.value if isinstance(self.on_reject, OnReject) else self.on_reject,
+            "on_error": self.on_error.value if isinstance(self.on_error, OnError) else self.on_error,
+            "max_retries": self.max_retries,
+            "timeout": self.timeout,
+            "on_timeout": self.on_timeout.value if isinstance(self.on_timeout, OnTimeout) else self.on_timeout,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "HITL":
+        """Create HITL from dictionary."""
+        return cls(
+            requires_confirmation=data.get("requires_confirmation", False),
+            confirmation_message=data.get("confirmation_message"),
+            requires_user_input=data.get("requires_user_input", False),
+            user_input_message=data.get("user_input_message"),
+            user_input_schema=data.get("user_input_schema"),
+            requires_output_review=data.get("requires_output_review", False),
+            output_review_message=data.get("output_review_message"),
+            requires_iteration_review=data.get("requires_iteration_review", False),
+            iteration_review_message=data.get("iteration_review_message"),
+            on_reject=data.get("on_reject", "skip"),
+            on_error=data.get("on_error", "skip"),
+            max_retries=data.get("max_retries", 3),
+            timeout=data.get("timeout"),
+            on_timeout=data.get("on_timeout", "cancel"),
+        )
+
+
+@dataclass
 class WorkflowExecutionInput:
     """Input data for a step execution"""
 
