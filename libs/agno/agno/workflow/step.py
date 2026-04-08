@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from copy import copy, deepcopy
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
 from uuid import uuid4
