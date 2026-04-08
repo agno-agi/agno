@@ -309,8 +309,19 @@ class Step:
             workflow_id = config.get("workflow_id")
             log_warning(
                 f"Cannot reconstruct nested workflow '{workflow_id}' for step '{config.get('name')}' "
-                f"(workflow registry support not yet implemented)"
+                f"(workflow registry support not yet implemented). "
+                f"Using placeholder executor."
             )
+
+            # Create a placeholder executor so validation doesn't crash.
+            # The step won't be re-executable until Registry supports workflows.
+            def _placeholder(step_input: StepInput) -> StepOutput:
+                return StepOutput(
+                    content=f"Nested workflow '{workflow_id}' cannot be re-executed (not yet reconstructable)",
+                    success=False,
+                )
+
+            executor = _placeholder
 
         # --- Handle Executor reconstruction ---
         if "executor_ref" in config and config["executor_ref"] and registry:
@@ -829,10 +840,27 @@ class Step:
         if workflow_run_response is None:
             return event
 
-        if hasattr(event, "workflow_id"):
-            event.workflow_id = workflow_run_response.workflow_id
-        if hasattr(event, "workflow_run_id"):
-            event.workflow_run_id = workflow_run_response.run_id
+        # Track the source (originating) workflow — set once, never overwritten.
+        if hasattr(event, "source_workflow_id") and event.source_workflow_id is None:
+            event.source_workflow_id = workflow_run_response.workflow_id
+        if hasattr(event, "source_workflow_name") and event.source_workflow_name is None:
+            event.source_workflow_name = workflow_run_response.workflow_name
+
+        # For events from nested workflows (source_workflow_id already set to a different
+        # workflow), preserve the original workflow_id/workflow_run_id so consumers can
+        # correctly attribute WorkflowStartedEvent/WorkflowCompletedEvent to the inner workflow.
+        is_nested_event = (
+            hasattr(event, "source_workflow_id")
+            and event.source_workflow_id is not None
+            and event.source_workflow_id != workflow_run_response.workflow_id
+        )
+
+        if not is_nested_event:
+            if hasattr(event, "workflow_id"):
+                event.workflow_id = workflow_run_response.workflow_id
+            if hasattr(event, "workflow_run_id"):
+                event.workflow_run_id = workflow_run_response.run_id
+
         # Set session_id to match workflow's session_id for consistent event tracking
         if hasattr(event, "session_id") and workflow_run_response.session_id:
             event.session_id = workflow_run_response.session_id
@@ -845,11 +873,6 @@ class Step:
         if hasattr(event, "step_index") and step_index is not None:
             if event.step_index is None:
                 event.step_index = step_index
-
-        if hasattr(event, "source_workflow_id") and event.source_workflow_id is None:
-            event.source_workflow_id = workflow_run_response.workflow_id
-        if hasattr(event, "source_workflow_name") and event.source_workflow_name is None:
-            event.source_workflow_name = workflow_run_response.workflow_name
 
         return event
 
@@ -1913,7 +1936,7 @@ class Step:
     ) -> Optional[Union[str, List[Any], Dict[str, Any], BaseModel]]:
         """Prepare the primary input by combining message and previous step outputs"""
 
-        if previous_step_outputs and self._executor_type in ["agent", "team"]:
+        if previous_step_outputs and self._executor_type in ["agent", "team", "workflow"]:
             last_output = list(previous_step_outputs.values())[-1] if previous_step_outputs else None
             if last_output:
                 deepest_content = self._get_deepest_content_from_step_output(last_output)

@@ -472,22 +472,22 @@ def test_nested_workflow_streaming_event_order_and_source(shared_db):
 
     # Verify event types in order
     expected_types = [
-        WorkflowStartedEvent,   # 1. outer start
-        StepStartedEvent,       # 2. outer/nested start
-        WorkflowStartedEvent,   # 3. inner start
-        StepStartedEvent,       # 4. inner/inner_step start
-        StepCompletedEvent,     # 5. inner/inner_step complete
-        StepStartedEvent,       # 6. inner/inner_summary start
-        StepCompletedEvent,     # 7. inner/inner_summary complete
-        WorkflowCompletedEvent, # 8. inner complete
-        StepCompletedEvent,     # 9. outer/nested complete
-        StepStartedEvent,       # 10. outer/final start
-        StepCompletedEvent,     # 11. outer/final complete
-        WorkflowCompletedEvent, # 12. outer complete
+        WorkflowStartedEvent,  # 1. outer start
+        StepStartedEvent,  # 2. outer/nested start
+        WorkflowStartedEvent,  # 3. inner start
+        StepStartedEvent,  # 4. inner/inner_step start
+        StepCompletedEvent,  # 5. inner/inner_step complete
+        StepStartedEvent,  # 6. inner/inner_summary start
+        StepCompletedEvent,  # 7. inner/inner_summary complete
+        WorkflowCompletedEvent,  # 8. inner complete
+        StepCompletedEvent,  # 9. outer/nested complete
+        StepStartedEvent,  # 10. outer/final start
+        StepCompletedEvent,  # 11. outer/final complete
+        WorkflowCompletedEvent,  # 12. outer complete
     ]
     for i, (ev, expected_type) in enumerate(zip(events, expected_types)):
         assert isinstance(ev, expected_type), (
-            f"Event {i+1}: expected {expected_type.__name__}, got {type(ev).__name__}"
+            f"Event {i + 1}: expected {expected_type.__name__}, got {type(ev).__name__}"
         )
 
     # Verify depth for each event
@@ -495,38 +495,42 @@ def test_nested_workflow_streaming_event_order_and_source(shared_db):
     for i, (ev, expected_depth) in enumerate(zip(events, expected_depths)):
         actual_depth = getattr(ev, "nested_depth", -1)
         assert actual_depth == expected_depth, (
-            f"Event {i+1} ({type(ev).__name__}): expected depth={expected_depth}, got {actual_depth}"
+            f"Event {i + 1} ({type(ev).__name__}): expected depth={expected_depth}, got {actual_depth}"
         )
 
     # Verify source_workflow_name for each event
     expected_sources = [
-        "Outer Workflow",   # 1
-        "Outer Workflow",   # 2
-        "Inner Workflow",   # 3
-        "Inner Workflow",   # 4
-        "Inner Workflow",   # 5
-        "Inner Workflow",   # 6
-        "Inner Workflow",   # 7
-        "Inner Workflow",   # 8
-        "Outer Workflow",   # 9
-        "Outer Workflow",   # 10
-        "Outer Workflow",   # 11
-        "Outer Workflow",   # 12
+        "Outer Workflow",  # 1
+        "Outer Workflow",  # 2
+        "Inner Workflow",  # 3
+        "Inner Workflow",  # 4
+        "Inner Workflow",  # 5
+        "Inner Workflow",  # 6
+        "Inner Workflow",  # 7
+        "Inner Workflow",  # 8
+        "Outer Workflow",  # 9
+        "Outer Workflow",  # 10
+        "Outer Workflow",  # 11
+        "Outer Workflow",  # 12
     ]
     for i, (ev, expected_src) in enumerate(zip(events, expected_sources)):
         actual_src = getattr(ev, "source_workflow_name", None)
         assert actual_src == expected_src, (
-            f"Event {i+1} ({type(ev).__name__}): expected source='{expected_src}', got '{actual_src}'"
+            f"Event {i + 1} ({type(ev).__name__}): expected source='{expected_src}', got '{actual_src}'"
         )
 
-    # All events should have workflow_id/name pointing to outer (enrichment)
+    # Outer events should have workflow_id pointing to outer, inner events should keep inner
     for ev in events:
-        assert ev.workflow_id == "outer-workflow", "All events should have workflow_id=outer-workflow after enrichment"
+        source = getattr(ev, "source_workflow_name", None)
+        if source == "Inner Workflow":
+            assert ev.workflow_id == "inner-workflow", "Inner events should preserve inner workflow_id"
+        else:
+            assert ev.workflow_id == "outer-workflow", "Outer events should have outer workflow_id"
 
 
 def test_nested_workflow_streaming_with_loop_events(shared_db):
     """Test that Loop events inside a nested workflow get correct depth and source."""
-    from agno.run.workflow import LoopExecutionStartedEvent, LoopExecutionCompletedEvent
+    from agno.run.workflow import LoopExecutionCompletedEvent, LoopExecutionStartedEvent
 
     inner = Workflow(
         name="Inner Workflow",
@@ -557,12 +561,12 @@ def test_nested_workflow_streaming_with_loop_events(shared_db):
     for ev in loop_started + loop_completed:
         assert ev.nested_depth == 1, f"Loop event depth should be 1, got {ev.nested_depth}"
         assert ev.source_workflow_name == "Inner Workflow"
-        assert ev.workflow_id == "outer-workflow"
+        assert ev.workflow_id == "inner-workflow"
 
 
 def test_nested_workflow_streaming_with_parallel_events(shared_db):
     """Test that Parallel events inside a nested workflow get correct depth and source."""
-    from agno.run.workflow import ParallelExecutionStartedEvent, ParallelExecutionCompletedEvent
+    from agno.run.workflow import ParallelExecutionCompletedEvent, ParallelExecutionStartedEvent
 
     inner = Workflow(
         name="Inner Workflow",
@@ -592,12 +596,12 @@ def test_nested_workflow_streaming_with_parallel_events(shared_db):
     for ev in par_started + par_completed:
         assert ev.nested_depth == 1, f"Parallel event depth should be 1, got {ev.nested_depth}"
         assert ev.source_workflow_name == "Inner Workflow"
-        assert ev.workflow_id == "outer-workflow"
+        assert ev.workflow_id == "inner-workflow"
 
 
 def test_nested_workflow_streaming_with_router_events(shared_db):
     """Test that Router events inside a nested workflow get correct depth and source."""
-    from agno.run.workflow import RouterExecutionStartedEvent, RouterExecutionCompletedEvent
+    from agno.run.workflow import RouterExecutionCompletedEvent, RouterExecutionStartedEvent
 
     inner = Workflow(
         name="Inner Workflow",
@@ -630,7 +634,7 @@ def test_nested_workflow_streaming_with_router_events(shared_db):
     for ev in router_started + router_completed:
         assert ev.nested_depth == 1, f"Router event depth should be 1, got {ev.nested_depth}"
         assert ev.source_workflow_name == "Inner Workflow"
-        assert ev.workflow_id == "outer-workflow"
+        assert ev.workflow_id == "inner-workflow"
 
 
 def test_nested_workflow_streaming_event_source_tracking(shared_db):
@@ -666,12 +670,16 @@ def test_nested_workflow_streaming_event_source_tracking(shared_db):
 
     # Inner events: source should point to inner workflow, depth == 1
     for ev in inner_events:
-        assert ev.source_workflow_name == "Inner Workflow", f"Inner event source should be 'Inner Workflow', got {ev.source_workflow_name}"
+        assert ev.source_workflow_name == "Inner Workflow", (
+            f"Inner event source should be 'Inner Workflow', got {ev.source_workflow_name}"
+        )
         assert ev.source_workflow_id == "inner-workflow"
         assert ev.nested_depth == 1, f"Inner event depth should be 1, got {ev.nested_depth}"
-        # workflow_id/name should be overwritten to outer by enrichment
-        assert ev.workflow_id == "outer-workflow", f"Inner event workflow_id should be outer after enrichment, got {ev.workflow_id}"
-        assert ev.workflow_name == "Outer Workflow"
+        # workflow_id/name should be preserved from the inner workflow (not overwritten by outer)
+        assert ev.workflow_id == "inner-workflow", (
+            f"Inner event workflow_id should be preserved as inner, got {ev.workflow_id}"
+        )
+        assert ev.workflow_name == "Inner Workflow"
 
     # Outer events: source should point to outer workflow, depth == 0
     for ev in outer_events:
@@ -735,7 +743,7 @@ def test_three_level_nested_depth_tracking(shared_db):
 
 def test_nested_depth_with_condition_events(shared_db):
     """Test that Condition events inside a nested workflow get correct depth."""
-    from agno.run.workflow import ConditionExecutionStartedEvent, ConditionExecutionCompletedEvent
+    from agno.run.workflow import ConditionExecutionCompletedEvent, ConditionExecutionStartedEvent
 
     inner = Workflow(
         name="Inner Workflow",

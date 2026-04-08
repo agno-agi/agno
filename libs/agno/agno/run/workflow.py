@@ -95,8 +95,17 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
     nested_depth: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
-        # Exclude run_output from serialization - it's only used at runtime for nested workflows
-        _dict = {k: v for k, v in asdict(self).items() if v is not None and k != "run_output"}
+        # Temporarily clear run_output before asdict() to avoid infinite recursion:
+        # WorkflowCompletedEvent.run_output -> WorkflowRunOutput.events -> WorkflowCompletedEvent.run_output -> ...
+        # asdict() recursively traverses all fields before we can filter, so we must clear it first.
+        saved_run_output = getattr(self, "run_output", None)
+        if saved_run_output is not None:
+            object.__setattr__(self, "run_output", None)
+        try:
+            _dict = {k: v for k, v in asdict(self).items() if v is not None and k != "run_output"}
+        finally:
+            if saved_run_output is not None:
+                object.__setattr__(self, "run_output", saved_run_output)
 
         if hasattr(self, "content") and self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
