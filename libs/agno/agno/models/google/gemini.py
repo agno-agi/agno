@@ -2,9 +2,10 @@ import asyncio
 import base64
 import json
 import mimetypes
+import threading
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Type, Union
@@ -142,6 +143,8 @@ class Gemini(Model):
 
     # Gemini client
     client: Optional[GeminiClient] = None
+    _thread_local_clients: threading.local = field(default_factory=threading.local, init=False, repr=False)
+    _manual_client_provided: bool = field(default=False, init=False, repr=False)
 
     # The role to map the Gemini response
     role_map = {
@@ -154,6 +157,20 @@ class Gemini(Model):
         "tool": "user",
     }
 
+    def __post_init__(self):
+        super().__post_init__()
+        self._manual_client_provided = self.client is not None
+
+    def _get_thread_local_client(self) -> Optional[GeminiClient]:
+        return getattr(self._thread_local_clients, "client", None)
+
+    def _set_thread_local_client(self, client: GeminiClient) -> None:
+        self._thread_local_clients.client = client
+
+    def _clear_thread_local_client(self) -> None:
+        if hasattr(self._thread_local_clients, "client"):
+            del self._thread_local_clients.client
+
     def get_client(self) -> GeminiClient:
         """
         Returns an instance of the GeminiClient client.
@@ -161,8 +178,11 @@ class Gemini(Model):
         Returns:
             GeminiClient: The GeminiClient client.
         """
-        if self.client:
+        if self._manual_client_provided and self.client:
             return self.client
+        thread_client = self._get_thread_local_client()
+        if thread_client:
+            return thread_client
         client_params: Dict[str, Any] = {}
         vertexai = self.vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
 
@@ -196,8 +216,35 @@ class Gemini(Model):
         if self.client_params:
             client_params.update(self.client_params)
 
-        self.client = genai.Client(**client_params)
-        return self.client
+        thread_client = genai.Client(**client_params)
+        self._set_thread_local_client(thread_client)
+        # Keep this for backwards compatibility with existing external checks.
+        self.client = thread_client
+        return thread_client
+
+    def close_current_thread_client(self) -> None:
+        """Close and clear the Gemini client for the current thread."""
+        if self._manual_client_provided:
+            return
+        thread_client = self._get_thread_local_client()
+        if thread_client is None:
+            return
+        thread_client.close()
+        if self.client is thread_client:
+            self.client = None
+        self._clear_thread_local_client()
+
+    async def aclose_current_thread_client(self) -> None:
+        """Async-close and clear the Gemini client for the current thread."""
+        if self._manual_client_provided:
+            return
+        thread_client = self._get_thread_local_client()
+        if thread_client is None:
+            return
+        await thread_client.aio.aclose()
+        if self.client is thread_client:
+            self.client = None
+        self._clear_thread_local_client()
 
     def to_dict(self) -> Dict[str, Any]:
         """
