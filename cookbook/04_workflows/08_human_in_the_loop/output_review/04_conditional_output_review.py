@@ -1,10 +1,9 @@
 """
 Conditional Output Review Example
 
-This example demonstrates conditional HITL: the output review only
-triggers when a condition is met. Instead of reviewing every output,
-you can pass a callable predicate that decides at runtime whether
-review is needed.
+This example demonstrates conditional HITL using the HITL config: the output
+review only triggers when a condition is met. Instead of reviewing every output,
+you can pass a callable predicate that decides at runtime whether review is needed.
 
 In this example, only outputs longer than 200 characters trigger review.
 """
@@ -14,7 +13,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.workflow import OnReject
 from agno.workflow.step import Step
-from agno.workflow.types import StepOutput
+from agno.workflow.types import HumanReview, StepOutput
 from agno.workflow.workflow import Workflow
 
 
@@ -47,11 +46,13 @@ workflow = Workflow(
         Step(
             name="draft_email",
             agent=draft_agent,
-            # Pass a callable instead of a bool — only pauses when the predicate returns True
-            requires_output_review=needs_review,
-            output_review_message="Long email detected - please review before sending",
-            on_reject=OnReject.retry,
-            hitl_max_retries=2,
+            human_review=HumanReview(
+                # Pass a callable instead of a bool — only pauses when the predicate returns True
+                requires_output_review=needs_review,
+                output_review_message="Long email detected - please review before sending",
+                on_reject=OnReject.retry,
+                max_retries=2,
+            ),
         ),
         Step(
             name="send_email",

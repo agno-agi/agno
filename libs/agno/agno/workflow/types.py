@@ -62,6 +62,140 @@ class OnError(str, Enum):
 
 
 @dataclass
+class HumanReview:
+    """Human-in-the-loop configuration for workflow components.
+
+    Groups all HITL parameters into a single config object. Pass it via
+    ``human_review=HumanReview(...)`` on Step, Loop, or Router.
+
+    Not all fields apply to all components. Each component validates
+    at construction time and raises ``ValueError`` for unsupported fields.
+
+    Field compatibility:
+        requires_confirmation   - Step, Loop, Router, Condition, Steps
+        requires_user_input     - Step, Router
+        requires_output_review  - Step, Router
+        requires_iteration_review - Loop
+    """
+
+    # Pre-execution confirmation (Step, Loop, Router, Condition, Steps)
+    requires_confirmation: bool = False
+    confirmation_message: Optional[str] = None
+
+    # User input collection (Step, Router only)
+    requires_user_input: bool = False
+    user_input_message: Optional[str] = None
+    user_input_schema: Optional[List[Dict[str, Any]]] = None
+
+    # Post-execution output review (Step, Router only)
+    requires_output_review: Union[bool, Any] = False  # Union[bool, Callable[[StepOutput], bool]]
+    output_review_message: Optional[str] = None
+
+    # Per-iteration review (Loop only)
+    requires_iteration_review: bool = False
+    iteration_review_message: Optional[str] = None
+
+    # Shared behavior
+    on_reject: Union[OnReject, str] = OnReject.skip
+    on_error: Union[OnError, str] = OnError.skip
+    max_retries: int = 3
+    timeout: Optional[int] = None
+    on_timeout: Union[OnTimeout, str] = OnTimeout.cancel
+
+    def __post_init__(self) -> None:
+        # Fail early on conflicting flags
+        if self.requires_output_review and self.requires_iteration_review:
+            raise ValueError(
+                "requires_output_review and requires_iteration_review cannot both be set. "
+                "Use requires_output_review on Step/Router, requires_iteration_review on Loop."
+            )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "requires_confirmation": self.requires_confirmation,
+            "confirmation_message": self.confirmation_message,
+            "requires_user_input": self.requires_user_input,
+            "user_input_message": self.user_input_message,
+            "user_input_schema": self.user_input_schema,
+            "requires_output_review": self.requires_output_review
+            if isinstance(self.requires_output_review, bool)
+            else True,
+            "output_review_message": self.output_review_message,
+            "requires_iteration_review": self.requires_iteration_review,
+            "iteration_review_message": self.iteration_review_message,
+            "on_reject": self.on_reject.value if isinstance(self.on_reject, OnReject) else self.on_reject,
+            "on_error": self.on_error.value if isinstance(self.on_error, OnError) else self.on_error,
+            "max_retries": self.max_retries,
+            "timeout": self.timeout,
+            "on_timeout": self.on_timeout.value if isinstance(self.on_timeout, OnTimeout) else self.on_timeout,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "HumanReview":
+        """Create HITL from dictionary."""
+        return cls(
+            requires_confirmation=data.get("requires_confirmation", False),
+            confirmation_message=data.get("confirmation_message"),
+            requires_user_input=data.get("requires_user_input", False),
+            user_input_message=data.get("user_input_message"),
+            user_input_schema=data.get("user_input_schema"),
+            requires_output_review=data.get("requires_output_review", False),
+            output_review_message=data.get("output_review_message"),
+            requires_iteration_review=data.get("requires_iteration_review", False),
+            iteration_review_message=data.get("iteration_review_message"),
+            on_reject=data.get("on_reject", "skip"),
+            on_error=data.get("on_error", "skip"),
+            max_retries=data.get("max_retries", 3),
+            timeout=data.get("timeout"),
+            on_timeout=data.get("on_timeout", "cancel"),
+        )
+
+
+def validate_human_review_for_step(hr: "HumanReview") -> None:
+    """Validate HumanReview config for use on a Step.
+
+    Raises ValueError if unsupported fields are set.
+    Supported: requires_confirmation, requires_user_input, requires_output_review.
+    """
+    if hr.requires_iteration_review:
+        raise ValueError(
+            "requires_iteration_review is not supported on Step. "
+            "Supported: requires_confirmation, requires_user_input, requires_output_review."
+        )
+
+
+def validate_human_review_for_loop(hr: "HumanReview") -> None:
+    """Validate HumanReview config for use on a Loop.
+
+    Raises ValueError if unsupported fields are set.
+    Supported: requires_confirmation, requires_iteration_review.
+    """
+    if hr.requires_output_review:
+        raise ValueError(
+            "requires_output_review is not supported on Loop. "
+            "Supported: requires_confirmation, requires_iteration_review."
+        )
+    if hr.requires_user_input:
+        raise ValueError(
+            "requires_user_input is not supported on Loop. Supported: requires_confirmation, requires_iteration_review."
+        )
+
+
+def validate_human_review_for_router(hr: "HumanReview") -> None:
+    """Validate HumanReview config for use on a Router.
+
+    Raises ValueError if unsupported fields are set.
+    Supported: requires_confirmation, requires_user_input, requires_output_review.
+    """
+    if hr.requires_iteration_review:
+        raise ValueError(
+            "requires_iteration_review is not supported on Router. "
+            "Supported: requires_confirmation, requires_user_input, requires_output_review."
+        )
+
+
+@dataclass
 class WorkflowExecutionInput:
     """Input data for a step execution"""
 

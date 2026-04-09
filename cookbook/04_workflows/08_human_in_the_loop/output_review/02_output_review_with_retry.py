@@ -1,7 +1,8 @@
 """
 Output Review with Retry Example
 
-This example demonstrates the reject-with-feedback-and-retry pattern:
+This example demonstrates the reject-with-feedback-and-retry pattern using
+the HITL config:
 1. Agent produces output
 2. Human reviews and rejects with feedback ("too formal, make it casual")
 3. Agent retries with the feedback
@@ -16,6 +17,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.workflow import OnReject
 from agno.workflow.step import Step
+from agno.workflow.types import HumanReview
 from agno.workflow.workflow import Workflow
 
 draft_agent = Agent(
@@ -37,10 +39,12 @@ workflow = Workflow(
         Step(
             name="draft_email",
             agent=draft_agent,
-            requires_output_review=True,
-            output_review_message="Review the email draft before sending",
-            on_reject=OnReject.retry,  # Re-run the step on rejection
-            hitl_max_retries=3,  # Maximum 3 retry attempts
+            human_review=HumanReview(
+                requires_output_review=True,
+                output_review_message="Review the email draft before sending",
+                on_reject=OnReject.retry,  # Re-run the step on rejection
+                max_retries=3,  # Maximum 3 retry attempts
+            ),
         ),
         Step(
             name="send_email",
