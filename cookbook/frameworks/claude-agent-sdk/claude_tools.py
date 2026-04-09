@@ -11,7 +11,7 @@ Usage:
     .venvs/demo/bin/python cookbook/frameworks/claude_tools.py
 """
 
-from agno.frameworks.claude import ClaudeAgentSDK
+from agno.agents.claude import ClaudeAgentSDK
 
 # ----- Agent with built-in tools -----
 agent = ClaudeAgentSDK(

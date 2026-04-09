@@ -16,7 +16,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent
-from agno.agent.protocol import AgentLike
+from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 
 
 async def agent_response_streamer(
-    agent: Union[Agent, RemoteAgent, AgentLike],
+    agent: Union[Agent, RemoteAgent, AgentProtocol],
     message: str,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -115,7 +115,7 @@ async def agent_response_streamer(
 
 
 async def agent_continue_response_streamer(
-    agent: Union[Agent, RemoteAgent, AgentLike],
+    agent: Union[Agent, RemoteAgent, AgentProtocol],
     run_id: str,
     updated_tools: Optional[List] = None,
     session_id: Optional[str] = None,

@@ -10,7 +10,7 @@ Usage:
 
 import json
 
-from agno.frameworks.langgraph import LangGraphAgent
+from agno.agents.langgraph import LangGraphAgent
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import MessagesState, StateGraph

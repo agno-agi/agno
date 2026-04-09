@@ -5,7 +5,7 @@ from agno.run.agent import RunOutput, RunOutputEvent
 
 
 @runtime_checkable
-class AgentLike(Protocol):
+class AgentProtocol(Protocol):
     """Protocol that any agent must satisfy to be registered with AgentOS.
 
     This is the minimal contract the agent router requires. Native Agent,

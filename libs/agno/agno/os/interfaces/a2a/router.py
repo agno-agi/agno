@@ -24,7 +24,7 @@ except ImportError as e:
 import warnings
 
 from agno.agent import Agent, RemoteAgent
-from agno.agent.protocol import AgentLike
+from agno.agent.protocol import AgentProtocol
 from agno.os.interfaces.a2a.utils import (
     map_a2a_request_to_run_input,
     map_run_output_to_a2a_task,
@@ -37,7 +37,7 @@ from agno.workflow import RemoteWorkflow, Workflow
 
 def attach_routes(
     router: APIRouter,
-    agents: Optional[List[Union[Agent, RemoteAgent, AgentLike]]] = None,
+    agents: Optional[List[Union[Agent, RemoteAgent, AgentProtocol]]] = None,
     teams: Optional[List[Union[Team, RemoteTeam]]] = None,
     workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
 ) -> APIRouter:
@@ -861,7 +861,7 @@ def attach_routes(
                 status_code=400,
                 detail="Entity ID required. Provide it via 'agentId' in params.message or 'X-Agent-ID' header.",
             )
-        entity: Optional[Union[Agent, RemoteAgent, AgentLike, Team, RemoteTeam, Workflow, RemoteWorkflow]] = None
+        entity: Optional[Union[Agent, RemoteAgent, AgentProtocol, Team, RemoteTeam, Workflow, RemoteWorkflow]] = None
         if agents:
             entity = get_agent_by_id(agent_id, agents)
         if not entity and teams:
@@ -975,7 +975,7 @@ def attach_routes(
                 status_code=400,
                 detail="Entity ID required. Provide 'agentId' in params.message or 'X-Agent-ID' header.",
             )
-        entity: Optional[Union[Agent, RemoteAgent, AgentLike, Team, RemoteTeam, Workflow, RemoteWorkflow]] = None
+        entity: Optional[Union[Agent, RemoteAgent, AgentProtocol, Team, RemoteTeam, Workflow, RemoteWorkflow]] = None
         if agents:
             entity = get_agent_by_id(agent_id, agents)
         if not entity and teams:

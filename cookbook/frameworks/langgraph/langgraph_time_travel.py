@@ -14,7 +14,7 @@ Usage:
     .venvs/demo/bin/python cookbook/frameworks/langgraph_time_travel.py
 """
 
-from agno.frameworks.langgraph import LangGraphAgent
+from agno.agents.langgraph import LangGraphAgent
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import MessagesState, StateGraph

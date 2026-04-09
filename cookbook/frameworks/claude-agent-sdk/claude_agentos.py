@@ -30,7 +30,7 @@ Then call the API:
         -F "stream=false"
 """
 
-from agno.frameworks.claude import ClaudeAgentSDK
+from agno.agents.claude import ClaudeAgentSDK
 from agno.os.app import AgentOS
 
 # ---------------------------------------------------------------------------

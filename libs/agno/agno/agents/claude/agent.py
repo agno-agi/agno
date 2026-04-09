@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List, Optional
 from uuid import uuid4
 
-from agno.frameworks.base import BaseExternalAgent
+from agno.agents.base import BaseExternalAgent
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     RunContentEvent,
@@ -37,7 +37,7 @@ class ClaudeAgentSDK(BaseExternalAgent):
         options_kwargs: Additional kwargs passed to ClaudeAgentOptions.
 
     Example:
-        from agno.frameworks.claude import ClaudeAgentSDK
+        from agno.agents.claude import ClaudeAgentSDK
 
         agent = ClaudeAgentSDK(
             agent_id="claude-coder",

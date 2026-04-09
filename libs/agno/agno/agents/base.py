@@ -23,6 +23,10 @@ from agno.utils.log import logger
 class BaseExternalAgent:
     """Base class for external framework adapters.
 
+    Structurally satisfies the AgentProtocol (agno.agent.protocol) — any subclass
+    that implements the two hooks below will automatically be compatible with
+    AgentOS routing, SSE streaming, and the agent os.
+
     Provides shared infrastructure for:
     - ID and name management
     - Run lifecycle event emission (RunStarted, RunCompleted, RunError)
@@ -49,7 +53,7 @@ class BaseExternalAgent:
         return self.agent_name or self.agent_id
 
     # ---------------------------------------------------------------------------
-    # Public async API (satisfies AgentLike protocol)
+    # Public async API (satisfies AgentProtocol protocol)
     # ---------------------------------------------------------------------------
 
     def arun(

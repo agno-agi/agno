@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, cast
 from uuid import uuid4
 
-from agno.frameworks.base import BaseExternalAgent
+from agno.agents.base import BaseExternalAgent
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     RunContentEvent,
@@ -30,7 +30,7 @@ class LangGraphAgent(BaseExternalAgent):
     Example:
         from langgraph.graph import StateGraph, MessagesState
         from langchain_openai import ChatOpenAI
-        from agno.frameworks.langgraph import LangGraphAgent
+        from agno.agents.langgraph import LangGraphAgent
 
         def chatbot(state: MessagesState):
             return {"messages": [ChatOpenAI(model="gpt-4o").invoke(state["messages"])]}
