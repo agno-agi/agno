@@ -348,6 +348,33 @@ class TestMetadata:
         result = json.loads(sf_tools.describe_object(sobject=""))
         assert "error" in result
 
+    def test_list_objects_large_org_parseable(self, mock_sf_client):
+        tools = SalesforceTools(
+            username="test@example.com",
+            password="testpass",
+            max_records=5,
+            all=True,
+        )
+        mock_sf_client.describe.return_value = {
+            "sobjects": [
+                {
+                    "name": f"Object{i}",
+                    "label": f"Object {i}",
+                    "queryable": True,
+                    "createable": True,
+                    "updateable": True,
+                    "deletable": True,
+                }
+                for i in range(100)
+            ]
+        }
+
+        raw = tools.list_objects()
+        result = json.loads(raw)
+        assert result["total"] == 100
+        assert result["returned"] == 5
+        assert len(result["objects"]) == 5
+
 
 class TestCRUD:
     def test_get_record(self, sf_tools, mock_sf_client):
@@ -486,6 +513,24 @@ class TestQuerySearch:
         result = json.loads(sf_tools.search(sosl=""))
         assert "error" in result
 
+    def test_query_large_result_parseable(self, mock_sf_client):
+        tools = SalesforceTools(
+            username="test@example.com",
+            password="testpass",
+            max_records=3,
+            all=True,
+        )
+        mock_sf_client.query.return_value = {
+            "totalSize": 50,
+            "done": True,
+            "records": [{"Id": f"{i:018d}", "Description": "x" * 10000} for i in range(50)],
+        }
+
+        raw = tools.query(soql="SELECT Id, Description FROM Account")
+        result = json.loads(raw)
+        assert result["totalSize"] == 50
+        assert result["returned"] == 3
+
 
 class TestReport:
     def test_get_report_success(self, sf_tools, mock_sf_client):
@@ -551,50 +596,3 @@ class TestErrorHandling:
         )
         result = json.loads(tools.query(soql="SELECT Id FROM Account"))
         assert "error" in result
-
-
-class TestJsonParseability:
-    def test_list_objects_always_parseable(self, mock_sf_client):
-        tools = SalesforceTools(
-            username="test@example.com",
-            password="testpass",
-            max_records=5,
-            all=True,
-        )
-        mock_sf_client.describe.return_value = {
-            "sobjects": [
-                {
-                    "name": f"Object{i}",
-                    "label": f"Object {i}",
-                    "queryable": True,
-                    "createable": True,
-                    "updateable": True,
-                    "deletable": True,
-                }
-                for i in range(100)
-            ]
-        }
-
-        raw = tools.list_objects()
-        result = json.loads(raw)
-        assert result["total"] == 100
-        assert result["returned"] == 5
-        assert len(result["objects"]) == 5
-
-    def test_query_always_parseable(self, mock_sf_client):
-        tools = SalesforceTools(
-            username="test@example.com",
-            password="testpass",
-            max_records=3,
-            all=True,
-        )
-        mock_sf_client.query.return_value = {
-            "totalSize": 50,
-            "done": True,
-            "records": [{"Id": f"{i:018d}", "Description": "x" * 10000} for i in range(50)],
-        }
-
-        raw = tools.query(soql="SELECT Id, Description FROM Account")
-        result = json.loads(raw)
-        assert result["totalSize"] == 50
-        assert result["returned"] == 3
