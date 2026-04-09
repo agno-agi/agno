@@ -271,24 +271,6 @@ class TestMetadata:
         assert result["returned"] == 3
         assert len(result["objects"]) == 3
 
-    def test_list_objects_caching(self, sf_tools, mock_sf_client):
-        mock_sf_client.describe.return_value = {
-            "sobjects": [
-                {
-                    "name": "Account",
-                    "label": "Account",
-                    "queryable": True,
-                    "createable": True,
-                    "updateable": True,
-                    "deletable": True,
-                }
-            ]
-        }
-
-        sf_tools.list_objects()
-        sf_tools.list_objects()
-        mock_sf_client.describe.assert_called_once()
-
     def test_describe_object(self, sf_tools, mock_sf_client, account_describe):
         mock_sf_client.Account = MagicMock()
         mock_sf_client.Account.describe.return_value = account_describe
@@ -335,14 +317,6 @@ class TestMetadata:
         assert result["totalFields"] == 10
         assert result["returnedFields"] == 2
         assert len(result["fields"]) == 2
-
-    def test_describe_object_caching(self, sf_tools, mock_sf_client, account_describe):
-        mock_sf_client.Account = MagicMock()
-        mock_sf_client.Account.describe.return_value = account_describe
-
-        sf_tools.describe_object(sobject="Account")
-        sf_tools.describe_object(sobject="Account")
-        mock_sf_client.Account.describe.assert_called_once()
 
     def test_describe_object_empty_name(self, sf_tools):
         result = json.loads(sf_tools.describe_object(sobject=""))

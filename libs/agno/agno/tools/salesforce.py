@@ -29,8 +29,6 @@ except ImportError:
 
 
 class SalesforceTools(Toolkit):
-    """Salesforce CRM toolkit — CRUD, SOQL queries, SOSL search, and metadata discovery for any Salesforce object."""
-
     def __init__(
         self,
         username: Optional[str] = None,
@@ -39,7 +37,6 @@ class SalesforceTools(Toolkit):
         domain: Optional[str] = None,
         instance_url: Optional[str] = None,
         session_id: Optional[str] = None,
-        cache_metadata: bool = True,
         max_records: int = 200,
         max_fields: int = 100,
         # Read operations — enabled by default
@@ -62,15 +59,8 @@ class SalesforceTools(Toolkit):
         self.domain = domain or getenv("SALESFORCE_DOMAIN", "login")
         self.instance_url = instance_url
         self.session_id = session_id
-        self.cache_metadata = cache_metadata
         self.max_records = max(max_records, 1)
         self.max_fields = max(max_fields, 1)
-
-        # Unbounded for v1 — acceptable for short-lived agents, revisit with TTL/maxsize for long-lived deployments
-        self._objects_cache: Optional[List[Dict[str, Any]]] = None
-        self._describe_cache: Dict[str, Dict[str, Any]] = {}
-
-        # Lazy connection
         self._sf: Optional[Salesforce] = None
 
         tools: List[Any] = []
@@ -155,15 +145,10 @@ class SalesforceTools(Toolkit):
             return json.dumps({"error": "Salesforce not connected."})
 
         try:
-            if self.cache_metadata and self._objects_cache is not None:
-                objects = self._objects_cache
-            else:
-                describe = sf.describe()
-                if not isinstance(describe, dict):
-                    return json.dumps({"error": "Unexpected response from Salesforce."})
-                objects = describe.get("sobjects", [])
-                if self.cache_metadata:
-                    self._objects_cache = objects
+            describe = sf.describe()
+            if not isinstance(describe, dict):
+                return json.dumps({"error": "Unexpected response from Salesforce."})
+            objects = describe.get("sobjects", [])
 
             result = []
             for obj in objects:
@@ -216,13 +201,8 @@ class SalesforceTools(Toolkit):
             return json.dumps({"error": "Salesforce not connected."})
 
         try:
-            if self.cache_metadata and sobject in self._describe_cache:
-                describe = self._describe_cache[sobject]
-            else:
-                sf_object = getattr(sf, sobject)
-                describe = sf_object.describe()
-                if self.cache_metadata:
-                    self._describe_cache[sobject] = describe
+            sf_object = getattr(sf, sobject)
+            describe = sf_object.describe()
 
             all_fields = describe.get("fields", [])
             fields = []
