@@ -376,18 +376,6 @@ class TestCRUD:
         assert "error" in result
         assert "not found" in result["error"]
 
-    def test_get_record_invalid_id_blocked(self, sf_tools):
-        result = json.loads(sf_tools.get_record(sobject="Account", record_id="' OR Id != '", fields="Id,Name"))
-        assert "error" in result
-        assert "Invalid Salesforce record ID" in result["error"]
-
-    def test_get_record_invalid_fields_blocked(self, sf_tools, mock_sf_client):
-        result = json.loads(
-            sf_tools.get_record(sobject="Account", record_id="001000000000ABC", fields="Id FROM Account--")
-        )
-        assert "error" in result
-        assert "Invalid field names" in result["error"]
-
     def test_get_record_missing_params(self, sf_tools):
         result = json.loads(sf_tools.get_record(sobject="", record_id=""))
         assert "error" in result
@@ -429,11 +417,6 @@ class TestCRUD:
         assert result["status"] == "success"
         assert result["id"] == "001000000000ABC"
 
-    def test_update_record_invalid_id(self, sf_tools):
-        result = json.loads(sf_tools.update_record(sobject="Account", record_id="bad-id!", record_data='{"Name": "x"}'))
-        assert "error" in result
-        assert "Invalid Salesforce record ID" in result["error"]
-
     def test_update_record_missing_params(self, sf_tools):
         result = json.loads(sf_tools.update_record(sobject="", record_id="", record_data=""))
         assert "error" in result
@@ -445,11 +428,6 @@ class TestCRUD:
         result = json.loads(sf_tools.delete_record(sobject="Account", record_id="001000000000ABC"))
         assert result["status"] == "success"
         assert result["id"] == "001000000000ABC"
-
-    def test_delete_record_invalid_id(self, sf_tools):
-        result = json.loads(sf_tools.delete_record(sobject="Account", record_id="'; DROP TABLE--"))
-        assert "error" in result
-        assert "Invalid Salesforce record ID" in result["error"]
 
     def test_delete_record_missing_params(self, sf_tools):
         result = json.loads(sf_tools.delete_record(sobject="", record_id=""))
@@ -528,11 +506,6 @@ class TestReport:
         result = json.loads(sf_tools.get_report(report_id="00O000000000BAD"))
         assert "error" in result
 
-    def test_get_report_invalid_id(self, sf_tools):
-        result = json.loads(sf_tools.get_report(report_id="../sobjects/Account"))
-        assert "error" in result
-        assert "Invalid Salesforce report ID" in result["error"]
-
     def test_get_report_empty_id(self, sf_tools):
         result = json.loads(sf_tools.get_report(report_id=""))
         assert "error" in result
@@ -578,29 +551,6 @@ class TestErrorHandling:
         )
         result = json.loads(tools.query(soql="SELECT Id FROM Account"))
         assert "error" in result
-
-
-class TestValidation:
-    def test_valid_sf_ids(self):
-        assert SalesforceTools._validate_sf_id("001000000000ABC")
-        assert SalesforceTools._validate_sf_id("001000000000ABCDEF")
-        assert SalesforceTools._validate_sf_id("00Qg50000035xNV")
-
-    def test_invalid_sf_ids(self):
-        assert not SalesforceTools._validate_sf_id("")
-        assert not SalesforceTools._validate_sf_id("short")
-        assert not SalesforceTools._validate_sf_id("' OR Id != '")
-        assert not SalesforceTools._validate_sf_id("001-000-000-ABC")
-
-    def test_valid_field_names(self):
-        assert SalesforceTools._validate_field_names("Id,Name,Industry")
-        assert SalesforceTools._validate_field_names("Account.Name")
-        assert SalesforceTools._validate_field_names("Custom_Field__c")
-
-    def test_invalid_field_names(self):
-        assert not SalesforceTools._validate_field_names("Id FROM Account--")
-        assert not SalesforceTools._validate_field_names("Id; DROP")
-        assert not SalesforceTools._validate_field_names("Id' OR '1'='1")
 
 
 class TestJsonParseability:

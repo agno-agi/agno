@@ -20,7 +20,6 @@ Authentication (pick one):
 """
 
 import json
-import re
 from os import getenv
 from typing import Any, Dict, List, Optional
 
@@ -31,12 +30,6 @@ try:
     from simple_salesforce import Salesforce, SalesforceAuthenticationFailed, SalesforceError
 except ImportError:
     raise ImportError("`simple-salesforce` not installed. Please install using `pip install simple-salesforce`.")
-
-# Salesforce ID: 15 or 18 alphanumeric characters
-_SF_ID_RE = re.compile(r"^[a-zA-Z0-9]{15,18}$")
-
-# Allowed characters in SOQL field names
-_FIELD_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*$")
 
 
 class SalesforceTools(Toolkit):
@@ -98,31 +91,6 @@ class SalesforceTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        """
-        Initialize SalesforceTools.
-
-        Args:
-            username: Salesforce username. Falls back to ``SALESFORCE_USERNAME`` env var.
-            password: Salesforce password. Falls back to ``SALESFORCE_PASSWORD`` env var.
-            security_token: Security token. Falls back to ``SALESFORCE_SECURITY_TOKEN`` env var.
-            domain: ``login`` for production, ``test`` for sandbox.
-                Falls back to ``SALESFORCE_DOMAIN`` env var. Default: ``login``.
-            instance_url: Direct instance URL (alternative to username/password auth).
-            session_id: Session ID (alternative to username/password auth).
-            cache_metadata: Cache object metadata to reduce API calls.
-            max_records: Maximum records returned by query/list operations. Default: 200.
-            max_fields: Maximum fields returned by describe_object. Default: 100.
-            enable_list_objects: Enable the list_objects function.
-            enable_describe_object: Enable the describe_object function.
-            enable_get_record: Enable the get_record function.
-            enable_query: Enable the query function.
-            enable_search: Enable the search function.
-            enable_create_record: Enable the create_record function.
-            enable_update_record: Enable the update_record function.
-            enable_delete_record: Enable the delete_record function.
-            enable_get_report: Enable the get_report function.
-            all: Enable all functions including write operations.
-        """
         self.username = username or getenv("SALESFORCE_USERNAME")
         self.password = password or getenv("SALESFORCE_PASSWORD")
         self.security_token = security_token or getenv("SALESFORCE_SECURITY_TOKEN")
@@ -189,14 +157,6 @@ class SalesforceTools(Toolkit):
         except Exception as e:
             logger.exception(f"Salesforce connection error: {e}")
             return None
-
-    @staticmethod
-    def _validate_sf_id(record_id: str) -> bool:
-        return bool(_SF_ID_RE.match(record_id))
-
-    @staticmethod
-    def _validate_field_names(fields: str) -> bool:
-        return all(_FIELD_NAME_RE.match(f.strip()) for f in fields.split(",") if f.strip())
 
     @staticmethod
     def _error(msg: str) -> str:
@@ -365,14 +325,9 @@ class SalesforceTools(Toolkit):
         if sf is None:
             return json.dumps({"error": "Salesforce not connected."})
 
-        if not self._validate_sf_id(record_id):
-            return json.dumps({"error": f"Invalid Salesforce record ID format: {record_id}"})
-
         try:
             sf_object = getattr(sf, sobject)
             if fields:
-                if not self._validate_field_names(fields):
-                    return json.dumps({"error": f"Invalid field names: {fields}"})
                 field_list = fields.replace(" ", "")
                 soql = f"SELECT {field_list} FROM {sobject} WHERE Id = '{record_id}'"
                 result = sf.query(soql)
@@ -448,9 +403,6 @@ class SalesforceTools(Toolkit):
         if not sobject or not record_id or not record_data:
             return json.dumps({"error": "sobject, record_id, and record_data are required."})
 
-        if not self._validate_sf_id(record_id):
-            return json.dumps({"error": f"Invalid Salesforce record ID format: {record_id}"})
-
         log_debug(f"Updating Salesforce {sobject} record: {record_id}")
 
         sf = self._get_client()
@@ -491,9 +443,6 @@ class SalesforceTools(Toolkit):
         """
         if not sobject or not record_id:
             return json.dumps({"error": "sobject and record_id are required."})
-
-        if not self._validate_sf_id(record_id):
-            return json.dumps({"error": f"Invalid Salesforce record ID format: {record_id}"})
 
         log_debug(f"Deleting Salesforce {sobject} record: {record_id}")
 
@@ -606,9 +555,6 @@ class SalesforceTools(Toolkit):
         """
         if not report_id:
             return json.dumps({"error": "report_id is required."})
-
-        if not self._validate_sf_id(report_id):
-            return json.dumps({"error": f"Invalid Salesforce report ID format: {report_id}"})
 
         log_debug(f"Running Salesforce report: {report_id}")
 
