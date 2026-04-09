@@ -130,8 +130,8 @@ class SalesforceTools(Toolkit):
         self.instance_url = instance_url
         self.session_id = session_id
         self.cache_metadata = cache_metadata
-        self.max_records = max_records
-        self.max_fields = max_fields
+        self.max_records = max(max_records, 1)
+        self.max_fields = max(max_fields, 1)
 
         # Unbounded for v1 — acceptable for short-lived agents, revisit with TTL/maxsize for long-lived deployments
         self._objects_cache: Optional[List[Dict[str, Any]]] = None
@@ -583,6 +583,9 @@ class SalesforceTools(Toolkit):
 
         try:
             result = sf.search(sosl)
+            records = result.get("searchRecords", []) if isinstance(result, dict) else []
+            if len(records) > self.max_records:
+                result["searchRecords"] = records[: self.max_records]
             return json.dumps(result)
         except SalesforceError as e:
             logger.exception(f"Salesforce SOSL error: {e}")

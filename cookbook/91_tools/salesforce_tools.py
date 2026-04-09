@@ -111,7 +111,7 @@ if __name__ == "__main__":
         "Search for anything related to 'United' across all objects."
     )
 
-    print("\n--- Example 5: Create a lead (sales agent) ---")
-    sales_agent.print_response(
-        "Create a new lead: John Smith, VP of Engineering at TechCorp, email john@techcorp.com"
-    )
+    # Uncomment to test write operations (creates a real Lead in your org):
+    # sales_agent.print_response(
+    #     "Create a new lead: John Smith, VP of Engineering at TechCorp, email john@techcorp.com"
+    # )
