@@ -4,19 +4,37 @@ Salesforce CRM tools for Agno agents.
 Provides CRUD operations, SOQL queries, SOSL search, and metadata discovery
 for any Salesforce object (standard or custom).
 
-Required:
-    - ``simple-salesforce`` library (``pip install simple-salesforce``)
+Requirements:
+    ``pip install simple-salesforce``
 
 Authentication (pick one):
-    **Option A — Username / Password (requires SOAP API enabled in the org):**
+
+    **Option A — Username / Password** (requires SOAP API enabled in the org):
+        Set environment variables:
         - ``SALESFORCE_USERNAME``: Salesforce username
         - ``SALESFORCE_PASSWORD``: Salesforce password
         - ``SALESFORCE_SECURITY_TOKEN``: Security token (from Salesforce settings)
         - ``SALESFORCE_DOMAIN``: ``login`` (production) or ``test`` (sandbox)
 
-    **Option B — Session / Instance URL (works in all orgs):**
-        - Pass ``instance_url`` and ``session_id`` directly.
-        - Useful when SOAP API login is disabled (default in newer Developer Edition orgs).
+    **Option B — Session / Instance URL** (works in all orgs):
+        Pass ``instance_url`` and ``session_id`` directly.
+        Useful when SOAP API login is disabled (default in newer Developer Edition orgs).
+
+Example:
+    ```python
+    from agno.agent import Agent
+    from agno.tools.salesforce import SalesforceTools
+
+    # Read-only agent (default)
+    agent = Agent(tools=[SalesforceTools()])
+
+    # Full CRUD agent
+    agent = Agent(tools=[SalesforceTools(
+        enable_create_record=True,
+        enable_update_record=True,
+        enable_delete_record=True,
+    )])
+    ```
 """
 
 import json
@@ -33,38 +51,7 @@ except ImportError:
 
 
 class SalesforceTools(Toolkit):
-    """
-    A toolkit for interacting with Salesforce CRM via the REST API.
-
-    Supports CRUD operations on any Salesforce object (standard or custom),
-    SOQL queries, SOSL full-text search, and metadata discovery.
-
-    Requires:
-        - ``simple-salesforce`` library (``pip install simple-salesforce``)
-
-    Authentication — pick one:
-        **Username / Password** (requires SOAP API enabled):
-            Set ``SALESFORCE_USERNAME``, ``SALESFORCE_PASSWORD``,
-            ``SALESFORCE_SECURITY_TOKEN``, and optionally ``SALESFORCE_DOMAIN``.
-
-        **Session / Instance URL** (works in all orgs):
-            Pass ``instance_url`` and ``session_id`` directly.
-
-    Example:
-        ```python
-        from agno.tools.salesforce import SalesforceTools
-
-        # Read-only agent
-        tools = SalesforceTools()
-
-        # Full CRUD agent
-        tools = SalesforceTools(
-            enable_create_record=True,
-            enable_update_record=True,
-            enable_delete_record=True,
-        )
-        ```
-    """
+    """Salesforce CRM toolkit — CRUD, SOQL queries, SOSL search, and metadata discovery for any Salesforce object."""
 
     def __init__(
         self,
@@ -151,10 +138,10 @@ class SalesforceTools(Toolkit):
                 )
                 return None
             return self._sf
-        except SalesforceAuthenticationFailed as e:
+        except SalesforceAuthenticationFailed:
             logger.exception("Salesforce authentication failed")
             return None
-        except Exception as e:
+        except Exception:
             logger.exception("Salesforce connection error")
             return None
 
