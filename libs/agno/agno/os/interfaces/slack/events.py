@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Dict
 from agno.agent import RunEvent
 from agno.os.interfaces.slack.helpers import member_name, task_id
 from agno.os.interfaces.slack.state import StreamState
+from agno.run.agent import BaseAgentRunEvent
 from agno.run.workflow import WorkflowRunEvent
 
 if TYPE_CHECKING:
@@ -216,6 +217,11 @@ async def _on_tool_call_error(chunk: BaseRunOutputEvent, state: StreamState, str
 
 
 async def _on_run_content(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+    # In team mode, member agents stream their own RunContentEvent (which extends
+    # BaseAgentRunEvent) before the leader synthesizes a TeamRunContent (which
+    # extends BaseTeamRunEvent). Showing both would duplicate content.
+    if state.entity_type == "team" and isinstance(chunk, BaseAgentRunEvent):
+        return False
     content = getattr(chunk, "content", None)
     if content is not None:
         state.append_content(content)

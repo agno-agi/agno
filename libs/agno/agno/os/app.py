@@ -36,7 +36,7 @@ from agno.os.config import (
     TracesDomainConfig,
 )
 from agno.os.interfaces.base import BaseInterface
-from agno.os.router import get_base_router, get_websocket_router
+from agno.os.router import get_base_router, get_info_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
 from agno.os.routers.approvals import get_approval_router
 from agno.os.routers.components import get_components_router
@@ -448,6 +448,7 @@ class AgentOS:
             self._add_router(app, get_home_router(self))
 
         self._add_router(app, get_health_router(health_endpoint="/health"))
+        self._add_router(app, get_info_router(self))
         self._add_router(app, get_base_router(self, settings=self.settings))
         self._add_router(app, get_agent_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_team_router(self, settings=self.settings, registry=self.registry))
@@ -890,6 +891,7 @@ class AgentOS:
                 excluded_route_paths = [
                     "/",
                     "/health",
+                    "/info",
                     "/docs",
                     "/redoc",
                     "/openapi.json",
@@ -1059,7 +1061,7 @@ class AgentOS:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     db._create_all_tables()
             except Exception as e:
-                log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db.id}): {e}")
+                log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
     async def _initialize_async_databases(self) -> None:
         """Initialize async databases."""
@@ -1083,7 +1085,7 @@ class AgentOS:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     await db._create_all_tables()
             except Exception as e:
-                log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {e}")
+                log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
     async def _close_databases(self) -> None:
         """Close all database connections and release connection pools."""
@@ -1109,7 +1111,7 @@ class AgentOS:
                     else:
                         db.close()
             except Exception as e:
-                log_warning(f"Failed to close {db.__class__.__name__} (id: {db.id}): {e}")
+                log_warning(f"Failed to close {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
     def _get_db_table_names(self, db: BaseDb) -> Dict[str, str]:
         """Get the table names for a database"""

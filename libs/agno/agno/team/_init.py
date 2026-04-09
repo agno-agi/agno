@@ -35,6 +35,7 @@ from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.machine import LearningMachine
 from agno.memory import MemoryManager
 from agno.models.base import Model
+from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
 from agno.models.utils import get_model
 from agno.run.agent import RunEvent
@@ -42,6 +43,7 @@ from agno.run.team import (
     TeamRunEvent,
 )
 from agno.session import SessionSummaryManager, TeamSession
+from agno.skills import Skills
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import (
@@ -63,6 +65,8 @@ def __init__(
     members: Union[List[Union[Agent, "Team"]], Callable[..., List]],
     id: Optional[str] = None,
     model: Optional[Union[Model, str]] = None,
+    fallback_config: Optional[FallbackConfig] = None,
+    fallback_models: Optional[List[Union[Model, str]]] = None,
     name: Optional[str] = None,
     role: Optional[str] = None,
     mode: Optional["TeamMode"] = None,
@@ -124,6 +128,7 @@ def __init__(
     num_history_runs: Optional[int] = None,
     num_history_messages: Optional[int] = None,
     max_tool_calls_from_history: Optional[int] = None,
+    skills: Optional[Skills] = None,
     tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
     tool_call_limit: Optional[int] = None,
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -183,6 +188,14 @@ def __init__(
     team.members = members
 
     team.model = model  # type: ignore[assignment]
+    if fallback_config is not None:
+        if fallback_models:
+            log_warning("Both fallback_config and fallback_models provided. Using fallback_config.")
+        team.fallback_config = fallback_config
+    elif fallback_models:
+        team.fallback_config = FallbackConfig(on_error=fallback_models)
+    else:
+        team.fallback_config = None
 
     team.name = name
     team.id = id
@@ -287,6 +300,8 @@ def __init__(
     team.store_tool_messages = store_tool_messages
     team.store_history_messages = store_history_messages
     team.send_media_to_model = send_media_to_model
+
+    team.skills = skills
 
     if tools is None:
         team.tools = None
@@ -674,6 +689,9 @@ def _resolve_models(team: "Team") -> None:
         team.parser_model = get_model(team.parser_model)
     if team.output_model is not None:
         team.output_model = get_model(team.output_model)
+
+    if team.fallback_config is not None:
+        team.fallback_config.resolve_models()
 
 
 def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:

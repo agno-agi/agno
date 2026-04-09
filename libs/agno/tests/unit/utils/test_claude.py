@@ -16,7 +16,7 @@ class TestFormatFileForMessage:
 
         assert result["type"] == "document"
         assert result["source"]["type"] == "text"
-        assert result["source"]["media_type"] == "text/plain"
+        assert result["source"]["media_type"] == "text/csv"
         assert result["source"]["data"] == csv_content
         assert result["citations"] == {"enabled": True}
 
@@ -38,7 +38,7 @@ class TestFormatFileForMessage:
         result = _format_file_for_message(File(content=raw, mime_type="text/csv"))
 
         assert result["source"]["type"] == "text"
-        assert result["source"]["media_type"] == "text/plain"
+        assert result["source"]["media_type"] == "text/csv"
         assert result["source"]["data"] == "col1,col2\na,b"
 
     def test_bytes_content_pdf_returns_base64_source(self):
@@ -74,7 +74,7 @@ class TestFormatFileForMessage:
         result = _format_file_for_message(File(content=raw, mime_type=mime_type))
 
         assert result["source"]["type"] == "text"
-        assert result["source"]["media_type"] == "text/plain"
+        assert result["source"]["media_type"] == mime_type
 
     def test_text_data_is_not_base64_encoded(self, tmp_path):
         """Regression: old code base64-encoded before checking MIME, sending gibberish as text."""

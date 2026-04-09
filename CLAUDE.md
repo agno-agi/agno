@@ -239,6 +239,8 @@ gh api repos/agno-agi/agno/pulls/<PR_NUMBER> -X PATCH -f body="$(cat /path/to/bo
 - Don't skip async variants of public methods
 - Don't push code without running `./scripts/format.sh` and `./scripts/validate.sh`
 - Don't submit a PR without a detailed PR description. Always follow the PR template provided in `.github/pull_request_template.md`.
+- Don't use `OpenAIChat` in cookbooks or examples — use `OpenAIResponses` instead
+- Don't use `gpt-4o` or `gpt-4o-mini` in cookbooks or examples — use `gpt-5.4` instead
 
 ---
 

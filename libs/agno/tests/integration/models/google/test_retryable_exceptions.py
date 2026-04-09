@@ -22,11 +22,11 @@ def create_mock_response(finish_reason: str = "STOP", content: str = "Test respo
     """Helper to create a mock Gemini response."""
     from google.genai.types import Content, GenerateContentResponse, Part
 
-    # Create a proper Part object
-    part = Part.from_text(text=content) if content else Part.from_text(text="")
+    # Create a proper Part object - always include at least one part to avoid index errors
+    part = Part.from_text(text=content if content else "")
 
     # Create Content with parts
-    content_obj = Content(role="model", parts=[part] if content else [])
+    content_obj = Content(role="model", parts=[part])
 
     # Create mock candidate
     mock_candidate = Mock()
@@ -68,7 +68,8 @@ def test_malformed_function_call_error_triggers_regeneration_attempt(model):
             return create_mock_response(finish_reason="MALFORMED_FUNCTION_CALL", content="")
         else:
             # Assert that the regeneration marker is in the second call
-            assert MALFORMED_FUNCTION_CALL_GUIDANCE == kwargs["contents"][1].parts[0].text
+            # After merging consecutive user messages, guidance is the second part of the first content
+            assert MALFORMED_FUNCTION_CALL_GUIDANCE == kwargs["contents"][0].parts[1].text
             return create_mock_response(content="Successfully regenerated response")
 
     with patch.object(model.get_client().models, "generate_content", side_effect=mock_generate_content):
@@ -236,7 +237,8 @@ def test_guidance_message_is_added_to_messages(model):
             return create_mock_response(finish_reason="MALFORMED_FUNCTION_CALL", content="")
         else:
             # Assert that the regeneration marker is in the second call
-            assert MALFORMED_FUNCTION_CALL_GUIDANCE == kwargs["contents"][1].parts[0].text
+            # After merging consecutive user messages, guidance is the second part of the first content
+            assert MALFORMED_FUNCTION_CALL_GUIDANCE == kwargs["contents"][0].parts[1].text
 
             return create_mock_response(content="Successfully regenerated response")
 
@@ -262,7 +264,8 @@ def test_guidance_message_is_not_in_final_response(model):
             return create_mock_response(finish_reason="MALFORMED_FUNCTION_CALL", content="")
         else:
             # Assert that the guidance message is there before the second generation attempt
-            assert MALFORMED_FUNCTION_CALL_GUIDANCE == kwargs["contents"][1].parts[0].text
+            # After merging consecutive user messages, guidance is the second part of the first content
+            assert MALFORMED_FUNCTION_CALL_GUIDANCE == kwargs["contents"][0].parts[1].text
 
             return create_mock_response(content="Successfully regenerated response")
 
