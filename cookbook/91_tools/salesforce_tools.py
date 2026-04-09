@@ -1,117 +1,84 @@
 """
-Salesforce CRM Tools
-=============================
+Salesforce CRM Agent that can query, create, update, and manage records using the Salesforce REST API.
 
-Demonstrates Salesforce CRM tools for account, contact, lead,
-and opportunity management via the Salesforce REST API.
-
-Requirements:
-    - ``simple-salesforce`` library (``pip install simple-salesforce``)
-    - Set environment variables (pick one auth method):
-
-      **Option A** — Username / Password (requires SOAP API enabled in the org):
-          - ``SALESFORCE_USERNAME``
-          - ``SALESFORCE_PASSWORD``
-          - ``SALESFORCE_SECURITY_TOKEN``
-          - ``SALESFORCE_DOMAIN`` (``login`` for production, ``test`` for sandbox)
-
-      **Option B** — Session / Instance URL (works in all orgs):
-          - Pass ``instance_url`` and ``session_id`` directly.
+Prerequisites:
+- pip install simple-salesforce
+- Set environment variables:
+    SALESFORCE_USERNAME, SALESFORCE_PASSWORD, SALESFORCE_SECURITY_TOKEN
+    OR pass instance_url and session_id directly for session-based auth.
 """
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.salesforce import SalesforceTools
 
-
-# Example 1: Read-only CRM explorer (default — safe for any agent)
-
-explorer_agent = Agent(
+# Read-only agent (default — query, search, and metadata only)
+read_only_agent = Agent(
     name="Salesforce Explorer",
     model=OpenAIChat(id="gpt-4o"),
     tools=[SalesforceTools()],
+    description="You are a Salesforce data specialist that can explore objects, query records, and search across the org.",
     instructions=[
-        "You are a Salesforce data explorer.",
-        "Use describe_object to understand fields before querying.",
-        "Use SOQL for precise queries, SOSL for full-text search.",
+        "Use describe_object to understand available fields before building queries.",
+        "Use SOQL for precise structured queries, SOSL for full-text search across objects.",
+        "When listing objects, focus on queryable standard objects unless asked about custom ones.",
     ],
     markdown=True,
 )
 
-
-# Example 2: Sales pipeline agent (read + create + update)
-
-sales_agent = Agent(
-    name="Sales Pipeline Agent",
+# Full CRM agent with write operations enabled
+full_crm_agent = Agent(
+    name="Salesforce CRM Agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[
         SalesforceTools(
             enable_create_record=True,
             enable_update_record=True,
+            enable_delete_record=True,
         )
     ],
+    description="You are a Salesforce CRM assistant with full read and write capabilities.",
     instructions=[
-        "You are a sales operations assistant.",
-        "Help manage accounts, contacts, leads, and opportunities in Salesforce.",
-        "Always use describe_object first to understand available fields before creating or updating records.",
+        "Always use describe_object to check required fields before creating records.",
+        "Confirm with the user before deleting any records.",
+        "When updating records, show the current values before applying changes.",
     ],
     markdown=True,
 )
-
-
-# Example 3: Full admin agent (all operations including delete)
-
-admin_agent = Agent(
-    name="Salesforce Admin",
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[SalesforceTools(all=True)],
-    instructions=[
-        "You are a Salesforce administrator.",
-        "You can perform any CRM operation including creating, updating, and deleting records.",
-        "Always confirm destructive actions before proceeding.",
-    ],
-    markdown=True,
-)
-
-
-# Example 4: Read-only agent with custom limits
-
-compact_agent = Agent(
-    name="Compact Explorer",
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        SalesforceTools(
-            max_records=50,
-            max_fields=30,
-        )
-    ],
-    instructions=["You are a focused CRM analyst. Return concise results."],
-    markdown=True,
-)
-
-
-# Run examples
 
 if __name__ == "__main__":
-    print("--- Example 1: Discover objects in the org ---")
-    explorer_agent.print_response(
-        "What Salesforce objects are available? Show me the first 10 queryable ones."
+    # Explore available objects
+    read_only_agent.print_response(
+        "List the queryable Salesforce objects in this org",
+        stream=True,
     )
 
-    print("\n--- Example 2: Query accounts ---")
-    explorer_agent.print_response("Find the top 5 accounts by name using SOQL.")
-
-    print("\n--- Example 3: Describe an object ---")
-    explorer_agent.print_response(
-        "Describe the Contact object. What fields are available?"
+    # Query accounts
+    read_only_agent.print_response(
+        "Find the top 5 accounts by name using SOQL",
+        stream=True,
     )
 
-    print("\n--- Example 4: Search across objects ---")
-    explorer_agent.print_response(
-        "Search for anything related to 'United' across all objects."
+    # Describe an object's schema
+    read_only_agent.print_response(
+        "Describe the Contact object. What fields are required for creating a new contact?",
+        stream=True,
     )
 
-    # Uncomment to test write operations (creates a real Lead in your org):
-    # sales_agent.print_response(
-    #     "Create a new lead: John Smith, VP of Engineering at TechCorp, email john@techcorp.com"
+    # Search across objects
+    read_only_agent.print_response(
+        "Search for anything related to 'United' across all objects",
+        stream=True,
+    )
+
+    # Create a lead (requires full_crm_agent)
+    # full_crm_agent.print_response(
+    #     "Create a new lead: John Smith, VP of Engineering at TechCorp, email john@techcorp.com",
+    #     stream=True,
+    # )
+
+    # Update a record (requires full_crm_agent)
+    # full_crm_agent.print_response(
+    #     "Update the account 'Acme Corp' to set the industry to 'Technology'",
+    #     stream=True,
     # )
