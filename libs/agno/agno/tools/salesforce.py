@@ -152,10 +152,10 @@ class SalesforceTools(Toolkit):
                 return None
             return self._sf
         except SalesforceAuthenticationFailed as e:
-            logger.exception(f"Salesforce authentication failed: {e}")
+            logger.exception("Salesforce authentication failed")
             return None
         except Exception as e:
-            logger.exception(f"Salesforce connection error: {e}")
+            logger.exception("Salesforce connection error")
             return None
 
     @staticmethod
@@ -222,10 +222,10 @@ class SalesforceTools(Toolkit):
 
             return json.dumps({"total": total, "returned": len(result), "objects": result})
         except SalesforceError as e:
-            logger.exception(f"Salesforce API error: {e}")
+            logger.exception("Salesforce API error")
             return self._error(str(e))
         except Exception as e:
-            logger.exception(f"Error listing objects: {e}")
+            logger.exception("Error listing objects")
             return self._error(str(e))
 
     def describe_object(self, sobject: str) -> str:
@@ -292,10 +292,10 @@ class SalesforceTools(Toolkit):
 
             return json.dumps(result)
         except SalesforceError as e:
-            logger.exception(f"Salesforce API error: {e}")
+            logger.exception("Salesforce API error")
             return self._error(str(e))
         except Exception as e:
-            logger.exception(f"Error describing object {sobject}: {e}")
+            logger.exception(f"Error describing object {sobject}")
             return self._error(str(e))
 
     def get_record(
@@ -339,10 +339,10 @@ class SalesforceTools(Toolkit):
                 record = sf_object.get(record_id)
                 return json.dumps(record)
         except SalesforceError as e:
-            logger.exception(f"Salesforce API error: {e}")
+            logger.exception("Salesforce API error")
             return self._error(str(e))
         except Exception as e:
-            logger.exception(f"Error getting {sobject} record: {e}")
+            logger.exception(f"Error getting {sobject} record")
             return self._error(str(e))
 
     def create_record(self, sobject: str, record_data: str) -> str:
@@ -381,10 +381,10 @@ class SalesforceTools(Toolkit):
                 }
             )
         except SalesforceError as e:
-            logger.exception(f"Salesforce API error: {e}")
+            logger.exception("Salesforce API error")
             return self._error(str(e))
         except Exception as e:
-            logger.exception(f"Error creating {sobject} record: {e}")
+            logger.exception(f"Error creating {sobject} record")
             return self._error(str(e))
 
     def update_record(self, sobject: str, record_id: str, record_data: str) -> str:
@@ -424,10 +424,10 @@ class SalesforceTools(Toolkit):
                 }
             )
         except SalesforceError as e:
-            logger.exception(f"Salesforce API error: {e}")
+            logger.exception("Salesforce API error")
             return self._error(str(e))
         except Exception as e:
-            logger.exception(f"Error updating {sobject} record: {e}")
+            logger.exception(f"Error updating {sobject} record")
             return self._error(str(e))
 
     def delete_record(self, sobject: str, record_id: str) -> str:
@@ -461,10 +461,10 @@ class SalesforceTools(Toolkit):
                 }
             )
         except SalesforceError as e:
-            logger.exception(f"Salesforce API error: {e}")
+            logger.exception("Salesforce API error")
             return self._error(str(e))
         except Exception as e:
-            logger.exception(f"Error deleting {sobject} record: {e}")
+            logger.exception(f"Error deleting {sobject} record")
             return self._error(str(e))
 
     def query(self, soql: str) -> str:
@@ -504,10 +504,10 @@ class SalesforceTools(Toolkit):
                 }
             )
         except SalesforceError as e:
-            logger.exception(f"Salesforce SOQL error: {e}")
+            logger.exception("Salesforce SOQL error")
             return self._error(str(e))
         except Exception as e:
-            logger.exception(f"Error executing SOQL: {e}")
+            logger.exception("Error executing SOQL")
             return self._error(str(e))
 
     def search(self, sosl: str) -> str:
@@ -537,10 +537,10 @@ class SalesforceTools(Toolkit):
                 result["searchRecords"] = records[: self.max_records]
             return json.dumps(result)
         except SalesforceError as e:
-            logger.exception(f"Salesforce SOSL error: {e}")
+            logger.exception("Salesforce SOSL error")
             return self._error(str(e))
         except Exception as e:
-            logger.exception(f"Error executing SOSL: {e}")
+            logger.exception("Error executing SOSL")
             return self._error(str(e))
 
     def get_report(self, report_id: str) -> str:
@@ -576,8 +576,8 @@ class SalesforceTools(Toolkit):
 
             return json.dumps(result)
         except SalesforceError as e:
-            logger.exception(f"Salesforce report error: {e}")
+            logger.exception("Salesforce report error")
             return self._error(str(e))
         except Exception as e:
-            logger.exception(f"Error running report {report_id}: {e}")
+            logger.exception(f"Error running report {report_id}")
             return self._error(str(e))
