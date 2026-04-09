@@ -139,9 +139,10 @@ class SalesforceTools(Toolkit):
                     "name": field.get("name"),
                     "label": field.get("label"),
                     "type": field.get("type"),
-                    "required": not field.get("nillable", True) and field.get("createable", False),
+                    "nillable": field.get("nillable"),
                     "createable": field.get("createable"),
                     "updateable": field.get("updateable"),
+                    "defaultedOnCreate": field.get("defaultedOnCreate"),
                 }
                 picklist = field.get("picklistValues")
                 if picklist:
