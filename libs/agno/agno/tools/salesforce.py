@@ -113,21 +113,6 @@ class SalesforceTools(Toolkit):
             logger.exception("Salesforce connection error")
             return None
 
-    @staticmethod
-    def _error(msg: str) -> str:
-        return json.dumps({"error": msg})
-
-    @staticmethod
-    def _parse_record_data(record_data: str) -> tuple:
-        """Returns (data_dict, None) on success or (None, error_json) on failure."""
-        try:
-            data = json.loads(record_data) if isinstance(record_data, str) else record_data
-        except json.JSONDecodeError as e:
-            return None, json.dumps({"error": f"Invalid JSON in record_data: {e}"})
-        if not isinstance(data, dict):
-            return None, json.dumps({"error": "record_data must be a JSON object."})
-        return data, None
-
     def list_objects(self, include_custom: bool = True) -> str:
         """
         List all available Salesforce objects in the org.
@@ -173,10 +158,10 @@ class SalesforceTools(Toolkit):
             return json.dumps({"total": total, "returned": len(result), "objects": result})
         except SalesforceError as e:
             logger.exception("Salesforce API error")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception("Error listing objects")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
 
     def describe_object(self, sobject: str) -> str:
         """
@@ -238,10 +223,10 @@ class SalesforceTools(Toolkit):
             return json.dumps(result)
         except SalesforceError as e:
             logger.exception("Salesforce API error")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception(f"Error describing object {sobject}")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
 
     def get_record(
         self,
@@ -285,10 +270,10 @@ class SalesforceTools(Toolkit):
                 return json.dumps(record)
         except SalesforceError as e:
             logger.exception("Salesforce API error")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception(f"Error getting {sobject} record")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
 
     def create_record(self, sobject: str, record_data: str) -> str:
         """
@@ -311,9 +296,13 @@ class SalesforceTools(Toolkit):
         if sf is None:
             return json.dumps({"error": "Salesforce not connected."})
 
-        data, err = self._parse_record_data(record_data)
-        if err:
-            return err
+        try:
+            data = json.loads(record_data) if isinstance(record_data, str) else record_data
+        except json.JSONDecodeError as e:
+            return json.dumps({"error": f"Invalid JSON in record_data: {e}"})
+
+        if not isinstance(data, dict):
+            return json.dumps({"error": "record_data must be a JSON object."})
 
         try:
             sf_object = getattr(sf, sobject)
@@ -327,10 +316,10 @@ class SalesforceTools(Toolkit):
             )
         except SalesforceError as e:
             logger.exception("Salesforce API error")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception(f"Error creating {sobject} record")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
 
     def update_record(self, sobject: str, record_id: str, record_data: str) -> str:
         """
@@ -354,9 +343,13 @@ class SalesforceTools(Toolkit):
         if sf is None:
             return json.dumps({"error": "Salesforce not connected."})
 
-        data, err = self._parse_record_data(record_data)
-        if err:
-            return err
+        try:
+            data = json.loads(record_data) if isinstance(record_data, str) else record_data
+        except json.JSONDecodeError as e:
+            return json.dumps({"error": f"Invalid JSON in record_data: {e}"})
+
+        if not isinstance(data, dict):
+            return json.dumps({"error": "record_data must be a JSON object."})
 
         try:
             sf_object = getattr(sf, sobject)
@@ -370,10 +363,10 @@ class SalesforceTools(Toolkit):
             )
         except SalesforceError as e:
             logger.exception("Salesforce API error")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception(f"Error updating {sobject} record")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
 
     def delete_record(self, sobject: str, record_id: str) -> str:
         """
@@ -407,10 +400,10 @@ class SalesforceTools(Toolkit):
             )
         except SalesforceError as e:
             logger.exception("Salesforce API error")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception(f"Error deleting {sobject} record")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
 
     def query(self, soql: str) -> str:
         """
@@ -450,10 +443,10 @@ class SalesforceTools(Toolkit):
             )
         except SalesforceError as e:
             logger.exception("Salesforce SOQL error")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception("Error executing SOQL")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
 
     def search(self, sosl: str) -> str:
         """
@@ -483,10 +476,10 @@ class SalesforceTools(Toolkit):
             return json.dumps(result)
         except SalesforceError as e:
             logger.exception("Salesforce SOSL error")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception("Error executing SOSL")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
 
     def get_report(self, report_id: str) -> str:
         """
@@ -522,7 +515,7 @@ class SalesforceTools(Toolkit):
             return json.dumps(result)
         except SalesforceError as e:
             logger.exception("Salesforce report error")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception(f"Error running report {report_id}")
-            return self._error(str(e))
+            return json.dumps({"error": str(e)})
