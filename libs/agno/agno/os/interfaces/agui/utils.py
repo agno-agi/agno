@@ -114,6 +114,29 @@ class EventBuffer:
         self.pending_tool_calls_parent_id = ""
 
 
+def extract_agui_user_input(messages: List[AGUIMessage]) -> str:
+    """Extract the last user message content from AG-UI messages.
+
+    AG-UI frontends send the full conversation history on every request.
+    The agent manages its own history via session DB, so we only need the
+    latest user message as input — matching the REST API pattern.
+    """
+    for msg in reversed(messages):
+        if msg.role == "user" and msg.content is not None:
+            # UserMessage.content is Union[str, List[InputContent]]
+            if isinstance(msg.content, str):
+                return msg.content
+            # Multimodal: extract text parts
+            if isinstance(msg.content, list):
+                text_parts = []
+                for part in msg.content:
+                    if hasattr(part, "type") and part.type == "text" and hasattr(part, "text"):
+                        text_parts.append(part.text)
+                if text_parts:
+                    return "\n".join(text_parts)
+    return ""
+
+
 def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[Message]:
     """Convert AG-UI messages to Agno messages."""
     # First pass: collect all tool_call_ids that have results
@@ -133,7 +156,7 @@ def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[
                 log_debug(f"Skipping duplicate AGUI tool result: {msg.tool_call_id}")
                 continue
             seen_tool_call_ids.add(msg.tool_call_id)
-            result.append(Message(role="tool", tool_call_id=msg.tool_call_id, content=msg.content))
+            result.append(Message(id=msg.id, role="tool", tool_call_id=msg.tool_call_id, content=msg.content))
 
         elif msg.role == "assistant":
             tool_calls = None
@@ -142,10 +165,18 @@ def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[
                 filtered_calls = [call for call in msg.tool_calls if call.id in tool_call_ids_with_results]
                 if filtered_calls:
                     tool_calls = [call.model_dump() for call in filtered_calls]
-            result.append(Message(role="assistant", content=msg.content, tool_calls=tool_calls))
+            result.append(Message(id=msg.id, role="assistant", content=msg.content, tool_calls=tool_calls))
 
         elif msg.role == "user":
-            result.append(Message(role="user", content=msg.content))
+            # UserMessage.content is Union[str, List[InputContent]]
+            if isinstance(msg.content, str):
+                content = msg.content
+            elif isinstance(msg.content, list):
+                text_parts = [p.text for p in msg.content if hasattr(p, "type") and p.type == "text" and hasattr(p, "text")]
+                content = "\n".join(text_parts) if text_parts else ""
+            else:
+                content = ""
+            result.append(Message(id=msg.id, role="user", content=content))
 
         elif msg.role == "system":
             pass  # Skip - agent builds its own system message from configuration

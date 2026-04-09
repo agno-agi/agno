@@ -23,7 +23,7 @@ from fastapi.responses import StreamingResponse
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.agui.utils import (
     async_stream_agno_response_as_agui_events,
-    convert_agui_messages_to_agno_messages,
+    extract_agui_user_input,
     validate_agui_state,
 )
 from agno.team.remote import RemoteTeam
@@ -35,8 +35,9 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
     run_id = run_input.run_id or str(uuid.uuid4())
 
     try:
-        # Preparing the input for the Agent and emitting the run started event
-        messages = convert_agui_messages_to_agno_messages(run_input.messages or [])
+        # AG-UI frontends send full conversation history every request.
+        # Extract only the last user message — agent manages history via session DB.
+        user_input = extract_agui_user_input(run_input.messages or [])
 
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
@@ -50,7 +51,7 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
 
         # Request streaming response from agent
         response_stream = agent.arun(  # type: ignore
-            input=messages,
+            input=user_input,
             session_id=run_input.thread_id,
             stream=True,
             stream_events=True,
@@ -77,8 +78,9 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
     """Run the contextual Team, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
     run_id = input.run_id or str(uuid.uuid4())
     try:
-        # Extract the last user message for team execution
-        messages = convert_agui_messages_to_agno_messages(input.messages or [])
+        # AG-UI frontends send full conversation history every request.
+        # Extract only the last user message — team manages history via session DB.
+        user_input = extract_agui_user_input(input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
         # Look for user_id in input.forwarded_props
@@ -91,7 +93,7 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
 
         # Request streaming response from team
         response_stream = team.arun(  # type: ignore
-            input=messages,
+            input=user_input,
             session_id=input.thread_id,
             stream=True,
             stream_steps=True,

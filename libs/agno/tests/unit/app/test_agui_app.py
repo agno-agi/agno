@@ -2,8 +2,14 @@ from unittest.mock import MagicMock
 
 import pytest
 from ag_ui.core import EventType
+from ag_ui.core.types import AssistantMessage, SystemMessage, TextInputContent, ToolMessage, UserMessage
 
-from agno.os.interfaces.agui.utils import EventBuffer, async_stream_agno_response_as_agui_events
+from agno.os.interfaces.agui.utils import (
+    EventBuffer,
+    async_stream_agno_response_as_agui_events,
+    convert_agui_messages_to_agno_messages,
+    extract_agui_user_input,
+)
 from agno.run.agent import RunContentEvent, ToolCallCompletedEvent, ToolCallStartedEvent
 
 
@@ -1358,3 +1364,82 @@ def test_validate_agui_state_with_invalid_to_dict():
     obj = TestClass()
     result = validate_agui_state(obj, "test_thread")
     assert result is None
+
+
+def test_extract_agui_user_input_from_full_history():
+    """Test extracting last user message from a CopilotKit-style full conversation history."""
+    messages = [
+        UserMessage(id="u1", content="hello 1"),
+        AssistantMessage(id="a1", content="response 1"),
+        UserMessage(id="u2", content="hello 2"),
+    ]
+
+    result = extract_agui_user_input(messages)
+
+    # Should extract only the last user message, not the first
+    assert result == "hello 2"
+
+
+def test_extract_agui_user_input_single_message():
+    """Test extraction when only one user message is present."""
+    messages = [UserMessage(id="u1", content="just one")]
+
+    result = extract_agui_user_input(messages)
+
+    assert result == "just one"
+
+
+def test_extract_agui_user_input_empty_list():
+    """Test extraction from empty message list returns empty string."""
+    assert extract_agui_user_input([]) == ""
+
+
+def test_extract_agui_user_input_no_user_messages():
+    """Test extraction when no user messages exist returns empty string."""
+    messages = [
+        AssistantMessage(id="a1", content="hello"),
+        SystemMessage(id="s1", content="you are helpful"),
+    ]
+
+    result = extract_agui_user_input(messages)
+
+    assert result == ""
+
+
+def test_extract_agui_user_input_multimodal_content():
+    """Test extraction handles multimodal UserMessage.content (List[InputContent])."""
+    messages = [
+        UserMessage(id="u1", content=[TextInputContent(text="describe this image")]),
+    ]
+
+    result = extract_agui_user_input(messages)
+
+    assert result == "describe this image"
+
+
+def test_convert_preserves_user_and_assistant_ids():
+    """Test that AG-UI message IDs are preserved through conversion, not replaced with random UUIDs."""
+    messages = [
+        UserMessage(id="agui-user-1", content="hello"),
+        AssistantMessage(id="agui-asst-1", content="hi there"),
+    ]
+
+    result = convert_agui_messages_to_agno_messages(messages)
+
+    assert result[0].id == "agui-user-1"
+    assert result[0].role == "user"
+    assert result[1].id == "agui-asst-1"
+    assert result[1].role == "assistant"
+
+
+def test_convert_preserves_tool_message_id():
+    """Test that tool message IDs and tool_call_ids are preserved through conversion."""
+    messages = [
+        ToolMessage(id="agui-tool-1", content="result data", tool_call_id="tc-1"),
+    ]
+
+    result = convert_agui_messages_to_agno_messages(messages)
+
+    assert result[0].id == "agui-tool-1"
+    assert result[0].tool_call_id == "tc-1"
+    assert result[0].role == "tool"
