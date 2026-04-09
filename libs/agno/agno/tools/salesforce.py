@@ -16,6 +16,7 @@ Authentication (pick one):
 """
 
 import json
+import textwrap
 from os import getenv
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +27,23 @@ try:
     from simple_salesforce import Salesforce
 except ImportError:
     raise ImportError("`simple-salesforce` not installed. Please install using `pip install simple-salesforce`.")
+
+SALESFORCE_INSTRUCTIONS = textwrap.dedent("""\
+    You have access to Salesforce CRM tools for querying, creating, and managing records.
+
+    ## SOQL (query tool)
+    - `SELECT Id, Name FROM Account WHERE Industry = 'Technology' LIMIT 10`
+    - `SELECT Id, Name, Account.Name FROM Contact WHERE Account.Industry = 'Technology'` — relationship query
+    - `SELECT COUNT() FROM Lead WHERE Status = 'Open - Not Contacted'` — aggregate
+
+    ## SOSL (search tool)
+    SOSL requires FIND with curly braces and explicit RETURNING with object names and fields:
+    - `FIND {search term} IN ALL FIELDS RETURNING Account(Id, Name), Contact(Id, Name, Email)`
+    - `FIND {John} IN NAME FIELDS RETURNING Lead(Id, Name, Company)`
+    SOSL does NOT support `RETURNING ALL OBJECTS` or `RETURNING ALL FIELDS`. You must specify object names and fields.
+
+    ## Creating Records
+    Use describe_object first to discover field names. Skip fields where defaultedOnCreate is true (e.g. OwnerId) — they are auto-populated.""")
 
 
 class SalesforceTools(Toolkit):
@@ -49,8 +67,11 @@ class SalesforceTools(Toolkit):
         enable_delete_record: bool = False,
         enable_get_report: bool = False,
         all: bool = False,
+        instructions: Optional[str] = None,
+        add_instructions: bool = True,
         **kwargs,
     ):
+        self.instructions = instructions or SALESFORCE_INSTRUCTIONS if add_instructions else None
         self.max_records = max_records
         self.max_fields = max_fields
 
@@ -95,7 +116,7 @@ class SalesforceTools(Toolkit):
         if all or enable_get_report:
             tools.append(self.get_report)
 
-        super().__init__(name="salesforce_tools", tools=tools, **kwargs)
+        super().__init__(name="salesforce_tools", tools=tools, instructions=self.instructions, **kwargs)
 
     def list_objects(self) -> str:
         """List all available Salesforce objects in the org."""
