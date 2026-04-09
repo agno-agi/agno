@@ -9,7 +9,7 @@ until it meets a quality threshold, then the outer workflow writes.
 from typing import List
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.workflow import Loop
 from agno.workflow.step import Step
 from agno.workflow.types import StepOutput
@@ -27,7 +27,7 @@ def is_detailed_enough(outputs: List[StepOutput]) -> bool:
 # --- Inner workflow: iterative research ---
 researcher = Agent(
     name="Iterative Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions=(
         "You are a researcher. Each iteration, expand on the previous research "
         "with more detail and specifics. Build on what was already written."
@@ -50,7 +50,7 @@ inner_workflow = Workflow(
 # --- Outer workflow ---
 writer = Agent(
     name="Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="Write a polished summary from the detailed research provided.",
 )
 
