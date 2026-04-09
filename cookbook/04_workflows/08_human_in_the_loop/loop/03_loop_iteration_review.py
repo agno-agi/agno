@@ -1,8 +1,9 @@
 """
 Loop Iteration Review Example
 
-This example demonstrates per-iteration review in a Loop component.
-After each iteration completes, the workflow pauses for human review.
+This example demonstrates per-iteration review in a Loop component using
+the HITL config class. After each iteration completes, the workflow pauses
+for human review.
 
 The reviewer can:
 - Accept (confirm): Stop the loop, keep the current output
@@ -11,21 +12,22 @@ The reviewer can:
   can continue refining it.
 
   Loop topology:
-    iteration 1 → [review] ─┬─ accept → done (keep output)
-                              └─ reject (with feedback) → iteration 2 → [review] → ...
+    iteration 1 -> [review] -+- accept -> done (keep output)
+                              +- reject (with feedback) -> iteration 2 -> [review] -> ...
 """
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.workflow import OnReject
 from agno.workflow.loop import Loop
 from agno.workflow.step import Step
+from agno.workflow.types import HumanReview
 from agno.workflow.workflow import Workflow
 
 refine_agent = Agent(
     name="Refiner",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions=(
         "You refine and improve text. Each time you receive text, "
         "make it more concise and polished. If the reviewer provides feedback, "
@@ -44,9 +46,11 @@ workflow = Workflow(
             ],
             max_iterations=5,
             forward_iteration_output=True,
-            requires_iteration_review=True,
-            iteration_review_message="Review this iteration.",
-            on_reject=OnReject.retry,  # Reject = try another iteration
+            human_review=HumanReview(
+                requires_iteration_review=True,
+                iteration_review_message="Review this iteration.",
+                on_reject=OnReject.retry,  # Reject = try another iteration
+            ),
         ),
     ],
 )

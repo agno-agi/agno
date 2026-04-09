@@ -22,7 +22,7 @@ from agno.utils.log import log_debug, log_error, logger
 from agno.utils.merge_dict import merge_parallel_session_states
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput, StepType
+from agno.workflow.types import HumanReview, StepInput, StepOutput, StepType
 
 WorkflowSteps = List[
     Union[
@@ -62,6 +62,7 @@ class Parallel:
         *args: Union[str, WorkflowSteps],
         name: Optional[str] = None,
         description: Optional[str] = None,
+        human_review: Optional[HumanReview] = None,
     ):
         resolved_name = name
         resolved_steps: List[Any] = []
@@ -84,6 +85,11 @@ class Parallel:
         self.steps = resolved_steps
         self.name = resolved_name
         self.description = description
+        self.human_review = human_review or HumanReview()
+
+        from agno.workflow.types import validate_human_review_for_parallel
+
+        validate_human_review_for_parallel(self.human_review)
 
     def to_dict(self) -> Dict[str, Any]:
         return {

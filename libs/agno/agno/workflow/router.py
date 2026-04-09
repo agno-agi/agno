@@ -18,6 +18,7 @@ from agno.utils.log import log_debug, log_error, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_router_selector, is_cel_expression
 from agno.workflow.step import Step
 from agno.workflow.types import (
+    HumanReview,
     OnReject,
     StepInput,
     StepOutput,
@@ -116,6 +117,44 @@ class Router:
     output_review_message: Optional[str] = None
     hitl_max_retries: int = 3
 
+    # Consolidated HITL config (takes priority over flat params above)
+    human_review: Optional[HumanReview] = None
+
+    def __post_init__(self) -> None:
+        # Router uses __post_init__ (not __init__) because it's a pure dataclass
+        # without a manual __init__. Step and Loop have manual __init__ methods
+        # where HumanReview is built directly.
+        if self.human_review is not None:
+            pass  # Use the explicit hitl
+        else:
+            self.human_review = HumanReview(
+                requires_user_input=self.requires_user_input,
+                user_input_message=self.user_input_message,
+                user_input_schema=self.user_input_schema,
+                requires_confirmation=self.requires_confirmation,
+                confirmation_message=self.confirmation_message,
+                on_reject=self.on_reject,
+                requires_output_review=self.requires_output_review,
+                output_review_message=self.output_review_message,
+                max_retries=self.hitl_max_retries,
+            )
+
+        # Validate HumanReview config for Router
+        from agno.workflow.types import validate_human_review_for_router
+
+        validate_human_review_for_router(self.human_review)
+
+        # Store HITL fields as attributes for backward compatibility
+        self.requires_user_input = self.human_review.requires_user_input
+        self.user_input_message = self.human_review.user_input_message
+        self.user_input_schema = self.human_review.user_input_schema
+        self.requires_confirmation = self.human_review.requires_confirmation
+        self.confirmation_message = self.human_review.confirmation_message
+        self.on_reject = self.human_review.on_reject
+        self.requires_output_review = self.human_review.requires_output_review
+        self.output_review_message = self.human_review.output_review_message
+        self.hitl_max_retries = self.human_review.max_retries
+
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
             "type": "Router",
@@ -142,15 +181,9 @@ class Router:
         if self.user_input_schema:
             result["user_input_schema"] = self.user_input_schema
 
-        # Add confirmation HITL fields
-        result["requires_confirmation"] = self.requires_confirmation
-        result["confirmation_message"] = self.confirmation_message
-        result["on_reject"] = str(self.on_reject)
-
-        # Add output review HITL fields
-        result["requires_output_review"] = self.requires_output_review
-        result["output_review_message"] = self.output_review_message
-        result["hitl_max_retries"] = self.hitl_max_retries
+        # Add human review config
+        if self.human_review:
+            result["human_review"] = self.human_review.to_dict()
 
         return result
 
@@ -312,21 +345,30 @@ class Router:
         else:
             raise ValueError(f"Invalid selector type in data: {type(selector_data).__name__}")
 
+        # HITL config
+        if data.get("human_review"):
+            human_review = HumanReview.from_dict(data["human_review"])
+        else:
+            # Backward compat: build HITL from flat keys
+            human_review = HumanReview(
+                requires_user_input=data.get("requires_user_input", False),
+                user_input_message=data.get("user_input_message"),
+                user_input_schema=data.get("user_input_schema"),
+                requires_confirmation=data.get("requires_confirmation", False),
+                confirmation_message=data.get("confirmation_message"),
+                on_reject=data.get("on_reject", "skip"),
+                requires_output_review=data.get("requires_output_review", False),
+                output_review_message=data.get("output_review_message"),
+                max_retries=data.get("hitl_max_retries", 3),
+            )
+
         return cls(
             selector=selector,
             choices=[deserialize_step(step) for step in data.get("choices", [])],
             name=data.get("name"),
             description=data.get("description"),
-            requires_user_input=data.get("requires_user_input", False),
-            user_input_message=data.get("user_input_message"),
             allow_multiple_selections=data.get("allow_multiple_selections", False),
-            user_input_schema=data.get("user_input_schema"),
-            requires_confirmation=data.get("requires_confirmation", False),
-            confirmation_message=data.get("confirmation_message"),
-            on_reject=data.get("on_reject", OnReject.skip),
-            requires_output_review=data.get("requires_output_review", False),
-            output_review_message=data.get("output_review_message"),
-            hitl_max_retries=data.get("hitl_max_retries", 3),
+            human_review=human_review,
         )
 
     def _prepare_single_step(self, step: Any) -> Any:
