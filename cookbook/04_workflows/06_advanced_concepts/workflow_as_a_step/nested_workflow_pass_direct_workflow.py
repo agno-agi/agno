@@ -14,7 +14,7 @@ Both approaches are equivalent:
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
@@ -28,7 +28,7 @@ def summarize(step_input: StepInput) -> StepOutput:
 # --- Inner workflow ---
 researcher = Agent(
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You are a research assistant. Be concise (2-3 sentences).",
 )
 
@@ -44,7 +44,7 @@ inner_workflow = Workflow(
 # --- Outer workflow: pass inner_workflow directly (no Step wrapper) ---
 writer = Agent(
     name="Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="Write a polished paragraph from the research provided.",
 )
 

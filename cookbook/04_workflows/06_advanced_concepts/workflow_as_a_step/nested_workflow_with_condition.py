@@ -7,7 +7,7 @@ fact-checking before passing results to the outer workflow's writer.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.workflow import Condition
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
@@ -29,13 +29,13 @@ def format_for_writer(step_input: StepInput) -> StepOutput:
 # --- Inner workflow: research with conditional fact-checking ---
 researcher = Agent(
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="Research the topic. Include specific dates and numbers where relevant.",
 )
 
 fact_checker = Agent(
     name="Fact Checker",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="Verify the facts in the provided text. Correct any inaccuracies.",
 )
 
@@ -57,7 +57,7 @@ inner_workflow = Workflow(
 # --- Outer workflow ---
 writer = Agent(
     name="Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="Write a polished paragraph from the research provided.",
 )
 
