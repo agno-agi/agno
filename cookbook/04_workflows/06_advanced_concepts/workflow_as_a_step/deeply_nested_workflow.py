@@ -8,7 +8,7 @@ Demonstrates composing workflows three levels deep:
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.workflow import Parallel
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
@@ -27,13 +27,13 @@ def merge_results(step_input: StepInput) -> StepOutput:
 
 data_agent = Agent(
     name="Data Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="Gather raw data and statistics on the topic. Be concise (2-3 sentences).",
 )
 
 analysis_agent = Agent(
     name="Analysis Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="Analyze the data provided. Identify key trends. Be concise (2-3 sentences).",
 )
 
@@ -49,7 +49,7 @@ data_workflow = Workflow(
 
 opinion_agent = Agent(
     name="Opinion Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="Provide expert opinion and perspective on the topic. Be concise (2-3 sentences).",
 )
 
@@ -85,7 +85,7 @@ level2_workflow = Workflow(
 
 writer = Agent(
     name="Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="Write a polished short paragraph synthesizing all research provided.",
 )
 
