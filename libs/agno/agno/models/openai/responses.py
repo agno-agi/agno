@@ -198,6 +198,7 @@ class OpenAIResponses(Model):
         client = self.get_client()
         while True:
             response = client.responses.retrieve(response_id)
+            log_debug(f"Background response {response_id} status: {response.status}")
             if response.status in ("completed", "failed", "incomplete"):
                 return response
             time.sleep(self.background_poll_interval)
@@ -207,6 +208,7 @@ class OpenAIResponses(Model):
         client = self.get_async_client()
         while True:
             response = await client.responses.retrieve(response_id)
+            log_debug(f"Background response {response_id} status: {response.status}")
             if response.status in ("completed", "failed", "incomplete"):
                 return response
             await asyncio.sleep(self.background_poll_interval)
@@ -1192,6 +1194,11 @@ class OpenAIResponses(Model):
             ModelResponse: Parsed response delta
         """
         model_response = ModelResponse()
+
+        print("--------------------------------")
+        print(stream_event.type)
+        print(stream_event)
+        print("--------------------------------")
 
         # 1. Add response ID
         if stream_event.type == "response.created":
