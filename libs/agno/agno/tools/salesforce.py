@@ -7,61 +7,12 @@ for any Salesforce object (standard or custom).
 Requirements:
     ``pip install simple-salesforce``
 
-Environment Variables:
-    - SALESFORCE_USERNAME: Salesforce username (email)
-    - SALESFORCE_PASSWORD: Salesforce password
-    - SALESFORCE_SECURITY_TOKEN: Security token
-    - SALESFORCE_DOMAIN: ``login`` (production) or ``test`` (sandbox)
+Authentication (pick one):
+    **Username / Password** — set SALESFORCE_USERNAME, SALESFORCE_PASSWORD,
+    SALESFORCE_SECURITY_TOKEN, and optionally SALESFORCE_DOMAIN env vars.
 
-How to Get These Credentials:
-    1. Sign up for a free Developer Edition at https://developer.salesforce.com/signup
-    2. Verify your email and set a password
-    3. Get your security token:
-       - Log into Salesforce
-       - Click your avatar (top right) > Settings
-       - Left sidebar: "Reset My Security Token"
-       - Click "Reset Security Token" — it will be emailed to you
-    4. Set up environment variables:
-       ```
-       export SALESFORCE_USERNAME=you@example.com
-       export SALESFORCE_PASSWORD=your-password
-       export SALESFORCE_SECURITY_TOKEN=token-from-email
-       export SALESFORCE_DOMAIN=login
-       ```
-
-    Note: Username/password auth uses the SOAP API, which is disabled by default
-    in newer Developer Edition orgs. If you get a "SOAP API login() is disabled" error,
-    use session-based auth instead (Option B below).
-
-Session-Based Authentication (Alternative):
-    For orgs where SOAP API login is disabled, or for server deployments
-    with an existing session:
-
-    1. Log into Salesforce in your browser
-    2. Get the session ID from your browser cookie (``sid``) or OAuth flow
-    3. Pass directly to the toolkit:
-       ```python
-       tools = SalesforceTools(
-           instance_url="https://your-org.my.salesforce.com",
-           session_id="your-session-id",
-       )
-       ```
-
-Example:
-    ```python
-    from agno.agent import Agent
-    from agno.tools.salesforce import SalesforceTools
-
-    # Read-only agent (default)
-    agent = Agent(tools=[SalesforceTools()])
-
-    # Full CRUD agent
-    agent = Agent(tools=[SalesforceTools(
-        enable_create_record=True,
-        enable_update_record=True,
-        enable_delete_record=True,
-    )])
-    ```
+    **Session / Instance URL** — pass ``instance_url`` and ``session_id`` directly.
+    Use this when SOAP API login is disabled (default in newer Developer Edition orgs).
 """
 
 import json

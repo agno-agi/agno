@@ -2,10 +2,29 @@
 Salesforce CRM Agent that can query, create, update, and manage records using the Salesforce REST API.
 
 Prerequisites:
-- pip install simple-salesforce
-- Set environment variables:
-    SALESFORCE_USERNAME, SALESFORCE_PASSWORD, SALESFORCE_SECURITY_TOKEN
-    OR pass instance_url and session_id directly for session-based auth.
+    1. Install: ``pip install simple-salesforce``
+    2. Get a Salesforce org:
+       - Sign up free at https://developer.salesforce.com/signup
+       - Verify your email and set a password
+    3. Get your security token:
+       - Log into Salesforce > click avatar (top right) > Settings
+       - Left sidebar: "Reset My Security Token" > click "Reset Security Token"
+       - Token will be emailed to you
+    4. Set environment variables:
+       ```
+       export SALESFORCE_USERNAME=you@example.com
+       export SALESFORCE_PASSWORD=your-password
+       export SALESFORCE_SECURITY_TOKEN=token-from-email
+       export SALESFORCE_DOMAIN=login
+       ```
+
+    If you get "SOAP API login() is disabled", use session-based auth instead:
+       ```python
+       SalesforceTools(
+           instance_url="https://your-org.my.salesforce.com",
+           session_id="your-session-id",
+       )
+       ```
 """
 
 from agno.agent import Agent
