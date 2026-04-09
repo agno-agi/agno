@@ -1,3 +1,4 @@
+import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
@@ -56,6 +57,12 @@ class OpenAIResponses(Model):
     user: Optional[str] = None
     service_tier: Optional[Literal["auto", "default", "flex", "priority"]] = None
     strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
+    background: Optional[bool] = (
+        None  # When True, enables background mode for long-running tasks. The API returns immediately and the response is polled until completion.
+    )
+    background_poll_interval: float = (
+        2.0  # Interval in seconds between polling attempts when background mode is enabled.
+    )
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     extra_body: Optional[Any] = None
@@ -186,6 +193,24 @@ class OpenAIResponses(Model):
         self.async_client = AsyncOpenAI(**client_params)
         return self.async_client
 
+    def _poll_background_response(self, response_id: str) -> "Response":
+        """Poll for a background response until it reaches a terminal state."""
+        client = self.get_client()
+        while True:
+            response = client.responses.retrieve(response_id)
+            if response.status in ("completed", "failed", "incomplete"):
+                return response
+            time.sleep(self.background_poll_interval)
+
+    async def _apoll_background_response(self, response_id: str) -> "Response":
+        """Async poll for a background response until it reaches a terminal state."""
+        client = self.get_async_client()
+        while True:
+            response = await client.responses.retrieve(response_id)
+            if response.status in ("completed", "failed", "incomplete"):
+                return response
+            await asyncio.sleep(self.background_poll_interval)
+
     def get_request_params(
         self,
         messages: Optional[List[Message]] = None,
@@ -199,14 +224,20 @@ class OpenAIResponses(Model):
         Returns:
             Dict[str, Any]: A dictionary of keyword arguments for API requests.
         """
+        # Background mode requires store=True
+        store = self.store
+        if self.background:
+            store = True
+
         # Define base request parameters
         base_params: Dict[str, Any] = {
+            "background": self.background,
             "include": self.include,
             "max_output_tokens": self.max_output_tokens,
             "max_tool_calls": self.max_tool_calls,
             "metadata": self.metadata,
             "parallel_tool_calls": self.parallel_tool_calls,
-            "store": self.store,
+            "store": store,
             "temperature": self.temperature,
             "top_p": self.top_p,
             "truncation": self.truncation,
@@ -700,7 +731,21 @@ class OpenAIResponses(Model):
                 **request_params,
             )
 
+            # Poll for completion if background mode is enabled
+            if self.background and provider_response.status in ("queued", "in_progress"):
+                log_debug(f"Background response submitted: {provider_response.id}, polling for completion...")
+                provider_response = self._poll_background_response(provider_response.id)
+
             assistant_message.metrics.stop_timer()
+
+            if provider_response.status == "failed":
+                error_msg = provider_response.error.message if provider_response.error else "Background response failed"
+                raise ModelProviderError(message=error_msg, model_name=self.name, model_id=self.id)
+            if provider_response.status == "incomplete":
+                log_warning(
+                    f"Background response {provider_response.id} completed with status 'incomplete': "
+                    f"{provider_response.incomplete_details}"
+                )
 
             model_response = self._parse_provider_response(provider_response, response_format=response_format)
 
@@ -782,7 +827,21 @@ class OpenAIResponses(Model):
                 **request_params,
             )
 
+            # Poll for completion if background mode is enabled
+            if self.background and provider_response.status in ("queued", "in_progress"):
+                log_debug(f"Background response submitted: {provider_response.id}, polling for completion...")
+                provider_response = await self._apoll_background_response(provider_response.id)
+
             assistant_message.metrics.stop_timer()
+
+            if provider_response.status == "failed":
+                error_msg = provider_response.error.message if provider_response.error else "Background response failed"
+                raise ModelProviderError(message=error_msg, model_name=self.name, model_id=self.id)
+            if provider_response.status == "incomplete":
+                log_warning(
+                    f"Background response {provider_response.id} completed with status 'incomplete': "
+                    f"{provider_response.incomplete_details}"
+                )
 
             model_response = self._parse_provider_response(provider_response, response_format=response_format)
 
