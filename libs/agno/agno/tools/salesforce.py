@@ -53,8 +53,8 @@ class SalesforceTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        self.max_records = max(max_records, 1)
-        self.max_fields = max(max_fields, 1)
+        self.max_records = max_records
+        self.max_fields = max_fields
 
         username = username or getenv("SALESFORCE_USERNAME")
         password = password or getenv("SALESFORCE_PASSWORD")
