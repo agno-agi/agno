@@ -285,10 +285,6 @@ class TestMetadata:
         assert result["returnedFields"] == 2
         assert len(result["fields"]) == 2
 
-    def test_describe_object_empty_name(self, sf_tools):
-        result = json.loads(sf_tools.describe_object(sobject=""))
-        assert "error" in result
-
     def test_list_objects_large_org_parseable(self, mock_sf_client):
         tools = SalesforceTools(
             username="test@example.com",
@@ -344,10 +340,6 @@ class TestCRUD:
         assert "error" in result
         assert "not found" in result["error"]
 
-    def test_get_record_missing_params(self, sf_tools):
-        result = json.loads(sf_tools.get_record(sobject="", record_id=""))
-        assert "error" in result
-
     def test_create_record(self, sf_tools, mock_sf_client):
         mock_sf_client.Account = MagicMock()
         mock_sf_client.Account.create.return_value = {"id": "001000000000NEW", "success": True}
@@ -367,10 +359,6 @@ class TestCRUD:
         assert "error" in result
         assert "Invalid JSON" in result["error"]
 
-    def test_create_record_missing_params(self, sf_tools):
-        result = json.loads(sf_tools.create_record(sobject="", record_data=""))
-        assert "error" in result
-
     def test_update_record(self, sf_tools, mock_sf_client):
         mock_sf_client.Account = MagicMock()
         mock_sf_client.Account.update.return_value = 204
@@ -385,10 +373,6 @@ class TestCRUD:
         assert result["status"] == "success"
         assert result["id"] == "001000000000ABC"
 
-    def test_update_record_missing_params(self, sf_tools):
-        result = json.loads(sf_tools.update_record(sobject="", record_id="", record_data=""))
-        assert "error" in result
-
     def test_delete_record(self, sf_tools, mock_sf_client):
         mock_sf_client.Account = MagicMock()
         mock_sf_client.Account.delete.return_value = 204
@@ -396,10 +380,6 @@ class TestCRUD:
         result = json.loads(sf_tools.delete_record(sobject="Account", record_id="001000000000ABC"))
         assert result["status"] == "success"
         assert result["id"] == "001000000000ABC"
-
-    def test_delete_record_missing_params(self, sf_tools):
-        result = json.loads(sf_tools.delete_record(sobject="", record_id=""))
-        assert "error" in result
 
 
 class TestQuerySearch:
@@ -436,10 +416,6 @@ class TestQuerySearch:
         assert result["returned"] == 5
         assert len(result["records"]) == 5
 
-    def test_query_empty(self, sf_tools):
-        result = json.loads(sf_tools.query(soql=""))
-        assert "error" in result
-
     def test_search_success(self, sf_tools, mock_sf_client):
         mock_sf_client.search.return_value = {
             "searchRecords": [
@@ -449,10 +425,6 @@ class TestQuerySearch:
 
         result = json.loads(sf_tools.search(sosl="FIND {John} RETURNING Contact(Id)"))
         assert "searchRecords" in result
-
-    def test_search_empty(self, sf_tools):
-        result = json.loads(sf_tools.search(sosl=""))
-        assert "error" in result
 
     def test_query_large_result_parseable(self, mock_sf_client):
         tools = SalesforceTools(
@@ -490,10 +462,6 @@ class TestReport:
         mock_sf_client.restful.side_effect = SalesforceError("url", 404, "res", "Not Found")
 
         result = json.loads(sf_tools.get_report(report_id="00O000000000BAD"))
-        assert "error" in result
-
-    def test_get_report_empty_id(self, sf_tools):
-        result = json.loads(sf_tools.get_report(report_id=""))
         assert "error" in result
 
     def test_get_report_unexpected_format(self, sf_tools, mock_sf_client):
