@@ -23,7 +23,7 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
 
 try:
-    from simple_salesforce import Salesforce, SalesforceAuthenticationFailed, SalesforceError
+    from simple_salesforce import Salesforce, SalesforceError
 except ImportError:
     raise ImportError("`simple-salesforce` not installed. Please install using `pip install simple-salesforce`.")
 
@@ -53,15 +53,29 @@ class SalesforceTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        self.username = username or getenv("SALESFORCE_USERNAME")
-        self.password = password or getenv("SALESFORCE_PASSWORD")
-        self.security_token = security_token or getenv("SALESFORCE_SECURITY_TOKEN")
-        self.domain = domain or getenv("SALESFORCE_DOMAIN", "login")
-        self.instance_url = instance_url
-        self.session_id = session_id
         self.max_records = max(max_records, 1)
         self.max_fields = max(max_fields, 1)
-        self._sf: Optional[Salesforce] = None
+
+        username = username or getenv("SALESFORCE_USERNAME")
+        password = password or getenv("SALESFORCE_PASSWORD")
+        security_token = security_token or getenv("SALESFORCE_SECURITY_TOKEN")
+        domain = domain or getenv("SALESFORCE_DOMAIN", "login")
+
+        if instance_url and session_id:
+            self.sf = Salesforce(instance_url=instance_url, session_id=session_id)
+        elif username and password:
+            self.sf = Salesforce(
+                username=username,
+                password=password,
+                security_token=security_token or "",
+                domain=domain,
+            )
+        else:
+            raise ValueError(
+                "Salesforce credentials not configured. "
+                "Set SALESFORCE_USERNAME, SALESFORCE_PASSWORD, and SALESFORCE_SECURITY_TOKEN "
+                "or pass instance_url and session_id."
+            )
 
         tools: List[Any] = []
         if all or enable_list_objects:
@@ -85,64 +99,22 @@ class SalesforceTools(Toolkit):
 
         super().__init__(name="salesforce_tools", tools=tools, **kwargs)
 
-    def _get_client(self) -> Optional[Salesforce]:
-        if self._sf is not None:
-            return self._sf
-
-        try:
-            if self.instance_url and self.session_id:
-                self._sf = Salesforce(instance_url=self.instance_url, session_id=self.session_id)
-            elif self.username and self.password:
-                self._sf = Salesforce(
-                    username=self.username,
-                    password=self.password,
-                    security_token=self.security_token or "",
-                    domain=self.domain,
-                )
-            else:
-                logger.error(
-                    "Salesforce credentials not configured. "
-                    "Set SALESFORCE_USERNAME, SALESFORCE_PASSWORD, and SALESFORCE_SECURITY_TOKEN."
-                )
-                return None
-            return self._sf
-        except SalesforceAuthenticationFailed:
-            logger.exception("Salesforce authentication failed")
-            return None
-        except Exception:
-            logger.exception("Salesforce connection error")
-            return None
-
-    def list_objects(self, include_custom: bool = True) -> str:
-        """
-        List all available Salesforce objects in the org.
-
-        Args:
-            include_custom: Include custom objects (ending in __c).
-
-        Returns:
-            str: JSON string with list of objects (name, label, queryable, createable).
-        """
+    def list_objects(self) -> str:
+        """List all available Salesforce objects in the org."""
         log_debug("Listing Salesforce objects")
 
-        sf = self._get_client()
-        if sf is None:
-            return json.dumps({"error": "Salesforce not connected."})
+        sf = self.sf
 
         try:
             describe = sf.describe()
             if not isinstance(describe, dict):
                 return json.dumps({"error": "Unexpected response from Salesforce."})
-            objects = describe.get("sobjects", [])
 
             result = []
-            for obj in objects:
-                name = obj.get("name", "")
-                if not include_custom and name.endswith("__c"):
-                    continue
+            for obj in describe.get("sobjects", []):
                 result.append(
                     {
-                        "name": name,
+                        "name": obj.get("name", ""),
                         "label": obj.get("label"),
                         "queryable": obj.get("queryable"),
                         "createable": obj.get("createable"),
@@ -165,25 +137,17 @@ class SalesforceTools(Toolkit):
 
     def describe_object(self, sobject: str) -> str:
         """
-        Get the schema/metadata for a Salesforce object.
-
-        Returns field names, types, labels, and picklist values.
+        Get the schema/metadata for a Salesforce object including field names, types, labels, and picklist values.
 
         Args:
-            sobject: The API name of the object (e.g. ``Account``, ``Contact``,
-                ``Custom_Object__c``).
-
-        Returns:
-            str: JSON string with object metadata including fields.
+            sobject: The API name of the object (e.g. ``Account``, ``Contact``, ``Custom_Object__c``).
         """
         if not sobject:
             return json.dumps({"error": "sobject name is required."})
 
         log_debug(f"Describing Salesforce object: {sobject}")
 
-        sf = self._get_client()
-        if sf is None:
-            return json.dumps({"error": "Salesforce not connected."})
+        sf = self.sf
 
         try:
             sf_object = getattr(sf, sobject)
@@ -228,32 +192,21 @@ class SalesforceTools(Toolkit):
             logger.exception(f"Error describing object {sobject}")
             return json.dumps({"error": str(e)})
 
-    def get_record(
-        self,
-        sobject: str,
-        record_id: str,
-        fields: str = "",
-    ) -> str:
+    def get_record(self, sobject: str, record_id: str, fields: str = "") -> str:
         """
         Get a single Salesforce record by its ID.
 
         Args:
             sobject: The API name of the object (e.g. ``Account``, ``Contact``).
             record_id: The Salesforce record ID (18-char or 15-char).
-            fields: Comma-separated list of fields to return.
-                If empty, returns all fields.
-
-        Returns:
-            str: JSON string with the record data.
+            fields: Comma-separated list of fields to return. If empty, returns all fields.
         """
         if not sobject or not record_id:
             return json.dumps({"error": "sobject and record_id are required."})
 
         log_debug(f"Getting Salesforce {sobject} record: {record_id}")
 
-        sf = self._get_client()
-        if sf is None:
-            return json.dumps({"error": "Salesforce not connected."})
+        sf = self.sf
 
         try:
             sf_object = getattr(sf, sobject)
@@ -282,19 +235,13 @@ class SalesforceTools(Toolkit):
         Args:
             sobject: The API name of the object (e.g. ``Account``, ``Contact``).
             record_data: JSON string of field name-value pairs.
-                Example: ``{"LastName": "Doe", "Email": "doe@example.com"}``
-
-        Returns:
-            str: JSON string with the created record ID and success status.
         """
         if not sobject or not record_data:
             return json.dumps({"error": "sobject and record_data are required."})
 
         log_debug(f"Creating Salesforce {sobject} record")
 
-        sf = self._get_client()
-        if sf is None:
-            return json.dumps({"error": "Salesforce not connected."})
+        sf = self.sf
 
         try:
             data = json.loads(record_data) if isinstance(record_data, str) else record_data
@@ -329,19 +276,13 @@ class SalesforceTools(Toolkit):
             sobject: The API name of the object (e.g. ``Account``, ``Contact``).
             record_id: The Salesforce record ID to update.
             record_data: JSON string of field name-value pairs to update.
-                Example: ``{"Email": "new@example.com"}``
-
-        Returns:
-            str: JSON string indicating success or error.
         """
         if not sobject or not record_id or not record_data:
             return json.dumps({"error": "sobject, record_id, and record_data are required."})
 
         log_debug(f"Updating Salesforce {sobject} record: {record_id}")
 
-        sf = self._get_client()
-        if sf is None:
-            return json.dumps({"error": "Salesforce not connected."})
+        sf = self.sf
 
         try:
             data = json.loads(record_data) if isinstance(record_data, str) else record_data
@@ -375,18 +316,13 @@ class SalesforceTools(Toolkit):
         Args:
             sobject: The API name of the object (e.g. ``Account``, ``Contact``).
             record_id: The Salesforce record ID to delete.
-
-        Returns:
-            str: JSON string indicating success or error.
         """
         if not sobject or not record_id:
             return json.dumps({"error": "sobject and record_id are required."})
 
         log_debug(f"Deleting Salesforce {sobject} record: {record_id}")
 
-        sf = self._get_client()
-        if sf is None:
-            return json.dumps({"error": "Salesforce not connected."})
+        sf = self.sf
 
         try:
             sf_object = getattr(sf, sobject)
@@ -411,19 +347,13 @@ class SalesforceTools(Toolkit):
 
         Args:
             soql: The SOQL query string.
-                Example: ``SELECT Id, Name FROM Account WHERE Industry = 'Technology' LIMIT 10``
-
-        Returns:
-            str: JSON string with query results (records and totalSize).
         """
         if not soql:
             return json.dumps({"error": "soql query string is required."})
 
         log_debug(f"Executing Salesforce SOQL: {soql}")
 
-        sf = self._get_client()
-        if sf is None:
-            return json.dumps({"error": "Salesforce not connected."})
+        sf = self.sf
 
         try:
             result = sf.query(soql)
@@ -454,19 +384,13 @@ class SalesforceTools(Toolkit):
 
         Args:
             sosl: The SOSL search string.
-                Example: ``FIND {John} IN ALL FIELDS RETURNING Contact(Id, Name, Email), Lead(Id, Name)``
-
-        Returns:
-            str: JSON string with search results.
         """
         if not sosl:
             return json.dumps({"error": "sosl search string is required."})
 
         log_debug(f"Executing Salesforce SOSL: {sosl}")
 
-        sf = self._get_client()
-        if sf is None:
-            return json.dumps({"error": "Salesforce not connected."})
+        sf = self.sf
 
         try:
             result = sf.search(sosl)
@@ -487,18 +411,13 @@ class SalesforceTools(Toolkit):
 
         Args:
             report_id: The Salesforce report ID (15 or 18 character).
-
-        Returns:
-            str: JSON string with report metadata and fact data.
         """
         if not report_id:
             return json.dumps({"error": "report_id is required."})
 
         log_debug(f"Running Salesforce report: {report_id}")
 
-        sf = self._get_client()
-        if sf is None:
-            return json.dumps({"error": "Salesforce not connected."})
+        sf = self.sf
 
         try:
             # Reports are read-only via the Analytics API; standard REST objects don't expose them

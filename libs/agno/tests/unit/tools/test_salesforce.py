@@ -89,10 +89,7 @@ class TestSalesforceInit:
             password="testpass",
             security_token="testtoken",
         )
-        assert tools.username == "test@example.com"
-        assert tools.password == "testpass"
-        assert tools.security_token == "testtoken"
-        assert tools.domain == "login"
+        assert tools.sf is not None
 
     def test_init_with_env_variables(self, mock_sf_client):
         with patch.dict(
@@ -105,18 +102,14 @@ class TestSalesforceInit:
             },
         ):
             tools = SalesforceTools()
-            assert tools.username == "env@example.com"
-            assert tools.password == "envpass"
-            assert tools.security_token == "envtoken"
-            assert tools.domain == "test"
+            assert tools.sf is not None
 
     def test_init_session_auth(self, mock_sf_client):
         tools = SalesforceTools(
             instance_url="https://my.salesforce.com",
             session_id="session123",
         )
-        sf = tools._get_client()
-        assert sf is not None
+        assert tools.sf is not None
         from agno.tools.salesforce import Salesforce
 
         Salesforce.assert_called_with(
@@ -218,32 +211,6 @@ class TestMetadata:
         assert result["returned"] == 2
         assert result["objects"][0]["name"] == "Account"
         assert result["objects"][1]["name"] == "Custom__c"
-
-    def test_list_objects_exclude_custom(self, sf_tools, mock_sf_client):
-        mock_sf_client.describe.return_value = {
-            "sobjects": [
-                {
-                    "name": "Account",
-                    "label": "Account",
-                    "queryable": True,
-                    "createable": True,
-                    "updateable": True,
-                    "deletable": True,
-                },
-                {
-                    "name": "Custom__c",
-                    "label": "Custom",
-                    "queryable": True,
-                    "createable": True,
-                    "updateable": True,
-                    "deletable": True,
-                },
-            ]
-        }
-
-        result = json.loads(sf_tools.list_objects(include_custom=False))
-        assert result["total"] == 1
-        assert result["objects"][0]["name"] == "Account"
 
     def test_list_objects_capping(self, mock_sf_client):
         tools = SalesforceTools(
@@ -539,14 +506,12 @@ class TestReport:
 class TestErrorHandling:
     @patch.dict("os.environ", {}, clear=True)
     def test_no_credentials(self, mock_sf_client):
-        tools = SalesforceTools(
-            username=None,
-            password=None,
-            security_token=None,
-        )
-        result = json.loads(tools.query(soql="SELECT Id FROM Account"))
-        assert "error" in result
-        assert "not connected" in result["error"]
+        with pytest.raises(ValueError, match="credentials not configured"):
+            SalesforceTools(
+                username=None,
+                password=None,
+                security_token=None,
+            )
 
     def test_salesforce_api_error(self, sf_tools, mock_sf_client):
         from simple_salesforce import SalesforceError
@@ -563,10 +528,9 @@ class TestErrorHandling:
 
         Salesforce.side_effect = SalesforceAuthenticationFailed(401, "Bad credentials")
 
-        tools = SalesforceTools(
-            username="bad@example.com",
-            password="wrong",
-            security_token="bad",
-        )
-        result = json.loads(tools.query(soql="SELECT Id FROM Account"))
-        assert "error" in result
+        with pytest.raises(SalesforceAuthenticationFailed):
+            SalesforceTools(
+                username="bad@example.com",
+                password="wrong",
+                security_token="bad",
+            )
