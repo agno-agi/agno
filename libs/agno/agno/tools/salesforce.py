@@ -7,18 +7,45 @@ for any Salesforce object (standard or custom).
 Requirements:
     ``pip install simple-salesforce``
 
-Authentication (pick one):
+Environment Variables:
+    - SALESFORCE_USERNAME: Salesforce username (email)
+    - SALESFORCE_PASSWORD: Salesforce password
+    - SALESFORCE_SECURITY_TOKEN: Security token
+    - SALESFORCE_DOMAIN: ``login`` (production) or ``test`` (sandbox)
 
-    **Option A — Username / Password** (requires SOAP API enabled in the org):
-        Set environment variables:
-        - ``SALESFORCE_USERNAME``: Salesforce username
-        - ``SALESFORCE_PASSWORD``: Salesforce password
-        - ``SALESFORCE_SECURITY_TOKEN``: Security token (from Salesforce settings)
-        - ``SALESFORCE_DOMAIN``: ``login`` (production) or ``test`` (sandbox)
+How to Get These Credentials:
+    1. Sign up for a free Developer Edition at https://developer.salesforce.com/signup
+    2. Verify your email and set a password
+    3. Get your security token:
+       - Log into Salesforce
+       - Click your avatar (top right) > Settings
+       - Left sidebar: "Reset My Security Token"
+       - Click "Reset Security Token" — it will be emailed to you
+    4. Set up environment variables:
+       ```
+       export SALESFORCE_USERNAME=you@example.com
+       export SALESFORCE_PASSWORD=your-password
+       export SALESFORCE_SECURITY_TOKEN=token-from-email
+       export SALESFORCE_DOMAIN=login
+       ```
 
-    **Option B — Session / Instance URL** (works in all orgs):
-        Pass ``instance_url`` and ``session_id`` directly.
-        Useful when SOAP API login is disabled (default in newer Developer Edition orgs).
+    Note: Username/password auth uses the SOAP API, which is disabled by default
+    in newer Developer Edition orgs. If you get a "SOAP API login() is disabled" error,
+    use session-based auth instead (Option B below).
+
+Session-Based Authentication (Alternative):
+    For orgs where SOAP API login is disabled, or for server deployments
+    with an existing session:
+
+    1. Log into Salesforce in your browser
+    2. Get the session ID from your browser cookie (``sid``) or OAuth flow
+    3. Pass directly to the toolkit:
+       ```python
+       tools = SalesforceTools(
+           instance_url="https://your-org.my.salesforce.com",
+           session_id="your-session-id",
+       )
+       ```
 
 Example:
     ```python
