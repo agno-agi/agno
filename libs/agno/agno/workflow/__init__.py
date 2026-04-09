@@ -8,7 +8,7 @@ from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
-from agno.workflow.types import OnError, OnReject, StepInput, StepOutput, WorkflowExecutionInput
+from agno.workflow.types import HumanReview, OnError, OnReject, OnTimeout, StepInput, StepOutput, WorkflowExecutionInput
 from agno.workflow.workflow import Workflow, get_workflow_by_id, get_workflows
 
 __all__ = [
@@ -26,6 +26,8 @@ __all__ = [
     "StepOutput",
     "OnReject",
     "OnError",
+    "OnTimeout",
+    "HumanReview",
     "get_workflow_by_id",
     "get_workflows",
     # CEL utilities
