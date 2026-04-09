@@ -18,7 +18,7 @@ The reviewer can:
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.workflow import OnReject
 from agno.workflow.loop import Loop
 from agno.workflow.step import Step
@@ -27,7 +27,7 @@ from agno.workflow.workflow import Workflow
 
 refine_agent = Agent(
     name="Refiner",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions=(
         "You refine and improve text. Each time you receive text, "
         "make it more concise and polished. If the reviewer provides feedback, "
