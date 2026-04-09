@@ -4,7 +4,6 @@ import contextvars
 import inspect
 from copy import deepcopy
 from dataclasses import dataclass
-from enum import Enum
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
 from uuid import uuid4
 
@@ -36,6 +35,7 @@ from agno.utils.log import log_debug, log_warning, logger, use_agent_logger, use
 from agno.utils.merge_dict import merge_dictionaries
 from agno.workflow.types import (
     ErrorRequirement,
+    HumanReview,
     OnError,
     OnReject,
     OnTimeout,
@@ -155,6 +155,7 @@ class Step:
         hitl_max_retries: int = 3,
         hitl_timeout: Optional[int] = None,
         on_timeout: Union[OnTimeout, str] = OnTimeout.cancel,
+        human_review: Optional[HumanReview] = None,
     ):
         # Auto-detect HITL metadata from @hitl decorator on executor function
         if executor is not None:
@@ -196,18 +197,44 @@ class Step:
         self.strict_input_validation = strict_input_validation
         self.add_workflow_history = add_workflow_history
         self.num_history_runs = num_history_runs
-        self.requires_confirmation = requires_confirmation
-        self.confirmation_message = confirmation_message
-        self.on_reject = on_reject
-        self.requires_user_input = requires_user_input
-        self.user_input_message = user_input_message
-        self.user_input_schema = user_input_schema
-        self.on_error = on_error
-        self.requires_output_review = requires_output_review
-        self.output_review_message = output_review_message
-        self.hitl_max_retries = hitl_max_retries
-        self.hitl_timeout = hitl_timeout
-        self.on_timeout = on_timeout
+        # Build HITL config - explicit hitl= takes priority over flat params
+        if human_review is not None:
+            self.human_review = human_review
+        else:
+            self.human_review = HumanReview(
+                requires_confirmation=requires_confirmation,
+                confirmation_message=confirmation_message,
+                requires_user_input=requires_user_input,
+                user_input_message=user_input_message,
+                user_input_schema=user_input_schema,
+                requires_output_review=requires_output_review,
+                output_review_message=output_review_message,
+                on_reject=on_reject,
+                on_error=on_error,
+                max_retries=hitl_max_retries,
+                timeout=hitl_timeout,
+                on_timeout=on_timeout,
+            )
+
+        # Validate HumanReview config for Step
+        from agno.workflow.types import validate_human_review_for_step
+
+        validate_human_review_for_step(self.human_review)
+
+        # Store HITL fields as attributes for backward compatibility
+        # These read from self.human_review so there's one source of truth
+        self.requires_confirmation = self.human_review.requires_confirmation
+        self.confirmation_message = self.human_review.confirmation_message
+        self.on_reject = self.human_review.on_reject
+        self.requires_user_input = self.human_review.requires_user_input
+        self.user_input_message = self.human_review.user_input_message
+        self.user_input_schema = self.human_review.user_input_schema
+        self.on_error = self.human_review.on_error
+        self.requires_output_review = self.human_review.requires_output_review
+        self.output_review_message = self.human_review.output_review_message
+        self.hitl_max_retries = self.human_review.max_retries
+        self.hitl_timeout = self.human_review.timeout
+        self.on_timeout = self.human_review.on_timeout
         self.step_id = step_id
 
         if step_id is None:
@@ -228,20 +255,7 @@ class Step:
             "strict_input_validation": self.strict_input_validation,
             "add_workflow_history": self.add_workflow_history,
             "num_history_runs": self.num_history_runs,
-            "requires_confirmation": self.requires_confirmation,
-            "confirmation_message": self.confirmation_message,
-            "requires_user_input": self.requires_user_input,
-            "user_input_message": self.user_input_message,
-            "user_input_schema": self.user_input_schema,
-            "on_reject": self.on_reject.value if isinstance(self.on_reject, Enum) else self.on_reject,
-            "on_error": self.on_error.value if isinstance(self.on_error, Enum) else self.on_error,
-            "requires_output_review": self.requires_output_review
-            if isinstance(self.requires_output_review, bool)
-            else True,
-            "output_review_message": self.output_review_message,
-            "hitl_max_retries": self.hitl_max_retries,
-            "hitl_timeout": self.hitl_timeout,
-            "on_timeout": self.on_timeout.value if isinstance(self.on_timeout, Enum) else self.on_timeout,
+            "human_review": self.human_review.to_dict(),
         }
 
         if self.agent is not None:
@@ -367,6 +381,26 @@ class Step:
         if "executor_ref" in config and config["executor_ref"] and registry:
             executor = registry.get_function(config["executor_ref"])
 
+        # HITL config
+        if config.get("human_review"):
+            human_review = HumanReview.from_dict(config["human_review"])
+        else:
+            # Backward compat: build HITL from flat keys
+            human_review = HumanReview(
+                requires_confirmation=config.get("requires_confirmation", False),
+                confirmation_message=config.get("confirmation_message"),
+                on_reject=config.get("on_reject", "skip"),
+                requires_user_input=config.get("requires_user_input", False),
+                user_input_message=config.get("user_input_message"),
+                user_input_schema=config.get("user_input_schema"),
+                on_error=config.get("on_error", "skip"),
+                requires_output_review=config.get("requires_output_review", False),
+                output_review_message=config.get("output_review_message"),
+                max_retries=config.get("hitl_max_retries", 3),
+                timeout=config.get("hitl_timeout"),
+                on_timeout=config.get("on_timeout", "cancel"),
+            )
+
         return cls(
             name=config.get("name"),
             step_id=config.get("step_id"),
@@ -376,18 +410,7 @@ class Step:
             strict_input_validation=config.get("strict_input_validation", False),
             add_workflow_history=config.get("add_workflow_history"),
             num_history_runs=config.get("num_history_runs", 3),
-            requires_confirmation=config.get("requires_confirmation", False),
-            confirmation_message=config.get("confirmation_message"),
-            on_reject=config.get("on_reject", "skip"),
-            requires_user_input=config.get("requires_user_input", False),
-            user_input_message=config.get("user_input_message"),
-            user_input_schema=config.get("user_input_schema"),
-            on_error=config.get("on_error", "fail"),
-            requires_output_review=config.get("requires_output_review", False),
-            output_review_message=config.get("output_review_message"),
-            hitl_max_retries=config.get("hitl_max_retries", 3),
-            hitl_timeout=config.get("hitl_timeout"),
-            on_timeout=config.get("on_timeout", "cancel"),
+            human_review=human_review,
             agent=agent,
             team=team,
             executor=executor,

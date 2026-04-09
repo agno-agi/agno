@@ -1,7 +1,8 @@
 """
-Router Post-Execution Review — Approve / Re-route / Cancel
+Router Post-Execution Review -- Approve / Re-route / Cancel
 
-Demonstrates reviewing a Router's output and optionally picking a different branch:
+Demonstrates reviewing a Router's output using the HITL config class,
+and optionally picking a different branch:
 
     START -> Router (selector picks branch) -> [PAUSE for review]
                                                +- approve  -> next step -> END
@@ -20,7 +21,7 @@ from agno.db.sqlite import SqliteDb
 from agno.workflow import OnReject
 from agno.workflow.router import Router
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 
@@ -95,11 +96,13 @@ workflow = Workflow(
                     executor=custom_analysis,
                 ),
             ],
-            # Post-execution review: human reviews output, can re-route
-            requires_output_review=True,
-            output_review_message="Review the analysis result. Approve, or pick a different analysis type?",
-            on_reject=OnReject.retry,
-            hitl_max_retries=5,
+            # Post-execution review via HITL config: human reviews output, can re-route
+            human_review=HumanReview(
+                requires_output_review=True,
+                output_review_message="Review the analysis result. Approve, or pick a different analysis type?",
+                on_reject=OnReject.retry,
+                max_retries=5,
+            ),
         ),
         Step(name="report", executor=generate_report),
     ],

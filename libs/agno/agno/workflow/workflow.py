@@ -5174,8 +5174,12 @@ class Workflow:
                         )
                         if review_result.should_pause:
                             apply_post_execution_pause_state(
-                                workflow_run_response, i, step_name,
-                                collected_step_outputs, review_result, step_output,
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
                                 previous_step_outputs=previous_step_outputs,
                             )
                             save_paused_session(self, session, workflow_run_response)
@@ -5619,8 +5623,12 @@ class Workflow:
                         )
                         if review_result.should_pause:
                             apply_post_execution_pause_state(
-                                workflow_run_response, i, step_name,
-                                collected_step_outputs, review_result, final_router_output,
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                final_router_output,
                                 previous_step_outputs=previous_step_outputs,
                             )
                             review_event = StepOutputReviewEvent(
@@ -6497,8 +6505,12 @@ class Workflow:
                         )
                         if review_result.should_pause:
                             apply_post_execution_pause_state(
-                                workflow_run_response, i, step_name,
-                                collected_step_outputs, review_result, step_output,
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
                                 previous_step_outputs=previous_step_outputs,
                             )
                             await asave_paused_session(self, session, workflow_run_response)
@@ -6934,8 +6946,12 @@ class Workflow:
                         )
                         if review_result.should_pause:
                             apply_post_execution_pause_state(
-                                workflow_run_response, i, step_name,
-                                collected_step_outputs, review_result, final_router_output,
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                final_router_output,
                                 previous_step_outputs=previous_step_outputs,
                             )
                             review_event = StepOutputReviewEvent(
