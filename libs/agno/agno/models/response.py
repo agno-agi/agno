@@ -95,10 +95,10 @@ class ToolExecution:
             confirmation_note=data.get("confirmation_note"),
             requires_user_input=data.get("requires_user_input"),
             user_input_schema=[UserInputField.from_dict(field) for field in data["user_input_schema"]]
-            if data.get("user_input_schema") is not None
+            if "user_input_schema" in data and data["user_input_schema"] is not None
             else None,
             user_feedback_schema=[UserFeedbackQuestion.from_dict(q) for q in data["user_feedback_schema"]]
-            if data.get("user_feedback_schema") is not None
+            if "user_feedback_schema" in data and data["user_feedback_schema"] is not None
             else None,
             answered=data.get("answered"),
             external_execution_required=data.get("external_execution_required"),
