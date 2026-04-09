@@ -226,15 +226,18 @@ def validate_human_review_for_steps(hr: "HumanReview") -> None:
 def validate_human_review_for_parallel(hr: "HumanReview") -> None:
     """Validate HumanReview config for use on a Parallel.
 
-    Raises ValueError if unsupported fields are set.
-    Supported: requires_confirmation.
+    Raises ValueError if any HITL fields are set. Parallel does not support
+    HITL pauses — steps inside a Parallel execute concurrently and cannot
+    be individually paused for human review.
     """
+    if hr.requires_confirmation:
+        raise ValueError("requires_confirmation is not supported on Parallel.")
     if hr.requires_output_review:
-        raise ValueError("requires_output_review is not supported on Parallel. Supported: requires_confirmation.")
+        raise ValueError("requires_output_review is not supported on Parallel.")
     if hr.requires_user_input:
-        raise ValueError("requires_user_input is not supported on Parallel. Supported: requires_confirmation.")
+        raise ValueError("requires_user_input is not supported on Parallel.")
     if hr.requires_iteration_review:
-        raise ValueError("requires_iteration_review is not supported on Parallel. Supported: requires_confirmation.")
+        raise ValueError("requires_iteration_review is not supported on Parallel.")
 
 
 @dataclass
