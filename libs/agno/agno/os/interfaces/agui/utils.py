@@ -177,56 +177,6 @@ def extract_agui_user_input(messages: List[AGUIMessage]) -> str:
     return ""
 
 
-def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[Message]:
-    """Convert AG-UI messages to Agno messages."""
-    # First pass: collect all tool_call_ids that have results
-    tool_call_ids_with_results: Set[str] = set()
-    for msg in messages:
-        if msg.role == "tool" and msg.tool_call_id:
-            tool_call_ids_with_results.add(msg.tool_call_id)
-
-    # Second pass: convert messages
-    result: List[Message] = []
-    seen_tool_call_ids: Set[str] = set()
-
-    for msg in messages:
-        if msg.role == "tool":
-            # Deduplicate tool results - keep only first occurrence
-            if msg.tool_call_id in seen_tool_call_ids:
-                log_debug(f"Skipping duplicate AGUI tool result: {msg.tool_call_id}")
-                continue
-            seen_tool_call_ids.add(msg.tool_call_id)
-            result.append(Message(id=msg.id, role="tool", tool_call_id=msg.tool_call_id, content=msg.content))
-
-        elif msg.role == "assistant":
-            tool_calls = None
-            if msg.tool_calls:
-                # Filter tool_calls to only those with results in this message sequence
-                filtered_calls = [call for call in msg.tool_calls if call.id in tool_call_ids_with_results]
-                if filtered_calls:
-                    tool_calls = [call.model_dump() for call in filtered_calls]
-            result.append(Message(id=msg.id, role="assistant", content=msg.content, tool_calls=tool_calls))
-
-        elif msg.role == "user":
-            # UserMessage.content is Union[str, List[InputContent]]
-            if isinstance(msg.content, str):
-                content = msg.content
-            elif isinstance(msg.content, list):
-                text_parts = [p.text for p in msg.content if hasattr(p, "type") and p.type == "text" and hasattr(p, "text")]
-                content = "\n".join(text_parts) if text_parts else ""
-            else:
-                content = ""
-            result.append(Message(id=msg.id, role="user", content=content))
-
-        elif msg.role == "system":
-            pass  # Skip - agent builds its own system message from configuration
-
-        else:
-            log_warning(f"Unknown AGUI message role: {msg.role}")
-
-    return result
-
-
 def extract_team_response_chunk_content(response: TeamRunContentEvent) -> str:
     """Given a response stream chunk, find and extract the content."""
 

@@ -2,12 +2,11 @@ from unittest.mock import MagicMock
 
 import pytest
 from ag_ui.core import EventType
-from ag_ui.core.types import AssistantMessage, SystemMessage, TextInputContent, ToolMessage, UserMessage
+from ag_ui.core.types import AssistantMessage, SystemMessage, TextInputContent, UserMessage
 
 from agno.os.interfaces.agui.utils import (
     EventBuffer,
     async_stream_agno_response_as_agui_events,
-    convert_agui_messages_to_agno_messages,
     extract_agui_user_input,
 )
 from agno.run.agent import RunContentEvent, ToolCallCompletedEvent, ToolCallStartedEvent
@@ -1503,31 +1502,3 @@ def test_extract_agui_user_input_multimodal_content():
     result = extract_agui_user_input(messages)
 
     assert result == "describe this image"
-
-
-def test_convert_preserves_user_and_assistant_ids():
-    """Test that AG-UI message IDs are preserved through conversion, not replaced with random UUIDs."""
-    messages = [
-        UserMessage(id="agui-user-1", content="hello"),
-        AssistantMessage(id="agui-asst-1", content="hi there"),
-    ]
-
-    result = convert_agui_messages_to_agno_messages(messages)
-
-    assert result[0].id == "agui-user-1"
-    assert result[0].role == "user"
-    assert result[1].id == "agui-asst-1"
-    assert result[1].role == "assistant"
-
-
-def test_convert_preserves_tool_message_id():
-    """Test that tool message IDs and tool_call_ids are preserved through conversion."""
-    messages = [
-        ToolMessage(id="agui-tool-1", content="result data", tool_call_id="tc-1"),
-    ]
-
-    result = convert_agui_messages_to_agno_messages(messages)
-
-    assert result[0].id == "agui-tool-1"
-    assert result[0].tool_call_id == "tc-1"
-    assert result[0].role == "tool"
