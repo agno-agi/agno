@@ -1,7 +1,10 @@
+from __future__ import annotations
+
+import contextvars
 import inspect
-from copy import copy
+from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -15,7 +18,7 @@ from agno.models.metrics import RunMetrics
 from agno.registry import Registry
 from agno.run import RunContext
 from agno.run.agent import RunContentEvent, RunOutput
-from agno.run.base import BaseRunOutputEvent
+from agno.run.base import BaseRunOutputEvent, RunStatus
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import (
@@ -32,14 +35,25 @@ from agno.utils.log import log_debug, log_warning, logger, use_agent_logger, use
 from agno.utils.merge_dict import merge_dictionaries
 from agno.workflow.types import (
     ErrorRequirement,
+    HumanReview,
     OnError,
     OnReject,
+    OnTimeout,
     StepInput,
     StepOutput,
     StepRequirement,
     StepType,
     UserInputField,
 )
+
+if TYPE_CHECKING:
+    from agno.workflow.workflow import Workflow
+
+# Maximum nesting depth for nested workflow execution to prevent circular references or stack overflow.
+_MAX_NESTED_WORKFLOW_DEPTH = 10
+# Use ContextVar instead of threading.local so depth is isolated per coroutine/task,
+# not per thread. This prevents concurrent async workflows from interfering with each other.
+_nested_workflow_depth: contextvars.ContextVar[int] = contextvars.ContextVar("_nested_workflow_depth", default=0)
 
 StepExecutor = Callable[
     [StepInput],
@@ -65,6 +79,7 @@ class Step:
     agent: Optional[Agent] = None
     team: Optional[Team] = None
     executor: Optional[StepExecutor] = None
+    workflow: Optional["Workflow"] = None  # Nested workflow support
 
     step_id: Optional[str] = None
     description: Optional[str] = None
@@ -98,6 +113,20 @@ class Step:
     # OnError.pause triggers HITL allowing user to retry or skip the failed step
     on_error: Union[OnError, str] = OnError.skip
 
+    # Post-execution output review: pause after the step runs so a human can review the output
+    # Can be a bool or a callable that receives StepOutput and returns bool (conditional review)
+    requires_output_review: Union[bool, Callable[["StepOutput"], bool]] = False
+    # Message to display to the reviewer when output review is requested
+    output_review_message: Optional[str] = None
+
+    # Maximum number of HITL retry attempts (applies when on_reject=OnReject.retry)
+    hitl_max_retries: int = 3
+
+    # Timeout for HITL responses in seconds (None = wait indefinitely)
+    hitl_timeout: Optional[int] = None
+    # Action when timeout expires: "cancel", "skip", or "approve"
+    on_timeout: Union[OnTimeout, str] = OnTimeout.cancel
+
     _retry_count: int = 0
 
     def __init__(
@@ -106,6 +135,7 @@ class Step:
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
         executor: Optional[StepExecutor] = None,
+        workflow: Optional["Workflow"] = None,
         step_id: Optional[str] = None,
         description: Optional[str] = None,
         max_retries: int = 3,
@@ -120,6 +150,12 @@ class Step:
         user_input_message: Optional[str] = None,
         user_input_schema: Optional[List[Dict[str, Any]]] = None,
         on_error: Union[OnError, str] = OnError.skip,
+        requires_output_review: Union[bool, Callable[["StepOutput"], bool]] = False,
+        output_review_message: Optional[str] = None,
+        hitl_max_retries: int = 3,
+        hitl_timeout: Optional[int] = None,
+        on_timeout: Union[OnTimeout, str] = OnTimeout.cancel,
+        human_review: Optional[HumanReview] = None,
     ):
         # Auto-detect HITL metadata from @hitl decorator on executor function
         if executor is not None:
@@ -149,6 +185,7 @@ class Step:
         self.agent = agent
         self.team = team
         self.executor = executor
+        self.workflow = workflow
 
         # Validate executor configuration
         self._validate_executor_config()
@@ -160,13 +197,44 @@ class Step:
         self.strict_input_validation = strict_input_validation
         self.add_workflow_history = add_workflow_history
         self.num_history_runs = num_history_runs
-        self.requires_confirmation = requires_confirmation
-        self.confirmation_message = confirmation_message
-        self.on_reject = on_reject
-        self.requires_user_input = requires_user_input
-        self.user_input_message = user_input_message
-        self.user_input_schema = user_input_schema
-        self.on_error = on_error
+        # Build HITL config - explicit hitl= takes priority over flat params
+        if human_review is not None:
+            self.human_review = human_review
+        else:
+            self.human_review = HumanReview(
+                requires_confirmation=requires_confirmation,
+                confirmation_message=confirmation_message,
+                requires_user_input=requires_user_input,
+                user_input_message=user_input_message,
+                user_input_schema=user_input_schema,
+                requires_output_review=requires_output_review,
+                output_review_message=output_review_message,
+                on_reject=on_reject,
+                on_error=on_error,
+                max_retries=hitl_max_retries,
+                timeout=hitl_timeout,
+                on_timeout=on_timeout,
+            )
+
+        # Validate HumanReview config for Step
+        from agno.workflow.types import validate_human_review_for_step
+
+        validate_human_review_for_step(self.human_review)
+
+        # Store HITL fields as attributes for backward compatibility
+        # These read from self.human_review so there's one source of truth
+        self.requires_confirmation = self.human_review.requires_confirmation
+        self.confirmation_message = self.human_review.confirmation_message
+        self.on_reject = self.human_review.on_reject
+        self.requires_user_input = self.human_review.requires_user_input
+        self.user_input_message = self.human_review.user_input_message
+        self.user_input_schema = self.human_review.user_input_schema
+        self.on_error = self.human_review.on_error
+        self.requires_output_review = self.human_review.requires_output_review
+        self.output_review_message = self.human_review.output_review_message
+        self.hitl_max_retries = self.human_review.max_retries
+        self.hitl_timeout = self.human_review.timeout
+        self.on_timeout = self.human_review.on_timeout
         self.step_id = step_id
 
         if step_id is None:
@@ -187,19 +255,15 @@ class Step:
             "strict_input_validation": self.strict_input_validation,
             "add_workflow_history": self.add_workflow_history,
             "num_history_runs": self.num_history_runs,
-            "requires_confirmation": self.requires_confirmation,
-            "confirmation_message": self.confirmation_message,
-            "requires_user_input": self.requires_user_input,
-            "user_input_message": self.user_input_message,
-            "user_input_schema": self.user_input_schema,
-            "on_reject": self.on_reject,
-            "on_error": self.on_error,
+            "human_review": self.human_review.to_dict(),
         }
 
         if self.agent is not None:
             result["agent_id"] = self.agent.id
         if self.team is not None:
             result["team_id"] = self.team.id
+        if self.workflow is not None:
+            result["workflow_id"] = self.workflow.id
         if self.executor is not None:
             result["executor_ref"] = self.executor.__name__
 
@@ -230,6 +294,7 @@ class Step:
         agent = None
         team = None
         executor = None
+        workflow = None
 
         # --- Handle Agent reconstruction ---
         if "agent_id" in config and config["agent_id"]:
@@ -242,8 +307,11 @@ class Step:
                     try:
                         # Deep copy to isolate mutable state between concurrent requests
                         agent = registry_agent.deep_copy()
-                    except Exception:
-                        log_warning(f"deep_copy() failed for registry agent '{agent_id}', using shared instance")
+                    except Exception as e:
+                        log_warning(
+                            f"deep_copy() failed for registry agent '{agent_id}', using shared instance: {e}",
+                        )
+
                         agent = registry_agent
 
             # Fall back to database
@@ -268,8 +336,11 @@ class Step:
                     try:
                         # Deep copy to isolate mutable state between concurrent requests
                         team = registry_team.deep_copy()
-                    except Exception:
-                        log_warning(f"deep_copy() failed for registry team '{team_id}', using shared instance")
+                    except Exception as e:
+                        log_warning(
+                            f"deep_copy() failed for registry team '{team_id}', using shared instance: {e}",
+                        )
+
                         team = registry_team
 
             # Fall back to database
@@ -283,9 +354,52 @@ class Step:
                     f"Could not resolve team_id='{team_id}' from registry or DB for step '{config.get('name')}'"
                 )
 
+        # --- Handle Workflow reconstruction ---
+        # TODO: Add workflow support to Registry (get_workflow method) for full reconstruction.
+        # Currently, nested workflow steps cannot be fully reconstructed from serialized form
+        # because the Registry does not track workflows. This only affects resumption of
+        # paused workflows that contain nested workflow steps.
+        if "workflow_id" in config and config["workflow_id"]:
+            workflow_id = config.get("workflow_id")
+            log_warning(
+                f"Cannot reconstruct nested workflow '{workflow_id}' for step '{config.get('name')}' "
+                f"(workflow registry support not yet implemented). "
+                f"Using placeholder executor."
+            )
+
+            # Create a placeholder executor so validation doesn't crash.
+            # The step won't be re-executable until Registry supports workflows.
+            def _placeholder(step_input: StepInput) -> StepOutput:
+                return StepOutput(
+                    content=f"Nested workflow '{workflow_id}' cannot be re-executed (not yet reconstructable)",
+                    success=False,
+                )
+
+            executor = _placeholder
+
         # --- Handle Executor reconstruction ---
         if "executor_ref" in config and config["executor_ref"] and registry:
             executor = registry.get_function(config["executor_ref"])
+
+        # HITL config
+        if config.get("human_review"):
+            human_review = HumanReview.from_dict(config["human_review"])
+        else:
+            # Backward compat: build HITL from flat keys
+            human_review = HumanReview(
+                requires_confirmation=config.get("requires_confirmation", False),
+                confirmation_message=config.get("confirmation_message"),
+                on_reject=config.get("on_reject", "skip"),
+                requires_user_input=config.get("requires_user_input", False),
+                user_input_message=config.get("user_input_message"),
+                user_input_schema=config.get("user_input_schema"),
+                on_error=config.get("on_error", "skip"),
+                requires_output_review=config.get("requires_output_review", False),
+                output_review_message=config.get("output_review_message"),
+                max_retries=config.get("hitl_max_retries", 3),
+                timeout=config.get("hitl_timeout"),
+                on_timeout=config.get("on_timeout", "cancel"),
+            )
 
         return cls(
             name=config.get("name"),
@@ -296,20 +410,15 @@ class Step:
             strict_input_validation=config.get("strict_input_validation", False),
             add_workflow_history=config.get("add_workflow_history"),
             num_history_runs=config.get("num_history_runs", 3),
-            requires_confirmation=config.get("requires_confirmation", False),
-            confirmation_message=config.get("confirmation_message"),
-            on_reject=config.get("on_reject", "cancel"),
-            requires_user_input=config.get("requires_user_input", False),
-            user_input_message=config.get("user_input_message"),
-            user_input_schema=config.get("user_input_schema"),
-            on_error=config.get("on_error", "fail"),
+            human_review=human_review,
             agent=agent,
             team=team,
             executor=executor,
+            workflow=workflow,
         )
 
     def get_links(self, position: int = 0) -> List[Dict[str, Any]]:
-        """Get links for this step's agent/team.
+        """Get links for this step's agent/team/workflow.
 
         Args:
             position: Position of this step in the workflow.
@@ -342,6 +451,17 @@ class Step:
                 }
             )
 
+        if self.workflow is not None:
+            links.append(
+                {
+                    "link_kind": "step_workflow",
+                    "link_key": link_key,
+                    "child_component_id": self.workflow.id,
+                    "child_version": None,
+                    "position": position,
+                }
+            )
+
         return links
 
     def create_step_requirement(
@@ -358,7 +478,13 @@ class Step:
         Returns:
             StepRequirement configured for this step's HITL needs.
         """
+        from datetime import datetime, timedelta, timezone
+
         user_input_schema = self._normalize_user_input_schema() if self.requires_user_input else None
+
+        timeout_at = None
+        if self.hitl_timeout is not None:
+            timeout_at = datetime.now(timezone.utc) + timedelta(seconds=self.hitl_timeout)
 
         return StepRequirement(
             step_id=self.step_id or str(uuid4()),
@@ -372,6 +498,9 @@ class Step:
             user_input_message=self.user_input_message,
             user_input_schema=user_input_schema,
             step_input=step_input,
+            max_retries=self.hitl_max_retries,
+            timeout_at=timeout_at,
+            on_timeout=self.on_timeout,
         )
 
     def create_error_requirement(
@@ -395,6 +524,51 @@ class Step:
             error_message=str(error),
             error_type=type(error).__name__,
             retry_count=self._retry_count,
+        )
+
+    def create_output_review_requirement(
+        self,
+        step_index: int,
+        step_input: StepInput,
+        step_output: "StepOutput",
+        retry_count: int = 0,
+    ) -> StepRequirement:
+        """Create a StepRequirement for post-execution output review.
+
+        Args:
+            step_index: Index of the step in the workflow.
+            step_input: The input that was used for the step.
+            step_output: The output produced by the step (for review).
+            retry_count: Number of times this step has been retried.
+
+        Returns:
+            StepRequirement configured for post-execution output review.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        timeout_at = None
+        if self.hitl_timeout is not None:
+            timeout_at = datetime.now(timezone.utc) + timedelta(seconds=self.hitl_timeout)
+
+        message = self.output_review_message or f"Review output of step '{self.name or 'step'}'?"
+
+        return StepRequirement(
+            step_id=self.step_id or str(uuid4()),
+            step_name=self.name or f"step_{step_index + 1}",
+            step_index=step_index,
+            step_type="Step",
+            requires_output_review=True,
+            output_review_message=message,
+            requires_confirmation=True,
+            confirmation_message=message,
+            on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
+            step_input=step_input,
+            step_output=step_output,
+            is_post_execution=True,
+            retry_count=retry_count,
+            max_retries=self.hitl_max_retries,
+            timeout_at=timeout_at,
+            on_timeout=self.on_timeout,
         )
 
     def _normalize_user_input_schema(self) -> Optional[List[UserInputField]]:
@@ -440,11 +614,12 @@ class Step:
                 self.agent is not None,
                 self.team is not None,
                 self.executor is not None,
+                self.workflow is not None,
             ]
         )
 
         if executor_count == 0:
-            raise ValueError(f"Step '{self.name}' must have one executor: agent=, team=, or executor=")
+            raise ValueError(f"Step '{self.name}' must have one executor: agent=, team=, executor=, or workflow=")
 
         if executor_count > 1:
             provided_executors = []
@@ -454,11 +629,13 @@ class Step:
                 provided_executors.append("team")
             if self.executor is not None:
                 provided_executors.append("executor")
+            if self.workflow is not None:
+                provided_executors.append("workflow")
 
             raise ValueError(
                 f"Step '{self.name}' can only have one executor type. "
                 f"Provided: {', '.join(provided_executors)}. "
-                f"Please use only one of: agent=, team=, or executor="
+                f"Please use only one of: agent=, team=, executor=, or workflow="
             )
 
     def _set_active_executor(self) -> None:
@@ -469,6 +646,9 @@ class Step:
         elif self.team is not None:
             self.active_executor = self.team  # type: ignore[assignment]
             self._executor_type = "team"
+        elif self.workflow is not None:
+            self.active_executor = self.workflow  # type: ignore[assignment]
+            self._executor_type = "workflow"
         elif self.executor is not None:
             self.active_executor = self.executor  # type: ignore[assignment]
             self._executor_type = "function"
@@ -544,11 +724,13 @@ class Step:
             step_input.workflow_session = workflow_session
 
         # Create session_state copy once to avoid duplication.
-        # Consider both run_context.session_state and session_state.
+        # run_context.session_state is shared intentionally across steps in the same workflow,
+        # so we use a direct reference. The session_state parameter (used for nested workflows)
+        # is deepcopied to prevent cross-workflow mutation.
         if run_context is not None and run_context.session_state is not None:
             session_state_copy = run_context.session_state
         else:
-            session_state_copy = copy(session_state) if session_state is not None else {}
+            session_state_copy = deepcopy(session_state) if session_state is not None else {}
 
         # Execute with retries
         for attempt in range(self.max_retries + 1):
@@ -679,6 +861,17 @@ class Step:
                             else:
                                 final_message = f"User preferences:\n{user_input_str}"
 
+                        # Append previous output and rejection feedback if available (from HITL retry)
+                        if step_input.additional_data and step_input.additional_data.get("previous_output"):
+                            prev_output = step_input.additional_data["previous_output"]
+                            if final_message:
+                                final_message = f"{final_message}\n\nYour previous output:\n{prev_output}"
+                            else:
+                                final_message = f"Your previous output:\n{prev_output}"
+                        if step_input.additional_data and step_input.additional_data.get("rejection_feedback"):
+                            feedback = step_input.additional_data["rejection_feedback"]
+                            final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
+
                         response = self.active_executor.run(  # type: ignore
                             input=final_message,  # type: ignore
                             images=images,
@@ -713,6 +906,21 @@ class Step:
 
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
+                    elif self._executor_type == "workflow":
+                        # Execute nested workflow
+                        response = self._execute_nested_workflow(
+                            step_input=step_input,
+                            session_id=session_id,
+                            user_id=user_id,
+                            workflow_run_response=workflow_run_response,
+                            session_state=session_state_copy,
+                            store_executor_outputs=store_executor_outputs,
+                            background_tasks=background_tasks,
+                        )
+
+                        # Merge session_state changes back
+                        if run_context is None and session_state is not None:
+                            merge_dictionaries(session_state, session_state_copy)
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
@@ -723,7 +931,7 @@ class Step:
 
             except Exception as e:
                 self.retry_count = attempt + 1
-                logger.warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
+                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -766,10 +974,22 @@ class Step:
         """Enrich event with step and workflow context information"""
         if workflow_run_response is None:
             return event
-        if hasattr(event, "workflow_id"):
-            event.workflow_id = workflow_run_response.workflow_id
-        if hasattr(event, "workflow_run_id"):
-            event.workflow_run_id = workflow_run_response.run_id
+
+        # For events from nested workflows (workflow_id already set to a different workflow),
+        # preserve the original workflow_id/workflow_run_id so consumers can correctly
+        # attribute events to the originating workflow.
+        is_nested_event = (
+            hasattr(event, "workflow_id")
+            and event.workflow_id is not None
+            and event.workflow_id != workflow_run_response.workflow_id
+        )
+
+        if not is_nested_event:
+            if hasattr(event, "workflow_id"):
+                event.workflow_id = workflow_run_response.workflow_id
+            if hasattr(event, "workflow_run_id"):
+                event.workflow_run_id = workflow_run_response.run_id
+
         # Set session_id to match workflow's session_id for consistent event tracking
         if hasattr(event, "session_id") and workflow_run_response.session_id:
             event.session_id = workflow_run_response.session_id
@@ -814,11 +1034,13 @@ class Step:
             step_input.workflow_session = workflow_session
 
         # Create session_state copy once to avoid duplication.
-        # Consider both run_context.session_state and session_state.
+        # run_context.session_state is shared intentionally across steps in the same workflow,
+        # so we use a direct reference. The session_state parameter (used for nested workflows)
+        # is deepcopied to prevent cross-workflow mutation.
         if run_context is not None and run_context.session_state is not None:
             session_state_copy = run_context.session_state
         else:
-            session_state_copy = copy(session_state) if session_state is not None else {}
+            session_state_copy = deepcopy(session_state) if session_state is not None else {}
 
         # Emit StepStartedEvent
         if stream_events and workflow_run_response:
@@ -961,6 +1183,17 @@ class Step:
                             else:
                                 final_message = f"User preferences:\n{user_input_str}"
 
+                        # Append previous output and rejection feedback if available (from HITL retry)
+                        if step_input.additional_data and step_input.additional_data.get("previous_output"):
+                            prev_output = step_input.additional_data["previous_output"]
+                            if final_message:
+                                final_message = f"{final_message}\n\nYour previous output:\n{prev_output}"
+                            else:
+                                final_message = f"Your previous output:\n{prev_output}"
+                        if step_input.additional_data and step_input.additional_data.get("rejection_feedback"):
+                            feedback = step_input.additional_data["rejection_feedback"]
+                            final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
+
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
                             input=final_message,
                             images=images,
@@ -1014,6 +1247,32 @@ class Step:
 
                         final_response = active_executor_run_response  # type: ignore
 
+                    elif self._executor_type == "workflow":
+                        # Execute nested workflow with streaming
+                        for event in self._execute_nested_workflow_stream(
+                            step_input=step_input,
+                            session_id=session_id,
+                            user_id=user_id,
+                            workflow_run_response=workflow_run_response,
+                            session_state=session_state_copy,
+                            store_executor_outputs=store_executor_outputs,
+                            stream_events=stream_events,
+                            background_tasks=background_tasks,
+                        ):
+                            if isinstance(event, StepOutput):
+                                final_response = event
+                            else:
+                                # Yield nested workflow events
+                                if stream_executor_events:
+                                    enriched_event = self._enrich_event_with_context(
+                                        event, workflow_run_response, step_index
+                                    )
+                                    yield enriched_event  # type: ignore[misc]
+
+                        # Merge session_state changes back
+                        if run_context is None and session_state is not None:
+                            merge_dictionaries(session_state, session_state_copy)
+
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
@@ -1046,7 +1305,7 @@ class Step:
                 return
             except Exception as e:
                 self.retry_count = attempt + 1
-                logger.warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
+                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -1089,11 +1348,13 @@ class Step:
             step_input.workflow_session = workflow_session
 
         # Create session_state copy once to avoid duplication.
-        # Consider both run_context.session_state and session_state.
+        # run_context.session_state is shared intentionally across steps in the same workflow,
+        # so we use a direct reference. The session_state parameter (used for nested workflows)
+        # is deepcopied to prevent cross-workflow mutation.
         if run_context is not None and run_context.session_state is not None:
             session_state_copy = run_context.session_state
         else:
-            session_state_copy = copy(session_state) if session_state is not None else {}
+            session_state_copy = deepcopy(session_state) if session_state is not None else {}
 
         # Execute with retries
         for attempt in range(self.max_retries + 1):
@@ -1254,6 +1515,17 @@ class Step:
                             else:
                                 final_message = f"User preferences:\n{user_input_str}"
 
+                        # Append previous output and rejection feedback if available (from HITL retry)
+                        if step_input.additional_data and step_input.additional_data.get("previous_output"):
+                            prev_output = step_input.additional_data["previous_output"]
+                            if final_message:
+                                final_message = f"{final_message}\n\nYour previous output:\n{prev_output}"
+                            else:
+                                final_message = f"Your previous output:\n{prev_output}"
+                        if step_input.additional_data and step_input.additional_data.get("rejection_feedback"):
+                            feedback = step_input.additional_data["rejection_feedback"]
+                            final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
+
                         response = await self.active_executor.arun(  # type: ignore
                             input=final_message,  # type: ignore
                             images=images,
@@ -1288,6 +1560,21 @@ class Step:
 
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
+                    elif self._executor_type == "workflow":
+                        # Execute nested workflow asynchronously
+                        response = await self._aexecute_nested_workflow(
+                            step_input=step_input,
+                            session_id=session_id,
+                            user_id=user_id,
+                            workflow_run_response=workflow_run_response,
+                            session_state=session_state_copy,
+                            store_executor_outputs=store_executor_outputs,
+                            background_tasks=background_tasks,
+                        )
+
+                        # Merge session_state changes back
+                        if run_context is None and session_state is not None:
+                            merge_dictionaries(session_state, session_state_copy)
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
@@ -1298,7 +1585,7 @@ class Step:
 
             except Exception as e:
                 self.retry_count = attempt + 1
-                logger.warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
+                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -1339,11 +1626,13 @@ class Step:
             step_input.workflow_session = workflow_session
 
         # Create session_state copy once to avoid duplication.
-        # Consider both run_context.session_state and session_state.
+        # run_context.session_state is shared intentionally across steps in the same workflow,
+        # so we use a direct reference. The session_state parameter (used for nested workflows)
+        # is deepcopied to prevent cross-workflow mutation.
         if run_context is not None and run_context.session_state is not None:
             session_state_copy = run_context.session_state
         else:
-            session_state_copy = copy(session_state) if session_state is not None else {}
+            session_state_copy = deepcopy(session_state) if session_state is not None else {}
 
         if stream_events and workflow_run_response:
             # Emit StepStartedEvent
@@ -1530,6 +1819,17 @@ class Step:
                             else:
                                 final_message = f"User preferences:\n{user_input_str}"
 
+                        # Append previous output and rejection feedback if available (from HITL retry)
+                        if step_input.additional_data and step_input.additional_data.get("previous_output"):
+                            prev_output = step_input.additional_data["previous_output"]
+                            if final_message:
+                                final_message = f"{final_message}\n\nYour previous output:\n{prev_output}"
+                            else:
+                                final_message = f"Your previous output:\n{prev_output}"
+                        if step_input.additional_data and step_input.additional_data.get("rejection_feedback"):
+                            feedback = step_input.additional_data["rejection_feedback"]
+                            final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
+
                         response_stream = self.active_executor.arun(  # type: ignore
                             input=final_message,
                             images=images,
@@ -1582,6 +1882,33 @@ class Step:
                             )
 
                         final_response = active_executor_run_response  # type: ignore
+
+                    elif self._executor_type == "workflow":
+                        # Execute nested workflow with async streaming
+                        async for event in self._aexecute_nested_workflow_stream(
+                            step_input=step_input,
+                            session_id=session_id,
+                            user_id=user_id,
+                            workflow_run_response=workflow_run_response,
+                            session_state=session_state_copy,
+                            store_executor_outputs=store_executor_outputs,
+                            stream_events=stream_events,
+                            background_tasks=background_tasks,
+                        ):
+                            if isinstance(event, StepOutput):
+                                final_response = event
+                            else:
+                                # Yield nested workflow events
+                                if stream_executor_events:
+                                    enriched_event = self._enrich_event_with_context(
+                                        event, workflow_run_response, step_index
+                                    )
+                                    yield enriched_event  # type: ignore[misc]
+
+                        # Merge session_state changes back
+                        if run_context is None and session_state is not None:
+                            merge_dictionaries(session_state, session_state_copy)
+
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
@@ -1614,7 +1941,7 @@ class Step:
 
             except Exception as e:
                 self.retry_count = attempt + 1
-                logger.warning(f"Step {self.name} failed (attempt {attempt + 1}): {e}")
+                log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
                 if attempt == self.max_retries:
                     if self.skip_on_failure:
@@ -1707,9 +2034,14 @@ class Step:
         return []
 
     def _store_executor_response(
-        self, workflow_run_response: "WorkflowRunOutput", executor_run_response: Union[RunOutput, TeamRunOutput]
+        self,
+        workflow_run_response: "WorkflowRunOutput",
+        executor_run_response: Optional[Union[RunOutput, TeamRunOutput]],
     ) -> None:
         """Store agent/team responses in step_executor_runs if enabled"""
+        if executor_run_response is None:
+            log_warning(f"Step '{self.name}': executor produced no response to store")
+            return
         if self._executor_type in ["agent", "team"]:
             # propogate the workflow run id as parent run id to the executor response
             executor_run_response.parent_run_id = workflow_run_response.run_id
@@ -1775,7 +2107,7 @@ class Step:
     ) -> Optional[Union[str, List[Any], Dict[str, Any], BaseModel]]:
         """Prepare the primary input by combining message and previous step outputs"""
 
-        if previous_step_outputs and self._executor_type in ["agent", "team"]:
+        if previous_step_outputs and self._executor_type in ["agent", "team", "workflow"]:
             last_output = list(previous_step_outputs.values())[-1] if previous_step_outputs else None
             if last_output:
                 deepest_content = self._get_deepest_content_from_step_output(last_output)
@@ -1790,7 +2122,9 @@ class Step:
         if isinstance(response, StepOutput):
             response.step_name = self.name or "unnamed_step"
             response.step_id = self.step_id
-            response.step_type = StepType.STEP
+            # Preserve step_type if already set (e.g., for workflow steps), otherwise default to STEP
+            if response.step_type is None:
+                response.step_type = StepType.STEP
             response.executor_type = self._executor_type
             response.executor_name = self.executor_name
             return response
@@ -1804,10 +2138,13 @@ class Step:
         # Extract metrics from response
         metrics = self._extract_metrics_from_response(response)
 
+        # Determine step type based on executor type
+        step_type = StepType.WORKFLOW if self._executor_type == "workflow" else StepType.STEP
+
         return StepOutput(
             step_name=self.name or "unnamed_step",
             step_id=self.step_id,
-            step_type=StepType.STEP,
+            step_type=step_type,
             executor_type=self._executor_type,
             executor_name=self.executor_name,
             content=response.content,
@@ -1845,6 +2182,567 @@ class Step:
                 logger.warning(f"Skipping AudioArtifact with no URL or content: {audio_artifact}")
                 continue
         return audios
+
+    # --- Nested Workflow Execution Methods ---
+
+    def _convert_workflow_step_results_to_step_outputs(self, step_results: List[Any]) -> List[StepOutput]:
+        """Convert nested workflow step results to StepOutput objects for nesting"""
+        nested_steps = []
+        for step_result in step_results:
+            if isinstance(step_result, StepOutput):
+                nested_steps.append(step_result)
+            elif isinstance(step_result, list):
+                # Handle List[StepOutput] from workflow components like Steps
+                for s in step_result:
+                    if isinstance(s, StepOutput):
+                        nested_steps.append(s)
+        return nested_steps
+
+    @staticmethod
+    def _aggregate_workflow_metrics(workflow_metrics: Any) -> Optional[RunMetrics]:
+        """Aggregate a WorkflowMetrics into a single RunMetrics by summing all step metrics.
+
+        WorkflowMetrics contains per-step StepMetrics (each wrapping a RunMetrics).
+        This aggregates them into one RunMetrics so it fits into StepOutput.metrics.
+        """
+        from agno.workflow.types import WorkflowMetrics as WFMetrics
+
+        if workflow_metrics is None or not isinstance(workflow_metrics, WFMetrics):
+            return None
+
+        aggregated = RunMetrics()
+        if workflow_metrics.duration is not None:
+            aggregated.duration = workflow_metrics.duration
+
+        has_step_metrics = False
+        for step_metric in workflow_metrics.steps.values():
+            if step_metric.metrics is not None:
+                has_step_metrics = True
+                aggregated = aggregated + step_metric.metrics
+
+        # Return aggregated metrics if any step had metrics or if duration is set
+        if has_step_metrics or aggregated.duration is not None:
+            return aggregated
+        return None
+
+    def _execute_nested_workflow(
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        store_executor_outputs: bool = True,
+        background_tasks: Optional[Any] = None,
+    ) -> StepOutput:
+        """Execute a nested workflow as a step (non-streaming)"""
+        from agno.workflow.workflow import Workflow
+
+        if not isinstance(self.workflow, Workflow):
+            raise ValueError("Workflow executor is not a Workflow instance")
+
+        # Guard against circular or excessively deep nesting
+        current_depth = _nested_workflow_depth.get()
+        if current_depth >= _MAX_NESTED_WORKFLOW_DEPTH:
+            raise ValueError(
+                f"Step '{self.name}': Maximum nested workflow depth ({_MAX_NESTED_WORKFLOW_DEPTH}) exceeded. "
+                "This may indicate circular workflow nesting."
+            )
+        _nested_workflow_depth.set(current_depth + 1)
+
+        try:
+            return self._execute_nested_workflow_inner(
+                step_input=step_input,
+                session_id=session_id,
+                user_id=user_id,
+                workflow_run_response=workflow_run_response,
+                session_state=session_state,
+                store_executor_outputs=store_executor_outputs,
+                background_tasks=background_tasks,
+            )
+        finally:
+            _nested_workflow_depth.set(current_depth)
+
+    def _execute_nested_workflow_inner(
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        store_executor_outputs: bool = True,
+        background_tasks: Optional[Any] = None,
+    ) -> StepOutput:
+        """Inner implementation of sync non-streaming nested workflow execution"""
+        from agno.workflow.workflow import Workflow
+
+        if not isinstance(self.workflow, Workflow):
+            raise ValueError("Workflow executor is not a Workflow instance")
+
+        # Prepare the input message
+        message = self._prepare_message(step_input.input, step_input.previous_step_outputs)
+
+        log_debug(f"Executing nested workflow: {self.workflow.name}")
+
+        # Execute the nested workflow with shared session
+        nested_run_output: WorkflowRunOutput = self.workflow.run(
+            input=message,
+            session_id=session_id,  # Share the parent's session_id
+            user_id=user_id,
+            session_state=session_state,  # Pass the session_state copy
+            images=step_input.images,
+            videos=step_input.videos,
+            audio=step_input.audio,
+            files=step_input.files,
+            stream=False,
+            background_tasks=background_tasks,
+        )
+
+        # Warn if the nested workflow paused (e.g., due to HITL on an inner step)
+        if nested_run_output.is_paused:
+            logger.warning(
+                f"Step '{self.name}': Nested workflow '{self.workflow.name}' is paused "
+                "(likely due to HITL on an inner step). The parent workflow will continue "
+                "but the paused inner step may not have executed."
+            )
+
+        # Store the nested workflow run in step_executor_runs if enabled
+        if store_executor_outputs and workflow_run_response is not None:
+            nested_run_output.parent_run_id = workflow_run_response.run_id
+            nested_run_output.workflow_step_id = self.step_id
+
+            if workflow_run_response.step_executor_runs is None:
+                workflow_run_response.step_executor_runs = []
+            # Clear events from nested output before storing to avoid duplicating
+            # data that is already captured at the outer workflow level.
+            nested_run_output.events = None
+            workflow_run_response.step_executor_runs.append(nested_run_output)
+
+        # Convert nested workflow's step_results to nested StepOutput objects
+        nested_steps = self._convert_workflow_step_results_to_step_outputs(nested_run_output.step_results)
+
+        # Create StepOutput from the nested workflow run with nested steps
+        return StepOutput(
+            step_name=self.name,
+            step_id=self.step_id,
+            step_type=StepType.WORKFLOW,
+            executor_type="workflow",
+            executor_name=self.workflow.name,
+            content=nested_run_output.content,
+            step_run_id=nested_run_output.run_id,
+            metrics=self._aggregate_workflow_metrics(nested_run_output.metrics),
+            success=nested_run_output.status != RunStatus.error,
+            error=nested_run_output.error if hasattr(nested_run_output, "error") else None,
+            steps=nested_steps if nested_steps else None,  # Include nested workflow's step results
+        )
+
+    def _execute_nested_workflow_stream(
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        store_executor_outputs: bool = True,
+        stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
+    ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
+        """Execute a nested workflow as a step with streaming"""
+        from agno.workflow.workflow import Workflow
+
+        if not isinstance(self.workflow, Workflow):
+            raise ValueError("Workflow executor is not a Workflow instance")
+
+        # Guard against circular or excessively deep nesting
+        current_depth = _nested_workflow_depth.get()
+        if current_depth >= _MAX_NESTED_WORKFLOW_DEPTH:
+            raise ValueError(
+                f"Step '{self.name}': Maximum nested workflow depth ({_MAX_NESTED_WORKFLOW_DEPTH}) exceeded. "
+                "This may indicate circular workflow nesting."
+            )
+        _nested_workflow_depth.set(current_depth + 1)
+
+        try:
+            yield from self._execute_nested_workflow_stream_inner(
+                step_input=step_input,
+                session_id=session_id,
+                user_id=user_id,
+                workflow_run_response=workflow_run_response,
+                session_state=session_state,
+                store_executor_outputs=store_executor_outputs,
+                stream_events=stream_events,
+                background_tasks=background_tasks,
+            )
+        finally:
+            _nested_workflow_depth.set(current_depth)
+
+    def _execute_nested_workflow_stream_inner(
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        store_executor_outputs: bool = True,
+        stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
+    ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
+        """Inner implementation of sync streaming nested workflow execution"""
+        from agno.run.workflow import WorkflowCompletedEvent
+        from agno.workflow.workflow import Workflow
+
+        if not isinstance(self.workflow, Workflow):
+            raise ValueError("Workflow executor is not a Workflow instance")
+
+        # Prepare the input message
+        message = self._prepare_message(step_input.input, step_input.previous_step_outputs)
+
+        log_debug(f"Executing nested workflow (streaming): {self.workflow.name}")
+
+        # Execute the nested workflow with streaming
+        # Capture the WorkflowCompletedEvent to get the final results
+        completed_event: Optional[WorkflowCompletedEvent] = None
+        for event in self.workflow.run(
+            input=message,
+            session_id=session_id,  # Share the parent's session_id
+            user_id=user_id,
+            session_state=session_state,
+            images=step_input.images,
+            videos=step_input.videos,
+            audio=step_input.audio,
+            files=step_input.files,
+            stream=True,
+            stream_events=stream_events,
+            background_tasks=background_tasks,
+        ):
+            # Capture the WorkflowCompletedEvent which contains step_results
+            if isinstance(event, WorkflowCompletedEvent):
+                completed_event = event
+            # Yield events from nested workflow
+            yield event
+
+        # Get the nested run output from the completed event (preferred) or from session
+        nested_run_output: Optional[WorkflowRunOutput] = None
+        if completed_event and completed_event.run_output:
+            nested_run_output = completed_event.run_output
+        elif self.workflow.session_id:
+            session = self.workflow.get_session(session_id=self.workflow.session_id)
+            if session and session.runs:
+                nested_run_output = session.runs[-1]
+
+        if nested_run_output is None:
+            log_warning(
+                f"Step '{self.name}': Nested workflow '{self.workflow.name}' did not produce a run output. "
+                "The workflow may have failed before completion."
+            )
+
+        # Warn if the nested workflow paused (e.g., due to HITL on an inner step)
+        if nested_run_output is not None and nested_run_output.is_paused:
+            logger.warning(
+                f"Step '{self.name}': Nested workflow '{self.workflow.name}' is paused "
+                "(likely due to HITL on an inner step). The parent workflow will continue "
+                "but the paused inner step may not have executed."
+            )
+
+        # Store the nested workflow run in step_executor_runs if enabled
+        if store_executor_outputs and workflow_run_response is not None and nested_run_output is not None:
+            nested_run_output.parent_run_id = workflow_run_response.run_id
+            nested_run_output.workflow_step_id = self.step_id
+
+            if workflow_run_response.step_executor_runs is None:
+                workflow_run_response.step_executor_runs = []
+            # Clear events from nested output before storing to avoid duplicating
+            # data that is already captured at the outer workflow level.
+            nested_run_output.events = None
+            workflow_run_response.step_executor_runs.append(nested_run_output)
+
+        # Get nested steps from the nested_run_output or from the completed event
+        nested_steps: Optional[List[StepOutput]] = None
+        if nested_run_output is not None and nested_run_output.step_results:
+            nested_steps = self._convert_workflow_step_results_to_step_outputs(nested_run_output.step_results)
+        elif completed_event and completed_event.step_results:
+            nested_steps = self._convert_workflow_step_results_to_step_outputs(completed_event.step_results)
+
+        # Yield the final StepOutput
+        yield StepOutput(
+            step_name=self.name,
+            step_id=self.step_id,
+            step_type=StepType.WORKFLOW,
+            executor_type="workflow",
+            executor_name=self.workflow.name,
+            content=nested_run_output.content
+            if nested_run_output is not None
+            else (completed_event.content if completed_event else None),
+            step_run_id=nested_run_output.run_id if nested_run_output is not None else None,
+            metrics=self._aggregate_workflow_metrics(nested_run_output.metrics)
+            if nested_run_output is not None
+            else None,
+            success=nested_run_output.status != RunStatus.error if nested_run_output is not None else False,
+            error=nested_run_output.error
+            if nested_run_output is not None and hasattr(nested_run_output, "error")
+            else None,
+            steps=nested_steps if nested_steps else None,
+        )
+
+    async def _aexecute_nested_workflow(
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        store_executor_outputs: bool = True,
+        background_tasks: Optional[Any] = None,
+    ) -> StepOutput:
+        """Execute a nested workflow as a step asynchronously (non-streaming)"""
+        from agno.workflow.workflow import Workflow
+
+        if not isinstance(self.workflow, Workflow):
+            raise ValueError("Workflow executor is not a Workflow instance")
+
+        # Guard against circular or excessively deep nesting
+        current_depth = _nested_workflow_depth.get()
+        if current_depth >= _MAX_NESTED_WORKFLOW_DEPTH:
+            raise ValueError(
+                f"Step '{self.name}': Maximum nested workflow depth ({_MAX_NESTED_WORKFLOW_DEPTH}) exceeded. "
+                "This may indicate circular workflow nesting."
+            )
+        _nested_workflow_depth.set(current_depth + 1)
+
+        try:
+            return await self._aexecute_nested_workflow_inner(
+                step_input=step_input,
+                session_id=session_id,
+                user_id=user_id,
+                workflow_run_response=workflow_run_response,
+                session_state=session_state,
+                store_executor_outputs=store_executor_outputs,
+                background_tasks=background_tasks,
+            )
+        finally:
+            _nested_workflow_depth.set(current_depth)
+
+    async def _aexecute_nested_workflow_inner(
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        store_executor_outputs: bool = True,
+        background_tasks: Optional[Any] = None,
+    ) -> StepOutput:
+        """Inner implementation of async non-streaming nested workflow execution"""
+        from agno.workflow.workflow import Workflow
+
+        if not isinstance(self.workflow, Workflow):
+            raise ValueError("Workflow executor is not a Workflow instance")
+
+        # Prepare the input message
+        message = self._prepare_message(step_input.input, step_input.previous_step_outputs)
+
+        log_debug(f"Executing nested workflow (async): {self.workflow.name}")
+
+        # Execute the nested workflow asynchronously with shared session
+        nested_run_output: WorkflowRunOutput = await self.workflow.arun(
+            input=message,
+            session_id=session_id,  # Share the parent's session_id
+            user_id=user_id,
+            session_state=session_state,
+            images=step_input.images,
+            videos=step_input.videos,
+            audio=step_input.audio,
+            files=step_input.files,
+            stream=False,
+            background_tasks=background_tasks,
+        )
+
+        # Warn if the nested workflow paused (e.g., due to HITL on an inner step)
+        if nested_run_output.is_paused:
+            logger.warning(
+                f"Step '{self.name}': Nested workflow '{self.workflow.name}' is paused "
+                "(likely due to HITL on an inner step). The parent workflow will continue "
+                "but the paused inner step may not have executed."
+            )
+
+        # Store the nested workflow run in step_executor_runs if enabled
+        if store_executor_outputs and workflow_run_response is not None:
+            nested_run_output.parent_run_id = workflow_run_response.run_id
+            nested_run_output.workflow_step_id = self.step_id
+
+            if workflow_run_response.step_executor_runs is None:
+                workflow_run_response.step_executor_runs = []
+            # Clear events from nested output before storing to avoid duplicating
+            # data that is already captured at the outer workflow level.
+            nested_run_output.events = None
+            workflow_run_response.step_executor_runs.append(nested_run_output)
+
+        # Convert nested workflow's step_results to nested StepOutput objects
+        nested_steps = self._convert_workflow_step_results_to_step_outputs(nested_run_output.step_results)
+
+        # Create StepOutput from the nested workflow run with nested steps
+        return StepOutput(
+            step_name=self.name,
+            step_id=self.step_id,
+            step_type=StepType.WORKFLOW,
+            executor_type="workflow",
+            executor_name=self.workflow.name,
+            content=nested_run_output.content,
+            step_run_id=nested_run_output.run_id,
+            metrics=self._aggregate_workflow_metrics(nested_run_output.metrics),
+            success=nested_run_output.status != RunStatus.error,
+            error=nested_run_output.error if hasattr(nested_run_output, "error") else None,
+            steps=nested_steps if nested_steps else None,  # Include nested workflow's step results
+        )
+
+    async def _aexecute_nested_workflow_stream(
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        store_executor_outputs: bool = True,
+        stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
+    ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
+        """Execute a nested workflow as a step with async streaming"""
+        from agno.workflow.workflow import Workflow
+
+        if not isinstance(self.workflow, Workflow):
+            raise ValueError("Workflow executor is not a Workflow instance")
+
+        # Guard against circular or excessively deep nesting
+        current_depth = _nested_workflow_depth.get()
+        if current_depth >= _MAX_NESTED_WORKFLOW_DEPTH:
+            raise ValueError(
+                f"Step '{self.name}': Maximum nested workflow depth ({_MAX_NESTED_WORKFLOW_DEPTH}) exceeded. "
+                "This may indicate circular workflow nesting."
+            )
+        _nested_workflow_depth.set(current_depth + 1)
+
+        try:
+            async for event in self._aexecute_nested_workflow_stream_inner(
+                step_input=step_input,
+                session_id=session_id,
+                user_id=user_id,
+                workflow_run_response=workflow_run_response,
+                session_state=session_state,
+                store_executor_outputs=store_executor_outputs,
+                stream_events=stream_events,
+                background_tasks=background_tasks,
+            ):
+                yield event
+        finally:
+            _nested_workflow_depth.set(current_depth)
+
+    async def _aexecute_nested_workflow_stream_inner(
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        store_executor_outputs: bool = True,
+        stream_events: bool = False,
+        background_tasks: Optional[Any] = None,
+    ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
+        """Inner implementation of async streaming nested workflow execution"""
+        from agno.run.workflow import WorkflowCompletedEvent
+        from agno.workflow.workflow import Workflow
+
+        if not isinstance(self.workflow, Workflow):
+            raise ValueError("Workflow executor is not a Workflow instance")
+
+        # Prepare the input message
+        message = self._prepare_message(step_input.input, step_input.previous_step_outputs)
+
+        log_debug(f"Executing nested workflow (async streaming): {self.workflow.name}")
+
+        # Execute the nested workflow with async streaming
+        # Capture the WorkflowCompletedEvent to get the final results
+        completed_event: Optional[WorkflowCompletedEvent] = None
+        async for event in self.workflow.arun(
+            input=message,
+            session_id=session_id,  # Share the parent's session_id
+            user_id=user_id,
+            session_state=session_state,
+            images=step_input.images,
+            videos=step_input.videos,
+            audio=step_input.audio,
+            files=step_input.files,
+            stream=True,
+            stream_events=stream_events,
+            background_tasks=background_tasks,
+        ):
+            # Capture the WorkflowCompletedEvent which contains step_results
+            if isinstance(event, WorkflowCompletedEvent):
+                completed_event = event
+            # Yield events from nested workflow
+            yield event
+
+        # Get the nested run output from the completed event (preferred) or from session
+        nested_run_output: Optional[WorkflowRunOutput] = None
+        if completed_event and completed_event.run_output:
+            nested_run_output = completed_event.run_output
+        elif self.workflow.session_id:
+            session = await self.workflow.aget_session(session_id=self.workflow.session_id)
+            if session and session.runs:
+                nested_run_output = session.runs[-1]
+
+        if nested_run_output is None:
+            log_warning(
+                f"Step '{self.name}': Nested workflow '{self.workflow.name}' did not produce a run output. "
+                "The workflow may have failed before completion."
+            )
+
+        # Warn if the nested workflow paused (e.g., due to HITL on an inner step)
+        if nested_run_output is not None and nested_run_output.is_paused:
+            logger.warning(
+                f"Step '{self.name}': Nested workflow '{self.workflow.name}' is paused "
+                "(likely due to HITL on an inner step). The parent workflow will continue "
+                "but the paused inner step may not have executed."
+            )
+
+        # Store the nested workflow run in step_executor_runs if enabled
+        if store_executor_outputs and workflow_run_response is not None and nested_run_output is not None:
+            nested_run_output.parent_run_id = workflow_run_response.run_id
+            nested_run_output.workflow_step_id = self.step_id
+
+            if workflow_run_response.step_executor_runs is None:
+                workflow_run_response.step_executor_runs = []
+            # Clear events from nested output before storing to avoid duplicating
+            # data that is already captured at the outer workflow level.
+            nested_run_output.events = None
+            workflow_run_response.step_executor_runs.append(nested_run_output)
+
+        # Get nested steps from the nested_run_output or from the completed event
+        nested_steps: Optional[List[StepOutput]] = None
+        if nested_run_output is not None and nested_run_output.step_results:
+            nested_steps = self._convert_workflow_step_results_to_step_outputs(nested_run_output.step_results)
+        elif completed_event and completed_event.step_results:
+            nested_steps = self._convert_workflow_step_results_to_step_outputs(completed_event.step_results)
+
+        # Yield the final StepOutput
+        yield StepOutput(
+            step_name=self.name,
+            step_id=self.step_id,
+            step_type=StepType.WORKFLOW,
+            executor_type="workflow",
+            executor_name=self.workflow.name,
+            content=nested_run_output.content
+            if nested_run_output is not None
+            else (completed_event.content if completed_event else None),
+            step_run_id=nested_run_output.run_id if nested_run_output is not None else None,
+            metrics=self._aggregate_workflow_metrics(nested_run_output.metrics)
+            if nested_run_output is not None
+            else None,
+            success=nested_run_output.status != RunStatus.error if nested_run_output is not None else False,
+            error=nested_run_output.error
+            if nested_run_output is not None and hasattr(nested_run_output, "error")
+            else None,
+            steps=nested_steps if nested_steps else None,
+        )
 
     def _convert_image_artifacts_to_images(self, image_artifacts: List[Image]) -> List[Image]:
         """
@@ -1891,8 +2789,8 @@ class Step:
 
                     images.append(Image(**image_kwargs))
 
-                except Exception as e:
-                    logger.error(f"Failed to process image content: {e}")
+                except Exception:
+                    logger.exception("Failed to process image content")
                     # Skip this image if we can't process it
                     continue
 

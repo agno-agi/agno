@@ -78,27 +78,27 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
             if isinstance(session_state, str):
                 session_state_dict = json.loads(session_state)  # type: ignore
                 kwargs["session_state"] = session_state_dict
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             kwargs.pop("session_state")
-            log_warning(f"Invalid session_state parameter couldn't be loaded: {session_state}")
+            log_warning(f"Invalid session_state parameter couldn't be loaded: {session_state}: {str(e)}")
 
     if dependencies := kwargs.get("dependencies"):
         try:
             if isinstance(dependencies, str):
                 dependencies_dict = json.loads(dependencies)  # type: ignore
                 kwargs["dependencies"] = dependencies_dict
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             kwargs.pop("dependencies")
-            log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}")
+            log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}: {str(e)}")
 
     if metadata := kwargs.get("metadata"):
         try:
             if isinstance(metadata, str):
                 metadata_dict = json.loads(metadata)  # type: ignore
                 kwargs["metadata"] = metadata_dict
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             kwargs.pop("metadata")
-            log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}")
+            log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}: {str(e)}")
 
     if knowledge_filters := kwargs.get("knowledge_filters"):
         try:
@@ -125,13 +125,13 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
                 else:
                     # Regular dict filter
                     kwargs["knowledge_filters"] = knowledge_filters_dict
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             kwargs.pop("knowledge_filters")
-            log_warning(f"Invalid knowledge_filters parameter couldn't be loaded: {knowledge_filters}")
+            log_warning(f"Invalid knowledge_filters parameter couldn't be loaded: {knowledge_filters}: {str(e)}")
         except ValueError as e:
             # Filter deserialization failed
             kwargs.pop("knowledge_filters")
-            log_warning(f"Invalid FilterExpr in knowledge_filters: {e}")
+            log_warning(f"Invalid FilterExpr in knowledge_filters: {str(e)}")
 
     # Handle output_schema - convert JSON schema to Pydantic model or keep as dict
     # use_json_schema is a control flag consumed here (not passed to Agent/Team)
@@ -152,12 +152,12 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
                     # Convert to Pydantic model (default behavior)
                     dynamic_model = json_schema_to_pydantic_model(schema_dict)
                     kwargs["output_schema"] = dynamic_model
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             kwargs.pop("output_schema")
-            log_warning(f"Invalid output_schema JSON: {output_schema}")
+            log_warning(f"Invalid output_schema JSON: {output_schema}: {str(e)}")
         except Exception as e:
             kwargs.pop("output_schema")
-            log_warning(f"Failed to create output_schema model: {e}")
+            log_warning(f"Failed to create output_schema model: {str(e)}")
 
     # Parse boolean and null values
     for key, value in kwargs.items():
@@ -485,8 +485,8 @@ def process_document(file: UploadFile) -> Optional[FileMedia]:
         return FileMedia(
             content=content, filename=file.filename, format=extract_format(file), mime_type=file.content_type
         )
-    except Exception as e:
-        logger.error(f"Error processing document {file.filename}: {e}")
+    except Exception:
+        logger.exception(f"Error processing document {file.filename}")
         return None
 
 
@@ -547,8 +547,8 @@ def get_agent_by_id(
         try:
             db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
             return db_agent
-        except Exception as e:
-            logger.error(f"Error getting agent {agent_id} from database: {e}")
+        except Exception:
+            logger.exception(f"Error getting agent {agent_id} from database")
             return None
 
     return None
@@ -591,8 +591,8 @@ def get_team_by_id(
         try:
             db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
             return db_team
-        except Exception as e:
-            logger.error(f"Error getting team {team_id} from database: {e}")
+        except Exception:
+            logger.exception(f"Error getting team {team_id} from database")
             return None
 
     return None
@@ -638,8 +638,8 @@ def get_workflow_by_id(
         try:
             db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
             return db_workflow
-        except Exception as e:
-            logger.error(f"Error getting workflow {workflow_id} from database: {e}")
+        except Exception:
+            logger.exception(f"Error getting workflow {workflow_id} from database")
             return None
 
     return None
@@ -973,15 +973,15 @@ def json_schema_to_pydantic_model(schema: Dict[str, Any]) -> Type[BaseModel]:
                 # Optional field: (Optional[type], None)
                 field_definitions[field_name] = (Optional[field_type], None)  # type: ignore[assignment]
         except Exception as e:
-            logger.warning(f"Failed to process field '{field_name}' in schema '{model_name}': {e}")
+            log_warning(f"Failed to process field '{field_name}' in schema '{model_name}': {str(e)}")
             # Skip problematic fields rather than failing entirely
             continue
 
     # Create and return the dynamic model
     try:
         return create_model(model_name, **field_definitions)  # type: ignore
-    except Exception as e:
-        logger.error(f"Failed to create dynamic model '{model_name}': {e}")
+    except Exception:
+        logger.exception(f"Failed to create dynamic model '{model_name}'")
         # Return a minimal model as fallback
         return create_model(model_name)
 
@@ -992,13 +992,14 @@ def setup_tracing_for_os(db: Union[BaseDb, AsyncBaseDb, RemoteDb]) -> None:
         from agno.tracing import setup_tracing
 
         setup_tracing(db=db)
-    except ImportError:
-        logger.warning(
-            "tracing=True but OpenTelemetry packages not installed. "
-            "Install with: pip install opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno"
+    except ImportError as e:
+        log_warning(
+            f"tracing=True but OpenTelemetry packages not installed. : {e}"
+            f"Install with: pip install opentelemetry-api opentelemetry-sdk openinference-instrumentation-agno: {e}"
         )
+
     except Exception as e:
-        logger.warning(f"Failed to enable tracing: {e}")
+        log_warning(f"Failed to enable tracing: {str(e)}")
 
 
 def format_duration_ms(duration_ms: Optional[int]) -> str:

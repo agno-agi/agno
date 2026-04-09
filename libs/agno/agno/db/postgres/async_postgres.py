@@ -291,7 +291,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
 
                 except Exception as e:
-                    log_error(f"Error creating index {idx.name}: {e}")
+                    log_error(f"Error creating index {idx.name}: {str(e)}")
 
             # Store the schema version for the created table
             if table_name != self.versions_table_name and table_created:
@@ -305,7 +305,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {self.db_schema}.{table_name}: {e}")
+            log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
     async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
@@ -461,7 +461,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return table
 
         except Exception as e:
-            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {e}")
+            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
     async def get_latest_schema_version(self, table_name: str) -> str:
@@ -538,7 +538,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     return True
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_error(f"Error deleting session: {str(e)}")
             return False
 
     async def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -566,7 +566,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_error(f"Error deleting sessions: {str(e)}")
 
     async def get_session(
         self,
@@ -623,7 +623,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception reading from session table: {e}")
+            log_error(f"Exception reading from session table: {str(e)}")
             return None
 
     async def get_sessions(
@@ -724,7 +724,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception reading from session table: {e}")
+            log_error(f"Exception reading from session table: {str(e)}")
             return [] if deserialize else ([], 0)
 
     async def rename_session(
@@ -801,7 +801,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+            log_error(f"Exception renaming session: {str(e)}")
             return None
 
     async def upsert_session(
@@ -970,7 +970,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 raise ValueError(f"Invalid session type: {session.session_type}")
 
         except Exception as e:
-            log_error(f"Exception upserting into sessions table: {e}")
+            log_error(f"Exception upserting into sessions table: {str(e)}")
             return None
 
     # -- Memory methods --
@@ -1001,7 +1001,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     log_debug(f"No user memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting user memory: {e}")
+            log_error(f"Error deleting user memory: {str(e)}")
 
     async def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
@@ -1031,7 +1031,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     log_debug(f"Successfully deleted {result.rowcount} user memories")  # type: ignore
 
         except Exception as e:
-            log_error(f"Error deleting user memories: {e}")
+            log_error(f"Error deleting user memories: {str(e)}")
 
     async def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
@@ -1084,7 +1084,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return list(set(topics))
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             return []
 
     async def get_user_memory(
@@ -1130,7 +1130,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             return None
 
     async def get_user_memories(
@@ -1213,7 +1213,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return [UserMemory.from_dict(record) for record in memories_raw]
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             return [] if deserialize else ([], 0)
 
     async def clear_memories(self) -> None:
@@ -1231,7 +1231,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 await sess.execute(table.delete())
 
         except Exception as e:
-            log_warning(f"Exception deleting all memories: {e}")
+            log_warning(f"Exception deleting all memories: {str(e)}")
 
     # -- Cultural Knowledge methods --
     async def clear_cultural_knowledge(self) -> None:
@@ -1249,7 +1249,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 await sess.execute(table.delete())
 
         except Exception as e:
-            log_error(f"Exception deleting all cultural knowledge: {e}")
+            log_error(f"Exception deleting all cultural knowledge: {str(e)}")
 
     async def delete_cultural_knowledge(self, id: str) -> None:
         """Delete cultural knowledge by ID.
@@ -1270,7 +1270,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 await sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Exception deleting cultural knowledge: {e}")
+            log_error(f"Exception deleting cultural knowledge: {str(e)}")
 
     async def get_cultural_knowledge(
         self, id: str, deserialize: Optional[bool] = True
@@ -1308,7 +1308,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return deserialize_cultural_knowledge(db_row)
 
         except Exception as e:
-            log_error(f"Exception reading cultural knowledge: {e}")
+            log_error(f"Exception reading cultural knowledge: {str(e)}")
             return None
 
     async def get_all_cultural_knowledge(
@@ -1383,7 +1383,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return [deserialize_cultural_knowledge(row) for row in db_rows]
 
         except Exception as e:
-            log_error(f"Exception reading all cultural knowledge: {e}")
+            log_error(f"Exception reading all cultural knowledge: {str(e)}")
             return [] if deserialize else ([], 0)
 
     async def upsert_cultural_knowledge(
@@ -1470,7 +1470,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return deserialize_cultural_knowledge(db_row)
 
         except Exception as e:
-            log_warning(f"Exception upserting cultural knowledge: {e}")
+            log_warning(f"Exception upserting cultural knowledge: {str(e)}")
             raise e
 
     async def get_user_memory_stats(
@@ -1541,7 +1541,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 ], total_count
 
         except Exception as e:
-            log_error(f"Exception getting user memory stats: {e}")
+            log_error(f"Exception getting user memory stats: {str(e)}")
             return [], 0
 
     async def upsert_user_memory(
@@ -1624,7 +1624,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Exception upserting user memory: {e}")
+            log_error(f"Exception upserting user memory: {str(e)}")
             return None
 
     # -- Metrics methods --
@@ -1669,7 +1669,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return [dict(record._mapping) for record in records]
 
         except Exception as e:
-            log_error(f"Exception reading from sessions table: {e}")
+            log_error(f"Exception reading from sessions table: {str(e)}")
             return []
 
     async def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
@@ -1777,7 +1777,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception refreshing metrics: {e}")
+            log_error(f"Exception refreshing metrics: {str(e)}")
             return None
 
     async def get_metrics(
@@ -1819,7 +1819,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return [dict(row._mapping) for row in records], latest_updated_at
 
         except Exception as e:
-            log_warning(f"Exception getting metrics: {e}")
+            log_warning(f"Exception getting metrics: {str(e)}")
             return [], None
 
     # -- Knowledge methods --
@@ -1839,7 +1839,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 await sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Exception deleting knowledge content: {e}")
+            log_error(f"Exception deleting knowledge content: {str(e)}")
 
     async def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
@@ -1865,7 +1865,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return KnowledgeRow.model_validate(row._mapping)
 
         except Exception as e:
-            log_error(f"Exception getting knowledge content: {e}")
+            log_error(f"Exception getting knowledge content: {str(e)}")
             return None
 
     async def get_knowledge_contents(
@@ -1921,7 +1921,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return [KnowledgeRow.model_validate(record._mapping) for record in records], total_count
 
         except Exception as e:
-            log_error(f"Exception getting knowledge contents: {e}")
+            log_error(f"Exception getting knowledge contents: {str(e)}")
             return [], 0
 
     async def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -2009,7 +2009,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge row: {e}")
+            log_error(f"Error upserting knowledge row: {str(e)}")
             return None
 
     # -- Eval methods --
@@ -2056,7 +2056,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_error(f"Error creating eval run: {str(e)}")
             return None
 
     async def delete_eval_run(self, eval_run_id: str) -> None:
@@ -2080,7 +2080,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+            log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
 
     async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         """Delete multiple eval runs from the database.
@@ -2103,7 +2103,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     log_debug(f"Deleted {result.rowcount} eval runs")  # type: ignore
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_error(f"Error deleting eval runs {eval_run_ids}: {str(e)}")
 
     async def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
@@ -2141,7 +2141,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}: {str(e)}")
             return None
 
     async def get_eval_runs(
@@ -2236,7 +2236,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_error(f"Exception getting eval runs: {str(e)}")
             return [] if deserialize else ([], 0)
 
     async def rename_eval_run(
@@ -2275,7 +2275,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Error upserting eval run name {eval_run_id}: {e}")
+            log_error(f"Error upserting eval run name {eval_run_id}: {str(e)}")
             return None
 
     # -- Migrations --
@@ -2481,7 +2481,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 await sess.execute(upsert_stmt)
 
         except Exception as e:
-            log_error(f"Error creating trace: {e}")
+            log_error(f"Error creating trace: {str(e)}")
             # Don't raise - tracing should not break the main application flow
 
     async def get_trace(
@@ -2534,7 +2534,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return None
 
         except Exception as e:
-            log_error(f"Error getting trace: {e}")
+            log_error(f"Error getting trace: {str(e)}")
             return None
 
     async def get_traces(
@@ -2638,7 +2638,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return traces, total_count
 
         except Exception as e:
-            log_error(f"Error getting traces: {e}")
+            log_error(f"Error getting traces: {str(e)}")
             return [], 0
 
     async def get_trace_stats(
@@ -2761,7 +2761,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return stats_list, total_count
 
         except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+            log_error(f"Error getting trace stats: {str(e)}")
             return [], 0
 
     # --- Spans ---
@@ -2789,7 +2789,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 await sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Error creating span: {e}")
+            log_error(f"Error creating span: {str(e)}")
 
     async def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2819,7 +2819,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     await sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+            log_error(f"Error creating spans batch: {str(e)}")
 
     async def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2846,7 +2846,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return None
 
         except Exception as e:
-            log_error(f"Error getting span: {e}")
+            log_error(f"Error getting span: {str(e)}")
             return None
 
     async def get_spans(
@@ -2889,7 +2889,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return [Span.from_dict(dict(row._mapping)) for row in results]
 
         except Exception as e:
-            log_error(f"Error getting spans: {e}")
+            log_error(f"Error getting spans: {str(e)}")
             return []
 
     # -- Learning methods --
@@ -3293,7 +3293,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     await sess.execute(table.insert().values(**schedule_data))
             return schedule_data
         except Exception as e:
-            log_error(f"Error creating schedule: {e}")
+            log_error(f"Error creating schedule: {str(e)}")
             raise
 
     async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -3392,7 +3392,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     await sess.execute(table.insert().values(**run_data))
             return run_data
         except Exception as e:
-            log_error(f"Error creating schedule run: {e}")
+            log_error(f"Error creating schedule run: {str(e)}")
             raise
 
     async def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -3470,7 +3470,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     await sess.execute(table.insert().values(**data))
             return data
         except Exception as e:
-            log_error(f"Error creating approval: {e}")
+            log_error(f"Error creating approval: {str(e)}")
             raise
 
     async def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
