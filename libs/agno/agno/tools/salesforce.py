@@ -3,9 +3,24 @@ Salesforce CRM tools for Agno agents.
 
 Provides CRUD operations, SOQL queries, SOSL search, and metadata discovery
 for any Salesforce object (standard or custom).
+
+Required:
+    - ``simple-salesforce`` library (``pip install simple-salesforce``)
+
+Authentication (pick one):
+    **Option A — Username / Password (requires SOAP API enabled in the org):**
+        - ``SALESFORCE_USERNAME``: Salesforce username
+        - ``SALESFORCE_PASSWORD``: Salesforce password
+        - ``SALESFORCE_SECURITY_TOKEN``: Security token (from Salesforce settings)
+        - ``SALESFORCE_DOMAIN``: ``login`` (production) or ``test`` (sandbox)
+
+    **Option B — Session / Instance URL (works in all orgs):**
+        - Pass ``instance_url`` and ``session_id`` directly.
+        - Useful when SOAP API login is disabled (default in newer Developer Edition orgs).
 """
 
 import json
+import re
 from os import getenv
 from typing import Any, Dict, List, Optional
 
@@ -17,11 +32,11 @@ try:
 except ImportError:
     raise ImportError("`simple-salesforce` not installed. Please install using `pip install simple-salesforce`.")
 
-# Maximum response size to return to the agent (characters)
-_MAX_RESPONSE_CHARS = 50_000
+# Salesforce ID: 15 or 18 alphanumeric characters
+_SF_ID_RE = re.compile(r"^[a-zA-Z0-9]{15,18}$")
 
-# Maximum records for query results
-_MAX_QUERY_RECORDS = 200
+# Allowed characters in SOQL field names
+_FIELD_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*$")
 
 
 class SalesforceTools(Toolkit):
@@ -32,13 +47,30 @@ class SalesforceTools(Toolkit):
     SOQL queries, SOSL full-text search, and metadata discovery.
 
     Requires:
-        - ``simple-salesforce`` library
+        - ``simple-salesforce`` library (``pip install simple-salesforce``)
 
-    Environment variables:
-        - ``SALESFORCE_USERNAME``: Salesforce username
-        - ``SALESFORCE_PASSWORD``: Salesforce password
-        - ``SALESFORCE_SECURITY_TOKEN``: Security token (from Salesforce settings)
-        - ``SALESFORCE_DOMAIN``: ``login`` (production) or ``test`` (sandbox)
+    Authentication — pick one:
+        **Username / Password** (requires SOAP API enabled):
+            Set ``SALESFORCE_USERNAME``, ``SALESFORCE_PASSWORD``,
+            ``SALESFORCE_SECURITY_TOKEN``, and optionally ``SALESFORCE_DOMAIN``.
+
+        **Session / Instance URL** (works in all orgs):
+            Pass ``instance_url`` and ``session_id`` directly.
+
+    Example:
+        ```python
+        from agno.tools.salesforce import SalesforceTools
+
+        # Read-only agent
+        tools = SalesforceTools()
+
+        # Full CRUD agent
+        tools = SalesforceTools(
+            enable_create_record=True,
+            enable_update_record=True,
+            enable_delete_record=True,
+        )
+        ```
     """
 
     def __init__(
@@ -50,14 +82,18 @@ class SalesforceTools(Toolkit):
         instance_url: Optional[str] = None,
         session_id: Optional[str] = None,
         cache_metadata: bool = True,
+        max_records: int = 200,
+        max_fields: int = 100,
+        # Read operations — enabled by default
         enable_list_objects: bool = True,
         enable_describe_object: bool = True,
         enable_get_record: bool = True,
-        enable_create_record: bool = True,
-        enable_update_record: bool = True,
-        enable_delete_record: bool = True,
         enable_query: bool = True,
         enable_search: bool = True,
+        # Write operations — disabled by default for safety
+        enable_create_record: bool = False,
+        enable_update_record: bool = False,
+        enable_delete_record: bool = False,
         enable_get_report: bool = False,
         all: bool = False,
         **kwargs,
@@ -74,16 +110,18 @@ class SalesforceTools(Toolkit):
             instance_url: Direct instance URL (alternative to username/password auth).
             session_id: Session ID (alternative to username/password auth).
             cache_metadata: Cache object metadata to reduce API calls.
+            max_records: Maximum records returned by query/list operations. Default: 200.
+            max_fields: Maximum fields returned by describe_object. Default: 100.
             enable_list_objects: Enable the list_objects function.
             enable_describe_object: Enable the describe_object function.
             enable_get_record: Enable the get_record function.
+            enable_query: Enable the query function.
+            enable_search: Enable the search function.
             enable_create_record: Enable the create_record function.
             enable_update_record: Enable the update_record function.
             enable_delete_record: Enable the delete_record function.
-            enable_query: Enable the query function.
-            enable_search: Enable the search function.
             enable_get_report: Enable the get_report function.
-            all: Enable all functions.
+            all: Enable all functions including write operations.
         """
         self.username = username or getenv("SALESFORCE_USERNAME")
         self.password = password or getenv("SALESFORCE_PASSWORD")
@@ -92,6 +130,8 @@ class SalesforceTools(Toolkit):
         self.instance_url = instance_url
         self.session_id = session_id
         self.cache_metadata = cache_metadata
+        self.max_records = max_records
+        self.max_fields = max_fields
 
         # Metadata caches
         self._objects_cache: Optional[List[Dict[str, Any]]] = None
@@ -107,16 +147,16 @@ class SalesforceTools(Toolkit):
             tools.append(self.describe_object)
         if all or enable_get_record:
             tools.append(self.get_record)
+        if all or enable_query:
+            tools.append(self.query)
+        if all or enable_search:
+            tools.append(self.search)
         if all or enable_create_record:
             tools.append(self.create_record)
         if all or enable_update_record:
             tools.append(self.update_record)
         if all or enable_delete_record:
             tools.append(self.delete_record)
-        if all or enable_query:
-            tools.append(self.query)
-        if all or enable_search:
-            tools.append(self.search)
         if all or enable_get_report:
             tools.append(self.get_report)
 
@@ -153,11 +193,13 @@ class SalesforceTools(Toolkit):
             logger.error(f"Salesforce connection error: {e}")
             return None
 
-    def _truncate(self, text: str) -> str:
-        """Truncate response text to avoid blowing up agent context."""
-        if len(text) > _MAX_RESPONSE_CHARS:
-            return text[:_MAX_RESPONSE_CHARS] + "\n... [truncated]"
-        return text
+    @staticmethod
+    def _validate_sf_id(record_id: str) -> bool:
+        return bool(_SF_ID_RE.match(record_id))
+
+    @staticmethod
+    def _validate_field_names(fields: str) -> bool:
+        return all(_FIELD_NAME_RE.match(f.strip()) for f in fields.split(",") if f.strip())
 
     def list_objects(self, include_custom: bool = True) -> str:
         """
@@ -176,7 +218,6 @@ class SalesforceTools(Toolkit):
             return json.dumps({"error": "Salesforce not connected."})
 
         try:
-            # Use cache if available
             if self.cache_metadata and self._objects_cache is not None:
                 objects = self._objects_cache
             else:
@@ -203,7 +244,13 @@ class SalesforceTools(Toolkit):
                     }
                 )
 
-            return self._truncate(json.dumps(result))
+            # Cap at max_records to keep response parseable
+            total = len(result)
+            if total > self.max_records:
+                result = result[: self.max_records]
+                return json.dumps({"total": total, "returned": self.max_records, "objects": result})
+
+            return json.dumps(result)
         except SalesforceError as e:
             logger.error(f"Salesforce API error: {e}")
             return json.dumps({"error": str(e)})
@@ -243,9 +290,9 @@ class SalesforceTools(Toolkit):
                 if self.cache_metadata:
                     self._describe_cache[sobject] = describe
 
-            # Extract key field info
+            all_fields = describe.get("fields", [])
             fields = []
-            for field in describe.get("fields", []):
+            for field in all_fields[: self.max_fields]:
                 field_info: Dict[str, Any] = {
                     "name": field.get("name"),
                     "label": field.get("label"),
@@ -254,27 +301,27 @@ class SalesforceTools(Toolkit):
                     "createable": field.get("createable"),
                     "updateable": field.get("updateable"),
                 }
-                # Include picklist values if present
                 picklist = field.get("picklistValues")
                 if picklist:
                     field_info["picklistValues"] = [
                         {"value": p.get("value"), "label": p.get("label")} for p in picklist if p.get("active")
                     ]
-                # Include reference info for lookup fields
                 if field.get("type") == "reference":
                     field_info["referenceTo"] = field.get("referenceTo")
                 fields.append(field_info)
 
-            result = {
+            result: Dict[str, Any] = {
                 "name": describe.get("name"),
                 "label": describe.get("label"),
                 "createable": describe.get("createable"),
                 "updateable": describe.get("updateable"),
                 "deletable": describe.get("deletable"),
+                "totalFields": len(all_fields),
+                "returnedFields": len(fields),
                 "fields": fields,
             }
 
-            return self._truncate(json.dumps(result))
+            return json.dumps(result)
         except SalesforceError as e:
             logger.error(f"Salesforce API error: {e}")
             return json.dumps({"error": str(e)})
@@ -309,10 +356,14 @@ class SalesforceTools(Toolkit):
         if sf is None:
             return json.dumps({"error": "Salesforce not connected."})
 
+        if not self._validate_sf_id(record_id):
+            return json.dumps({"error": f"Invalid Salesforce record ID format: {record_id}"})
+
         try:
             sf_object = getattr(sf, sobject)
             if fields:
-                # Use SOQL for field filtering
+                if not self._validate_field_names(fields):
+                    return json.dumps({"error": f"Invalid field names: {fields}"})
                 field_list = fields.replace(" ", "")
                 soql = f"SELECT {field_list} FROM {sobject} WHERE Id = '{record_id}'"
                 result = sf.query(soql)
@@ -322,7 +373,7 @@ class SalesforceTools(Toolkit):
                 return json.dumps(records[0])
             else:
                 record = sf_object.get(record_id)
-                return self._truncate(json.dumps(record))
+                return json.dumps(record)
         except SalesforceError as e:
             logger.error(f"Salesforce API error: {e}")
             return json.dumps({"error": str(e)})
@@ -392,6 +443,9 @@ class SalesforceTools(Toolkit):
         if not sobject or not record_id or not record_data:
             return json.dumps({"error": "sobject, record_id, and record_data are required."})
 
+        if not self._validate_sf_id(record_id):
+            return json.dumps({"error": f"Invalid Salesforce record ID format: {record_id}"})
+
         log_debug(f"Updating Salesforce {sobject} record: {record_id}")
 
         sf = self._get_client()
@@ -436,6 +490,9 @@ class SalesforceTools(Toolkit):
         """
         if not sobject or not record_id:
             return json.dumps({"error": "sobject and record_id are required."})
+
+        if not self._validate_sf_id(record_id):
+            return json.dumps({"error": f"Invalid Salesforce record ID format: {record_id}"})
 
         log_debug(f"Deleting Salesforce {sobject} record: {record_id}")
 
@@ -483,19 +540,18 @@ class SalesforceTools(Toolkit):
         try:
             result = sf.query(soql)
             records = result.get("records", [])
+            total_size = result.get("totalSize", len(records))
 
-            # Cap records to prevent context overflow
-            if len(records) > _MAX_QUERY_RECORDS:
-                records = records[:_MAX_QUERY_RECORDS]
+            if len(records) > self.max_records:
+                records = records[: self.max_records]
 
-            return self._truncate(
-                json.dumps(
-                    {
-                        "totalSize": result.get("totalSize"),
-                        "done": result.get("done"),
-                        "records": records,
-                    }
-                )
+            return json.dumps(
+                {
+                    "totalSize": total_size,
+                    "returned": len(records),
+                    "done": result.get("done"),
+                    "records": records,
+                }
             )
         except SalesforceError as e:
             logger.error(f"Salesforce SOQL error: {e}")
@@ -526,7 +582,7 @@ class SalesforceTools(Toolkit):
 
         try:
             result = sf.search(sosl)
-            return self._truncate(json.dumps(result))
+            return json.dumps(result)
         except SalesforceError as e:
             logger.error(f"Salesforce SOSL error: {e}")
             return json.dumps({"error": str(e)})
@@ -561,13 +617,12 @@ class SalesforceTools(Toolkit):
             if not isinstance(response, dict):
                 return json.dumps({"error": "Unexpected report response format."})
 
-            # Extract key info
             result: Dict[str, Any] = {
                 "reportMetadata": response.get("reportMetadata"),
                 "factMap": response.get("factMap"),
             }
 
-            return self._truncate(json.dumps(result))
+            return json.dumps(result)
         except SalesforceError as e:
             logger.error(f"Salesforce report error: {e}")
             return json.dumps({"error": str(e)})
