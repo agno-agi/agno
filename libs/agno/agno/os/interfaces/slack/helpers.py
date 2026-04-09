@@ -40,6 +40,20 @@ def should_respond(event: dict, reply_to_mentions_only: bool) -> bool:
     return True
 
 
+def build_run_metadata(
+    display_name: Optional[str],
+    resolved_user_id: str,
+    ctx: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    metadata: Dict[str, Any] = {}
+    if display_name:
+        metadata["user_name"] = display_name
+        metadata["user_id"] = resolved_user_id
+    if ctx.get("action_token"):
+        metadata["action_token"] = ctx["action_token"]
+    return metadata or None
+
+
 def extract_event_context(event: dict) -> Dict[str, Any]:
     return {
         "message_text": event.get("text", ""),
@@ -47,6 +61,8 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
         "user": event.get("user", ""),
         # Prefer existing thread; fall back to message ts for new conversations
         "thread_id": event.get("thread_ts") or event.get("ts", ""),
+        # User-scoped token for assistant.search.context workspace search
+        "action_token": event.get("assistant_thread", {}).get("action_token"),
     }
 
 
@@ -87,8 +103,8 @@ async def resolve_slack_user(async_client: Any, slack_user_id: str) -> Tuple[str
             display_name = None
 
         return (resolved_id, display_name)
-    except Exception:
-        log_warning(f"Failed to resolve Slack user {slack_user_id}")
+    except Exception as e:
+        log_warning(f"Failed to resolve Slack user {slack_user_id}: {str(e)}")
         return (slack_user_id, None)
 
 
@@ -99,8 +115,8 @@ async def resolve_channel_name(async_client: Any, channel_id: str) -> Optional[s
         channel = resp.get("channel", {}) if resp else {}
         # API returns "" for unnamed channels; normalize to None
         return channel.get("name") or None
-    except Exception:
-        log_warning(f"Failed to resolve channel name for {channel_id}")
+    except Exception as e:
+        log_warning(f"Failed to resolve channel name for {channel_id}: {str(e)}")
         return None
 
 
@@ -152,7 +168,7 @@ async def download_event_files_async(
                     safe_mime = mimetype if mimetype in File.valid_mime_types() else None
                     files.append(File(content=file_content, filename=filename, mime_type=safe_mime))
             except Exception as e:
-                log_error(f"Failed to download file {file_id}: {e}")
+                log_error(f"Failed to download file {file_id}: {str(e)}")
 
     return files, images, videos, audio, skipped
 
@@ -179,7 +195,7 @@ async def upload_response_media_async(async_client: Any, response: Any, channel_
                         thread_ts=thread_ts,
                     )
                 except Exception as e:
-                    log_error(f"Failed to upload {attr.rstrip('s')}: {e}")
+                    log_error(f"Failed to upload {attr.rstrip('s')}: {str(e)}")
 
 
 async def send_slack_message_async(

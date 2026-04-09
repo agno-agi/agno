@@ -27,7 +27,7 @@ class SurrealDb(VectorDb):
         DEFINE TABLE IF NOT EXISTS {collection} SCHEMAFUL;
         DEFINE FIELD IF NOT EXISTS content ON {collection} TYPE string;
         DEFINE FIELD IF NOT EXISTS embedding ON {collection} TYPE array<float>;
-        DEFINE FIELD IF NOT EXISTS meta_data ON {collection} FLEXIBLE TYPE object;
+        DEFINE FIELD IF NOT EXISTS meta_data ON {collection} TYPE object FLEXIBLE;
         DEFINE INDEX IF NOT EXISTS vector_idx ON {collection} FIELDS embedding HNSW DIMENSION {dimensions} DIST {distance};
     """
 
@@ -655,7 +655,7 @@ class SurrealDb(VectorDb):
             log_debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
         except Exception as e:
-            log_error(f"Error updating metadata for content_id '{content_id}': {e}")
+            log_error(f"Error updating metadata for content_id '{content_id}': {str(e)}")
             raise
 
     def get_supported_search_types(self) -> List[str]:

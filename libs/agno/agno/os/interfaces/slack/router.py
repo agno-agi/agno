@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import (
+    build_run_metadata,
     download_event_files_async,
     extract_event_context,
     resolve_channel_name,
@@ -193,8 +194,7 @@ def attach_routes(
             run_kwargs: Dict[str, Any] = {
                 "user_id": resolved_user_id,
                 "session_id": session_id,
-                "metadata": {"user_name": display_name, "user_email": resolved_user_id} if display_name else None,
-                # Channel name for LLM context, channel_id for tool calls
+                "metadata": build_run_metadata(display_name, resolved_user_id, ctx),
                 "dependencies": {
                     "Slack channel": f"#{channel_name}" if channel_name else ctx["channel_id"],
                     "Slack channel_id": ctx["channel_id"],
@@ -239,7 +239,7 @@ def attach_routes(
                 )
                 await upload_response_media_async(async_client, response, ctx["channel_id"], ctx["thread_id"])
         except Exception as e:
-            log_error(f"Error processing slack event: {e}")
+            log_error(f"Error processing slack event: {str(e)}")
             await send_slack_message_async(
                 async_client,
                 channel=ctx["channel_id"],
@@ -318,8 +318,7 @@ def attach_routes(
                 "stream_events": True,
                 "user_id": resolved_user_id,
                 "session_id": session_id,
-                "metadata": {"user_name": display_name, "user_email": resolved_user_id} if display_name else None,
-                # Channel name for LLM context, channel_id for tool calls
+                "metadata": build_run_metadata(display_name, resolved_user_id, ctx),
                 "dependencies": {
                     "Slack channel": f"#{channel_name}" if channel_name else ctx["channel_id"],
                     "Slack channel_id": ctx["channel_id"],
@@ -439,7 +438,7 @@ def attach_routes(
                 is_msg_too_long = "msg_too_long" in str(e)
             if not is_msg_too_long:
                 log_error(
-                    f"Error streaming slack response: {e} [channel={ctx['channel_id']}, thread={ctx['thread_id']}, user={user_id}]"
+                    f"Error streaming slack response [channel={ctx['channel_id']}, thread={ctx['thread_id']}, user={user_id}]"
                 )
             try:
                 await async_client.assistant_threads_setStatus(
@@ -485,6 +484,6 @@ def attach_routes(
                 channel_id=channel_id, thread_ts=thread_ts, prompts=prompts
             )
         except Exception as e:
-            log_error(f"Failed to set suggested prompts: {e}")
+            log_error(f"Failed to set suggested prompts: {str(e)}")
 
     return router
