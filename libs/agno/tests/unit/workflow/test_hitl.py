@@ -1011,8 +1011,8 @@ class TestConditionOnReject:
 
         data = condition.to_dict()
 
-        assert "on_reject" in data
-        assert data["on_reject"] == "OnReject.else_branch" or data["on_reject"] == "else"
+        assert "human_review" in data
+        assert data["human_review"]["on_reject"] == "else"
 
     def test_condition_from_dict_restores_on_reject(self):
         """Test that Condition.from_dict restores on_reject field."""
