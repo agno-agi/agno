@@ -24,7 +24,7 @@ from agno.tools import Toolkit
 from agno.utils.log import logger
 
 try:
-    from simple_salesforce import Salesforce
+    from simple_salesforce import Salesforce  # type: ignore[import-not-found]
 except ImportError:
     raise ImportError("`simple-salesforce` not installed. Please install using `pip install simple-salesforce`.")
 
