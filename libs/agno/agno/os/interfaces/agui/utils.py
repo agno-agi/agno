@@ -27,7 +27,6 @@ from ag_ui.core import (
 from ag_ui.core.types import Message as AGUIMessage
 from pydantic import BaseModel
 
-from agno.models.message import Message
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import ReasoningCompletedEvent as AgentReasoningCompletedEvent
 from agno.run.agent import ReasoningContentDeltaEvent as AgentReasoningContentDeltaEvent
@@ -40,7 +39,7 @@ from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
 from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
 
 
