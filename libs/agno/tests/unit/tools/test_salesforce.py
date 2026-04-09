@@ -214,9 +214,10 @@ class TestMetadata:
         }
 
         result = json.loads(sf_tools.list_objects())
-        assert len(result) == 2
-        assert result[0]["name"] == "Account"
-        assert result[1]["name"] == "Custom__c"
+        assert result["total"] == 2
+        assert result["returned"] == 2
+        assert result["objects"][0]["name"] == "Account"
+        assert result["objects"][1]["name"] == "Custom__c"
 
     def test_list_objects_exclude_custom(self, sf_tools, mock_sf_client):
         mock_sf_client.describe.return_value = {
@@ -241,8 +242,8 @@ class TestMetadata:
         }
 
         result = json.loads(sf_tools.list_objects(include_custom=False))
-        assert len(result) == 1
-        assert result[0]["name"] == "Account"
+        assert result["total"] == 1
+        assert result["objects"][0]["name"] == "Account"
 
     def test_list_objects_capping(self, mock_sf_client):
         tools = SalesforceTools(
@@ -527,6 +528,11 @@ class TestReport:
         result = json.loads(sf_tools.get_report(report_id="00O000000000BAD"))
         assert "error" in result
 
+    def test_get_report_invalid_id(self, sf_tools):
+        result = json.loads(sf_tools.get_report(report_id="../sobjects/Account"))
+        assert "error" in result
+        assert "Invalid Salesforce report ID" in result["error"]
+
     def test_get_report_empty_id(self, sf_tools):
         result = json.loads(sf_tools.get_report(report_id=""))
         assert "error" in result
@@ -621,9 +627,9 @@ class TestJsonParseability:
 
         raw = tools.list_objects()
         result = json.loads(raw)
-        assert isinstance(result, dict)
         assert result["total"] == 100
         assert result["returned"] == 5
+        assert len(result["objects"]) == 5
 
     def test_query_always_parseable(self, mock_sf_client):
         tools = SalesforceTools(

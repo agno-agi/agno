@@ -133,7 +133,7 @@ class SalesforceTools(Toolkit):
         self.max_records = max_records
         self.max_fields = max_fields
 
-        # Metadata caches
+        # Unbounded for v1 — acceptable for short-lived agents, revisit with TTL/maxsize for long-lived deployments
         self._objects_cache: Optional[List[Dict[str, Any]]] = None
         self._describe_cache: Dict[str, Dict[str, Any]] = {}
 
@@ -163,16 +163,13 @@ class SalesforceTools(Toolkit):
         super().__init__(name="salesforce_tools", tools=tools, **kwargs)
 
     def _get_client(self) -> Optional[Salesforce]:
-        """Get or create the Salesforce client (lazy initialization)."""
         if self._sf is not None:
             return self._sf
 
         try:
             if self.instance_url and self.session_id:
-                # Direct session auth
                 self._sf = Salesforce(instance_url=self.instance_url, session_id=self.session_id)
             elif self.username and self.password:
-                # Username/password auth
                 self._sf = Salesforce(
                     username=self.username,
                     password=self.password,
@@ -187,10 +184,10 @@ class SalesforceTools(Toolkit):
                 return None
             return self._sf
         except SalesforceAuthenticationFailed as e:
-            logger.error(f"Salesforce authentication failed: {e}")
+            logger.exception(f"Salesforce authentication failed: {e}")
             return None
         except Exception as e:
-            logger.error(f"Salesforce connection error: {e}")
+            logger.exception(f"Salesforce connection error: {e}")
             return None
 
     @staticmethod
@@ -200,6 +197,21 @@ class SalesforceTools(Toolkit):
     @staticmethod
     def _validate_field_names(fields: str) -> bool:
         return all(_FIELD_NAME_RE.match(f.strip()) for f in fields.split(",") if f.strip())
+
+    @staticmethod
+    def _error(msg: str) -> str:
+        return json.dumps({"error": msg})
+
+    @staticmethod
+    def _parse_record_data(record_data: str) -> tuple:
+        """Returns (data_dict, None) on success or (None, error_json) on failure."""
+        try:
+            data = json.loads(record_data) if isinstance(record_data, str) else record_data
+        except json.JSONDecodeError as e:
+            return None, json.dumps({"error": f"Invalid JSON in record_data: {e}"})
+        if not isinstance(data, dict):
+            return None, json.dumps({"error": "record_data must be a JSON object."})
+        return data, None
 
     def list_objects(self, include_custom: bool = True) -> str:
         """
@@ -244,19 +256,17 @@ class SalesforceTools(Toolkit):
                     }
                 )
 
-            # Cap at max_records to keep response parseable
             total = len(result)
             if total > self.max_records:
                 result = result[: self.max_records]
-                return json.dumps({"total": total, "returned": self.max_records, "objects": result})
 
-            return json.dumps(result)
+            return json.dumps({"total": total, "returned": len(result), "objects": result})
         except SalesforceError as e:
-            logger.error(f"Salesforce API error: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Salesforce API error: {e}")
+            return self._error(str(e))
         except Exception as e:
-            logger.error(f"Error listing objects: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Error listing objects: {e}")
+            return self._error(str(e))
 
     def describe_object(self, sobject: str) -> str:
         """
@@ -281,7 +291,6 @@ class SalesforceTools(Toolkit):
             return json.dumps({"error": "Salesforce not connected."})
 
         try:
-            # Use cache if available
             if self.cache_metadata and sobject in self._describe_cache:
                 describe = self._describe_cache[sobject]
             else:
@@ -323,11 +332,11 @@ class SalesforceTools(Toolkit):
 
             return json.dumps(result)
         except SalesforceError as e:
-            logger.error(f"Salesforce API error: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Salesforce API error: {e}")
+            return self._error(str(e))
         except Exception as e:
-            logger.error(f"Error describing object {sobject}: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Error describing object {sobject}: {e}")
+            return self._error(str(e))
 
     def get_record(
         self,
@@ -375,11 +384,11 @@ class SalesforceTools(Toolkit):
                 record = sf_object.get(record_id)
                 return json.dumps(record)
         except SalesforceError as e:
-            logger.error(f"Salesforce API error: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Salesforce API error: {e}")
+            return self._error(str(e))
         except Exception as e:
-            logger.error(f"Error getting {sobject} record: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Error getting {sobject} record: {e}")
+            return self._error(str(e))
 
     def create_record(self, sobject: str, record_data: str) -> str:
         """
@@ -402,13 +411,9 @@ class SalesforceTools(Toolkit):
         if sf is None:
             return json.dumps({"error": "Salesforce not connected."})
 
-        try:
-            data = json.loads(record_data) if isinstance(record_data, str) else record_data
-        except json.JSONDecodeError as e:
-            return json.dumps({"error": f"Invalid JSON in record_data: {e}"})
-
-        if not isinstance(data, dict):
-            return json.dumps({"error": "record_data must be a JSON object."})
+        data, err = self._parse_record_data(record_data)
+        if err:
+            return err
 
         try:
             sf_object = getattr(sf, sobject)
@@ -421,11 +426,11 @@ class SalesforceTools(Toolkit):
                 }
             )
         except SalesforceError as e:
-            logger.error(f"Salesforce API error: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Salesforce API error: {e}")
+            return self._error(str(e))
         except Exception as e:
-            logger.error(f"Error creating {sobject} record: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Error creating {sobject} record: {e}")
+            return self._error(str(e))
 
     def update_record(self, sobject: str, record_id: str, record_data: str) -> str:
         """
@@ -452,13 +457,9 @@ class SalesforceTools(Toolkit):
         if sf is None:
             return json.dumps({"error": "Salesforce not connected."})
 
-        try:
-            data = json.loads(record_data) if isinstance(record_data, str) else record_data
-        except json.JSONDecodeError as e:
-            return json.dumps({"error": f"Invalid JSON in record_data: {e}"})
-
-        if not isinstance(data, dict):
-            return json.dumps({"error": "record_data must be a JSON object."})
+        data, err = self._parse_record_data(record_data)
+        if err:
+            return err
 
         try:
             sf_object = getattr(sf, sobject)
@@ -471,11 +472,11 @@ class SalesforceTools(Toolkit):
                 }
             )
         except SalesforceError as e:
-            logger.error(f"Salesforce API error: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Salesforce API error: {e}")
+            return self._error(str(e))
         except Exception as e:
-            logger.error(f"Error updating {sobject} record: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Error updating {sobject} record: {e}")
+            return self._error(str(e))
 
     def delete_record(self, sobject: str, record_id: str) -> str:
         """
@@ -511,11 +512,11 @@ class SalesforceTools(Toolkit):
                 }
             )
         except SalesforceError as e:
-            logger.error(f"Salesforce API error: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Salesforce API error: {e}")
+            return self._error(str(e))
         except Exception as e:
-            logger.error(f"Error deleting {sobject} record: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Error deleting {sobject} record: {e}")
+            return self._error(str(e))
 
     def query(self, soql: str) -> str:
         """
@@ -554,11 +555,11 @@ class SalesforceTools(Toolkit):
                 }
             )
         except SalesforceError as e:
-            logger.error(f"Salesforce SOQL error: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Salesforce SOQL error: {e}")
+            return self._error(str(e))
         except Exception as e:
-            logger.error(f"Error executing SOQL: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Error executing SOQL: {e}")
+            return self._error(str(e))
 
     def search(self, sosl: str) -> str:
         """
@@ -584,11 +585,11 @@ class SalesforceTools(Toolkit):
             result = sf.search(sosl)
             return json.dumps(result)
         except SalesforceError as e:
-            logger.error(f"Salesforce SOSL error: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Salesforce SOSL error: {e}")
+            return self._error(str(e))
         except Exception as e:
-            logger.error(f"Error executing SOSL: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Error executing SOSL: {e}")
+            return self._error(str(e))
 
     def get_report(self, report_id: str) -> str:
         """
@@ -603,6 +604,9 @@ class SalesforceTools(Toolkit):
         if not report_id:
             return json.dumps({"error": "report_id is required."})
 
+        if not self._validate_sf_id(report_id):
+            return json.dumps({"error": f"Invalid Salesforce report ID format: {report_id}"})
+
         log_debug(f"Running Salesforce report: {report_id}")
 
         sf = self._get_client()
@@ -610,9 +614,8 @@ class SalesforceTools(Toolkit):
             return json.dumps({"error": "Salesforce not connected."})
 
         try:
-            # Use the Analytics API to run the report
-            report_url = f"analytics/reports/{report_id}"
-            response = sf.restful(report_url, method="GET")
+            # Reports are read-only via the Analytics API; standard REST objects don't expose them
+            response = sf.restful(f"analytics/reports/{report_id}", method="GET")
 
             if not isinstance(response, dict):
                 return json.dumps({"error": "Unexpected report response format."})
@@ -624,8 +627,8 @@ class SalesforceTools(Toolkit):
 
             return json.dumps(result)
         except SalesforceError as e:
-            logger.error(f"Salesforce report error: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Salesforce report error: {e}")
+            return self._error(str(e))
         except Exception as e:
-            logger.error(f"Error running report {report_id}: {e}")
-            return json.dumps({"error": str(e)})
+            logger.exception(f"Error running report {report_id}: {e}")
+            return self._error(str(e))

@@ -23,9 +23,9 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.salesforce import SalesforceTools
 
-# ---------------------------------------------------------------------------
+
 # Example 1: Read-only CRM explorer (default — safe for any agent)
-# ---------------------------------------------------------------------------
+
 explorer_agent = Agent(
     name="Salesforce Explorer",
     model=OpenAIChat(id="gpt-4o"),
@@ -38,9 +38,9 @@ explorer_agent = Agent(
     markdown=True,
 )
 
-# ---------------------------------------------------------------------------
+
 # Example 2: Sales pipeline agent (read + create + update)
-# ---------------------------------------------------------------------------
+
 sales_agent = Agent(
     name="Sales Pipeline Agent",
     model=OpenAIChat(id="gpt-4o"),
@@ -58,9 +58,9 @@ sales_agent = Agent(
     markdown=True,
 )
 
-# ---------------------------------------------------------------------------
+
 # Example 3: Full admin agent (all operations including delete)
-# ---------------------------------------------------------------------------
+
 admin_agent = Agent(
     name="Salesforce Admin",
     model=OpenAIChat(id="gpt-4o"),
@@ -73,9 +73,9 @@ admin_agent = Agent(
     markdown=True,
 )
 
-# ---------------------------------------------------------------------------
+
 # Example 4: Read-only agent with custom limits
-# ---------------------------------------------------------------------------
+
 compact_agent = Agent(
     name="Compact Explorer",
     model=OpenAIChat(id="gpt-4o"),
@@ -89,9 +89,9 @@ compact_agent = Agent(
     markdown=True,
 )
 
-# ---------------------------------------------------------------------------
+
 # Run examples
-# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     print("--- Example 1: Discover objects in the org ---")
     explorer_agent.print_response(
