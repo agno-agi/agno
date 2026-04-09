@@ -689,7 +689,7 @@ def _get_delegate_task_function(
         # Find the member agent using the helper function
         result = _find_member_by_id(team, member_id, run_context=run_context)
         if result is None:
-            yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0, run_context=run_context)}"
+            yield f"Member with ID {member_id} not found in the team or any subteams. Please choose the correct member from the list of members:\n\n{team.get_members_system_message_content(indent=0, run_context=run_context, async_mode=True)}"
             return
 
         _, member_agent = result
@@ -1274,7 +1274,7 @@ def create_knowledge_search_tool(
                     run_context=run_context,
                 )
             except Exception as e:
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
@@ -1304,7 +1304,7 @@ def create_knowledge_search_tool(
                     run_context=run_context,
                 )
             except Exception as e:
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
@@ -1336,7 +1336,7 @@ def create_knowledge_search_tool(
                     run_context=run_context,
                 )
             except Exception as e:
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
@@ -1362,7 +1362,7 @@ def create_knowledge_search_tool(
                     run_context=run_context,
                 )
             except Exception as e:
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
             _track_references(docs, query, retrieval_timer.elapsed)
             retrieval_timer.stop()
@@ -1432,7 +1432,7 @@ def get_relevant_docs_from_knowledge(
             knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
             return team.knowledge_retriever(**knowledge_retriever_kwargs)
         except Exception as e:
-            log_warning(f"Knowledge retriever failed: {e}")
+            log_warning(f"Knowledge retriever failed: {str(e)}")
             raise e
     # Use knowledge protocol's retrieve method
     try:
@@ -1457,7 +1457,7 @@ def get_relevant_docs_from_knowledge(
 
         return [doc.to_dict() for doc in relevant_docs]
     except Exception as e:
-        log_warning(f"Error retrieving from knowledge base: {e}")
+        log_warning(f"Error retrieving from knowledge base: {str(e)}")
         raise e
 
 
@@ -1525,7 +1525,7 @@ async def aget_relevant_docs_from_knowledge(
 
             return result
         except Exception as e:
-            log_warning(f"Knowledge retriever failed: {e}")
+            log_warning(f"Knowledge retriever failed: {str(e)}")
             raise e
 
     # Use knowledge protocol's retrieve method
@@ -1559,5 +1559,5 @@ async def aget_relevant_docs_from_knowledge(
 
         return [doc.to_dict() for doc in relevant_docs]
     except Exception as e:
-        log_warning(f"Error retrieving from knowledge base: {e}")
+        log_warning(f"Error retrieving from knowledge base: {str(e)}")
         raise e

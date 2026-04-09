@@ -387,7 +387,7 @@ def require_approval_resolved(db: Any) -> Any:
             # run continue so non-approval setups are unaffected.
             from agno.utils.log import log_warning
 
-            log_warning(f"Approval resolution check skipped due to error: {exc}")
+            log_warning(f"Approval resolution check skipped due to error: {exc}: {exc}")
             return
 
     return dependency

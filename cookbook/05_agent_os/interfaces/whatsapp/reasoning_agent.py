@@ -21,7 +21,7 @@ agent_db = SqliteDb(db_file="tmp/persistent_memory.db")
 
 reasoning_finance_agent = Agent(
     name="Reasoning Finance Agent",
-    model=Claude(id="claude-3-7-sonnet-latest"),
+    model=Claude(id="claude-sonnet-4-6"),
     db=agent_db,
     tools=[
         ReasoningTools(add_instructions=True),
@@ -36,7 +36,7 @@ reasoning_finance_agent = Agent(
 # Setup our AgentOS app
 agent_os = AgentOS(
     agents=[reasoning_finance_agent],
-    interfaces=[Whatsapp(agent=reasoning_finance_agent)],
+    interfaces=[Whatsapp(agent=reasoning_finance_agent, show_reasoning=True)],
 )
 app = agent_os.get_app()
 
@@ -46,10 +46,4 @@ app = agent_os.get_app()
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    """Run your AgentOS.
-
-    You can see the configuration and available apps at:
-    http://localhost:7777/config
-
-    """
     agent_os.serve(app="reasoning_agent:app", reload=True)

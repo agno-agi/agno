@@ -348,11 +348,21 @@ async def stream_a2a_response(
 
         # Send content events
         elif isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content:
-            accumulated_content += event.content
+            # Serialize content to str: Pydantic models (from output_schema) must be
+            # converted before str-concatenation or TextPart construction, otherwise
+            # "TypeError: can only concatenate str (not <Model>) to str" is raised.
+            raw_content = event.content
+            if hasattr(raw_content, "model_dump_json"):
+                content_str = raw_content.model_dump_json()
+            elif not isinstance(raw_content, str):
+                content_str = str(raw_content)
+            else:
+                content_str = raw_content
+            accumulated_content += content_str
             message = A2AMessage(
                 message_id=message_id,
                 role=Role.agent,
-                parts=[Part(root=TextPart(text=event.content))],
+                parts=[Part(root=TextPart(text=content_str))],
                 context_id=context_id,
                 task_id=task_id,
                 metadata={"agno_content_category": "content"},

@@ -19,7 +19,10 @@ except ImportError:
 class YouTubeReader(Reader):
     """Reader for YouTube video transcripts"""
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = RecursiveChunking(), **kwargs):
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+        if chunking_strategy is None:
+            chunk_size = kwargs.get("chunk_size", 5000)
+            chunking_strategy = RecursiveChunking(chunk_size=chunk_size)
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
@@ -72,7 +75,7 @@ class YouTubeReader(Reader):
             return documents
 
         except Exception as e:
-            log_error(f"Error reading transcript for {url}: {e}")
+            log_error(f"Error reading transcript for {url}: {str(e)}")
             return []
 
     async def async_read(self, url: str) -> List[Document]:

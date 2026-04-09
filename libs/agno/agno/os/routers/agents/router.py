@@ -221,13 +221,19 @@ def get_agent_router(
         agent_id: str,
         request: Request,
         background_tasks: BackgroundTasks,
-        message: str = Form(...),
-        stream: bool = Form(True),
-        session_id: Optional[str] = Form(None),
-        user_id: Optional[str] = Form(None),
-        files: Optional[List[UploadFile]] = File(None),
-        version: Optional[str] = Form(None),
-        background: bool = Form(False),
+        message: str = Form(..., description="The input message or prompt to send to the agent"),
+        stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
+        session_id: Optional[str] = Form(
+            None, description="Session ID for conversation continuity. If not provided, a new session is created"
+        ),
+        user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
+        files: Optional[List[UploadFile]] = File(
+            None, description="Files to upload (images, audio, video, or documents)"
+        ),
+        version: Optional[str] = Form(None, description="Agent version to use for this run"),
+        background: bool = Form(
+            False, description="Run in background and return immediately with run metadata (requires database)"
+        ),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
 
@@ -289,7 +295,7 @@ def get_agent_router(
                         base64_image = process_image(file)
                         base64_images.append(base64_image)
                     except Exception as e:
-                        log_error(f"Error processing image {file.filename}: {e}")
+                        log_error(f"Error processing image {file.filename}: {str(e)}")
                         continue
                 elif file.content_type in [
                     "audio/wav",
@@ -306,7 +312,9 @@ def get_agent_router(
                         audio = process_audio(file)
                         base64_audios.append(audio)
                     except Exception as e:
-                        log_error(f"Error processing audio {file.filename} with content type {file.content_type}: {e}")
+                        log_error(
+                            f"Error processing audio {file.filename} with content type {file.content_type}: {str(e)}"
+                        )
                         continue
                 elif file.content_type in [
                     "video/x-flv",
@@ -325,20 +333,21 @@ def get_agent_router(
                         base64_video = process_video(file)
                         base64_videos.append(base64_video)
                     except Exception as e:
-                        log_error(f"Error processing video {file.filename}: {e}")
+                        log_error(f"Error processing video {file.filename}: {str(e)}")
                         continue
                 elif file.content_type in [
                     "application/pdf",
                     "application/json",
                     "application/x-javascript",
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "application/vnd.ms-outlook",
                     "text/javascript",
                     "application/x-python",
                     "text/x-python",
                     "text/plain",
                     "text/html",
                     "text/css",
-                    "text/md",
+                    "text/markdown",
                     "text/csv",
                     "text/xml",
                     "text/rtf",
@@ -349,7 +358,7 @@ def get_agent_router(
                         if input_file is not None:
                             input_files.append(input_file)
                     except Exception as e:
-                        log_error(f"Error processing file {file.filename}: {e}")
+                        log_error(f"Error processing file {file.filename}: {str(e)}")
                         continue
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
@@ -505,10 +514,12 @@ def get_agent_router(
         run_id: str,
         request: Request,
         background_tasks: BackgroundTasks,
-        tools: str = Form(""),  # JSON string of tools (optional when admin approval resolved)
-        session_id: Optional[str] = Form(None),
-        user_id: Optional[str] = Form(None),
-        stream: bool = Form(True),
+        tools: str = Form(
+            "", description="JSON string of tool call results to continue the paused run"
+        ),  # optional when admin approval resolved
+        session_id: Optional[str] = Form(None, description="Session ID for the paused run"),
+        user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
+        stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
     ):
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id

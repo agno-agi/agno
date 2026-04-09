@@ -128,7 +128,7 @@ class AgentSession:
             agent_id: The id of the agent to get the messages from.
             team_id: The id of the team to get the messages from.
             last_n_runs: The number of runs to return messages from, counting from the latest. Defaults to all runs.
-            last_n_messages: The number of messages to return, counting from the latest. Defaults to all messages.
+            limit: The number of messages to return, counting from the latest. Defaults to all messages.
             skip_roles: Skip messages with these roles.
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
@@ -171,6 +171,12 @@ class AgentSession:
         # Filter by status
         runs = [run for run in runs if hasattr(run, "status") and run.status not in skip_statuses]  # type: ignore
 
+        # Filter by last_n_runs before applying message limit
+        if last_n_runs is not None:
+            if last_n_runs <= 0:
+                return []
+            runs = runs[-last_n_runs:]
+
         messages_from_history = []
         system_message = None
 
@@ -192,11 +198,17 @@ class AgentSession:
                         messages_from_history.append(message)
 
             if system_message:
-                messages_from_history = [system_message] + messages_from_history[
-                    -(limit - 1) :
-                ]  # Grab one less message then add the system message
+                if limit <= 1:
+                    messages_from_history = [system_message]
+                else:
+                    messages_from_history = [system_message] + messages_from_history[
+                        -(limit - 1) :
+                    ]  # Grab one less message then add the system message
             else:
-                messages_from_history = messages_from_history[-limit:]
+                if limit <= 0:
+                    messages_from_history = []
+                else:
+                    messages_from_history = messages_from_history[-limit:]
 
             # Remove tool result messages that don't have an associated assistant message with tool calls
             while len(messages_from_history) > 0 and messages_from_history[0].role == "tool":
@@ -204,8 +216,7 @@ class AgentSession:
 
         # If limit is not set, return all messages
         else:
-            runs_to_process = runs[-last_n_runs:] if last_n_runs is not None else runs
-            for run_response in runs_to_process:
+            for run_response in runs:
                 if not run_response or not run_response.messages:
                     continue
 

@@ -68,6 +68,7 @@ class BaseRunOutputEvent:
                 "requirements",
                 "tasks",
                 "memories",
+                "followups",
             ]
         }
 
@@ -85,6 +86,9 @@ class BaseRunOutputEvent:
 
         if hasattr(self, "references") and self.references is not None:
             _dict["references"] = [r.model_dump() for r in self.references]
+
+        if hasattr(self, "followups") and self.followups is not None:
+            _dict["followups"] = self.followups
 
         if hasattr(self, "member_responses") and self.member_responses:
             _dict["member_responses"] = [response.to_dict() for response in self.member_responses]
@@ -173,8 +177,8 @@ class BaseRunOutputEvent:
 
         try:
             _dict = self.to_dict()
-        except Exception:
-            log_error("Failed to convert response event to json", exc_info=True)
+        except Exception as e:
+            log_error(f"Failed to convert response event to json: {str(e)}")
             raise
 
         if indent is None:
