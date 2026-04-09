@@ -195,6 +195,48 @@ def validate_human_review_for_router(hr: "HumanReview") -> None:
         )
 
 
+def validate_human_review_for_condition(hr: "HumanReview") -> None:
+    """Validate HumanReview config for use on a Condition.
+
+    Raises ValueError if unsupported fields are set.
+    Supported: requires_confirmation.
+    """
+    if hr.requires_output_review:
+        raise ValueError("requires_output_review is not supported on Condition. Supported: requires_confirmation.")
+    if hr.requires_user_input:
+        raise ValueError("requires_user_input is not supported on Condition. Supported: requires_confirmation.")
+    if hr.requires_iteration_review:
+        raise ValueError("requires_iteration_review is not supported on Condition. Supported: requires_confirmation.")
+
+
+def validate_human_review_for_steps(hr: "HumanReview") -> None:
+    """Validate HumanReview config for use on a Steps pipeline.
+
+    Raises ValueError if unsupported fields are set.
+    Supported: requires_confirmation.
+    """
+    if hr.requires_output_review:
+        raise ValueError("requires_output_review is not supported on Steps. Supported: requires_confirmation.")
+    if hr.requires_user_input:
+        raise ValueError("requires_user_input is not supported on Steps. Supported: requires_confirmation.")
+    if hr.requires_iteration_review:
+        raise ValueError("requires_iteration_review is not supported on Steps. Supported: requires_confirmation.")
+
+
+def validate_human_review_for_parallel(hr: "HumanReview") -> None:
+    """Validate HumanReview config for use on a Parallel.
+
+    Raises ValueError if unsupported fields are set.
+    Supported: requires_confirmation.
+    """
+    if hr.requires_output_review:
+        raise ValueError("requires_output_review is not supported on Parallel. Supported: requires_confirmation.")
+    if hr.requires_user_input:
+        raise ValueError("requires_user_input is not supported on Parallel. Supported: requires_confirmation.")
+    if hr.requires_iteration_review:
+        raise ValueError("requires_iteration_review is not supported on Parallel. Supported: requires_confirmation.")
+
+
 @dataclass
 class WorkflowExecutionInput:
     """Input data for a step execution"""
