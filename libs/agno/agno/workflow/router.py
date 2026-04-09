@@ -139,9 +139,10 @@ class Router:
                 max_retries=self.hitl_max_retries,
             )
 
-        # Validate: iteration review not supported on Router
-        if self.human_review.requires_iteration_review:
-            raise ValueError("requires_iteration_review is not supported on Router. Use it on Loop instead.")
+        # Validate HumanReview config for Router
+        from agno.workflow.types import validate_human_review_for_router
+
+        validate_human_review_for_router(self.human_review)
 
         # Store HITL fields as attributes for backward compatibility
         self.requires_user_input = self.human_review.requires_user_input

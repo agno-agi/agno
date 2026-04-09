@@ -216,9 +216,10 @@ class Step:
                 on_timeout=on_timeout,
             )
 
-        # Validate: iteration review not supported on Step
-        if self.human_review.requires_iteration_review:
-            raise ValueError("requires_iteration_review is not supported on Step. Use it on Loop instead.")
+        # Validate HumanReview config for Step
+        from agno.workflow.types import validate_human_review_for_step
+
+        validate_human_review_for_step(self.human_review)
 
         # Store HITL fields as attributes for backward compatibility
         # These read from self.human_review so there's one source of truth

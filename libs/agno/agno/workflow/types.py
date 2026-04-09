@@ -65,29 +65,29 @@ class OnError(str, Enum):
 class HumanReview:
     """Human-in-the-loop configuration for workflow components.
 
-    Groups all HITL parameters into a single config object instead of
-    scattering them as flat params across Step/Loop/Router constructors.
+    Groups all HITL parameters into a single config object. Pass it via
+    ``human_review=HumanReview(...)`` on Step, Loop, or Router.
 
-    Not all fields apply to all components:
-    - requires_output_review: Step, Router (raises on Loop)
-    - requires_iteration_review: Loop only (raises on Step, Router)
-    - requires_confirmation: all components
-    - requires_user_input: Step, Router
+    Not all fields apply to all components. Each component validates
+    at construction time and raises ``ValueError`` for unsupported fields.
 
-    Each component validates the config in its __init__ and raises
-    ValueError if unsupported fields are set.
+    Field compatibility:
+        requires_confirmation   - Step, Loop, Router, Condition, Steps
+        requires_user_input     - Step, Router
+        requires_output_review  - Step, Router
+        requires_iteration_review - Loop
     """
 
-    # Pre-execution confirmation
+    # Pre-execution confirmation (Step, Loop, Router, Condition, Steps)
     requires_confirmation: bool = False
     confirmation_message: Optional[str] = None
 
-    # User input collection
+    # User input collection (Step, Router only)
     requires_user_input: bool = False
     user_input_message: Optional[str] = None
     user_input_schema: Optional[List[Dict[str, Any]]] = None
 
-    # Post-execution output review
+    # Post-execution output review (Step, Router only)
     requires_output_review: Union[bool, Any] = False  # Union[bool, Callable[[StepOutput], bool]]
     output_review_message: Optional[str] = None
 
@@ -101,6 +101,14 @@ class HumanReview:
     max_retries: int = 3
     timeout: Optional[int] = None
     on_timeout: Union[OnTimeout, str] = OnTimeout.cancel
+
+    def __post_init__(self) -> None:
+        # Fail early on conflicting flags
+        if self.requires_output_review and self.requires_iteration_review:
+            raise ValueError(
+                "requires_output_review and requires_iteration_review cannot both be set. "
+                "Use requires_output_review on Step/Router, requires_iteration_review on Loop."
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -141,6 +149,49 @@ class HumanReview:
             max_retries=data.get("max_retries", 3),
             timeout=data.get("timeout"),
             on_timeout=data.get("on_timeout", "cancel"),
+        )
+
+
+def validate_human_review_for_step(hr: "HumanReview") -> None:
+    """Validate HumanReview config for use on a Step.
+
+    Raises ValueError if unsupported fields are set.
+    Supported: requires_confirmation, requires_user_input, requires_output_review.
+    """
+    if hr.requires_iteration_review:
+        raise ValueError(
+            "requires_iteration_review is not supported on Step. "
+            "Supported: requires_confirmation, requires_user_input, requires_output_review."
+        )
+
+
+def validate_human_review_for_loop(hr: "HumanReview") -> None:
+    """Validate HumanReview config for use on a Loop.
+
+    Raises ValueError if unsupported fields are set.
+    Supported: requires_confirmation, requires_iteration_review.
+    """
+    if hr.requires_output_review:
+        raise ValueError(
+            "requires_output_review is not supported on Loop. "
+            "Supported: requires_confirmation, requires_iteration_review."
+        )
+    if hr.requires_user_input:
+        raise ValueError(
+            "requires_user_input is not supported on Loop. Supported: requires_confirmation, requires_iteration_review."
+        )
+
+
+def validate_human_review_for_router(hr: "HumanReview") -> None:
+    """Validate HumanReview config for use on a Router.
+
+    Raises ValueError if unsupported fields are set.
+    Supported: requires_confirmation, requires_user_input, requires_output_review.
+    """
+    if hr.requires_iteration_review:
+        raise ValueError(
+            "requires_iteration_review is not supported on Router. "
+            "Supported: requires_confirmation, requires_user_input, requires_output_review."
         )
 
 
