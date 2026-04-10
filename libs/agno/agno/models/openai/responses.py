@@ -303,7 +303,7 @@ class OpenAIResponses(Model):
 
         # Handle reasoning tools for o3 and o4-mini models
         if self._using_reasoning_model() and messages is not None:
-            if self.store is False:
+            if store is False:
                 request_params["store"] = False
 
                 # Add encrypted reasoning content to include if not already present
