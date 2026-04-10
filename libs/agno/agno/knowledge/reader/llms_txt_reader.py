@@ -175,6 +175,16 @@ class LLMsTxtReader(Reader):
 
         return soup.get_text(separator="\n", strip=True)
 
+    def _process_response(self, content_type: str, text: str) -> str:
+        """Classify an HTTP response by content-type and return processed text."""
+        if any(t in content_type for t in ["text/plain", "text/markdown"]):
+            return text
+
+        if "text/html" in content_type or text.strip().startswith(("<!DOCTYPE", "<html", "<HTML")):
+            return self._extract_content(text)
+
+        return text
+
     def fetch_url(self, url: str) -> Optional[str]:
         """Fetch content from a URL, returning text for text-like content or extracted text from HTML."""
         try:
@@ -184,20 +194,7 @@ class LLMsTxtReader(Reader):
             else:
                 response = httpx.get(url, timeout=self.timeout, follow_redirects=True)
             response.raise_for_status()
-
-            content_type = response.headers.get("content-type", "")
-            text = response.text
-
-            # If content is plain text or markdown, return as-is
-            if any(t in content_type for t in ["text/plain", "text/markdown"]):
-                return text
-
-            # If content is HTML, extract the text
-            if "text/html" in content_type or text.strip().startswith(("<!DOCTYPE", "<html", "<HTML")):
-                return self._extract_content(text)
-
-            # Default: return raw text
-            return text
+            return self._process_response(response.headers.get("content-type", ""), response.text)
         except httpx.HTTPStatusError as e:
             log_warning(f"HTTP error fetching {url}: {e.response.status_code}")
             return None
@@ -214,17 +211,7 @@ class LLMsTxtReader(Reader):
             log_debug(f"Fetching asynchronously: {url}")
             response = await client.get(url, timeout=self.timeout, follow_redirects=True)
             response.raise_for_status()
-
-            content_type = response.headers.get("content-type", "")
-            text = response.text
-
-            if any(t in content_type for t in ["text/plain", "text/markdown"]):
-                return text
-
-            if "text/html" in content_type or text.strip().startswith(("<!DOCTYPE", "<html", "<HTML")):
-                return self._extract_content(text)
-
-            return text
+            return self._process_response(response.headers.get("content-type", ""), response.text)
         except httpx.HTTPStatusError as e:
             log_warning(f"HTTP error fetching {url}: {e.response.status_code}")
             return None

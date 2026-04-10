@@ -1,5 +1,7 @@
 import json
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
+
+import httpx
 
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
@@ -74,6 +76,13 @@ class LLMsTxtTools(Toolkit):
 
         super().__init__(name="llms_txt_tools", tools=tools, async_tools=async_tools_list, **kwargs)
 
+    def _async_client_kwargs(self) -> Dict[str, Any]:
+        """Build kwargs for httpx.AsyncClient matching the reader's config."""
+        kwargs: Dict[str, Any] = {"timeout": httpx.Timeout(self.timeout)}
+        if self.reader.proxy:
+            kwargs["proxy"] = self.reader.proxy
+        return kwargs
+
     def get_llms_txt_index(self, url: str) -> str:
         """Reads an llms.txt file and returns the index of all available documentation pages.
 
@@ -108,15 +117,18 @@ class LLMsTxtTools(Toolkit):
         return json.dumps(index)
 
     async def aget_llms_txt_index(self, url: str) -> str:
-        """Async variant of get_llms_txt_index.
+        """Reads an llms.txt file and returns the index of all available documentation pages.
+
+        An llms.txt file is a standardized index of documentation for a project.
+        This function reads the index and returns all available pages with their titles,
+        URLs, descriptions, and sections. Use this to discover what documentation is
+        available, then use read_llms_txt_url to fetch specific pages.
 
         :param url: The URL of the llms.txt file (e.g. https://docs.example.com/llms.txt).
         :return: JSON with the overview and list of available documentation pages.
         """
-        import httpx
-
         log_info(f"Reading llms.txt index from {url}")
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(**self._async_client_kwargs()) as client:
             llms_txt_content = await self.reader.async_fetch_url(client, url)
 
         if not llms_txt_content:
@@ -156,15 +168,16 @@ class LLMsTxtTools(Toolkit):
         return content
 
     async def aread_llms_txt_url(self, url: str) -> str:
-        """Async variant of read_llms_txt_url.
+        """Fetches and returns the content of a specific documentation page URL.
+
+        Use this after calling get_llms_txt_index to fetch the content of specific pages
+        you want to read. You can call this multiple times for different URLs.
 
         :param url: The URL of the documentation page to read.
         :return: The text content of the page.
         """
-        import httpx
-
         log_debug(f"Fetching URL: {url}")
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(**self._async_client_kwargs()) as client:
             content = await self.reader.async_fetch_url(client, url)
 
         if not content:
@@ -202,7 +215,11 @@ class LLMsTxtTools(Toolkit):
         return f"Successfully loaded {len(documents)} documents from llms.txt into the knowledge base"
 
     async def aread_llms_txt_and_load_knowledge(self, url: str) -> str:
-        """Async variant of read_llms_txt_and_load_knowledge.
+        """Reads an llms.txt file, fetches all linked documentation pages, and loads them into the knowledge base.
+
+        An llms.txt file is a standardized index of documentation for a project.
+        This function reads the index, fetches every linked page, and stores the content
+        in the knowledge base for future retrieval.
 
         :param url: The URL of the llms.txt file (e.g. https://docs.example.com/llms.txt).
         :return: Summary of what was loaded into the knowledge base.
