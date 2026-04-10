@@ -331,7 +331,7 @@ class AwsBedrock(Model):
                             else:
                                 tool_input = json.loads(arguments)
                         except (json.JSONDecodeError, KeyError) as e:
-                            log_warning(f"Failed to parse tool call arguments: {e}")
+                            log_warning(f"Failed to parse tool call arguments: {str(e)}")
                             tool_input = {}
 
                         tool_use_content.append(
@@ -461,7 +461,7 @@ class AwsBedrock(Model):
 
             return tokens
         except Exception as e:
-            log_warning(f"Failed to count tokens via Bedrock API: {e}")
+            log_warning(f"Failed to count tokens via Bedrock API: {str(e)}")
             return super().count_tokens(messages, tools, output_schema)
 
     async def acount_tokens(
@@ -491,7 +491,7 @@ class AwsBedrock(Model):
 
             return tokens
         except Exception as e:
-            log_warning(f"Failed to count tokens via Bedrock API: {e}")
+            log_warning(f"Failed to count tokens via Bedrock API: {str(e)}")
             return await super().acount_tokens(messages, tools, output_schema)
 
     def invoke(
