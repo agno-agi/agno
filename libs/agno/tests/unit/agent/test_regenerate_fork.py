@@ -696,3 +696,59 @@ class TestBranchSessionDispatch:
         assert len(read_calls) == 1
         assert read_calls[0]["session_id"] == "original"
         assert read_calls[0]["user_id"] == "alice"
+
+    def test_branch_records_branched_from_on_each_run(self, monkeypatch: pytest.MonkeyPatch):
+        """Every branched run must carry branched_from pointing at the source session."""
+        agent = Agent(name="test")
+        run1 = _make_run(run_id="r1", messages=[Message(role="user", content="hi")])
+        run2 = _make_run(run_id="r2", messages=[Message(role="user", content="hello")])
+        session = _make_session(runs=[run1, run2], session_id="original")
+        mock_save = _patch_branch_deps(agent, monkeypatch, session)
+
+        _run.branch_session_dispatch(agent, source_session_id="original")
+
+        saved_session = mock_save.call_args[1].get("session") or mock_save.call_args[0][1]
+        for run in saved_session.runs:
+            assert run.branched_from == "original"
+
+    def test_branch_source_runs_not_mutated(self, monkeypatch: pytest.MonkeyPatch):
+        """The source session's runs must not gain a branched_from field from the branch op."""
+        agent = Agent(name="test")
+        run1 = _make_run(run_id="r1", messages=[Message(role="user", content="hi")])
+        assert run1.branched_from is None
+        session = _make_session(runs=[run1], session_id="original")
+        _patch_branch_deps(agent, monkeypatch, session)
+
+        _run.branch_session_dispatch(agent, source_session_id="original")
+
+        # Source run must remain untouched
+        assert run1.branched_from is None
+        assert run1.run_id == "r1"
+        assert run1.session_id == "sess-1"
+
+    def test_nested_branch_preserves_original_branched_from(self, monkeypatch: pytest.MonkeyPatch):
+        """When branching a session whose runs already carry branched_from, preserve it."""
+        agent = Agent(name="test")
+        run1 = _make_run(run_id="r1", messages=[Message(role="user", content="hi")])
+        run1.branched_from = "the-original"  # already branched once
+        session = _make_session(runs=[run1], session_id="intermediate")
+        mock_save = _patch_branch_deps(agent, monkeypatch, session)
+
+        _run.branch_session_dispatch(agent, source_session_id="intermediate")
+
+        saved_session = mock_save.call_args[1].get("session") or mock_save.call_args[0][1]
+        # Nested branch must preserve the original branched_from, not overwrite it
+        assert saved_session.runs[0].branched_from == "the-original"
+        # But session-level branched_from points at the immediate parent
+        assert saved_session.session_data["branched_from"] == "intermediate"
+
+    def test_branch_branched_from_survives_to_dict_roundtrip(self, monkeypatch: pytest.MonkeyPatch):
+        """branched_from must serialize via to_dict/from_dict."""
+        run = _make_run(run_id="r1", messages=[Message(role="user", content="hi")])
+        run.branched_from = "source-sess"
+
+        d = run.to_dict()
+        assert d.get("branched_from") == "source-sess"
+
+        restored = RunOutput.from_dict(d)
+        assert restored.branched_from == "source-sess"

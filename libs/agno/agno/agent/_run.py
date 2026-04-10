@@ -5259,11 +5259,17 @@ def branch_session_dispatch(
     # Rewrite session_id on each copied run so the new session's run metadata
     # is internally consistent (runs should reference their owning session).
     # Also assign new run_ids so they are globally unique.
+    # Record branched_from on each run so the UI can distinguish copied runs
+    # from new runs. Preserve any existing branched_from so nested branches
+    # keep pointing back to the run's original session.
     for run in branched_runs or []:
         run.run_id = str(uuid4())
         run.session_id = new_session_id
+        if not run.branched_from:
+            run.branched_from = source_session_id
 
-    # Carry over session_data and record the source session for traceability.
+    # Carry over session_data and record the source session at the session level
+    # for accountability (even if all runs are later deleted/regenerated).
     new_session_data = copy.deepcopy(source_session.session_data) or {}
     new_session_data["branched_from"] = source_session_id
 
@@ -5340,11 +5346,17 @@ async def abranch_session_dispatch(
     branched_runs = copy.deepcopy(source_session.runs)
 
     # Rewrite session_id and run_id on each copied run so run metadata is consistent.
+    # Record branched_from on each run so the UI can distinguish copied runs
+    # from new runs. Preserve any existing branched_from so nested branches
+    # keep pointing back to the run's original session.
     for run in branched_runs or []:
         run.run_id = str(uuid4())
         run.session_id = new_session_id
+        if not run.branched_from:
+            run.branched_from = source_session_id
 
-    # Carry over session_data and record the source session for traceability.
+    # Carry over session_data and record the source session at the session level
+    # for accountability (even if all runs are later deleted/regenerated).
     new_session_data = copy.deepcopy(source_session.session_data) or {}
     new_session_data["branched_from"] = source_session_id
 
