@@ -59,15 +59,6 @@ class LLMsTxtReader(Reader):
         skip_optional: bool = False,
         **kwargs,
     ):
-        """Initialize the LLMsTxtReader.
-
-        Args:
-            chunking_strategy: Strategy for chunking documents.
-            max_urls: Maximum number of linked URLs to fetch. Defaults to 100.
-            timeout: HTTP request timeout in seconds. Defaults to 30.
-            proxy: Optional HTTP proxy URL.
-            skip_optional: Whether to skip URLs in the "Optional" section.
-        """
         if chunking_strategy is None:
             chunk_size = kwargs.get("chunk_size", 5000)
             chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
@@ -109,33 +100,24 @@ class LLMsTxtReader(Reader):
             section_match = _SECTION_PATTERN.match(line)
             if section_match:
                 current_section = section_match.group(1).strip()
-                continue
-
-            if not current_section:
+            elif not current_section:
                 overview_lines.append(line)
-                continue
-
-            if self.skip_optional and current_section.lower() == "optional":
-                continue
-
-            link_match = _LINK_PATTERN.match(line.strip())
-            if link_match:
-                title = link_match.group(1).strip()
-                url = link_match.group(2).strip()
-                description = (link_match.group(3) or "").strip()
-
-                # Resolve relative URLs
-                if not url.startswith(("http://", "https://")):
-                    url = urljoin(base_url, url)
-
-                entries.append(
-                    LLMsTxtEntry(
-                        title=title,
-                        url=url,
-                        description=description,
-                        section=current_section,
+            elif self.skip_optional and current_section.lower() == "optional":
+                pass
+            else:
+                link_match = _LINK_PATTERN.match(line.strip())
+                if link_match:
+                    url = link_match.group(2).strip()
+                    if not url.startswith(("http://", "https://")):
+                        url = urljoin(base_url, url)
+                    entries.append(
+                        LLMsTxtEntry(
+                            title=link_match.group(1).strip(),
+                            url=url,
+                            description=(link_match.group(3) or "").strip(),
+                            section=current_section,
+                        )
                     )
-                )
 
         overview = "\n".join(overview_lines).strip()
         return overview, entries
