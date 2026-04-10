@@ -27,8 +27,8 @@ class LLMsTxtTools(Toolkit):
 
     Args:
         knowledge: Optional Knowledge instance. When provided, enables knowledge loading mode.
-        max_urls: Maximum number of linked URLs to fetch when loading into knowledge. Defaults to 100.
-        timeout: HTTP request timeout in seconds. Defaults to 30.
+        max_urls: Maximum number of linked URLs to fetch when loading into knowledge. Defaults to 20.
+        timeout: HTTP request timeout in seconds. Defaults to 60.
         skip_optional: Whether to skip URLs listed in the "Optional" section. Defaults to False.
 
     Example:
@@ -45,8 +45,8 @@ class LLMsTxtTools(Toolkit):
     def __init__(
         self,
         knowledge: Optional[Knowledge] = None,
-        max_urls: int = 100,
-        timeout: int = 30,
+        max_urls: int = 20,
+        timeout: int = 60,
         skip_optional: bool = False,
         **kwargs,
     ):

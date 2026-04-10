@@ -57,8 +57,8 @@ SAMPLE_LLMS_TXT_RELATIVE = """# My Project
 class TestLLMsTxtReaderInit:
     def test_defaults(self):
         reader = LLMsTxtReader()
-        assert reader.max_urls == 100
-        assert reader.timeout == 30
+        assert reader.max_urls == 20
+        assert reader.timeout == 60
         assert reader.proxy is None
         assert reader.skip_optional is False
 

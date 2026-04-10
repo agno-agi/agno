@@ -44,15 +44,15 @@ class LLMsTxtReader(Reader):
     - H2-delimited sections containing markdown links to documentation pages
 
     Example:
-        reader = LLMsTxtReader(max_urls=50)
+        reader = LLMsTxtReader(max_urls=20)
         documents = reader.read("https://docs.example.com/llms.txt")
     """
 
     def __init__(
         self,
         chunking_strategy: Optional[ChunkingStrategy] = None,
-        max_urls: int = 100,
-        timeout: int = 30,
+        max_urls: int = 20,
+        timeout: int = 60,
         proxy: Optional[str] = None,
         skip_optional: bool = False,
         **kwargs,
