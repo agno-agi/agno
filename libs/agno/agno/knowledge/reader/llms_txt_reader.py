@@ -14,16 +14,14 @@ from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error, log_warning
 
-try:
-    from bs4 import BeautifulSoup
-except ImportError:
-    raise ImportError("The `bs4` package is not installed. Please install it via `pip install beautifulsoup4`.")
-
-
 # Pattern to match markdown links: - [Title](url) or - [Title](url): description
+# Note: titles with nested brackets (e.g. [Agent [Beta]](url)) are not supported.
 _LINK_PATTERN = re.compile(r"-\s+\[([^\]]+)\]\(([^)]+)\)(?::\s*(.+))?")
 # Pattern to match H2 section headers
 _SECTION_PATTERN = re.compile(r"^##\s+(.+)$", re.MULTILINE)
+
+# Maximum number of concurrent HTTP requests when fetching linked pages
+_MAX_CONCURRENT_FETCHES = 10
 
 
 @dataclass
@@ -96,7 +94,7 @@ class LLMsTxtReader(Reader):
     def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.URL]
 
-    def _parse_llms_txt(self, content: str, base_url: str) -> Tuple[str, List[LLMsTxtEntry]]:
+    def parse_llms_txt(self, content: str, base_url: str) -> Tuple[str, List[LLMsTxtEntry]]:
         """Parse an llms.txt file and extract all linked URLs.
 
         Args:
@@ -155,6 +153,11 @@ class LLMsTxtReader(Reader):
 
     def _extract_content(self, html: str) -> str:
         """Extract readable text content from HTML."""
+        try:
+            from bs4 import BeautifulSoup
+        except ImportError:
+            raise ImportError("The `bs4` package is not installed. Please install it via `pip install beautifulsoup4`.")
+
         soup = BeautifulSoup(html, "html.parser")
 
         # Remove unwanted elements
@@ -164,15 +167,15 @@ class LLMsTxtReader(Reader):
         # Try to find main content
         main = soup.find("main") or soup.find("article") or soup.find(attrs={"role": "main"})
         if main:
-            return main.get_text(strip=True, separator=" ")
+            return main.get_text(separator="\n", strip=True)
 
         body = soup.find("body")
         if body:
-            return body.get_text(strip=True, separator=" ")
+            return body.get_text(separator="\n", strip=True)
 
-        return soup.get_text(strip=True, separator=" ")
+        return soup.get_text(separator="\n", strip=True)
 
-    def _fetch_url(self, url: str) -> Optional[str]:
+    def fetch_url(self, url: str) -> Optional[str]:
         """Fetch content from a URL, returning text for text-like content or extracted text from HTML."""
         try:
             log_debug(f"Fetching: {url}")
@@ -205,7 +208,7 @@ class LLMsTxtReader(Reader):
             log_error(f"Failed to fetch {url}: {str(e)}")
             return None
 
-    async def _async_fetch_url(self, client: httpx.AsyncClient, url: str) -> Optional[str]:
+    async def async_fetch_url(self, client: httpx.AsyncClient, url: str) -> Optional[str]:
         """Asynchronously fetch content from a URL."""
         try:
             log_debug(f"Fetching asynchronously: {url}")
@@ -296,13 +299,13 @@ class LLMsTxtReader(Reader):
         log_debug(f"Reading llms.txt: {url}")
 
         # Fetch the llms.txt file
-        llms_txt_content = self._fetch_url(url)
+        llms_txt_content = self.fetch_url(url)
         if not llms_txt_content:
             log_error(f"Failed to fetch llms.txt from {url}")
             return []
 
         # Parse the llms.txt content
-        overview, entries = self._parse_llms_txt(llms_txt_content, url)
+        overview, entries = self.parse_llms_txt(llms_txt_content, url)
         log_debug(f"Found {len(entries)} linked URLs in llms.txt")
 
         # Limit the number of URLs to fetch
@@ -313,7 +316,7 @@ class LLMsTxtReader(Reader):
         # Fetch all linked pages
         fetched: Dict[str, str] = {}
         for entry in entries_to_fetch:
-            content = self._fetch_url(entry.url)
+            content = self.fetch_url(entry.url)
             if content:
                 fetched[entry.url] = content
 
@@ -335,13 +338,13 @@ class LLMsTxtReader(Reader):
         client_args = {"proxy": self.proxy} if self.proxy else {}
         async with httpx.AsyncClient(**client_args) as client:  # type: ignore
             # Fetch the llms.txt file
-            llms_txt_content = await self._async_fetch_url(client, url)
+            llms_txt_content = await self.async_fetch_url(client, url)
             if not llms_txt_content:
                 log_error(f"Failed to fetch llms.txt from {url}")
                 return []
 
             # Parse the llms.txt content
-            overview, entries = self._parse_llms_txt(llms_txt_content, url)
+            overview, entries = self.parse_llms_txt(llms_txt_content, url)
             log_debug(f"Found {len(entries)} linked URLs in llms.txt")
 
             # Limit the number of URLs to fetch
@@ -349,13 +352,16 @@ class LLMsTxtReader(Reader):
             if len(entries) > self.max_urls:
                 log_warning(f"Limiting to {self.max_urls} URLs (found {len(entries)})")
 
-            # Fetch all linked pages concurrently
+            # Fetch all linked pages concurrently with a semaphore to limit parallelism
+            semaphore = asyncio.Semaphore(_MAX_CONCURRENT_FETCHES)
+
             async def _fetch_entry(entry: LLMsTxtEntry) -> Tuple[str, Optional[str]]:
-                content = await self._async_fetch_url(client, entry.url)
-                return entry.url, content
+                async with semaphore:
+                    content = await self.async_fetch_url(client, entry.url)
+                    return entry.url, content
 
             results = await asyncio.gather(*[_fetch_entry(e) for e in entries_to_fetch])
-            fetched: Dict[str, str] = {url: content for url, content in results if content}
+            fetched: Dict[str, str] = {entry_url: content for entry_url, content in results if content}
 
             log_debug(f"Successfully fetched {len(fetched)}/{len(entries_to_fetch)} linked pages")
             return self._build_documents(overview, entries_to_fetch, fetched, url, name)
