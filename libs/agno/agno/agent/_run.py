@@ -4671,6 +4671,8 @@ def regenerate_dispatch(
 
     # Build message context: everything except the final assistant response
     trimmed_messages = _strip_final_assistant_messages(last_run.messages)
+    if not trimmed_messages:
+        raise ValueError("Cannot regenerate: no user messages found in the last run.")
 
     # Handle the original run
     if preserve_original:
@@ -4884,6 +4886,8 @@ def aregenerate_dispatch(  # type: ignore
 
         # Build message context: everything except the final assistant response
         trimmed_messages = _strip_final_assistant_messages(last_run.messages)
+        if not trimmed_messages:
+            raise ValueError("Cannot regenerate: no user messages found in the last run.")
 
         # Handle the original run
         if preserve_original:
@@ -5061,6 +5065,9 @@ async def _aregenerate_run(
         raise ValueError("Last run has no messages to regenerate from.")
 
     trimmed_messages = _strip_final_assistant_messages(last_run.messages)
+    if not trimmed_messages:
+        raise ValueError("Cannot regenerate: no user messages found in the last run.")
+
     if preserve_original:
         last_run.status = RunStatus.regenerated
     else:
@@ -5139,6 +5146,9 @@ async def _aregenerate_run_stream(
         raise ValueError("Last run has no messages to regenerate from.")
 
     trimmed_messages = _strip_final_assistant_messages(last_run.messages)
+    if not trimmed_messages:
+        raise ValueError("Cannot regenerate: no user messages found in the last run.")
+
     if preserve_original:
         last_run.status = RunStatus.regenerated
     else:

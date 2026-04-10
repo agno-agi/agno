@@ -219,6 +219,21 @@ class TestRegenerateDispatch:
         with pytest.raises(ValueError, match="no messages"):
             _run.regenerate_dispatch(agent, session_id="sess-1", stream=False)
 
+    def test_regenerate_raises_on_assistant_only_messages(self, monkeypatch: pytest.MonkeyPatch):
+        """If stripping leaves no messages (assistant-only run), raise a clear error."""
+        agent = Agent(name="test")
+        assistant_only_run = _make_run(
+            messages=[
+                Message(role="assistant", content="hi"),
+                Message(role="assistant", content="there"),
+            ]
+        )
+        session = _make_session(runs=[assistant_only_run])
+        _patch_regenerate_deps(agent, monkeypatch, session)
+
+        with pytest.raises(ValueError, match="no user messages"):
+            _run.regenerate_dispatch(agent, session_id="sess-1", stream=False)
+
     def test_regenerate_raises_without_session_id(self, monkeypatch: pytest.MonkeyPatch):
         agent = Agent(name="test")
         agent.session_id = None
