@@ -49,19 +49,30 @@ class LLMsTxtTools(Toolkit):
         skip_optional: bool = False,
         **kwargs,
     ):
+        from agno.knowledge.reader.llms_txt_reader import LLMsTxtReader
+
         self.knowledge: Optional[Knowledge] = knowledge
         self.max_urls = max_urls
         self.timeout = timeout
         self.skip_optional = skip_optional
+        self.reader = LLMsTxtReader(
+            max_urls=max_urls,
+            timeout=timeout,
+            skip_optional=skip_optional,
+        )
 
         tools: List[Any] = []
+        async_tools_list: List[tuple] = []
         if self.knowledge is not None:
             tools.append(self.read_llms_txt_and_load_knowledge)
+            async_tools_list.append((self.aread_llms_txt_and_load_knowledge, "read_llms_txt_and_load_knowledge"))
         else:
             tools.append(self.get_llms_txt_index)
             tools.append(self.read_llms_txt_url)
+            async_tools_list.append((self.aget_llms_txt_index, "get_llms_txt_index"))
+            async_tools_list.append((self.aread_llms_txt_url, "read_llms_txt_url"))
 
-        super().__init__(name="llms_txt_tools", tools=tools, **kwargs)
+        super().__init__(name="llms_txt_tools", tools=tools, async_tools=async_tools_list, **kwargs)
 
     def get_llms_txt_index(self, url: str) -> str:
         """Reads an llms.txt file and returns the index of all available documentation pages.
@@ -74,19 +85,44 @@ class LLMsTxtTools(Toolkit):
         :param url: The URL of the llms.txt file (e.g. https://docs.example.com/llms.txt).
         :return: JSON with the overview and list of available documentation pages.
         """
-        from agno.knowledge.reader.llms_txt_reader import LLMsTxtReader
-
-        reader = LLMsTxtReader(
-            timeout=self.timeout,
-            skip_optional=self.skip_optional,
-        )
-
         log_info(f"Reading llms.txt index from {url}")
-        llms_txt_content = reader._fetch_url(url)
+        llms_txt_content = self.reader.fetch_url(url)
         if not llms_txt_content:
             return f"Failed to fetch llms.txt from {url}"
 
-        overview, entries = reader._parse_llms_txt(llms_txt_content, url)
+        overview, entries = self.reader.parse_llms_txt(llms_txt_content, url)
+
+        index = {
+            "overview": overview,
+            "pages": [
+                {
+                    "title": entry.title,
+                    "url": entry.url,
+                    "description": entry.description,
+                    "section": entry.section,
+                }
+                for entry in entries
+            ],
+            "total_pages": len(entries),
+        }
+        return json.dumps(index)
+
+    async def aget_llms_txt_index(self, url: str) -> str:
+        """Async variant of get_llms_txt_index.
+
+        :param url: The URL of the llms.txt file (e.g. https://docs.example.com/llms.txt).
+        :return: JSON with the overview and list of available documentation pages.
+        """
+        import httpx
+
+        log_info(f"Reading llms.txt index from {url}")
+        async with httpx.AsyncClient() as client:
+            llms_txt_content = await self.reader.async_fetch_url(client, url)
+
+        if not llms_txt_content:
+            return f"Failed to fetch llms.txt from {url}"
+
+        overview, entries = self.reader.parse_llms_txt(llms_txt_content, url)
 
         index = {
             "overview": overview,
@@ -112,12 +148,25 @@ class LLMsTxtTools(Toolkit):
         :param url: The URL of the documentation page to read.
         :return: The text content of the page.
         """
-        from agno.knowledge.reader.llms_txt_reader import LLMsTxtReader
+        log_debug(f"Fetching URL: {url}")
+        content = self.reader.fetch_url(url)
+        if not content:
+            return f"Failed to fetch content from {url}"
 
-        reader = LLMsTxtReader(timeout=self.timeout)
+        return content
+
+    async def aread_llms_txt_url(self, url: str) -> str:
+        """Async variant of read_llms_txt_url.
+
+        :param url: The URL of the documentation page to read.
+        :return: The text content of the page.
+        """
+        import httpx
 
         log_debug(f"Fetching URL: {url}")
-        content = reader._fetch_url(url)
+        async with httpx.AsyncClient() as client:
+            content = await self.reader.async_fetch_url(client, url)
+
         if not content:
             return f"Failed to fetch content from {url}"
 
@@ -136,16 +185,8 @@ class LLMsTxtTools(Toolkit):
         if self.knowledge is None:
             return "Knowledge base not provided"
 
-        from agno.knowledge.reader.llms_txt_reader import LLMsTxtReader
-
-        reader = LLMsTxtReader(
-            max_urls=self.max_urls,
-            timeout=self.timeout,
-            skip_optional=self.skip_optional,
-        )
-
         log_info(f"Reading llms.txt from {url}")
-        documents: List[Document] = reader.read(url=url)
+        documents: List[Document] = self.reader.read(url=url)
 
         if not documents:
             return f"No documents found in llms.txt at {url}"
@@ -153,6 +194,31 @@ class LLMsTxtTools(Toolkit):
         log_debug(f"Loading {len(documents)} documents into knowledge base")
         for doc in documents:
             self.knowledge.insert(
+                text_content=doc.content,
+                name=doc.name,
+                metadata=doc.meta_data,
+            )
+
+        return f"Successfully loaded {len(documents)} documents from llms.txt into the knowledge base"
+
+    async def aread_llms_txt_and_load_knowledge(self, url: str) -> str:
+        """Async variant of read_llms_txt_and_load_knowledge.
+
+        :param url: The URL of the llms.txt file (e.g. https://docs.example.com/llms.txt).
+        :return: Summary of what was loaded into the knowledge base.
+        """
+        if self.knowledge is None:
+            return "Knowledge base not provided"
+
+        log_info(f"Reading llms.txt from {url}")
+        documents: List[Document] = await self.reader.async_read(url=url)
+
+        if not documents:
+            return f"No documents found in llms.txt at {url}"
+
+        log_debug(f"Loading {len(documents)} documents into knowledge base")
+        for doc in documents:
+            await self.knowledge.ainsert(
                 text_content=doc.content,
                 name=doc.name,
                 metadata=doc.meta_data,

@@ -73,7 +73,7 @@ class TestLLMsTxtReaderInit:
 class TestParseLLMsTxt:
     def test_parses_entries(self):
         reader = LLMsTxtReader()
-        overview, entries = reader._parse_llms_txt(SAMPLE_LLMS_TXT, "https://docs.acme.com/llms.txt")
+        overview, entries = reader.parse_llms_txt(SAMPLE_LLMS_TXT, "https://docs.acme.com/llms.txt")
 
         assert len(entries) == 7
         assert entries[0].title == "Introduction"
@@ -83,35 +83,35 @@ class TestParseLLMsTxt:
 
     def test_parses_overview(self):
         reader = LLMsTxtReader()
-        overview, entries = reader._parse_llms_txt(SAMPLE_LLMS_TXT, "https://docs.acme.com/llms.txt")
+        overview, entries = reader.parse_llms_txt(SAMPLE_LLMS_TXT, "https://docs.acme.com/llms.txt")
 
         assert "# Acme Project" in overview
         assert "Acme makes it easy" in overview
 
     def test_sections_assigned(self):
         reader = LLMsTxtReader()
-        _, entries = reader._parse_llms_txt(SAMPLE_LLMS_TXT, "https://docs.acme.com/llms.txt")
+        _, entries = reader.parse_llms_txt(SAMPLE_LLMS_TXT, "https://docs.acme.com/llms.txt")
 
         sections = {e.section for e in entries}
         assert sections == {"Getting Started", "API Reference", "Optional"}
 
     def test_skip_optional(self):
         reader = LLMsTxtReader(skip_optional=True)
-        _, entries = reader._parse_llms_txt(SAMPLE_LLMS_TXT, "https://docs.acme.com/llms.txt")
+        _, entries = reader.parse_llms_txt(SAMPLE_LLMS_TXT, "https://docs.acme.com/llms.txt")
 
         assert len(entries) == 5
         assert all(e.section != "Optional" for e in entries)
 
     def test_relative_urls_resolved(self):
         reader = LLMsTxtReader()
-        _, entries = reader._parse_llms_txt(SAMPLE_LLMS_TXT_RELATIVE, "https://example.com/llms.txt")
+        _, entries = reader.parse_llms_txt(SAMPLE_LLMS_TXT_RELATIVE, "https://example.com/llms.txt")
 
         assert entries[0].url == "https://example.com/docs/guide"
         assert entries[1].url == "https://example.com/api/reference"
 
     def test_empty_content(self):
         reader = LLMsTxtReader()
-        overview, entries = reader._parse_llms_txt("", "https://example.com/llms.txt")
+        overview, entries = reader.parse_llms_txt("", "https://example.com/llms.txt")
 
         assert overview == ""
         assert entries == []
@@ -119,7 +119,7 @@ class TestParseLLMsTxt:
     def test_no_links(self):
         content = "# Title\n\nSome overview text.\n\n## Section\n\nNo links here."
         reader = LLMsTxtReader()
-        overview, entries = reader._parse_llms_txt(content, "https://example.com/llms.txt")
+        overview, entries = reader.parse_llms_txt(content, "https://example.com/llms.txt")
 
         assert "# Title" in overview
         assert entries == []
@@ -146,6 +146,14 @@ class TestExtractContent:
         assert "var x" not in result
         assert "Text" in result
 
+    def test_preserves_structure_with_newlines(self):
+        reader = LLMsTxtReader()
+        html = "<html><body><main><p>First paragraph</p><p>Second paragraph</p></main></body></html>"
+        result = reader._extract_content(html)
+        assert "First paragraph" in result
+        assert "Second paragraph" in result
+        assert "\n" in result
+
 
 class TestFetchUrl:
     def test_returns_text_for_plain_content(self):
@@ -156,7 +164,7 @@ class TestFetchUrl:
         mock_response.raise_for_status = MagicMock()
 
         with patch("httpx.get", return_value=mock_response):
-            result = reader._fetch_url("https://example.com/file.txt")
+            result = reader.fetch_url("https://example.com/file.txt")
 
         assert result == "Plain text content"
 
@@ -168,7 +176,7 @@ class TestFetchUrl:
         mock_response.raise_for_status = MagicMock()
 
         with patch("httpx.get", return_value=mock_response):
-            result = reader._fetch_url("https://example.com/page")
+            result = reader.fetch_url("https://example.com/page")
 
         assert "Extracted" in result
 
@@ -179,7 +187,7 @@ class TestFetchUrl:
             "httpx.get",
             side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=MagicMock(status_code=404)),
         ):
-            result = reader._fetch_url("https://example.com/missing")
+            result = reader.fetch_url("https://example.com/missing")
 
         assert result is None
 
@@ -187,7 +195,7 @@ class TestFetchUrl:
         reader = LLMsTxtReader()
 
         with patch("httpx.get", side_effect=httpx.RequestError("connection failed")):
-            result = reader._fetch_url("https://example.com/down")
+            result = reader.fetch_url("https://example.com/down")
 
         assert result is None
 
@@ -243,7 +251,7 @@ class TestRead:
                 return SAMPLE_LLMS_TXT
             return f"Content of {url}"
 
-        with patch.object(reader, "_fetch_url", side_effect=mock_fetch):
+        with patch.object(reader, "fetch_url", side_effect=mock_fetch):
             docs = reader.read("https://example.com/llms.txt")
 
         # 1 overview + 5 linked docs (max_urls=5)
@@ -253,7 +261,7 @@ class TestRead:
     def test_read_returns_empty_on_fetch_failure(self):
         reader = LLMsTxtReader()
 
-        with patch.object(reader, "_fetch_url", return_value=None):
+        with patch.object(reader, "fetch_url", return_value=None):
             docs = reader.read("https://example.com/llms.txt")
 
         assert docs == []
@@ -266,7 +274,7 @@ class TestRead:
                 return SAMPLE_LLMS_TXT
             return f"Content of {url}"
 
-        with patch.object(reader, "_fetch_url", side_effect=mock_fetch):
+        with patch.object(reader, "fetch_url", side_effect=mock_fetch):
             docs = reader.read("https://example.com/llms.txt")
 
         # 1 overview + 2 linked docs (max_urls=2)
@@ -286,6 +294,12 @@ class TestLLMsTxtToolsInit:
         assert "read_llms_txt_url" in func_names
         assert "read_llms_txt_and_load_knowledge" not in func_names
 
+    def test_without_knowledge_registers_async_tools(self):
+        tools = LLMsTxtTools()
+        async_func_names = [func.name for func in tools.async_functions.values()]
+        assert "get_llms_txt_index" in async_func_names
+        assert "read_llms_txt_url" in async_func_names
+
     def test_with_knowledge_registers_load(self):
         mock_knowledge = MagicMock()
         tools = LLMsTxtTools(knowledge=mock_knowledge)
@@ -293,11 +307,23 @@ class TestLLMsTxtToolsInit:
         assert "read_llms_txt_and_load_knowledge" in func_names
         assert "get_llms_txt_index" not in func_names
 
+    def test_with_knowledge_registers_async_load(self):
+        mock_knowledge = MagicMock()
+        tools = LLMsTxtTools(knowledge=mock_knowledge)
+        async_func_names = [func.name for func in tools.async_functions.values()]
+        assert "read_llms_txt_and_load_knowledge" in async_func_names
+
     def test_custom_params(self):
         tools = LLMsTxtTools(max_urls=50, timeout=10, skip_optional=True)
         assert tools.max_urls == 50
         assert tools.timeout == 10
         assert tools.skip_optional is True
+
+    def test_reader_is_reused(self):
+        tools = LLMsTxtTools()
+        assert tools.reader is not None
+        assert tools.reader.timeout == tools.timeout
+        assert tools.reader.max_urls == tools.max_urls
 
 
 class TestGetLLMsTxtIndex:
