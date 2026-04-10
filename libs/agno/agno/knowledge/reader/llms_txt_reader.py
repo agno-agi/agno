@@ -2,7 +2,7 @@ import asyncio
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
 import httpx
@@ -20,17 +20,12 @@ from agno.knowledge.types import ContentType
 from agno.utils.http import async_fetch_with_retry, fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_warning
 
-# Pattern to match markdown links: - [Title](url) or - [Title](url): description
-# Note: titles with nested brackets (e.g. [Agent [Beta]](url)) are not supported.
 _LINK_PATTERN = re.compile(r"-\s+\[([^\]]+)\]\(([^)]+)\)(?::\s*(.+))?")
-# Pattern to match H2 section headers
 _SECTION_PATTERN = re.compile(r"^##\s+(.+)$", re.MULTILINE)
 
 
 @dataclass
 class LLMsTxtEntry:
-    """A single entry parsed from an llms.txt file."""
-
     title: str
     url: str
     description: str
@@ -38,15 +33,7 @@ class LLMsTxtEntry:
 
 
 class LLMsTxtReader(Reader):
-    """Reader for llms.txt files.
-
-    Reads an llms.txt file (see https://llmstxt.org), parses all linked documentation URLs,
-    fetches the content of each linked page, and returns them as Documents.
-
-    The llms.txt format is a standardized markdown file with:
-    - An H1 heading (project name)
-    - An optional blockquote summary
-    - H2-delimited sections containing markdown links to documentation pages
+    """Reader for llms.txt files (see https://llmstxt.org).
 
     Example:
         reader = LLMsTxtReader(max_urls=20)
@@ -60,7 +47,7 @@ class LLMsTxtReader(Reader):
         timeout: int = 60,
         proxy: Optional[str] = None,
         skip_optional: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ):
         if chunking_strategy is None:
             chunk_size = kwargs.get("chunk_size", 5000)
@@ -85,48 +72,9 @@ class LLMsTxtReader(Reader):
     def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.URL]
 
-    def parse_llms_txt(self, content: str, base_url: str) -> Tuple[str, List[LLMsTxtEntry]]:
-        """Parse an llms.txt file and extract all linked URLs.
-
-        Args:
-            content: The raw text content of the llms.txt file.
-            base_url: The base URL for resolving relative links.
-
-        Returns:
-            A tuple of (overview text, list of LLMsTxtEntry).
-        """
-        entries: List[LLMsTxtEntry] = []
-        current_section = ""
-        overview_lines: List[str] = []
-
-        for line in content.split("\n"):
-            section_match = _SECTION_PATTERN.match(line)
-            if section_match:
-                current_section = section_match.group(1).strip()
-            elif not current_section:
-                overview_lines.append(line)
-            elif self.skip_optional and current_section.lower() == "optional":
-                pass
-            else:
-                link_match = _LINK_PATTERN.match(line.strip())
-                if link_match:
-                    url = link_match.group(2).strip()
-                    if not url.startswith(("http://", "https://")):
-                        url = urljoin(base_url, url)
-                    entries.append(
-                        LLMsTxtEntry(
-                            title=link_match.group(1).strip(),
-                            url=url,
-                            description=(link_match.group(3) or "").strip(),
-                            section=current_section,
-                        )
-                    )
-
-        overview = "\n".join(overview_lines).strip()
-        return overview, entries
+    # Helpers
 
     def _process_response(self, content_type: str, text: str) -> str:
-        """Classify an HTTP response by content-type and extract text."""
         if any(t in content_type for t in ["text/plain", "text/markdown"]):
             return text
 
@@ -147,28 +95,6 @@ class LLMsTxtReader(Reader):
 
         return text
 
-    def fetch_url(self, url: str) -> Optional[str]:
-        """Fetch a URL and return its text content, or None on failure."""
-        try:
-            response = fetch_with_retry(
-                url, max_retries=1, proxy=self.proxy, timeout=self.timeout, follow_redirects=True
-            )
-            return self._process_response(response.headers.get("content-type", ""), response.text)
-        except Exception as e:
-            log_warning(f"Failed to fetch {url}: {e}")
-            return None
-
-    async def async_fetch_url(self, client: httpx.AsyncClient, url: str) -> Optional[str]:
-        """Async variant of fetch_url using a shared client."""
-        try:
-            response = await async_fetch_with_retry(
-                url, client=client, max_retries=1, timeout=self.timeout, follow_redirects=True
-            )
-            return self._process_response(response.headers.get("content-type", ""), response.text)
-        except Exception as e:
-            log_warning(f"Failed to fetch {url}: {e}")
-            return None
-
     def _build_documents(
         self,
         overview: str,
@@ -177,17 +103,13 @@ class LLMsTxtReader(Reader):
         llms_txt_url: str,
         name: Optional[str],
     ) -> List[Document]:
-        """Build Document list from fetched content."""
         documents: List[Document] = []
 
         if overview:
             doc = Document(
                 name=name or llms_txt_url,
                 id=str(uuid.uuid4()),
-                meta_data={
-                    "url": llms_txt_url,
-                    "type": "llms_txt_overview",
-                },
+                meta_data={"url": llms_txt_url, "type": "llms_txt_overview"},
                 content=overview,
             )
             if self.chunk:
@@ -218,16 +140,60 @@ class LLMsTxtReader(Reader):
 
         return documents
 
+    # Public methods
+
+    def parse_llms_txt(self, content: str, base_url: str) -> Tuple[str, List[LLMsTxtEntry]]:
+        entries: List[LLMsTxtEntry] = []
+        current_section = ""
+        overview_lines: List[str] = []
+
+        for line in content.split("\n"):
+            section_match = _SECTION_PATTERN.match(line)
+            if section_match:
+                current_section = section_match.group(1).strip()
+            elif not current_section:
+                overview_lines.append(line)
+            elif self.skip_optional and current_section.lower() == "optional":
+                pass
+            else:
+                link_match = _LINK_PATTERN.match(line.strip())
+                if link_match:
+                    url = link_match.group(2).strip()
+                    if not url.startswith(("http://", "https://")):
+                        url = urljoin(base_url, url)
+                    entries.append(
+                        LLMsTxtEntry(
+                            title=link_match.group(1).strip(),
+                            url=url,
+                            description=(link_match.group(3) or "").strip(),
+                            section=current_section,
+                        )
+                    )
+
+        overview = "\n".join(overview_lines).strip()
+        return overview, entries
+
+    def fetch_url(self, url: str) -> Optional[str]:
+        try:
+            response = fetch_with_retry(
+                url, max_retries=1, proxy=self.proxy, timeout=self.timeout, follow_redirects=True
+            )
+            return self._process_response(response.headers.get("content-type", ""), response.text)
+        except Exception as e:
+            log_warning(f"Failed to fetch {url}: {e}")
+            return None
+
+    async def async_fetch_url(self, client: httpx.AsyncClient, url: str) -> Optional[str]:
+        try:
+            response = await async_fetch_with_retry(
+                url, client=client, max_retries=1, timeout=self.timeout, follow_redirects=True
+            )
+            return self._process_response(response.headers.get("content-type", ""), response.text)
+        except Exception as e:
+            log_warning(f"Failed to fetch {url}: {e}")
+            return None
+
     def read(self, url: str, name: Optional[str] = None) -> List[Document]:
-        """Read an llms.txt file and all its linked documentation.
-
-        Args:
-            url: The URL of the llms.txt file.
-            name: Optional name for the documents.
-
-        Returns:
-            A list of documents from the llms.txt and all linked pages.
-        """
         log_debug(f"Reading llms.txt: {url}")
         llms_txt_content = self.fetch_url(url)
         if not llms_txt_content:
@@ -251,15 +217,6 @@ class LLMsTxtReader(Reader):
         return self._build_documents(overview, entries_to_fetch, fetched, url, name)
 
     async def async_read(self, url: str, name: Optional[str] = None) -> List[Document]:
-        """Asynchronously read an llms.txt file and all its linked documentation.
-
-        Args:
-            url: The URL of the llms.txt file.
-            name: Optional name for the documents.
-
-        Returns:
-            A list of documents from the llms.txt and all linked pages.
-        """
         log_debug(f"Reading llms.txt asynchronously: {url}")
         async with httpx.AsyncClient(proxy=self.proxy) as client:
             llms_txt_content = await self.async_fetch_url(client, url)
@@ -274,8 +231,7 @@ class LLMsTxtReader(Reader):
             if len(entries) > self.max_urls:
                 log_warning(f"Limiting to {self.max_urls} URLs (found {len(entries)})")
 
-            # httpx AsyncClient limits concurrent connections per host (default 20),
-            # so we don't need application-level throttling
+            # httpx AsyncClient limits concurrent connections per host (default 20)
             async def _fetch_entry(entry: LLMsTxtEntry) -> Tuple[str, Optional[str]]:
                 content = await self.async_fetch_url(client, entry.url)
                 return entry.url, content

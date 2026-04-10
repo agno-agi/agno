@@ -43,6 +43,8 @@ class LLMsTxtTools(Toolkit):
 
         super().__init__(name="llms_txt_tools", tools=tools, async_tools=async_tools_list, **kwargs)
 
+    # Helpers
+
     def _async_client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(timeout=self.timeout, proxy=self.reader.proxy)
 
@@ -58,6 +60,8 @@ class LLMsTxtTools(Toolkit):
             }
         )
 
+    # Tools
+
     def get_llms_txt_index(self, url: str) -> str:
         """
         Reads an llms.txt file and returns the index of all available documentation pages.
@@ -69,13 +73,16 @@ class LLMsTxtTools(Toolkit):
         Returns:
             str: JSON with the overview and list of available documentation pages
         """
-        log_info(f"Reading llms.txt index from {url}")
-        llms_txt_content = self.reader.fetch_url(url)
-        if not llms_txt_content:
-            return f"Failed to fetch llms.txt from {url}"
+        try:
+            log_info(f"Reading llms.txt index from {url}")
+            llms_txt_content = self.reader.fetch_url(url)
+            if not llms_txt_content:
+                return f"Failed to fetch llms.txt from {url}"
 
-        overview, entries = self.reader.parse_llms_txt(llms_txt_content, url)
-        return self._format_index(overview, entries)
+            overview, entries = self.reader.parse_llms_txt(llms_txt_content, url)
+            return self._format_index(overview, entries)
+        except Exception as e:
+            return f"Error reading llms.txt index from {url}: {type(e).__name__}: {e}"
 
     async def aget_llms_txt_index(self, url: str) -> str:
         """
@@ -88,15 +95,18 @@ class LLMsTxtTools(Toolkit):
         Returns:
             str: JSON with the overview and list of available documentation pages
         """
-        log_info(f"Reading llms.txt index from {url}")
-        async with self._async_client() as client:
-            llms_txt_content = await self.reader.async_fetch_url(client, url)
+        try:
+            log_info(f"Reading llms.txt index from {url}")
+            async with self._async_client() as client:
+                llms_txt_content = await self.reader.async_fetch_url(client, url)
 
-        if not llms_txt_content:
-            return f"Failed to fetch llms.txt from {url}"
+            if not llms_txt_content:
+                return f"Failed to fetch llms.txt from {url}"
 
-        overview, entries = self.reader.parse_llms_txt(llms_txt_content, url)
-        return self._format_index(overview, entries)
+            overview, entries = self.reader.parse_llms_txt(llms_txt_content, url)
+            return self._format_index(overview, entries)
+        except Exception as e:
+            return f"Error reading llms.txt index from {url}: {type(e).__name__}: {e}"
 
     def read_llms_txt_url(self, url: str) -> str:
         """
@@ -109,11 +119,14 @@ class LLMsTxtTools(Toolkit):
         Returns:
             str: The text content of the page
         """
-        log_debug(f"Fetching URL: {url}")
-        content = self.reader.fetch_url(url)
-        if not content:
-            return f"Failed to fetch content from {url}"
-        return content
+        try:
+            log_debug(f"Fetching URL: {url}")
+            content = self.reader.fetch_url(url)
+            if not content:
+                return f"Failed to fetch content from {url}"
+            return content
+        except Exception as e:
+            return f"Error fetching {url}: {type(e).__name__}: {e}"
 
     async def aread_llms_txt_url(self, url: str) -> str:
         """
@@ -126,13 +139,16 @@ class LLMsTxtTools(Toolkit):
         Returns:
             str: The text content of the page
         """
-        log_debug(f"Fetching URL: {url}")
-        async with self._async_client() as client:
-            content = await self.reader.async_fetch_url(client, url)
+        try:
+            log_debug(f"Fetching URL: {url}")
+            async with self._async_client() as client:
+                content = await self.reader.async_fetch_url(client, url)
 
-        if not content:
-            return f"Failed to fetch content from {url}"
-        return content
+            if not content:
+                return f"Failed to fetch content from {url}"
+            return content
+        except Exception as e:
+            return f"Error fetching {url}: {type(e).__name__}: {e}"
 
     def read_llms_txt_and_load_knowledge(self, url: str) -> str:
         """
@@ -147,9 +163,12 @@ class LLMsTxtTools(Toolkit):
         if self.knowledge is None:
             return "Knowledge base not provided"
 
-        log_info(f"Reading llms.txt from {url}")
-        self.knowledge.insert(url=url, reader=self.reader)
-        return f"Successfully loaded documentation from {url} into the knowledge base"
+        try:
+            log_info(f"Reading llms.txt from {url}")
+            self.knowledge.insert(url=url, reader=self.reader)
+            return f"Successfully loaded documentation from {url} into the knowledge base"
+        except Exception as e:
+            return f"Error loading knowledge from {url}: {type(e).__name__}: {e}"
 
     async def aread_llms_txt_and_load_knowledge(self, url: str) -> str:
         """
@@ -164,6 +183,9 @@ class LLMsTxtTools(Toolkit):
         if self.knowledge is None:
             return "Knowledge base not provided"
 
-        log_info(f"Reading llms.txt from {url}")
-        await self.knowledge.ainsert(url=url, reader=self.reader)
-        return f"Successfully loaded documentation from {url} into the knowledge base"
+        try:
+            log_info(f"Reading llms.txt from {url}")
+            await self.knowledge.ainsert(url=url, reader=self.reader)
+            return f"Successfully loaded documentation from {url} into the knowledge base"
+        except Exception as e:
+            return f"Error loading knowledge from {url}: {type(e).__name__}: {e}"
