@@ -122,37 +122,30 @@ class LLMsTxtReader(Reader):
         overview = "\n".join(overview_lines).strip()
         return overview, entries
 
-    def _extract_content(self, html: str) -> str:
-        """Extract readable text content from HTML."""
-        try:
-            from bs4 import BeautifulSoup
-        except ImportError:
-            raise ImportError("The `bs4` package is not installed. Please install it via `pip install beautifulsoup4`.")
-
-        soup = BeautifulSoup(html, "html.parser")
-
-        # Remove unwanted elements
-        for tag in soup.find_all(["script", "style", "nav", "header", "footer", "aside"]):
-            tag.decompose()
-
-        # Try to find main content
-        main = soup.find("main") or soup.find("article") or soup.find(attrs={"role": "main"})
-        if main:
-            return main.get_text(separator="\n", strip=True)
-
-        body = soup.find("body")
-        if body:
-            return body.get_text(separator="\n", strip=True)
-
-        return soup.get_text(separator="\n", strip=True)
-
     def _process_response(self, content_type: str, text: str) -> str:
-        """Classify an HTTP response by content-type and return processed text."""
+        """Classify an HTTP response by content-type and extract text."""
         if any(t in content_type for t in ["text/plain", "text/markdown"]):
             return text
 
         if "text/html" in content_type or text.strip().startswith(("<!DOCTYPE", "<html", "<HTML")):
-            return self._extract_content(text)
+            try:
+                from bs4 import BeautifulSoup
+            except ImportError:
+                raise ImportError("The `bs4` package is not installed. Please install it via `pip install beautifulsoup4`.")
+
+            soup = BeautifulSoup(text, "html.parser")
+            for tag in soup.find_all(["script", "style", "nav", "header", "footer", "aside"]):
+                tag.decompose()
+
+            main = soup.find("main") or soup.find("article") or soup.find(attrs={"role": "main"})
+            if main:
+                return main.get_text(separator="\n", strip=True)
+
+            body = soup.find("body")
+            if body:
+                return body.get_text(separator="\n", strip=True)
+
+            return soup.get_text(separator="\n", strip=True)
 
         return text
 

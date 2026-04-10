@@ -124,31 +124,31 @@ class TestParseLLMsTxt:
         assert entries == []
 
 
-class TestExtractContent:
+class TestProcessResponse:
     def test_extracts_from_main_tag(self):
         reader = LLMsTxtReader()
         html = "<html><body><nav>Nav</nav><main>Main content here</main><footer>Foot</footer></body></html>"
-        result = reader._extract_content(html)
+        result = reader._process_response("text/html",html)
         assert "Main content here" in result
         assert "Nav" not in result
 
     def test_extracts_from_body_fallback(self):
         reader = LLMsTxtReader()
         html = "<html><body><div>Body content</div></body></html>"
-        result = reader._extract_content(html)
+        result = reader._process_response("text/html",html)
         assert "Body content" in result
 
     def test_strips_script_and_style(self):
         reader = LLMsTxtReader()
         html = "<html><body><script>var x=1;</script><style>.a{}</style><p>Text</p></body></html>"
-        result = reader._extract_content(html)
+        result = reader._process_response("text/html",html)
         assert "var x" not in result
         assert "Text" in result
 
     def test_preserves_structure_with_newlines(self):
         reader = LLMsTxtReader()
         html = "<html><body><main><p>First paragraph</p><p>Second paragraph</p></main></body></html>"
-        result = reader._extract_content(html)
+        result = reader._process_response("text/html",html)
         assert "First paragraph" in result
         assert "Second paragraph" in result
         assert "\n" in result
