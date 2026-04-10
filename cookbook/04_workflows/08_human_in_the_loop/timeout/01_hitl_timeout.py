@@ -1,9 +1,9 @@
 """
 HITL Timeout Example
 
-This example demonstrates timeout handling for HITL pauses. When a step
-pauses for human review, a timeout can be set so the workflow doesn't
-wait forever.
+This example demonstrates timeout handling for HITL pauses using the HumanReview
+config class. When a step pauses for human review, a timeout can be set so
+the workflow doesn't wait forever.
 
 Timeout is checked at continue_run() time. If the timeout has elapsed:
 - on_timeout="approve": Auto-approve the output
@@ -19,20 +19,20 @@ import time
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.workflow.step import Step
-from agno.workflow.types import OnTimeout
+from agno.workflow.types import HumanReview, OnTimeout
 from agno.workflow.workflow import Workflow
 
 draft_agent = Agent(
     name="Drafter",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You draft short professional emails. Keep it under 3 sentences.",
 )
 
 send_agent = Agent(
     name="Sender",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You confirm sending the email. Summarize what was sent.",
 )
 
@@ -43,10 +43,12 @@ workflow = Workflow(
         Step(
             name="draft_email",
             agent=draft_agent,
-            requires_output_review=True,
-            output_review_message="Review the draft (auto-approves in 5 seconds)",
-            hitl_timeout=5,  # 5 second timeout
-            on_timeout=OnTimeout.approve,  # Auto-approve when timeout expires
+            human_review=HumanReview(
+                requires_output_review=True,
+                output_review_message="Review the draft (auto-approves in 5 seconds)",
+                timeout=5,  # 5 second timeout
+                on_timeout=OnTimeout.approve,  # Auto-approve when timeout expires
+            ),
         ),
         Step(
             name="send_email",

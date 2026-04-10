@@ -1,16 +1,17 @@
 """
 Confirmation Timeout Example
 
-Demonstrates timeout with pre-execution confirmation (requires_confirmation).
-The step pauses BEFORE execution and waits for human approval. If no one
-responds within the timeout, the on_timeout action fires automatically.
+Demonstrates timeout with pre-execution confirmation (requires_confirmation)
+using the HITL config class. The step pauses BEFORE execution and waits for
+human approval. If no one responds within the timeout, the on_timeout action
+fires automatically.
 
 Three timeout behaviors:
   - on_timeout="approve": Auto-confirm and execute the step
   - on_timeout="skip": Skip the step, continue workflow
   - on_timeout="cancel": Cancel the entire workflow
 
-Timeout is checked lazily at continue_run() time — no background timer needed.
+Timeout is checked lazily at continue_run() time -- no background timer needed.
 The timeout_at field on StepRequirement can be used by a UI for countdown display.
 
 Run:
@@ -22,7 +23,7 @@ import time
 from agno.db.sqlite import SqliteDb
 from agno.workflow import OnReject
 from agno.workflow.step import Step
-from agno.workflow.types import OnTimeout, StepInput, StepOutput
+from agno.workflow.types import HumanReview, OnTimeout, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 
@@ -43,7 +44,7 @@ def generate_report(step_input: StepInput) -> StepOutput:
 
 
 # ---------------------------------------------------------------------------
-# Workflow — dangerous step with confirmation + timeout
+# Workflow -- dangerous step with confirmation + timeout via HITL config
 # ---------------------------------------------------------------------------
 workflow = Workflow(
     name="confirmation_timeout_demo",
@@ -53,13 +54,15 @@ workflow = Workflow(
         Step(
             name="delete_records",
             executor=delete_old_records,
-            # Pre-execution confirmation: pauses BEFORE the step runs
-            requires_confirmation=True,
-            confirmation_message="About to delete old records. Proceed?",
-            on_reject=OnReject.skip,
-            # Timeout: auto-skip if no human responds within 10 seconds
-            hitl_timeout=10,
-            on_timeout=OnTimeout.skip,
+            human_review=HumanReview(
+                # Pre-execution confirmation: pauses BEFORE the step runs
+                requires_confirmation=True,
+                confirmation_message="About to delete old records. Proceed?",
+                on_reject=OnReject.skip,
+                # Timeout: auto-skip if no human responds within 10 seconds
+                timeout=10,
+                on_timeout=OnTimeout.skip,
+            ),
         ),
         Step(name="report", executor=generate_report),
     ],
@@ -87,7 +90,7 @@ if __name__ == "__main__":
         # req.confirm()  # or req.reject()
         # run_output = workflow.continue_run(run_output)
 
-        # Option 2: Simulate timeout — wait past the deadline
+        # Option 2: Simulate timeout -- wait past the deadline
         print("\nSimulating 11 second delay (timeout is 10 seconds)...")
         time.sleep(11)
 

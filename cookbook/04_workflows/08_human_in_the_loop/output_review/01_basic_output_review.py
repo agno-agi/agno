@@ -1,9 +1,9 @@
 """
 Basic Output Review Example
 
-This example demonstrates post-execution output review, where the workflow
-pauses AFTER a step runs so a human can review the output before it flows
-to the next step.
+This example demonstrates post-execution output review using the HITL config,
+where the workflow pauses AFTER a step runs so a human can review the output
+before it flows to the next step.
 
 The human can:
 - Confirm: Output flows to the next step as-is
@@ -13,21 +13,22 @@ The human can:
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.workflow import OnReject
 from agno.workflow.step import Step
+from agno.workflow.types import HumanReview
 from agno.workflow.workflow import Workflow
 
 # Create agents for each step
 draft_agent = Agent(
     name="Drafter",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You draft short professional emails. Keep it under 3 sentences.",
 )
 
 send_agent = Agent(
     name="Sender",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You confirm sending the email. Summarize what was sent.",
 )
 
@@ -39,9 +40,11 @@ workflow = Workflow(
         Step(
             name="draft_email",
             agent=draft_agent,
-            requires_output_review=True,
-            output_review_message="Review the email draft before sending",
-            on_reject=OnReject.cancel,  # Reject = cancel workflow (don't send the email)
+            human_review=HumanReview(
+                requires_output_review=True,
+                output_review_message="Review the email draft before sending",
+                on_reject=OnReject.cancel,  # Reject = cancel workflow (don't send the email)
+            ),
         ),
         Step(
             name="send_email",
