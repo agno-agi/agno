@@ -766,12 +766,15 @@ class OpenAIResponses(Model):
                 **request_params,
             )
 
+            # Stop the timer before polling so wall-clock polling wait is not counted as inference time.
+            # For background mode, the initial create() measures submission latency; the polling loop
+            # is then allowed to run without inflating time_to_first_token / total time metrics.
+            assistant_message.metrics.stop_timer()
+
             # Poll for completion if background mode is enabled
             if self.background and provider_response.status in ("queued", "in_progress"):
                 log_debug(f"Background response submitted: {provider_response.id}, polling for completion...")
                 provider_response = self._poll_background_response(provider_response.id)
-
-            assistant_message.metrics.stop_timer()
 
             if provider_response.status == "failed":
                 error_msg = provider_response.error.message if provider_response.error else "Background response failed"
@@ -868,12 +871,15 @@ class OpenAIResponses(Model):
                 **request_params,
             )
 
+            # Stop the timer before polling so wall-clock polling wait is not counted as inference time.
+            # For background mode, the initial create() measures submission latency; the polling loop
+            # is then allowed to run without inflating time_to_first_token / total time metrics.
+            assistant_message.metrics.stop_timer()
+
             # Poll for completion if background mode is enabled
             if self.background and provider_response.status in ("queued", "in_progress"):
                 log_debug(f"Background response submitted: {provider_response.id}, polling for completion...")
                 provider_response = await self._apoll_background_response(provider_response.id)
-
-            assistant_message.metrics.stop_timer()
 
             if provider_response.status == "failed":
                 error_msg = provider_response.error.message if provider_response.error else "Background response failed"
