@@ -58,11 +58,12 @@ class OpenAIResponses(Model):
     service_tier: Optional[Literal["auto", "default", "flex", "priority"]] = None
     strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     background: Optional[bool] = (
-        None  # When True, enables background mode for long-running tasks. The API returns immediately and the response is polled until completion.
+        None  # When True, enables background mode for long-running tasks. The API returns immediately and the response is polled until completion. Not supported for streaming.
     )
     background_poll_interval: float = (
         2.0  # Interval in seconds between polling attempts when background mode is enabled.
     )
+    background_max_wait: float = 600.0  # Maximum time in seconds to wait for a background response before cancelling it and raising an error. Defaults to 10 minutes, matching OpenAI's storage window.
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     extra_body: Optional[Any] = None
@@ -194,23 +195,55 @@ class OpenAIResponses(Model):
         return self.async_client
 
     def _poll_background_response(self, response_id: str) -> "Response":
-        """Poll for a background response until it reaches a terminal state."""
+        """Poll for a background response until it reaches a terminal state.
+
+        If background_max_wait is exceeded, cancels the response and raises ModelProviderError.
+        """
         client = self.get_client()
+        deadline = time.monotonic() + self.background_max_wait
         while True:
             response = client.responses.retrieve(response_id)
-            log_debug(f"Background response {response_id} status: {response.status}")
-            if response.status in ("completed", "failed", "incomplete"):
+            if response.status in ("completed", "failed", "incomplete", "cancelled"):
                 return response
+            if time.monotonic() >= deadline:
+                log_warning(
+                    f"Background response {response_id} exceeded max wait of {self.background_max_wait}s, cancelling."
+                )
+                try:
+                    client.responses.cancel(response_id)
+                except Exception as cancel_exc:
+                    log_warning(f"Failed to cancel background response {response_id}: {cancel_exc}")
+                raise ModelProviderError(
+                    message=f"Background response {response_id} exceeded max wait of {self.background_max_wait}s",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
             time.sleep(self.background_poll_interval)
 
     async def _apoll_background_response(self, response_id: str) -> "Response":
-        """Async poll for a background response until it reaches a terminal state."""
+        """Async poll for a background response until it reaches a terminal state.
+
+        If background_max_wait is exceeded, cancels the response and raises ModelProviderError.
+        """
         client = self.get_async_client()
+        deadline = time.monotonic() + self.background_max_wait
         while True:
             response = await client.responses.retrieve(response_id)
-            log_debug(f"Background response {response_id} status: {response.status}")
-            if response.status in ("completed", "failed", "incomplete"):
+            if response.status in ("completed", "failed", "incomplete", "cancelled"):
                 return response
+            if time.monotonic() >= deadline:
+                log_warning(
+                    f"Background response {response_id} exceeded max wait of {self.background_max_wait}s, cancelling."
+                )
+                try:
+                    await client.responses.cancel(response_id)
+                except Exception as cancel_exc:
+                    log_warning(f"Failed to cancel background response {response_id}: {cancel_exc}")
+                raise ModelProviderError(
+                    message=f"Background response {response_id} exceeded max wait of {self.background_max_wait}s",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
             await asyncio.sleep(self.background_poll_interval)
 
     def get_request_params(
@@ -743,6 +776,12 @@ class OpenAIResponses(Model):
             if provider_response.status == "failed":
                 error_msg = provider_response.error.message if provider_response.error else "Background response failed"
                 raise ModelProviderError(message=error_msg, model_name=self.name, model_id=self.id)
+            if provider_response.status == "cancelled":
+                raise ModelProviderError(
+                    message=f"Background response {provider_response.id} was cancelled",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
             if provider_response.status == "incomplete":
                 log_warning(
                     f"Background response {provider_response.id} completed with status 'incomplete': "
@@ -839,6 +878,12 @@ class OpenAIResponses(Model):
             if provider_response.status == "failed":
                 error_msg = provider_response.error.message if provider_response.error else "Background response failed"
                 raise ModelProviderError(message=error_msg, model_name=self.name, model_id=self.id)
+            if provider_response.status == "cancelled":
+                raise ModelProviderError(
+                    message=f"Background response {provider_response.id} was cancelled",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
             if provider_response.status == "incomplete":
                 log_warning(
                     f"Background response {provider_response.id} completed with status 'incomplete': "
@@ -916,6 +961,9 @@ class OpenAIResponses(Model):
             request_params = self.get_request_params(
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
+            # Background mode is not supported for streaming. Strip the flag and warn.
+            if request_params.pop("background", None):
+                log_warning("Background mode is not supported for streaming requests. Ignoring `background=True`.")
             tool_use: Dict[str, Any] = {}
 
             assistant_message.metrics.start_timer()
@@ -1002,6 +1050,9 @@ class OpenAIResponses(Model):
             request_params = self.get_request_params(
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
+            # Background mode is not supported for streaming. Strip the flag and warn.
+            if request_params.pop("background", None):
+                log_warning("Background mode is not supported for streaming requests. Ignoring `background=True`.")
             tool_use: Dict[str, Any] = {}
 
             assistant_message.metrics.start_timer()
