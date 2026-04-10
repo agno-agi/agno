@@ -203,6 +203,7 @@ class OpenAIResponses(Model):
         deadline = time.monotonic() + self.background_max_wait
         while True:
             response = client.responses.retrieve(response_id)
+            log_debug(f"Background response {response_id} status: {response.status}")
             if response.status in ("completed", "failed", "incomplete", "cancelled"):
                 return response
             if time.monotonic() >= deadline:
@@ -229,6 +230,7 @@ class OpenAIResponses(Model):
         deadline = time.monotonic() + self.background_max_wait
         while True:
             response = await client.responses.retrieve(response_id)
+            log_debug(f"Background response {response_id} status: {response.status}")
             if response.status in ("completed", "failed", "incomplete", "cancelled"):
                 return response
             if time.monotonic() >= deadline:
@@ -1251,11 +1253,6 @@ class OpenAIResponses(Model):
             ModelResponse: Parsed response delta
         """
         model_response = ModelResponse()
-
-        print("--------------------------------")
-        print(stream_event.type)
-        print(stream_event)
-        print("--------------------------------")
 
         # 1. Add response ID
         if stream_event.type == "response.created":
