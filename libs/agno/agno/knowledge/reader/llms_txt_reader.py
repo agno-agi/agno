@@ -12,6 +12,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
+from agno.utils.http import async_fetch_with_retry, fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_warning
 
 # Pattern to match markdown links: - [Title](url) or - [Title](url): description
@@ -128,7 +129,9 @@ class LLMsTxtReader(Reader):
             try:
                 from bs4 import BeautifulSoup
             except ImportError:
-                raise ImportError("The `bs4` package is not installed. Please install it via `pip install beautifulsoup4`.")
+                raise ImportError(
+                    "The `bs4` package is not installed. Please install it via `pip install beautifulsoup4`."
+                )
 
             soup = BeautifulSoup(text, "html.parser")
             for tag in soup.find_all(["script", "style", "nav", "header", "footer", "aside"]):
@@ -149,8 +152,9 @@ class LLMsTxtReader(Reader):
     def fetch_url(self, url: str) -> Optional[str]:
         """Fetch a URL and return its text content, or None on failure."""
         try:
-            response = httpx.get(url, timeout=self.timeout, proxy=self.proxy, follow_redirects=True)
-            response.raise_for_status()
+            response = fetch_with_retry(
+                url, max_retries=1, proxy=self.proxy, timeout=self.timeout, follow_redirects=True
+            )
             return self._process_response(response.headers.get("content-type", ""), response.text)
         except Exception as e:
             log_warning(f"Failed to fetch {url}: {e}")
@@ -159,8 +163,9 @@ class LLMsTxtReader(Reader):
     async def async_fetch_url(self, client: httpx.AsyncClient, url: str) -> Optional[str]:
         """Async variant of fetch_url using a shared client."""
         try:
-            response = await client.get(url, timeout=self.timeout, follow_redirects=True)
-            response.raise_for_status()
+            response = await async_fetch_with_retry(
+                url, client=client, max_retries=1, timeout=self.timeout, follow_redirects=True
+            )
             return self._process_response(response.headers.get("content-type", ""), response.text)
         except Exception as e:
             log_warning(f"Failed to fetch {url}: {e}")
@@ -271,14 +276,12 @@ class LLMsTxtReader(Reader):
             entries_to_fetch = entries[: self.max_urls]
             if len(entries) > self.max_urls:
                 log_warning(f"Limiting to {self.max_urls} URLs (found {len(entries)})")
-            # httpx pool limits handle per-host connections, but we also cap total
-            # in-flight fetches to avoid bursting 100 requests at third-party servers
-            semaphore = asyncio.Semaphore(10)
 
+            # httpx AsyncClient limits concurrent connections per host (default 20),
+            # so we don't need application-level throttling
             async def _fetch_entry(entry: LLMsTxtEntry) -> Tuple[str, Optional[str]]:
-                async with semaphore:
-                    content = await self.async_fetch_url(client, entry.url)
-                    return entry.url, content
+                content = await self.async_fetch_url(client, entry.url)
+                return entry.url, content
 
             results = await asyncio.gather(*[_fetch_entry(e) for e in entries_to_fetch])
             fetched: Dict[str, str] = {entry_url: content for entry_url, content in results if content}
