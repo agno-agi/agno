@@ -1,7 +1,7 @@
 """Unit tests for LLMsTxtTools and LLMsTxtReader."""
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import httpx
 import pytest
@@ -12,7 +12,7 @@ from agno.knowledge.reader.llms_txt_reader import LLMsTxtEntry, LLMsTxtReader  #
 from agno.tools.llms_txt import LLMsTxtTools  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# Sample llms.txt content for testing
+# Fixtures
 # ---------------------------------------------------------------------------
 
 SAMPLE_LLMS_TXT = """# Acme Project
@@ -49,331 +49,494 @@ SAMPLE_LLMS_TXT_RELATIVE = """# My Project
 """
 
 
-# ---------------------------------------------------------------------------
-# LLMsTxtReader tests
-# ---------------------------------------------------------------------------
-
-
-class TestLLMsTxtReaderInit:
-    def test_defaults(self):
-        reader = LLMsTxtReader()
-        assert reader.max_urls == 20
-        assert reader.timeout == 60
-        assert reader.proxy is None
-        assert reader.skip_optional is False
-
-    def test_custom_params(self):
-        reader = LLMsTxtReader(max_urls=50, timeout=10, skip_optional=True)
-        assert reader.max_urls == 50
-        assert reader.timeout == 10
-        assert reader.skip_optional is True
-
-
-class TestParseLLMsTxt:
-    def test_parses_entries(self):
-        reader = LLMsTxtReader()
-        overview, entries = reader.parse_llms_txt(SAMPLE_LLMS_TXT, "https://docs.acme.com/llms.txt")
-
-        assert len(entries) == 7
-        assert entries[0].title == "Introduction"
-        assert entries[0].url == "https://docs.acme.com/introduction"
-        assert entries[0].description == "Overview of Acme"
-        assert entries[0].section == "Getting Started"
-
-    def test_parses_overview(self):
-        reader = LLMsTxtReader()
-        overview, entries = reader.parse_llms_txt(SAMPLE_LLMS_TXT, "https://docs.acme.com/llms.txt")
-
-        assert "# Acme Project" in overview
-        assert "Acme makes it easy" in overview
-
-    def test_sections_assigned(self):
-        reader = LLMsTxtReader()
-        _, entries = reader.parse_llms_txt(SAMPLE_LLMS_TXT, "https://docs.acme.com/llms.txt")
-
-        sections = {e.section for e in entries}
-        assert sections == {"Getting Started", "API Reference", "Optional"}
-
-    def test_skip_optional(self):
-        reader = LLMsTxtReader(skip_optional=True)
-        _, entries = reader.parse_llms_txt(SAMPLE_LLMS_TXT, "https://docs.acme.com/llms.txt")
-
-        assert len(entries) == 5
-        assert all(e.section != "Optional" for e in entries)
+@pytest.fixture
+def reader():
+    return LLMsTxtReader(chunk=False)
 
-    def test_relative_urls_resolved(self):
-        reader = LLMsTxtReader()
-        _, entries = reader.parse_llms_txt(SAMPLE_LLMS_TXT_RELATIVE, "https://example.com/llms.txt")
-
-        assert entries[0].url == "https://example.com/docs/guide"
-        assert entries[1].url == "https://example.com/api/reference"
-
-    def test_empty_content(self):
-        reader = LLMsTxtReader()
-        overview, entries = reader.parse_llms_txt("", "https://example.com/llms.txt")
-
-        assert overview == ""
-        assert entries == []
-
-    def test_no_links(self):
-        content = "# Title\n\nSome overview text.\n\n## Section\n\nNo links here."
-        reader = LLMsTxtReader()
-        overview, entries = reader.parse_llms_txt(content, "https://example.com/llms.txt")
-
-        assert "# Title" in overview
-        assert entries == []
-
-
-class TestProcessResponse:
-    def test_extracts_from_main_tag(self):
-        reader = LLMsTxtReader()
-        html = "<html><body><nav>Nav</nav><main>Main content here</main><footer>Foot</footer></body></html>"
-        result = reader._process_response("text/html", html)
-        assert "Main content here" in result
-        assert "Nav" not in result
-
-    def test_extracts_from_body_fallback(self):
-        reader = LLMsTxtReader()
-        html = "<html><body><div>Body content</div></body></html>"
-        result = reader._process_response("text/html", html)
-        assert "Body content" in result
-
-    def test_strips_script_and_style(self):
-        reader = LLMsTxtReader()
-        html = "<html><body><script>var x=1;</script><style>.a{}</style><p>Text</p></body></html>"
-        result = reader._process_response("text/html", html)
-        assert "var x" not in result
-        assert "Text" in result
-
-    def test_preserves_structure_with_newlines(self):
-        reader = LLMsTxtReader()
-        html = "<html><body><main><p>First paragraph</p><p>Second paragraph</p></main></body></html>"
-        result = reader._process_response("text/html", html)
-        assert "First paragraph" in result
-        assert "Second paragraph" in result
-        assert "\n" in result
 
+@pytest.fixture
+def tools():
+    return LLMsTxtTools()
 
-class TestFetchUrl:
-    def test_returns_text_for_plain_content(self):
-        reader = LLMsTxtReader()
-        mock_response = MagicMock()
-        mock_response.headers = {"content-type": "text/plain"}
-        mock_response.text = "Plain text content"
-        mock_response.raise_for_status = MagicMock()
 
-        with patch("httpx.get", return_value=mock_response):
-            result = reader.fetch_url("https://example.com/file.txt")
+@pytest.fixture
+def tools_with_knowledge():
+    mock_knowledge = MagicMock()
+    return LLMsTxtTools(knowledge=mock_knowledge)
 
-        assert result == "Plain text content"
 
-    def test_extracts_html_content(self):
-        reader = LLMsTxtReader()
-        mock_response = MagicMock()
-        mock_response.headers = {"content-type": "text/html"}
-        mock_response.text = "<html><body><main>Extracted</main></body></html>"
-        mock_response.raise_for_status = MagicMock()
+def _mock_httpx_response(text: str, content_type: str = "text/plain") -> Mock:
+    resp = Mock()
+    resp.headers = {"content-type": content_type}
+    resp.text = text
+    resp.raise_for_status = Mock()
+    return resp
 
-        with patch("httpx.get", return_value=mock_response):
-            result = reader.fetch_url("https://example.com/page")
 
-        assert "Extracted" in result
+# ============================================================================
+# READER: INIT
+# ============================================================================
 
-    def test_returns_none_on_http_error(self):
-        reader = LLMsTxtReader()
 
-        with patch(
-            "httpx.get",
-            side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=MagicMock(status_code=404)),
-        ):
-            result = reader.fetch_url("https://example.com/missing")
+def test_reader_defaults():
+    reader = LLMsTxtReader()
+    assert reader.max_urls == 20
+    assert reader.timeout == 60
+    assert reader.proxy is None
+    assert reader.skip_optional is False
 
-        assert result is None
 
-    def test_returns_none_on_request_error(self):
-        reader = LLMsTxtReader()
+def test_reader_custom_params():
+    reader = LLMsTxtReader(max_urls=50, timeout=10, skip_optional=True)
+    assert reader.max_urls == 50
+    assert reader.timeout == 10
+    assert reader.skip_optional is True
 
-        with patch("httpx.get", side_effect=httpx.RequestError("connection failed")):
-            result = reader.fetch_url("https://example.com/down")
 
-        assert result is None
+# ============================================================================
+# READER: PARSE
+# ============================================================================
 
 
-class TestBuildDocuments:
-    def test_builds_overview_and_linked_docs(self):
-        reader = LLMsTxtReader(chunk=False)
-        entries = [
-            LLMsTxtEntry(title="Intro", url="https://example.com/intro", description="Intro page", section="Docs"),
-        ]
-        fetched = {"https://example.com/intro": "Introduction content here"}
+def test_parse_entries(reader):
+    overview, entries = reader.parse_llms_txt(SAMPLE_LLMS_TXT, "https://docs.acme.com/llms.txt")
 
-        docs = reader._build_documents("Overview text", entries, fetched, "https://example.com/llms.txt", None)
+    assert len(entries) == 7
+    assert entries[0].title == "Introduction"
+    assert entries[0].url == "https://docs.acme.com/introduction"
+    assert entries[0].description == "Overview of Acme"
+    assert entries[0].section == "Getting Started"
 
-        assert len(docs) == 2
-        assert docs[0].meta_data["type"] == "llms_txt_overview"
-        assert docs[0].content == "Overview text"
-        assert docs[1].meta_data["type"] == "llms_txt_linked_doc"
-        assert docs[1].name == "Intro"
-        assert docs[1].content == "Introduction content here"
 
-    def test_skips_unfetched_entries(self):
-        reader = LLMsTxtReader(chunk=False)
-        entries = [
-            LLMsTxtEntry(title="Missing", url="https://example.com/missing", description="", section="Docs"),
-        ]
-        fetched = {}
+def test_parse_overview(reader):
+    overview, _ = reader.parse_llms_txt(SAMPLE_LLMS_TXT, "https://docs.acme.com/llms.txt")
 
-        docs = reader._build_documents("Overview", entries, fetched, "https://example.com/llms.txt", None)
+    assert "# Acme Project" in overview
+    assert "Acme makes it easy" in overview
 
-        # Only the overview doc
-        assert len(docs) == 1
 
+def test_parse_sections(reader):
+    _, entries = reader.parse_llms_txt(SAMPLE_LLMS_TXT, "https://docs.acme.com/llms.txt")
 
-class TestRead:
-    def test_read_fetches_and_builds_docs(self):
-        reader = LLMsTxtReader(max_urls=5, chunk=False)
+    sections = {e.section for e in entries}
+    assert sections == {"Getting Started", "API Reference", "Optional"}
 
-        def mock_fetch(url):
-            if url == "https://example.com/llms.txt":
-                return SAMPLE_LLMS_TXT
-            return f"Content of {url}"
 
-        with patch.object(reader, "fetch_url", side_effect=mock_fetch):
-            docs = reader.read("https://example.com/llms.txt")
+def test_parse_skip_optional():
+    reader = LLMsTxtReader(skip_optional=True)
+    _, entries = reader.parse_llms_txt(SAMPLE_LLMS_TXT, "https://docs.acme.com/llms.txt")
 
-        # 1 overview + 5 linked docs (max_urls=5)
-        assert len(docs) == 6
-        assert docs[0].meta_data["type"] == "llms_txt_overview"
+    assert len(entries) == 5
+    assert all(e.section != "Optional" for e in entries)
 
-    def test_read_returns_empty_on_fetch_failure(self):
-        reader = LLMsTxtReader()
 
-        with patch.object(reader, "fetch_url", return_value=None):
-            docs = reader.read("https://example.com/llms.txt")
+def test_parse_relative_urls(reader):
+    _, entries = reader.parse_llms_txt(SAMPLE_LLMS_TXT_RELATIVE, "https://example.com/llms.txt")
 
-        assert docs == []
+    assert entries[0].url == "https://example.com/docs/guide"
+    assert entries[1].url == "https://example.com/api/reference"
 
-    def test_max_urls_limits_fetched_pages(self):
-        reader = LLMsTxtReader(max_urls=2, chunk=False)
 
-        def mock_fetch(url):
-            if url == "https://example.com/llms.txt":
-                return SAMPLE_LLMS_TXT
-            return f"Content of {url}"
+def test_parse_empty_content(reader):
+    overview, entries = reader.parse_llms_txt("", "https://example.com/llms.txt")
 
-        with patch.object(reader, "fetch_url", side_effect=mock_fetch):
-            docs = reader.read("https://example.com/llms.txt")
+    assert overview == ""
+    assert entries == []
 
-        # 1 overview + 2 linked docs (max_urls=2)
-        assert len(docs) == 3
 
+def test_parse_no_links(reader):
+    content = "# Title\n\nSome overview text.\n\n## Section\n\nNo links here."
+    overview, entries = reader.parse_llms_txt(content, "https://example.com/llms.txt")
 
-# ---------------------------------------------------------------------------
-# LLMsTxtTools tests
-# ---------------------------------------------------------------------------
+    assert "# Title" in overview
+    assert entries == []
 
 
-class TestLLMsTxtToolsInit:
-    def test_without_knowledge_registers_agentic_tools(self):
-        tools = LLMsTxtTools()
-        func_names = [func.name for func in tools.functions.values()]
-        assert "get_llms_txt_index" in func_names
-        assert "read_llms_txt_url" in func_names
-        assert "read_llms_txt_and_load_knowledge" not in func_names
+# ============================================================================
+# READER: PROCESS RESPONSE
+# ============================================================================
 
-    def test_without_knowledge_registers_async_tools(self):
-        tools = LLMsTxtTools()
-        async_func_names = [func.name for func in tools.async_functions.values()]
-        assert "get_llms_txt_index" in async_func_names
-        assert "read_llms_txt_url" in async_func_names
 
-    def test_with_knowledge_registers_load(self):
-        mock_knowledge = MagicMock()
-        tools = LLMsTxtTools(knowledge=mock_knowledge)
-        func_names = [func.name for func in tools.functions.values()]
-        assert "read_llms_txt_and_load_knowledge" in func_names
-        assert "get_llms_txt_index" not in func_names
+def test_process_response_plain_text(reader):
+    result = reader._process_response("text/plain", "Plain text content")
+    assert result == "Plain text content"
 
-    def test_with_knowledge_registers_async_load(self):
-        mock_knowledge = MagicMock()
-        tools = LLMsTxtTools(knowledge=mock_knowledge)
-        async_func_names = [func.name for func in tools.async_functions.values()]
-        assert "read_llms_txt_and_load_knowledge" in async_func_names
 
-    def test_custom_params(self):
-        tools = LLMsTxtTools(max_urls=50, timeout=10, skip_optional=True)
-        assert tools.max_urls == 50
-        assert tools.timeout == 10
-        assert tools.skip_optional is True
+def test_process_response_markdown(reader):
+    result = reader._process_response("text/markdown", "# Heading\n\nBody")
+    assert result == "# Heading\n\nBody"
 
-    def test_reader_is_reused(self):
-        tools = LLMsTxtTools()
-        assert tools.reader is not None
-        assert tools.reader.timeout == tools.timeout
-        assert tools.reader.max_urls == tools.max_urls
 
+def test_process_response_html_extracts_main(reader):
+    html = "<html><body><nav>Nav</nav><main>Main content here</main><footer>Foot</footer></body></html>"
+    result = reader._process_response("text/html", html)
+    assert "Main content here" in result
+    assert "Nav" not in result
 
-class TestGetLLMsTxtIndex:
-    def test_returns_index_json(self):
-        tools = LLMsTxtTools()
 
-        mock_response = MagicMock()
-        mock_response.headers = {"content-type": "text/plain"}
-        mock_response.text = SAMPLE_LLMS_TXT
-        mock_response.raise_for_status = MagicMock()
+def test_process_response_html_body_fallback(reader):
+    html = "<html><body><div>Body content</div></body></html>"
+    result = reader._process_response("text/html", html)
+    assert "Body content" in result
 
-        with patch("httpx.get", return_value=mock_response):
-            result = tools.get_llms_txt_index("https://docs.acme.com/llms.txt")
 
-        data = json.loads(result)
-        assert data["total_pages"] == 7
-        assert data["pages"][0]["title"] == "Introduction"
-        assert data["pages"][0]["url"] == "https://docs.acme.com/introduction"
-        assert "overview" in data
+def test_process_response_strips_scripts(reader):
+    html = "<html><body><script>var x=1;</script><style>.a{}</style><p>Text</p></body></html>"
+    result = reader._process_response("text/html", html)
+    assert "var x" not in result
+    assert "Text" in result
 
-    def test_returns_error_on_fetch_failure(self):
-        tools = LLMsTxtTools()
 
-        with patch("httpx.get", side_effect=httpx.RequestError("connection failed")):
-            result = tools.get_llms_txt_index("https://example.com/llms.txt")
+def test_process_response_newline_separator(reader):
+    html = "<html><body><main><p>First paragraph</p><p>Second paragraph</p></main></body></html>"
+    result = reader._process_response("text/html", html)
+    assert "First paragraph" in result
+    assert "Second paragraph" in result
+    assert "\n" in result
 
-        assert "Failed to fetch" in result
 
+def test_process_response_html_sniffing(reader):
+    """HTML detected by content prefix when content-type header is missing."""
+    result = reader._process_response("", "<!DOCTYPE html><html><body><p>Sniffed</p></body></html>")
+    assert "Sniffed" in result
 
-class TestReadLLMsTxtUrl:
-    def test_returns_page_content(self):
-        tools = LLMsTxtTools()
 
-        mock_response = MagicMock()
-        mock_response.headers = {"content-type": "text/plain"}
-        mock_response.text = "Page content here"
-        mock_response.raise_for_status = MagicMock()
+def test_process_response_unknown_content_type(reader):
+    """Unknown content-type returns raw text."""
+    result = reader._process_response("application/json", '{"key": "value"}')
+    assert result == '{"key": "value"}'
 
-        with patch("httpx.get", return_value=mock_response):
-            result = tools.read_llms_txt_url("https://docs.acme.com/introduction")
 
-        assert result == "Page content here"
+# ============================================================================
+# READER: FETCH
+# ============================================================================
 
-    def test_returns_error_on_fetch_failure(self):
-        tools = LLMsTxtTools()
 
-        with patch("httpx.get", side_effect=httpx.RequestError("connection failed")):
-            result = tools.read_llms_txt_url("https://example.com/missing")
+def test_fetch_url_plain_content(reader):
+    mock_response = _mock_httpx_response("Plain text content", "text/plain")
 
-        assert "Failed to fetch" in result
+    with patch("agno.utils.http.httpx.get", return_value=mock_response):
+        result = reader.fetch_url("https://example.com/file.txt")
 
+    assert result == "Plain text content"
 
-class TestLoadKnowledge:
-    def test_delegates_to_knowledge_insert(self):
-        mock_knowledge = MagicMock()
-        tools = LLMsTxtTools(knowledge=mock_knowledge)
 
-        result = tools.read_llms_txt_and_load_knowledge("https://example.com/llms.txt")
+def test_fetch_url_html_content(reader):
+    mock_response = _mock_httpx_response("<html><body><main>Extracted</main></body></html>", "text/html")
 
-        mock_knowledge.insert.assert_called_once_with(url="https://example.com/llms.txt", reader=tools.reader)
-        assert "Successfully loaded" in result
+    with patch("agno.utils.http.httpx.get", return_value=mock_response):
+        result = reader.fetch_url("https://example.com/page")
 
-    def test_returns_message_when_no_knowledge(self):
-        tools = LLMsTxtTools()
-        result = tools.read_llms_txt_and_load_knowledge("https://example.com/llms.txt")
-        assert result == "Knowledge base not provided"
+    assert "Extracted" in result
+
+
+def test_fetch_url_http_error(reader):
+    with patch(
+        "agno.utils.http.httpx.get",
+        side_effect=httpx.HTTPStatusError("error", request=MagicMock(), response=MagicMock(status_code=404)),
+    ):
+        result = reader.fetch_url("https://example.com/missing")
+
+    assert result is None
+
+
+def test_fetch_url_request_error(reader):
+    with patch("agno.utils.http.httpx.get", side_effect=httpx.RequestError("connection failed")):
+        result = reader.fetch_url("https://example.com/down")
+
+    assert result is None
+
+
+# ============================================================================
+# READER: BUILD DOCUMENTS
+# ============================================================================
+
+
+def test_build_documents_overview_and_linked(reader):
+    entries = [
+        LLMsTxtEntry(title="Intro", url="https://example.com/intro", description="Intro page", section="Docs"),
+    ]
+    fetched = {"https://example.com/intro": "Introduction content here"}
+
+    docs = reader._build_documents("Overview text", entries, fetched, "https://example.com/llms.txt", None)
+
+    assert len(docs) == 2
+    assert docs[0].meta_data["type"] == "llms_txt_overview"
+    assert docs[0].content == "Overview text"
+    assert docs[1].meta_data["type"] == "llms_txt_linked_doc"
+    assert docs[1].name == "Intro"
+    assert docs[1].content == "Introduction content here"
+
+
+def test_build_documents_skips_unfetched(reader):
+    entries = [
+        LLMsTxtEntry(title="Missing", url="https://example.com/missing", description="", section="Docs"),
+    ]
+    docs = reader._build_documents("Overview", entries, {}, "https://example.com/llms.txt", None)
+
+    assert len(docs) == 1
+    assert docs[0].meta_data["type"] == "llms_txt_overview"
+
+
+def test_build_documents_empty_overview(reader):
+    entries = [
+        LLMsTxtEntry(title="Page", url="https://example.com/page", description="", section="Docs"),
+    ]
+    fetched = {"https://example.com/page": "Page content"}
+
+    docs = reader._build_documents("", entries, fetched, "https://example.com/llms.txt", None)
+
+    assert len(docs) == 1
+    assert docs[0].meta_data["type"] == "llms_txt_linked_doc"
+
+
+# ============================================================================
+# READER: READ
+# ============================================================================
+
+
+def test_read_fetches_and_builds():
+    reader = LLMsTxtReader(max_urls=5, chunk=False)
+
+    def mock_fetch(url):
+        if url == "https://example.com/llms.txt":
+            return SAMPLE_LLMS_TXT
+        return f"Content of {url}"
+
+    with patch.object(reader, "fetch_url", side_effect=mock_fetch):
+        docs = reader.read("https://example.com/llms.txt")
+
+    assert len(docs) == 6
+    assert docs[0].meta_data["type"] == "llms_txt_overview"
+
+
+def test_read_returns_empty_on_failure():
+    reader = LLMsTxtReader()
+
+    with patch.object(reader, "fetch_url", return_value=None):
+        docs = reader.read("https://example.com/llms.txt")
+
+    assert docs == []
+
+
+def test_read_max_urls_limits():
+    reader = LLMsTxtReader(max_urls=2, chunk=False)
+
+    def mock_fetch(url):
+        if url == "https://example.com/llms.txt":
+            return SAMPLE_LLMS_TXT
+        return f"Content of {url}"
+
+    with patch.object(reader, "fetch_url", side_effect=mock_fetch):
+        docs = reader.read("https://example.com/llms.txt")
+
+    assert len(docs) == 3
+
+
+# ============================================================================
+# READER: ASYNC READ
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_async_read_fetches_concurrently():
+    reader = LLMsTxtReader(max_urls=3, chunk=False)
+
+    async def mock_async_fetch(client, url):
+        if "llms.txt" in url:
+            return SAMPLE_LLMS_TXT
+        return f"Content of {url}"
+
+    with patch.object(reader, "async_fetch_url", side_effect=mock_async_fetch):
+        docs = await reader.async_read("https://example.com/llms.txt")
+
+    assert len(docs) == 4
+    assert docs[0].meta_data["type"] == "llms_txt_overview"
+
+
+@pytest.mark.asyncio
+async def test_async_read_returns_empty_on_failure():
+    reader = LLMsTxtReader()
+
+    async def mock_async_fetch(client, url):
+        return None
+
+    with patch.object(reader, "async_fetch_url", side_effect=mock_async_fetch):
+        docs = await reader.async_read("https://example.com/llms.txt")
+
+    assert docs == []
+
+
+# ============================================================================
+# TOOLKIT: INIT
+# ============================================================================
+
+
+def test_toolkit_agentic_tools(tools):
+    func_names = [func.name for func in tools.functions.values()]
+    assert "get_llms_txt_index" in func_names
+    assert "read_llms_txt_url" in func_names
+    assert "read_llms_txt_and_load_knowledge" not in func_names
+
+
+def test_toolkit_async_tools(tools):
+    async_func_names = [func.name for func in tools.async_functions.values()]
+    assert "get_llms_txt_index" in async_func_names
+    assert "read_llms_txt_url" in async_func_names
+
+
+def test_toolkit_knowledge_tools(tools_with_knowledge):
+    func_names = [func.name for func in tools_with_knowledge.functions.values()]
+    assert "read_llms_txt_and_load_knowledge" in func_names
+    assert "get_llms_txt_index" not in func_names
+
+
+def test_toolkit_knowledge_async_tools(tools_with_knowledge):
+    async_func_names = [func.name for func in tools_with_knowledge.async_functions.values()]
+    assert "read_llms_txt_and_load_knowledge" in async_func_names
+
+
+def test_toolkit_custom_params():
+    t = LLMsTxtTools(max_urls=50, timeout=10, skip_optional=True)
+    assert t.max_urls == 50
+    assert t.timeout == 10
+    assert t.skip_optional is True
+
+
+def test_toolkit_reader_reuse(tools):
+    assert tools.reader is not None
+    assert tools.reader.timeout == tools.timeout
+    assert tools.reader.max_urls == tools.max_urls
+
+
+# ============================================================================
+# TOOLKIT: GET INDEX
+# ============================================================================
+
+
+def test_get_index_returns_json(tools):
+    mock_response = _mock_httpx_response(SAMPLE_LLMS_TXT, "text/plain")
+
+    with patch("agno.utils.http.httpx.get", return_value=mock_response):
+        result = tools.get_llms_txt_index("https://docs.acme.com/llms.txt")
+
+    data = json.loads(result)
+    assert data["total_pages"] == 7
+    assert data["pages"][0]["title"] == "Introduction"
+    assert data["pages"][0]["url"] == "https://docs.acme.com/introduction"
+    assert "overview" in data
+
+
+def test_get_index_failure(tools):
+    with patch("agno.utils.http.httpx.get", side_effect=httpx.RequestError("connection failed")):
+        result = tools.get_llms_txt_index("https://example.com/llms.txt")
+
+    assert "Failed to fetch" in result
+
+
+def test_get_index_error_handling(tools):
+    with patch.object(tools.reader, "fetch_url", side_effect=RuntimeError("unexpected")):
+        result = tools.get_llms_txt_index("https://example.com/llms.txt")
+
+    assert "Error" in result
+    assert "RuntimeError" in result
+
+
+# ============================================================================
+# TOOLKIT: READ URL
+# ============================================================================
+
+
+def test_read_url_returns_content(tools):
+    mock_response = _mock_httpx_response("Page content here", "text/plain")
+
+    with patch("agno.utils.http.httpx.get", return_value=mock_response):
+        result = tools.read_llms_txt_url("https://docs.acme.com/introduction")
+
+    assert result == "Page content here"
+
+
+def test_read_url_failure(tools):
+    with patch("agno.utils.http.httpx.get", side_effect=httpx.RequestError("connection failed")):
+        result = tools.read_llms_txt_url("https://example.com/missing")
+
+    assert "Failed to fetch" in result
+
+
+# ============================================================================
+# TOOLKIT: ASYNC TOOLS
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_aget_index_returns_json(tools):
+    mock_response = _mock_httpx_response(SAMPLE_LLMS_TXT, "text/plain")
+
+    mock_client = AsyncMock()
+    mock_client.get.return_value = mock_response
+
+    with patch("agno.tools.llms_txt.httpx.AsyncClient") as mock_async_client:
+        mock_async_client.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_async_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await tools.aget_llms_txt_index("https://docs.acme.com/llms.txt")
+
+    data = json.loads(result)
+    assert data["total_pages"] == 7
+    assert data["pages"][0]["title"] == "Introduction"
+
+
+@pytest.mark.asyncio
+async def test_aread_url_returns_content(tools):
+    mock_response = _mock_httpx_response("Async page content", "text/plain")
+
+    mock_client = AsyncMock()
+    mock_client.get.return_value = mock_response
+
+    with patch("agno.tools.llms_txt.httpx.AsyncClient") as mock_async_client:
+        mock_async_client.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_async_client.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await tools.aread_llms_txt_url("https://docs.acme.com/page")
+
+    assert result == "Async page content"
+
+
+@pytest.mark.asyncio
+async def test_aread_knowledge_delegates(tools_with_knowledge):
+    tools_with_knowledge.knowledge.ainsert = AsyncMock()
+
+    result = await tools_with_knowledge.aread_llms_txt_and_load_knowledge("https://example.com/llms.txt")
+
+    tools_with_knowledge.knowledge.ainsert.assert_called_once_with(
+        url="https://example.com/llms.txt", reader=tools_with_knowledge.reader
+    )
+    assert "Successfully loaded" in result
+
+
+# ============================================================================
+# TOOLKIT: KNOWLEDGE
+# ============================================================================
+
+
+def test_knowledge_delegates_to_insert(tools_with_knowledge):
+    result = tools_with_knowledge.read_llms_txt_and_load_knowledge("https://example.com/llms.txt")
+
+    tools_with_knowledge.knowledge.insert.assert_called_once_with(
+        url="https://example.com/llms.txt", reader=tools_with_knowledge.reader
+    )
+    assert "Successfully loaded" in result
+
+
+def test_knowledge_no_knowledge(tools):
+    result = tools.read_llms_txt_and_load_knowledge("https://example.com/llms.txt")
+    assert result == "Knowledge base not provided"
+
+
+def test_knowledge_error_handling(tools_with_knowledge):
+    tools_with_knowledge.knowledge.insert.side_effect = RuntimeError("db connection failed")
+
+    result = tools_with_knowledge.read_llms_txt_and_load_knowledge("https://example.com/llms.txt")
+
+    assert "Error" in result
+    assert "RuntimeError" in result
