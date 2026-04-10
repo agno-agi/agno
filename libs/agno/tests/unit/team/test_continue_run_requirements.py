@@ -666,31 +666,162 @@ class TestAsyncGatherErrorHandling:
         assert len(member_results) == 0
 
 
+# ===========================================================================
+# 12. _tool_result_requires_human_input
+# ===========================================================================
+
+
+class TestToolResultRequiresHumanInput:
+    def test_matching_string(self):
+        from agno.team._run import _tool_result_requires_human_input
+
+        tool = _make_tool_execution(result="Tool requires human input to proceed")
+        assert _tool_result_requires_human_input(tool) is True
+
+    def test_case_insensitive(self):
+        from agno.team._run import _tool_result_requires_human_input
+
+        tool = _make_tool_execution(result="REQUIRES HUMAN INPUT")
+        assert _tool_result_requires_human_input(tool) is True
+
+    def test_no_match(self):
+        from agno.team._run import _tool_result_requires_human_input
+
+        tool = _make_tool_execution(result="Success: operation completed")
+        assert _tool_result_requires_human_input(tool) is False
+
+    def test_none_result(self):
+        from agno.team._run import _tool_result_requires_human_input
+
+        tool = _make_tool_execution(result=None)
+        assert _tool_result_requires_human_input(tool) is False
+
+    def test_non_string_result(self):
+        from agno.team._run import _tool_result_requires_human_input
+
+        tool = _make_tool_execution(result={"key": "requires human input"})
+        assert _tool_result_requires_human_input(tool) is False
+
+
+# ===========================================================================
+# 13. _prepare_member_hitl_continuation improvements
+# ===========================================================================
+
+
 class TestPrepareMemberHitlContinuation:
-    def test_updates_delegate_task_to_members_placeholder_case_insensitively(self):
-        from agno.models.message import Message
+    """Tests for the improved _prepare_member_hitl_continuation that handles
+    delegate_task_to_members (plural) and case-insensitive matching."""
+
+    def _make_run_response_with_tools(self, tools):
+        run_response = MagicMock()
+        run_response.tools = tools
+        run_response.requirements = None
+        return run_response
+
+    def _make_run_messages(self, tool_call_ids):
+        msgs = []
+        for tc_id in tool_call_ids:
+            msg = MagicMock()
+            msg.role = "tool"
+            msg.tool_call_id = tc_id
+            msg.content = "requires human input"
+            msgs.append(msg)
+        run_messages = MagicMock()
+        run_messages.messages = msgs
+        return run_messages
+
+    def test_updates_delegate_task_to_member(self):
+        from agno.team._run import _prepare_member_hitl_continuation
+
+        tool = _make_tool_execution(
+            tool_name="delegate_task_to_member",
+            tool_call_id="tc-1",
+            result="Tool requires human input",
+        )
+        run_response = self._make_run_response_with_tools([tool])
+        run_messages = self._make_run_messages(["tc-1"])
+
+        _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
+
+        assert "requires human input" not in tool.result
+        assert "Done" in tool.result
+
+    def test_updates_delegate_task_to_members_plural(self):
         from agno.team._run import _prepare_member_hitl_continuation
 
         tool = _make_tool_execution(
             tool_name="delegate_task_to_members",
-            tool_call_id="tool-1",
-            result="Agent Analyst: Requires human input before continuing.",
+            tool_call_id="tc-1",
+            result="Tool requires human input",
         )
-        run_response = MagicMock()
-        run_response.tools = [tool]
+        run_response = self._make_run_response_with_tools([tool])
+        run_messages = self._make_run_messages(["tc-1"])
+
+        _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
+
+        assert "Done" in tool.result
+
+    def test_updates_multiple_matching_tools(self):
+        from agno.team._run import _prepare_member_hitl_continuation
+
+        tool1 = _make_tool_execution(
+            tool_name="delegate_task_to_member",
+            tool_call_id="tc-1",
+            result="requires human input",
+        )
+        tool2 = _make_tool_execution(
+            tool_name="delegate_task_to_members",
+            tool_call_id="tc-2",
+            result="requires human input",
+        )
+        run_response = self._make_run_response_with_tools([tool1, tool2])
+        run_messages = self._make_run_messages(["tc-1", "tc-2"])
+
+        _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
+
+        assert "Done" in tool1.result
+        assert "Done" in tool2.result
+        assert run_messages.messages[0].content == run_messages.messages[1].content
+
+    def test_falls_back_to_any_tool_with_human_input(self):
+        """If no delegate tool matches, falls back to any tool with human input result."""
+        from agno.team._run import _prepare_member_hitl_continuation
+
+        tool = _make_tool_execution(
+            tool_name="some_other_tool",
+            tool_call_id="tc-1",
+            result="requires human input",
+        )
+        run_response = self._make_run_response_with_tools([tool])
+        run_messages = self._make_run_messages(["tc-1"])
+
+        _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
+
+        assert "Done" in tool.result
+
+    def test_resets_run_state(self):
+        from agno.run import RunStatus
+        from agno.team._run import _prepare_member_hitl_continuation
+
+        tool = _make_tool_execution(
+            tool_name="delegate_task_to_member",
+            tool_call_id="tc-1",
+            result="requires human input",
+        )
+        run_response = self._make_run_response_with_tools([tool])
         run_response.status = RunStatus.paused
-        run_response.content = "paused"
+        run_response.content = "old content"
+        run_messages = self._make_run_messages(["tc-1"])
 
-        run_messages = MagicMock()
-        run_messages.messages = [Message(role="tool", content=tool.result, tool_call_id="tool-1")]
+        _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
 
-        _prepare_member_hitl_continuation(run_response, run_messages, ["[Analyst]: Approved"])
-
-        expected = "Member results after human-in-the-loop resolution:\n[Analyst]: Approved"
-        assert tool.result == expected
-        assert run_messages.messages[0].content == expected
         assert run_response.status == RunStatus.running
         assert run_response.content is None
+
+
+# ===========================================================================
+# 14. Approval resolution fallback in continue_run_dispatch
+# ===========================================================================
 
 
 class TestContinueRunApprovalResolution:

@@ -1276,7 +1276,7 @@ def _run(
                     else:
                         delay = team.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
 
@@ -1726,7 +1726,7 @@ def _run_stream(
                     else:
                         delay = team.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
 
@@ -3134,7 +3134,7 @@ async def _arun(
                     else:
                         delay = team.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -3238,15 +3238,15 @@ async def _arun_background(
                 background_tasks=background_tasks,
                 **kwargs,
             )
-        except Exception:
-            log_error(f"Background run {run_response.run_id} failed", exc_info=True)
+        except Exception as e:
+            log_error(f"Background run {run_response.run_id} failed: {str(e)}")
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
                 team_session.upsert_run(run_response=run_response)
                 await asave_session(team, session=team_session)
-            except Exception:
-                log_error(f"Failed to persist error state for background run {run_response.run_id}", exc_info=True)
+            except Exception as e:
+                log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
             # Note: acleanup_run is already called by _arun's finally block
 
     task = asyncio.create_task(_background_task())
@@ -3704,7 +3704,7 @@ async def _arun_stream(
                     else:
                         delay = team.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -4156,7 +4156,7 @@ def _resolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
 
             run_context.dependencies[key] = resolved_value
         except Exception as e:
-            log_warning(f"Failed to resolve dependencies for {key}: {e}")
+            log_warning(f"Failed to resolve dependencies for {key}: {str(e)}")
 
 
 async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
@@ -4191,7 +4191,7 @@ async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> N
 
             run_context.dependencies[key] = resolved_value
         except Exception as e:
-            log_warning(f"Failed to resolve context for '{key}': {e}")
+            log_warning(f"Failed to resolve context for '{key}': {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -4290,6 +4290,7 @@ def _handle_team_tool_call_updates(
     etc.) that ``Team`` also provides, so passing a ``Team`` is safe at runtime.
     """
     from agno.agent._tools import (
+        handle_ask_user_tool_update,
         handle_external_execution_update,
         handle_get_user_input_tool_update,
         handle_user_input_update,
@@ -4304,7 +4305,7 @@ def _handle_team_tool_call_updates(
         # Case 1: Handle confirmed tools and execute them
         if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
             if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
-                deque(run_tool(team, run_response, run_messages, _t, functions=_functions), maxlen=0)  # type: ignore
+                deque(run_tool(team, run_response, run_messages, _t, functions=_functions, team_mode=True), maxlen=0)  # type: ignore
             else:
                 reject_tool_call(team, run_messages, _t, functions=_functions)  # type: ignore
                 _t.confirmed = False
@@ -4316,9 +4317,15 @@ def _handle_team_tool_call_updates(
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
 
-        # Case 3: Agentic user input required
+        # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _t.requires_user_input = False
+            _t.answered = True
+
+        # Case 3b: User feedback (ask_user) required
+        elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
@@ -4327,7 +4334,7 @@ def _handle_team_tool_call_updates(
             handle_user_input_update(team, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
-            deque(run_tool(team, run_response, run_messages, _t, functions=_functions), maxlen=0)  # type: ignore
+            deque(run_tool(team, run_response, run_messages, _t, functions=_functions, team_mode=True), maxlen=0)  # type: ignore
 
 
 def _handle_team_tool_call_updates_stream(
@@ -4343,6 +4350,7 @@ def _handle_team_tool_call_updates_stream(
     Yields events during tool execution for streaming responses.
     """
     from agno.agent._tools import (
+        handle_ask_user_tool_update,
         handle_external_execution_update,
         handle_get_user_input_tool_update,
         handle_user_input_update,
@@ -4364,6 +4372,7 @@ def _handle_team_tool_call_updates_stream(
                     _t,
                     functions=_functions,
                     stream_events=stream_events,  # type: ignore
+                    team_mode=True,
                 )
             else:
                 reject_tool_call(team, run_messages, _t, functions=_functions)  # type: ignore
@@ -4376,9 +4385,15 @@ def _handle_team_tool_call_updates_stream(
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
 
-        # Case 3: Agentic user input required
+        # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _t.requires_user_input = False
+            _t.answered = True
+
+        # Case 3b: User feedback (ask_user) required
+        elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
@@ -4392,6 +4407,7 @@ def _handle_team_tool_call_updates_stream(
                 _t,
                 functions=_functions,
                 stream_events=stream_events,  # type: ignore
+                team_mode=True,
             )
             _t.requires_user_input = False
             _t.answered = True
@@ -4409,6 +4425,7 @@ async def _ahandle_team_tool_call_updates(
     """
     from agno.agent._tools import (
         arun_tool,
+        handle_ask_user_tool_update,
         handle_external_execution_update,
         handle_get_user_input_tool_update,
         handle_user_input_update,
@@ -4421,7 +4438,7 @@ async def _ahandle_team_tool_call_updates(
     for _t in run_response.tools or []:
         if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
             if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
-                async for _ in arun_tool(team, run_response, run_messages, _t, functions=_functions):  # type: ignore
+                async for _ in arun_tool(team, run_response, run_messages, _t, functions=_functions, team_mode=True):  # type: ignore
                     pass
             else:
                 reject_tool_call(team, run_messages, _t, functions=_functions)  # type: ignore
@@ -4433,8 +4450,15 @@ async def _ahandle_team_tool_call_updates(
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
 
+        # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _t.requires_user_input = False
+            _t.answered = True
+
+        # Case 3b: User feedback (ask_user) required
+        elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
@@ -4442,7 +4466,7 @@ async def _ahandle_team_tool_call_updates(
             handle_user_input_update(team, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
-            async for _ in arun_tool(team, run_response, run_messages, _t, functions=_functions):  # type: ignore
+            async for _ in arun_tool(team, run_response, run_messages, _t, functions=_functions, team_mode=True):  # type: ignore
                 pass
 
 
@@ -4460,6 +4484,7 @@ async def _ahandle_team_tool_call_updates_stream(
     """
     from agno.agent._tools import (
         arun_tool,
+        handle_ask_user_tool_update,
         handle_external_execution_update,
         handle_get_user_input_tool_update,
         handle_user_input_update,
@@ -4480,6 +4505,7 @@ async def _ahandle_team_tool_call_updates_stream(
                     _t,
                     functions=_functions,
                     stream_events=stream_events,  # type: ignore
+                    team_mode=True,
                 ):
                     yield event  # type: ignore
             else:
@@ -4493,9 +4519,15 @@ async def _ahandle_team_tool_call_updates_stream(
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
 
-        # Case 3: Agentic user input required
+        # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _t.requires_user_input = False
+            _t.answered = True
+
+        # Case 3b: User feedback (ask_user) required
+        elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
@@ -4509,6 +4541,7 @@ async def _ahandle_team_tool_call_updates_stream(
                 _t,
                 functions=_functions,
                 stream_events=stream_events,  # type: ignore
+                team_mode=True,
             ):
                 yield event  # type: ignore
             _t.requires_user_input = False
@@ -4720,7 +4753,7 @@ def _route_requirements_to_members_stream(
             event.parent_run_id = getattr(event, "parent_run_id", None) or run_response.run_id
 
             # Store event and yield (same as _handle_model_response_chunk for member events)
-            if team.stream_member_events:
+            if stream_events or team.stream_member_events:
                 yield handle_event(
                     event,
                     run_response,
@@ -4930,7 +4963,7 @@ async def _aroute_requirements_to_members_stream(
             event.parent_run_id = getattr(event, "parent_run_id", None) or run_response.run_id
 
             # Store event and yield (same as _handle_model_response_chunk for member events)
-            if team.stream_member_events:
+            if stream_events or team.stream_member_events:
                 yield handle_event(
                     event,
                     run_response,
@@ -4976,8 +5009,9 @@ def _prepare_member_hitl_continuation(
 ) -> None:
     """Prepare run_response and run_messages for member HITL continuation.
 
-    Updates the delegate_task_to_member tool result in both run_response.tools
-    and the corresponding message in run_messages. Also resets run state for continuation.
+    Updates the delegate_task_to_member/delegate_task_to_members tool result in both
+    run_response.tools and the corresponding message in run_messages. Also resets run
+    state for continuation.
 
     This is called after the member agent's HITL has been resolved and we need to
     continue the team run with the member's results.
@@ -5634,7 +5668,7 @@ def _continue_run(
     handle_event(
         create_team_run_continued_event(run_response),
         run_response,
-        # events_to_skip=team.events_to_skip,
+        events_to_skip=team.events_to_skip,
         store_events=team.store_events,
     )
 
@@ -5759,7 +5793,7 @@ def _continue_run(
                         delay = team.delay_between_retries * (2**attempt)
                     else:
                         delay = team.delay_between_retries
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     _time.sleep(delay)
                     continue
 
@@ -6023,7 +6057,7 @@ def _continue_run_stream(
                         delay = team.delay_between_retries * (2**attempt)
                     else:
                         delay = team.delay_between_retries
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     _time.sleep(delay)
                     continue
 
@@ -6215,7 +6249,9 @@ async def _acontinue_run(
                     from agno.run.approval import acheck_and_apply_approval_resolution
 
                     try:
-                        await acheck_and_apply_approval_resolution(team.db, run_response.run_id, run_response)
+                        await acheck_and_apply_approval_resolution(
+                            team.db, run_response.run_id or run_id or "", run_response
+                        )
                     except RuntimeError:
                         raise ValueError(
                             "To continue a run from a given run_id, the requirements parameter must be provided "
@@ -6443,7 +6479,7 @@ async def _acontinue_run(
                         delay = team.delay_between_retries * (2**attempt)
                     else:
                         delay = team.delay_between_retries
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -6534,7 +6570,9 @@ async def _acontinue_run_stream(
                     from agno.run.approval import acheck_and_apply_approval_resolution
 
                     try:
-                        await acheck_and_apply_approval_resolution(team.db, run_response.run_id, run_response)
+                        await acheck_and_apply_approval_resolution(
+                            team.db, run_response.run_id or run_id or "", run_response
+                        )
                     except RuntimeError:
                         raise ValueError(
                             "To continue a run from a given run_id, the requirements parameter must be provided "
@@ -6974,7 +7012,7 @@ async def _acontinue_run_stream(
                         delay = team.delay_between_retries * (2**attempt)
                     else:
                         delay = team.delay_between_retries
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
