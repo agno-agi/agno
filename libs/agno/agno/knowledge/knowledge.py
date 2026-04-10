@@ -1564,7 +1564,9 @@ class Knowledge(RemoteKnowledge):
         file_extension = url_path.suffix.lower()
 
         bytes_content = None
-        if file_extension:
+        # Skip pre-download when a custom reader is provided — it knows how to
+        # handle the URL directly (e.g. LLMsTxtReader fetches linked pages)
+        if file_extension and not content.reader:
             async with AsyncClient() as client:
                 response = await async_fetch_with_retry(content.url, client=client)
             bytes_content = BytesIO(response.content)
@@ -1716,7 +1718,9 @@ class Knowledge(RemoteKnowledge):
         file_extension = url_path.suffix.lower()
 
         bytes_content = None
-        if file_extension:
+        # Skip pre-download when a custom reader is provided — it knows how to
+        # handle the URL directly (e.g. LLMsTxtReader fetches linked pages)
+        if file_extension and not content.reader:
             response = fetch_with_retry(content.url)
             bytes_content = BytesIO(response.content)
 

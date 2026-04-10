@@ -381,19 +381,12 @@ class TestLoadKnowledge:
         mock_knowledge = MagicMock()
         tools = LLMsTxtTools(knowledge=mock_knowledge)
 
-        tools.read_llms_txt_and_load_knowledge("https://example.com/llms.txt")
+        result = tools.read_llms_txt_and_load_knowledge("https://example.com/llms.txt")
 
         mock_knowledge.insert.assert_called_once_with(url="https://example.com/llms.txt", reader=tools.reader)
+        assert "Successfully loaded" in result
 
     def test_returns_message_when_no_knowledge(self):
         tools = LLMsTxtTools()
         result = tools.read_llms_txt_and_load_knowledge("https://example.com/llms.txt")
         assert result == "Knowledge base not provided"
-
-    def test_returns_success_message(self):
-        mock_knowledge = MagicMock()
-        tools = LLMsTxtTools(knowledge=mock_knowledge)
-
-        result = tools.read_llms_txt_and_load_knowledge("https://example.com/llms.txt")
-
-        assert "Successfully loaded" in result

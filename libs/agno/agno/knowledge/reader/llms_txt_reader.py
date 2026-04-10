@@ -106,29 +106,21 @@ class LLMsTxtReader(Reader):
         """
         entries: List[LLMsTxtEntry] = []
         current_section = ""
-        in_optional = False
-
-        lines = content.split("\n")
         overview_lines: List[str] = []
-        past_first_section = False
 
-        for line in lines:
-            # Check for section headers
+        for line in content.split("\n"):
             section_match = _SECTION_PATTERN.match(line)
             if section_match:
                 current_section = section_match.group(1).strip()
-                past_first_section = True
-                in_optional = current_section.lower() == "optional"
                 continue
 
-            if not past_first_section:
+            if not current_section:
                 overview_lines.append(line)
                 continue
 
-            if self.skip_optional and in_optional:
+            if self.skip_optional and current_section.lower() == "optional":
                 continue
 
-            # Check for links
             link_match = _LINK_PATTERN.match(line.strip())
             if link_match:
                 title = link_match.group(1).strip()
@@ -189,10 +181,7 @@ class LLMsTxtReader(Reader):
         """Fetch content from a URL, returning text for text-like content or extracted text from HTML."""
         try:
             log_debug(f"Fetching: {url}")
-            if self.proxy:
-                response = httpx.get(url, timeout=self.timeout, proxy=self.proxy, follow_redirects=True)
-            else:
-                response = httpx.get(url, timeout=self.timeout, follow_redirects=True)
+            response = httpx.get(url, timeout=self.timeout, proxy=self.proxy, follow_redirects=True)
             response.raise_for_status()
             return self._process_response(response.headers.get("content-type", ""), response.text)
         except httpx.HTTPStatusError as e:
@@ -284,23 +273,18 @@ class LLMsTxtReader(Reader):
             A list of documents from the llms.txt and all linked pages.
         """
         log_debug(f"Reading llms.txt: {url}")
-
-        # Fetch the llms.txt file
         llms_txt_content = self.fetch_url(url)
         if not llms_txt_content:
             log_error(f"Failed to fetch llms.txt from {url}")
             return []
 
-        # Parse the llms.txt content
         overview, entries = self.parse_llms_txt(llms_txt_content, url)
         log_debug(f"Found {len(entries)} linked URLs in llms.txt")
 
-        # Limit the number of URLs to fetch
         entries_to_fetch = entries[: self.max_urls]
         if len(entries) > self.max_urls:
             log_warning(f"Limiting to {self.max_urls} URLs (found {len(entries)})")
 
-        # Fetch all linked pages
         fetched: Dict[str, str] = {}
         for entry in entries_to_fetch:
             content = self.fetch_url(entry.url)
@@ -321,25 +305,18 @@ class LLMsTxtReader(Reader):
             A list of documents from the llms.txt and all linked pages.
         """
         log_debug(f"Reading llms.txt asynchronously: {url}")
-
-        client_args = {"proxy": self.proxy} if self.proxy else {}
-        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
-            # Fetch the llms.txt file
+        async with httpx.AsyncClient(proxy=self.proxy) as client:
             llms_txt_content = await self.async_fetch_url(client, url)
             if not llms_txt_content:
                 log_error(f"Failed to fetch llms.txt from {url}")
                 return []
 
-            # Parse the llms.txt content
             overview, entries = self.parse_llms_txt(llms_txt_content, url)
             log_debug(f"Found {len(entries)} linked URLs in llms.txt")
 
-            # Limit the number of URLs to fetch
             entries_to_fetch = entries[: self.max_urls]
             if len(entries) > self.max_urls:
                 log_warning(f"Limiting to {self.max_urls} URLs (found {len(entries)})")
-
-            # Fetch all linked pages concurrently with a semaphore to limit parallelism
             semaphore = asyncio.Semaphore(_MAX_CONCURRENT_FETCHES)
 
             async def _fetch_entry(entry: LLMsTxtEntry) -> Tuple[str, Optional[str]]:

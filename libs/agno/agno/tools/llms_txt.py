@@ -82,6 +82,24 @@ class LLMsTxtTools(Toolkit):
             kwargs["proxy"] = self.reader.proxy
         return kwargs
 
+    def _format_index(self, overview: str, entries: list) -> str:
+        """Build JSON index response from parsed llms.txt data."""
+        return json.dumps(
+            {
+                "overview": overview,
+                "pages": [
+                    {
+                        "title": e.title,
+                        "url": e.url,
+                        "description": e.description,
+                        "section": e.section,
+                    }
+                    for e in entries
+                ],
+                "total_pages": len(entries),
+            }
+        )
+
     def get_llms_txt_index(self, url: str) -> str:
         """Reads an llms.txt file and returns the index of all available documentation pages.
 
@@ -99,21 +117,7 @@ class LLMsTxtTools(Toolkit):
             return f"Failed to fetch llms.txt from {url}"
 
         overview, entries = self.reader.parse_llms_txt(llms_txt_content, url)
-
-        index = {
-            "overview": overview,
-            "pages": [
-                {
-                    "title": entry.title,
-                    "url": entry.url,
-                    "description": entry.description,
-                    "section": entry.section,
-                }
-                for entry in entries
-            ],
-            "total_pages": len(entries),
-        }
-        return json.dumps(index)
+        return self._format_index(overview, entries)
 
     async def aget_llms_txt_index(self, url: str) -> str:
         """Reads an llms.txt file and returns the index of all available documentation pages.
@@ -134,21 +138,7 @@ class LLMsTxtTools(Toolkit):
             return f"Failed to fetch llms.txt from {url}"
 
         overview, entries = self.reader.parse_llms_txt(llms_txt_content, url)
-
-        index = {
-            "overview": overview,
-            "pages": [
-                {
-                    "title": entry.title,
-                    "url": entry.url,
-                    "description": entry.description,
-                    "section": entry.section,
-                }
-                for entry in entries
-            ],
-            "total_pages": len(entries),
-        }
-        return json.dumps(index)
+        return self._format_index(overview, entries)
 
     def read_llms_txt_url(self, url: str) -> str:
         """Fetches and returns the content of a specific documentation page URL.
