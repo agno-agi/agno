@@ -60,7 +60,6 @@ class TestLLMsTxtReaderInit:
         assert reader.max_urls == 100
         assert reader.timeout == 30
         assert reader.proxy is None
-        assert reader.include_llms_txt_content is True
         assert reader.skip_optional is False
 
     def test_custom_params(self):
@@ -228,19 +227,6 @@ class TestBuildDocuments:
 
         # Only the overview doc
         assert len(docs) == 1
-
-    def test_excludes_overview_when_disabled(self):
-        reader = LLMsTxtReader(chunk=False, include_llms_txt_content=False)
-        entries = [
-            LLMsTxtEntry(title="Page", url="https://example.com/page", description="", section="Docs"),
-        ]
-        fetched = {"https://example.com/page": "Page content"}
-
-        docs = reader._build_documents("Overview", entries, fetched, "https://example.com/llms.txt", None)
-
-        assert len(docs) == 1
-        assert docs[0].meta_data["type"] == "llms_txt_linked_doc"
-
 
 class TestRead:
     def test_read_fetches_and_builds_docs(self):

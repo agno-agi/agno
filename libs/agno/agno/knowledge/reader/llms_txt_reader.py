@@ -56,7 +56,6 @@ class LLMsTxtReader(Reader):
         max_urls: int = 100,
         timeout: int = 30,
         proxy: Optional[str] = None,
-        include_llms_txt_content: bool = True,
         skip_optional: bool = False,
         **kwargs,
     ):
@@ -67,7 +66,6 @@ class LLMsTxtReader(Reader):
             max_urls: Maximum number of linked URLs to fetch. Defaults to 100.
             timeout: HTTP request timeout in seconds. Defaults to 30.
             proxy: Optional HTTP proxy URL.
-            include_llms_txt_content: Whether to include the llms.txt file itself as a document.
             skip_optional: Whether to skip URLs in the "Optional" section.
         """
         if chunking_strategy is None:
@@ -77,7 +75,6 @@ class LLMsTxtReader(Reader):
         self.max_urls = max_urls
         self.timeout = timeout
         self.proxy = proxy
-        self.include_llms_txt_content = include_llms_txt_content
         self.skip_optional = skip_optional
 
     @classmethod
@@ -222,8 +219,7 @@ class LLMsTxtReader(Reader):
         """Build Document list from fetched content."""
         documents: List[Document] = []
 
-        # Optionally include the llms.txt overview as a document
-        if self.include_llms_txt_content and overview:
+        if overview:
             doc = Document(
                 name=name or llms_txt_url,
                 id=str(uuid.uuid4()),
