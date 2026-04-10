@@ -11,6 +11,7 @@ on:
       - "fix/ci-test-failures"
       - "fix/team-hitl-streaming"
       - "v2.5-phase2"
+      - "gh-7432"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
