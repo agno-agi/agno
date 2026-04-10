@@ -134,7 +134,7 @@ class FileTools(Toolkit):
             log_debug(f"Saved: {file_path}")
             return str(file_name)
         except Exception as e:
-            log_error(f"Error saving to file: {e}")
+            log_error(f"Error saving to file: {str(e)}")
             return f"Error saving to file: {e}"
 
     def read_file_chunk(self, file_name: str, start_line: int, end_line: int, encoding: str = "utf-8") -> str:
@@ -157,7 +157,7 @@ class FileTools(Toolkit):
             lines = contents.split(self.line_separator)
             return self.line_separator.join(lines[start_line : end_line + 1])
         except Exception as e:
-            log_error(f"Error reading file: {e}")
+            log_error(f"Error reading file: {str(e)}")
             return f"Error reading file: {e}"
 
     def replace_file_chunk(
@@ -188,7 +188,7 @@ class FileTools(Toolkit):
                 file_name=file_name, contents=self.line_separator.join(start + [chunk] + end), encoding=encoding
             )
         except Exception as e:
-            log_error(f"Error patching file: {e}")
+            log_error(f"Error patching file: {str(e)}")
             return f"Error patching file: {e}"
 
     def read_file(self, file_name: str, encoding: str = "utf-8") -> str:
@@ -212,7 +212,7 @@ class FileTools(Toolkit):
 
             return str(contents)
         except Exception as e:
-            log_error(f"Error reading file: {e}")
+            log_error(f"Error reading file: {str(e)}")
             return f"Error reading file: {e}"
 
     def delete_file(self, file_name: str) -> str:
@@ -233,7 +233,7 @@ class FileTools(Toolkit):
                 log_error(f"Attempt to delete file outside {self.base_dir}: {file_name}")
                 return "Incorrect file_name"
         except Exception as e:
-            log_error(f"Error removing {file_name}: {e}")
+            log_error(f"Error removing {file_name}: {str(e)}")
             return f"Error removing file: {e}"
 
     def list_files(self, **kwargs) -> str:
@@ -251,7 +251,7 @@ class FileTools(Toolkit):
             else:
                 return "{}"
         except Exception as e:
-            log_error(f"Error reading files: {e}")
+            log_error(f"Error reading files: {str(e)}")
             return f"Error reading files: {e}"
 
     def search_files(self, pattern: str) -> str:
