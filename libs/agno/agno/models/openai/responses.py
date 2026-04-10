@@ -1293,6 +1293,10 @@ class OpenAIResponses(Model):
             if self.reasoning is not None and self.reasoning_summary is None:
                 model_response.reasoning_content = stream_event.delta
 
+        # 3.1 Stream reasoning summary deltas
+        elif stream_event.type == "response.reasoning_summary_text.delta":
+            model_response.reasoning_content = stream_event.delta
+
         # 4. Add tool calls information
 
         # 4.1 Add starting tool call
@@ -1328,29 +1332,14 @@ class OpenAIResponses(Model):
         elif stream_event.type == "response.completed":
             model_response = ModelResponse()
 
-            # Handle reasoning output items
-            if self.reasoning_summary is not None or self.store is False:
-                summary_text: str = ""
+            # Handle reasoning output items for ZDR mode (store=False)
+            if self.store is False:
                 for out in getattr(stream_event.response, "output", []) or []:
                     if getattr(out, "type", None) == "reasoning":
-                        # In ZDR mode (store=False), store reasoning data for next request
-                        if self.store is False and hasattr(out, "encrypted_content"):
+                        if hasattr(out, "encrypted_content"):
                             if model_response.provider_data is None:
                                 model_response.provider_data = {}
-                            # Store the complete output item
                             model_response.provider_data["reasoning_output"] = out.model_dump(exclude_none=True)
-                        if self.reasoning_summary is not None:
-                            summaries = getattr(out, "summary", None)
-                            if summaries:
-                                for s in summaries:
-                                    text_val = s.get("text") if isinstance(s, dict) else getattr(s, "text", None)
-                                    if text_val:
-                                        if summary_text:
-                                            summary_text += "\n\n"
-                                        summary_text += text_val
-
-                if summary_text:
-                    model_response.reasoning_content = summary_text
 
             # Add metrics
             if stream_event.response.usage is not None:
