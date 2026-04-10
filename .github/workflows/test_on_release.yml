@@ -1,6 +1,8 @@
 name: Main Validation
 
 on:
+  schedule:
+    - cron: "30 21 * * 6"
   push:
     branches:
       - "*release*" # Run on release-* format
