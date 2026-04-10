@@ -134,6 +134,7 @@ parallel = ["parallel-web"]
 psycopg = ["psycopg-binary", "psycopg"]
 redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
+salesforce = ["simple-salesforce"]
 scrapegraph = ["scrapegraph-py"]
 todoist = ["todoist-api-python"]
 valyu = ["valyu"]
@@ -262,6 +263,7 @@ tools = [
   "agno[agentql]",
   "agno[opencv]",
   "agno[parallel]",
+  "agno[salesforce]",
   "agno[scrapegraph]",
   "agno[valyu]",
   "agno[yfinance]",

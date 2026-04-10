@@ -9,7 +9,7 @@ agents based on the topic, then the outer workflow polishes the output.
 from typing import List
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.workflow import Router
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput
@@ -31,19 +31,19 @@ def topic_router(step_input: StepInput) -> List[Step]:
 # --- Specialist agents ---
 tech_specialist = Agent(
     name="Tech Specialist",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You are a technology expert. Provide detailed technical explanations.",
 )
 
 history_specialist = Agent(
     name="History Specialist",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You are a historian. Provide detailed historical context and analysis.",
 )
 
 general_specialist = Agent(
     name="General Specialist",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You are a general knowledge expert. Provide clear, informative answers.",
 )
 
@@ -67,7 +67,7 @@ inner_workflow = Workflow(
 # --- Outer workflow ---
 editor = Agent(
     name="Editor",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You are an editor. Polish and improve the specialist's research into a clear article.",
 )
 
