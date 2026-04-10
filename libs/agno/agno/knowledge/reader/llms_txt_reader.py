@@ -20,9 +20,6 @@ _LINK_PATTERN = re.compile(r"-\s+\[([^\]]+)\]\(([^)]+)\)(?::\s*(.+))?")
 # Pattern to match H2 section headers
 _SECTION_PATTERN = re.compile(r"^##\s+(.+)$", re.MULTILINE)
 
-# Maximum number of concurrent HTTP requests when fetching linked pages
-_MAX_CONCURRENT_FETCHES = 10
-
 
 @dataclass
 class LLMsTxtEntry:
@@ -274,7 +271,9 @@ class LLMsTxtReader(Reader):
             entries_to_fetch = entries[: self.max_urls]
             if len(entries) > self.max_urls:
                 log_warning(f"Limiting to {self.max_urls} URLs (found {len(entries)})")
-            semaphore = asyncio.Semaphore(_MAX_CONCURRENT_FETCHES)
+            # httpx pool limits handle per-host connections, but we also cap total
+            # in-flight fetches to avoid bursting 100 requests at third-party servers
+            semaphore = asyncio.Semaphore(10)
 
             async def _fetch_entry(entry: LLMsTxtEntry) -> Tuple[str, Optional[str]]:
                 async with semaphore:
