@@ -513,9 +513,11 @@ class TestRouterOutputReviewFields:
             hitl_max_retries=5,
         )
         d = router.to_dict()
-        assert d["requires_output_review"] is True
-        assert d["output_review_message"] == "Review?"
-        assert d["hitl_max_retries"] == 5
+        assert "human_review" in d
+        hitl = d["human_review"]
+        assert hitl["requires_output_review"] is True
+        assert hitl["output_review_message"] == "Review?"
+        assert hitl["max_retries"] == 5
 
 
 class TestRouterCreateOutputReviewRequirement:

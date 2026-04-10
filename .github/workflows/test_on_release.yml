@@ -854,6 +854,7 @@ jobs:
           ./libs/agno/tests/integration/teams/test_tasks_mode_streaming.py \
           ./libs/agno/tests/integration/teams/test_followups.py \
           ./libs/agno/tests/integration/teams/test_tool_hooks.py \
+          ./libs/agno/tests/integration/teams/test_member_dedup.py \
 
   verify-split-test-coverage:
     runs-on: ubuntu-latest

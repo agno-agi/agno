@@ -202,6 +202,7 @@ WorkflowSteps = Union[
             Parallel,
             Condition,
             Router,
+            "Workflow",  # Nested workflow support
         ]
     ],
 ]
@@ -1425,6 +1426,8 @@ class Workflow:
                     step_type = StepType.STEP
                 elif isinstance(step, Agent) or isinstance(step, Team):
                     step_type = StepType.STEP
+                elif isinstance(step, Workflow):
+                    step_type = StepType.WORKFLOW
                 else:
                     step_type = STEP_TYPE_MAPPING[type(step)]
                 step_dict = {
@@ -1474,6 +1477,7 @@ class Workflow:
 
         if isinstance(event, (RunOutput, TeamRunOutput)):
             return event
+
         if self.store_events:
             # Check if this event type should be skipped
             if self.events_to_skip:
@@ -1573,10 +1577,31 @@ class Workflow:
         step_id = getattr(step, "step_id", None) if step else None
         step_name = getattr(step, "name", None) if step else None
 
-        if hasattr(event, "workflow_id"):
-            event.workflow_id = workflow_run_response.workflow_id
-        if hasattr(event, "workflow_run_id"):
-            event.workflow_run_id = workflow_run_response.run_id
+        # Detect nested events: if the event's workflow_id differs from the current workflow,
+        # it originated from an inner workflow and should preserve its identity.
+        is_nested_event = (
+            hasattr(event, "workflow_id")
+            and event.workflow_id is not None
+            and event.workflow_id != workflow_run_response.workflow_id
+        )
+
+        # Increment nested_depth each time an outer workflow enriches a nested event
+        if is_nested_event and hasattr(event, "nested_depth"):
+            event.nested_depth = getattr(event, "nested_depth", 0) + 1
+
+        if not is_nested_event:
+            # Outer event: set workflow identity to current workflow
+            if hasattr(event, "workflow_id"):
+                event.workflow_id = workflow_run_response.workflow_id
+            if hasattr(event, "workflow_name"):
+                event.workflow_name = workflow_run_response.workflow_name
+            if hasattr(event, "workflow_run_id"):
+                event.workflow_run_id = workflow_run_response.run_id
+        else:
+            # Nested event: preserve original workflow_id/name, but update workflow_run_id
+            # for tracking which parent run processed the event
+            if hasattr(event, "workflow_run_id"):
+                event.workflow_run_id = workflow_run_response.run_id
         # Set session_id to match workflow's session_id for consistent event tracking
         if hasattr(event, "session_id") and workflow_run_response.session_id:
             event.session_id = workflow_run_response.session_id
@@ -2500,6 +2525,7 @@ class Workflow:
             session_id=workflow_run_response.session_id,
             step_results=workflow_run_response.step_results,  # type: ignore
             metadata=workflow_run_response.metadata,
+            run_output=workflow_run_response,  # Include full run output for nested workflows
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
@@ -3371,6 +3397,7 @@ class Workflow:
             session_id=workflow_run_response.session_id,
             step_results=workflow_run_response.step_results,  # type: ignore[arg-type]
             metadata=workflow_run_response.metadata,
+            run_output=workflow_run_response,  # Include full run output for nested workflows
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
 
@@ -5147,8 +5174,12 @@ class Workflow:
                         )
                         if review_result.should_pause:
                             apply_post_execution_pause_state(
-                                workflow_run_response, i, step_name,
-                                collected_step_outputs, review_result, step_output,
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
                                 previous_step_outputs=previous_step_outputs,
                             )
                             save_paused_session(self, session, workflow_run_response)
@@ -5592,8 +5623,12 @@ class Workflow:
                         )
                         if review_result.should_pause:
                             apply_post_execution_pause_state(
-                                workflow_run_response, i, step_name,
-                                collected_step_outputs, review_result, final_router_output,
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                final_router_output,
                                 previous_step_outputs=previous_step_outputs,
                             )
                             review_event = StepOutputReviewEvent(
@@ -6470,8 +6505,12 @@ class Workflow:
                         )
                         if review_result.should_pause:
                             apply_post_execution_pause_state(
-                                workflow_run_response, i, step_name,
-                                collected_step_outputs, review_result, step_output,
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
                                 previous_step_outputs=previous_step_outputs,
                             )
                             await asave_paused_session(self, session, workflow_run_response)
@@ -6907,8 +6946,12 @@ class Workflow:
                         )
                         if review_result.should_pause:
                             apply_post_execution_pause_state(
-                                workflow_run_response, i, step_name,
-                                collected_step_outputs, review_result, final_router_output,
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                final_router_output,
                                 previous_step_outputs=previous_step_outputs,
                             )
                             review_event = StepOutputReviewEvent(
@@ -7651,7 +7694,7 @@ class Workflow:
     def _prepare_steps(self):
         """Prepare the steps for execution"""
         if not callable(self.steps) and self.steps is not None:
-            prepared_steps: List[Union[Step, Steps, Loop, Parallel, Condition, Router]] = []
+            prepared_steps: List[Union[Step, Steps, Loop, Parallel, Condition, Router, "Workflow"]] = []
             for i, step in enumerate(self.steps):  # type: ignore
                 if callable(step) and hasattr(step, "__name__"):
                     step_name = step.__name__
@@ -7665,6 +7708,10 @@ class Workflow:
                     step_name = step.name or f"step_{i + 1}"
                     log_debug(f"Step {i + 1}: Team '{step_name}' with {len(step.members)} members")
                     prepared_steps.append(Step(name=step_name, description=step.description, team=step))
+                elif isinstance(step, Workflow):
+                    step_name = step.name or f"step_{i + 1}"
+                    log_debug(f"Step {i + 1}: Nested Workflow '{step_name}'")
+                    prepared_steps.append(Step(name=step_name, description=step.description, workflow=step))
                 elif isinstance(step, Step) and step.add_workflow_history is True and self.db is None:
                     log_warning(
                         f"Step '{step.name or f'step_{i + 1}'}' has add_workflow_history=True "
@@ -7873,7 +7920,11 @@ class Workflow:
             step_dict = {
                 "name": step.name if hasattr(step, "name") else f"unnamed_{type(step).__name__.lower()}",
                 "description": step.description if hasattr(step, "description") else "User-defined callable step",
-                "type": STEP_TYPE_MAPPING[type(step)].value,  # type: ignore
+                "type": (
+                    StepType.WORKFLOW
+                    if isinstance(step, Workflow)
+                    else STEP_TYPE_MAPPING.get(type(step), StepType.STEP)
+                ).value,
             }
 
             # Handle agent/team/tools

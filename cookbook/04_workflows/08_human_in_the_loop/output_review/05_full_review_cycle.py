@@ -2,29 +2,31 @@
 Full Review Cycle Example
 =========================
 
-Demonstrates the complete HITL review workflow with all three decisions:
+Demonstrates the complete HITL review workflow with all three decisions,
+using the HITL config class:
 
   Workflow topology:
-    agent_a → [human review] ─┬─ approve → agent_b → END
-                               ├─ reject  → agent_a (retry with feedback)
-                               └─ cancel  → END
+    agent_a -> [human review] -+- approve -> agent_b -> END
+                               +- reject  -> agent_a (retry with feedback)
+                               +- cancel  -> END
 
   The post-execution review on agent_a acts as the human review gate.
-  No separate review step needed — the framework handles pause/resume.
+  No separate review step needed -- the framework handles pause/resume.
 
 Demonstrates:
-  - Post-execution output review (requires_output_review)
+  - Post-execution output review (HITL.requires_output_review)
   - Reject with retry (on_reject=OnReject.retry)
   - Reject with feedback (reject(feedback=...))
-  - Max retries (hitl_max_retries)
+  - Max retries (HITL.max_retries)
   - All three decisions: approve, reject, cancel
 """
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.workflow import OnReject
 from agno.workflow.step import Step
+from agno.workflow.types import HumanReview
 from agno.workflow.workflow import Workflow
 
 # ---------------------------------------------------------------------------
@@ -33,7 +35,7 @@ from agno.workflow.workflow import Workflow
 
 agent_a = Agent(
     name="Agent A",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions=(
         "You are Agent A - a research assistant. "
         "Produce a concise numbered list of the key benefits of morning exercise. "
@@ -45,7 +47,7 @@ agent_a = Agent(
 
 agent_b = Agent(
     name="Agent B",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions=(
         "You are Agent B - a science writer for a general audience. "
         "The human reviewer has APPROVED Agent A's research points. "
@@ -65,10 +67,12 @@ workflow = Workflow(
         Step(
             name="agent_a",
             agent=agent_a,
-            requires_output_review=True,
-            output_review_message="Review Agent A's draft and decide: approve / reject / cancel",
-            on_reject=OnReject.retry,
-            hitl_max_retries=3,
+            human_review=HumanReview(
+                requires_output_review=True,
+                output_review_message="Review Agent A's draft and decide: approve / reject / cancel",
+                on_reject=OnReject.retry,
+                max_retries=3,
+            ),
         ),
         Step(
             name="agent_b",
@@ -118,9 +122,11 @@ cancel_workflow = Workflow(
         Step(
             name="agent_a",
             agent=agent_a,
-            requires_output_review=True,
-            output_review_message="Review Agent A's draft",
-            on_reject=OnReject.cancel,
+            human_review=HumanReview(
+                requires_output_review=True,
+                output_review_message="Review Agent A's draft",
+                on_reject=OnReject.cancel,
+            ),
         ),
         Step(
             name="agent_b",
