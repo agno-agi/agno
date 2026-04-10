@@ -2,7 +2,7 @@ import asyncio
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
 import httpx
@@ -47,7 +47,7 @@ class LLMsTxtReader(Reader):
         timeout: int = 60,
         proxy: Optional[str] = None,
         skip_optional: bool = False,
-        **kwargs: Any,
+        **kwargs,
     ):
         if chunking_strategy is None:
             chunk_size = kwargs.get("chunk_size", 5000)

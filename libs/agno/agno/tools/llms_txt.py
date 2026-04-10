@@ -1,5 +1,5 @@
 import json
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 
 import httpx
 
@@ -16,7 +16,7 @@ class LLMsTxtTools(Toolkit):
         max_urls: int = 20,
         timeout: int = 60,
         skip_optional: bool = False,
-        **kwargs: Any,
+        **kwargs,
     ):
         self.knowledge: Optional[Knowledge] = knowledge
         self.max_urls = max_urls
@@ -28,7 +28,7 @@ class LLMsTxtTools(Toolkit):
             skip_optional=skip_optional,
         )
 
-        tools: List[Any] = []
+        tools: List[Callable] = []
         async_tools_list: List[tuple] = []
         # Agentic mode — agent picks which pages to read
         if self.knowledge is None:
