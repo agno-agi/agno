@@ -150,37 +150,23 @@ class LLMsTxtReader(Reader):
         return text
 
     def fetch_url(self, url: str) -> Optional[str]:
-        """Fetch content from a URL, returning text for text-like content or extracted text from HTML."""
+        """Fetch a URL and return its text content, or None on failure."""
         try:
-            log_debug(f"Fetching: {url}")
             response = httpx.get(url, timeout=self.timeout, proxy=self.proxy, follow_redirects=True)
             response.raise_for_status()
             return self._process_response(response.headers.get("content-type", ""), response.text)
-        except httpx.HTTPStatusError as e:
-            log_warning(f"HTTP error fetching {url}: {e.response.status_code}")
-            return None
-        except httpx.RequestError as e:
-            log_warning(f"Request error fetching {url}: {str(e)}")
-            return None
         except Exception as e:
-            log_error(f"Failed to fetch {url}: {str(e)}")
+            log_warning(f"Failed to fetch {url}: {e}")
             return None
 
     async def async_fetch_url(self, client: httpx.AsyncClient, url: str) -> Optional[str]:
-        """Asynchronously fetch content from a URL."""
+        """Async variant of fetch_url using a shared client."""
         try:
-            log_debug(f"Fetching asynchronously: {url}")
             response = await client.get(url, timeout=self.timeout, follow_redirects=True)
             response.raise_for_status()
             return self._process_response(response.headers.get("content-type", ""), response.text)
-        except httpx.HTTPStatusError as e:
-            log_warning(f"HTTP error fetching {url}: {e.response.status_code}")
-            return None
-        except httpx.RequestError as e:
-            log_warning(f"Request error fetching {url}: {str(e)}")
-            return None
         except Exception as e:
-            log_error(f"Failed to fetch {url}: {str(e)}")
+            log_warning(f"Failed to fetch {url}: {e}")
             return None
 
     def _build_documents(
