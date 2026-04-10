@@ -501,9 +501,10 @@ def get_team_router(
         if not isinstance(team, RemoteTeam):
             team.store_member_responses = True
 
-        if session_id is None or session_id == "":
-            log_warning(
-                "Continuing run without session_id. This might lead to unexpected behavior if session context is important."
+        if (session_id is None or session_id == "") and not isinstance(team, RemoteTeam):
+            raise HTTPException(
+                status_code=400,
+                detail="session_id is required to continue a run",
             )
 
         # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
