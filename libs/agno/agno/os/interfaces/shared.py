@@ -10,13 +10,11 @@ from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
 from agno.session.workflow import WorkflowSession
 
-# =============================================================================
 # Event Normalization
-# =============================================================================
 
 
+# Strip "Team" prefix so agent and team events use the same handlers
 def normalize_event(event: str) -> str:
-    """Strip 'Team' prefix so agent and team events use the same handlers."""
     return event.removeprefix("Team")
 
 
@@ -42,14 +40,14 @@ SUPPRESSED_IN_WORKFLOW: frozenset[str] = frozenset(
 )
 
 
-# =============================================================================
 # Team Member Helpers
-# =============================================================================
+
+_AGENT_NAME_KEY_LIMIT = 20  # Keep task card keys short; no platform constraint, just readability
 
 
 def member_name(chunk: Any, entity_name: str) -> Optional[str]:
-    # Return name only for team members (not leader) to prefix task card
-    # labels like "Researcher: web_search" for disambiguation
+    # Returns None when chunk belongs to the team leader (name matches entity_name)
+    # or when chunk has no agent_name attribute
     name = getattr(chunk, "agent_name", None)
     if name and isinstance(name, str) and name != entity_name:
         return name
@@ -60,14 +58,12 @@ def task_id(agent_name: Optional[str], base_id: str) -> str:
     # Prefix card IDs per agent so concurrent tool calls from different
     # team members don't collide in the stream
     if agent_name:
-        safe = agent_name.lower().replace(" ", "_")[:20]
+        safe = agent_name.lower().replace(" ", "_")[:_AGENT_NAME_KEY_LIMIT]
         return f"{safe}_{base_id}"
     return base_id
 
 
-# =============================================================================
 # Text Chunking
-# =============================================================================
 
 
 def chunk_text(text: str, max_len: int) -> List[str]:
@@ -96,9 +92,7 @@ def chunk_text(text: str, max_len: int) -> List[str]:
     return chunks
 
 
-# =============================================================================
 # Media Collection
-# =============================================================================
 
 
 def collect_media_from_chunk(state: Any, chunk: Any) -> None:
@@ -118,10 +112,9 @@ def collect_media_from_chunk(state: Any, chunk: Any) -> None:
             state.files.append(f)
 
 
-# =============================================================================
 # Session Store Config
-# =============================================================================
 
+# (session_type, session_class, entity_id_attribute_name)
 _SESSION_DISPATCH = {
     "agent": (SessionType.AGENT, AgentSession, "agent_id"),
     "team": (SessionType.TEAM, TeamSession, "team_id"),
@@ -132,10 +125,10 @@ _SESSION_DISPATCH = {
 class SessionStoreConfig(NamedTuple):
     session_type: SessionType
     session_cls: Type[Any]
-    id_field: str
+    id_field: str  # Attribute name on the entity holding its own ID (e.g. "agent_id")
     db: Any
-    has_db: bool
-    is_async_db: bool
+    has_db: bool  # True when db is a BaseDb or AsyncBaseDb instance
+    is_async_db: bool  # True for AsyncBaseDb — drives await vs to_thread dispatch
 
 
 def build_session_store_config(entity: object, entity_type: str) -> SessionStoreConfig:
@@ -166,12 +159,13 @@ async def find_latest_session_id(
         sort_by="created_at",
         sort_order="desc",
         limit=50,
-        deserialize=False,
+        deserialize=False,  # Raw dicts — avoid constructing full session objects just to read session_id
     )
     if cfg.is_async_db:
         results = await cfg.db.get_sessions(**query)  # type: ignore[arg-type, misc]
     else:
         results = await asyncio.to_thread(cfg.db.get_sessions, **query)  # type: ignore[arg-type]
+    # Some DB implementations return (rows, total_count) tuple; extract just the rows
     rows = results[0] if isinstance(results, tuple) else results
     if not rows:
         return None
@@ -182,9 +176,7 @@ async def find_latest_session_id(
     return None
 
 
-# =============================================================================
 # Dev Mode Check
-# =============================================================================
 
 
 def is_dev_mode() -> bool:

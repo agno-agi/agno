@@ -5,6 +5,9 @@ from typing import Any, Optional
 from agno.os.interfaces.shared import is_dev_mode
 from agno.utils.log import log_warning
 
+# Discord recommends a 5-minute window to tolerate clock skew
+_REPLAY_WINDOW_SECONDS = 300
+
 # Public key is fixed per app — cache VerifyKey to avoid re-parsing on every request
 _verify_key_cache: dict[str, Any] = {}
 
@@ -13,6 +16,7 @@ def _get_verify_key(key_hex: str) -> Any:
     cached = _verify_key_cache.get(key_hex)
     if cached is not None:
         return cached
+    # PyNaCl is optional — deferred so the package stays importable without it
     try:
         from nacl.signing import VerifyKey
     except ImportError as e:
@@ -40,9 +44,8 @@ def verify_discord_signature(
     if not key:
         raise ValueError("DISCORD_PUBLIC_KEY is not set. Set the env var or pass public_key.")
 
-    # Reject stale requests to block replay attacks (5-minute window)
     try:
-        if abs(time.time() - int(timestamp)) > 300:
+        if abs(time.time() - int(timestamp)) > _REPLAY_WINDOW_SECONDS:
             return False
     except (ValueError, TypeError):
         return False
@@ -52,4 +55,6 @@ def verify_discord_signature(
         verify_key.verify(timestamp.encode() + body, bytes.fromhex(signature))
         return True
     except Exception:
+        # nacl raises BadSignatureError on mismatch, ValueError on malformed hex;
+        # treat any failure as invalid to avoid leaking exception details
         return False

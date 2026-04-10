@@ -7,14 +7,14 @@ from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Literal, Optional, 
 from agno.media import Audio, File, Image, Video
 from agno.os.interfaces.discord.formatting import normalize_discord_markdown, normalize_for_streaming
 from agno.os.interfaces.discord.helpers import (
-    DC_CHUNK_SIZE,
-    DC_MAX_EMBED_DESC,
+    _FOLLOWUP_CHUNK_SIZE,
+    _MAX_EMBED_DESCRIPTION,
     EMBED_COLOR_COMPLETE,
     EMBED_COLOR_ERROR,
     EMBED_COLOR_PROCESSING,
     build_status_embed,
-    patch_webhook_message,
-    post_followup_message,
+    edit_original_response,
+    send_followup_message,
 )
 from agno.os.interfaces.shared import (
     SessionStoreConfig,
@@ -29,8 +29,8 @@ if TYPE_CHECKING:
     from agno.run.agent import RunOutput
     from agno.run.team import TeamRunOutput
 
-# Rate limit for Discord webhook edits during streaming
-DC_STREAM_EDIT_INTERVAL = 1.5
+# Discord rate-limits webhook edits to ~5 req/5s per token; 1.5s gives headroom
+_STREAM_EDIT_INTERVAL_SECONDS = 1.5
 
 EntityType = Literal["agent", "team", "workflow"]
 TaskStatus = Literal["in_progress", "complete", "error"]
@@ -38,10 +38,14 @@ TaskStatus = Literal["in_progress", "complete", "error"]
 # Discord caps embed fields at 25
 _MAX_EMBED_FIELDS = 25
 
+# Discord channel types that represent threads
+_THREAD_CHANNEL_TYPES = frozenset((10, 11, 12))  # ANNOUNCEMENT, PUBLIC, PRIVATE
 
-# Session scope builder
 
-
+# Returns one of:
+#   dc:{entity_id}:dm:{channel_id}                      — DM or group DM
+#   dc:{entity_id}:thread:{channel_id}                   — thread
+#   dc:{entity_id}:channel:{channel_id}:user:{user_id}   — guild channel
 def _build_session_scope(
     entity_id: Optional[str],
     channel_id: str,
@@ -52,13 +56,9 @@ def _build_session_scope(
 ) -> str:
     if not guild_id:
         return f"dc:{entity_id}:dm:{channel_id}"
-    # Thread types: PUBLIC_THREAD=11, PRIVATE_THREAD=12, ANNOUNCEMENT_THREAD=10
-    if channel_type in (10, 11, 12):
+    if channel_type in _THREAD_CHANNEL_TYPES:
         return f"dc:{entity_id}:thread:{channel_id}"
     return f"dc:{entity_id}:channel:{channel_id}:user:{user_id}"
-
-
-# Task card — one embed field per tool call or reasoning step
 
 
 @dataclass
@@ -79,20 +79,21 @@ class TaskCard:
         return {"name": name, "value": value, "inline": True}
 
 
-# Bot-level state — shared across all interactions
-
-
 @dataclass
-class BotState:
+class InstanceState:
+    """Per-interface-instance state, shared across all concurrent interactions."""
+
     session_config: SessionStoreConfig
     entity_id: Optional[str] = None
     processed_interactions: Dict[str, float] = field(default_factory=dict)
 
+    # Covers Discord's retry window (~3s per attempt, several retries)
     DEDUP_TTL_SECONDS: ClassVar[float] = 60.0
 
     def is_duplicate_interaction(self, interaction_id: str) -> bool:
         now = time.monotonic()
-        # Insertion-ordered dict — break on first fresh entry
+        # Dict is insertion-ordered by arrival time (monotonically increasing);
+        # once we hit a fresh entry, all later ones are also fresh
         to_delete = []
         for iid, ts in self.processed_interactions.items():
             if now - ts > self.DEDUP_TTL_SECONDS:
@@ -107,10 +108,9 @@ class BotState:
         return False
 
 
-# Stream state — one per interaction response lifecycle
-
-
 class StreamState:
+    """Per-interaction streaming lifecycle. One instance per background task."""
+
     def __init__(
         self,
         http_session: "aiohttp.ClientSession",
@@ -132,7 +132,7 @@ class StreamState:
         self.last_edit_time: float = 0.0
         self.reasoning_round: int = 0
         self.error_count: int = 0
-        self.terminal_status: Optional[TaskStatus] = None
+        self.error_status: Optional[TaskStatus] = None
         self.final_run_output: Optional[Union["RunOutput", "TeamRunOutput"]] = None
         self.workflow_final_content: Optional[str] = None
         self.images: List[Image] = []
@@ -140,7 +140,7 @@ class StreamState:
         self.audio: List[Audio] = []
         self.files: List[File] = []
 
-    # Content accumulation — list + join avoids O(n^2)
+    # Content accumulation — list + join avoids O(n^2) string concatenation
 
     @property
     def accumulated_content(self) -> str:
@@ -148,6 +148,7 @@ class StreamState:
 
     @accumulated_content.setter
     def accumulated_content(self, value: str) -> None:
+        # Replaces all buffered content — used for final output override (workflow/run_completed)
         self._content_parts = [value]
 
     def append_content(self, text: str) -> None:
@@ -167,7 +168,7 @@ class StreamState:
         if card:
             card.status = "complete"
 
-    def error_task(self, key: str, error_msg: str = "") -> None:
+    def fail_task(self, key: str, error_msg: str = "") -> None:
         card = self.task_cards.get(key)
         if card:
             card.status = "error"
@@ -195,18 +196,18 @@ class StreamState:
             content = self.accumulated_content
             # Full normalization only at finalize; streaming uses lightweight version
             normalized = normalize_discord_markdown(content) if is_final else normalize_for_streaming(content)
-            description = normalized[:DC_MAX_EMBED_DESC]
+            description = normalized[:_MAX_EMBED_DESCRIPTION]
         return build_status_embed(title=title, description=description, fields=self._build_fields(), color=color)
 
     # Display updates — rate-limited to avoid 429s
 
     async def update_display(self) -> None:
         now = time.monotonic()
-        if now - self.last_edit_time < DC_STREAM_EDIT_INTERVAL:
+        if now - self.last_edit_time < _STREAM_EDIT_INTERVAL_SECONDS:
             return
         embed = self._build_embed(title="Processing...", color=EMBED_COLOR_PROCESSING)
         try:
-            await patch_webhook_message(self.http_session, self.application_id, self.interaction_token, embeds=[embed])
+            await edit_original_response(self.http_session, self.application_id, self.interaction_token, embeds=[embed])
             self.last_edit_time = time.monotonic()
         except Exception as e:
             log_warning(f"Stream display update failed: {str(e)}")
@@ -215,13 +216,20 @@ class StreamState:
 
     async def finalize(self) -> None:
         self.resolve_all_pending()
-        # terminal_status is authoritative; task card scan is fallback
-        is_error = self.terminal_status == "error" or any(c.status == "error" for c in self.task_cards.values())
+        # error_status is authoritative; task card scan is fallback
+        is_error = self.error_status == "error" or any(c.status == "error" for c in self.task_cards.values())
         title = "Error" if is_error else "Complete"
         color = EMBED_COLOR_ERROR if is_error else EMBED_COLOR_COMPLETE
 
         content = self.accumulated_content
         if not content and not self.task_cards:
+            # Always update the deferred response — silence leaves the user on an infinite spinner
+            try:
+                await edit_original_response(
+                    self.http_session, self.application_id, self.interaction_token, content="(no response)"
+                )
+            except Exception as e:
+                log_warning(f"Failed to send empty-response fallback: {str(e)}")
             return
 
         normalized = normalize_discord_markdown(content) if content else ""
@@ -233,22 +241,24 @@ class StreamState:
 
     async def _finalize_inner(self, normalized: str, title: str, color: int) -> None:
         fields = self._build_fields()
-        if len(normalized) <= DC_MAX_EMBED_DESC:
+        if len(normalized) <= _MAX_EMBED_DESCRIPTION:
             embed = build_status_embed(title=title, description=normalized, fields=fields, color=color)
-            await patch_webhook_message(self.http_session, self.application_id, self.interaction_token, embeds=[embed])
+            await edit_original_response(self.http_session, self.application_id, self.interaction_token, embeds=[embed])
             return
         # Content exceeds embed limit — truncated embed + overflow as follow-ups
-        embed = build_status_embed(title=title, description=normalized[:DC_MAX_EMBED_DESC], fields=fields, color=color)
-        await patch_webhook_message(self.http_session, self.application_id, self.interaction_token, embeds=[embed])
-        for part in chunk_text(normalized[DC_MAX_EMBED_DESC:], DC_CHUNK_SIZE):
-            await post_followup_message(self.http_session, self.application_id, self.interaction_token, content=part)
+        embed = build_status_embed(
+            title=title, description=normalized[:_MAX_EMBED_DESCRIPTION], fields=fields, color=color
+        )
+        await edit_original_response(self.http_session, self.application_id, self.interaction_token, embeds=[embed])
+        for part in chunk_text(normalized[_MAX_EMBED_DESCRIPTION:], _FOLLOWUP_CHUNK_SIZE):
+            await send_followup_message(self.http_session, self.application_id, self.interaction_token, content=part)
 
     async def _finalize_plaintext(self, normalized: str) -> None:
         if not normalized.strip():
             return
         try:
-            for part in chunk_text(normalized, DC_CHUNK_SIZE):
-                await post_followup_message(
+            for part in chunk_text(normalized, _FOLLOWUP_CHUNK_SIZE):
+                await send_followup_message(
                     self.http_session, self.application_id, self.interaction_token, content=part
                 )
         except Exception as e:

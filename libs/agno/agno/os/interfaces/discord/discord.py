@@ -5,7 +5,7 @@ from fastapi.routing import APIRouter
 
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.base import BaseInterface
-from agno.os.interfaces.discord.helpers import _ERROR_MESSAGE
+from agno.os.interfaces.discord.helpers import FALLBACK_ERROR_MESSAGE
 from agno.os.interfaces.discord.router import attach_routes
 from agno.team import RemoteTeam, Team
 from agno.workflow import RemoteWorkflow, Workflow
@@ -27,7 +27,7 @@ class Discord(BaseInterface):
         application_id: Optional[str] = None,
         streaming: bool = True,
         show_reasoning: bool = True,
-        error_message: str = _ERROR_MESSAGE,
+        error_message: str = FALLBACK_ERROR_MESSAGE,
     ):
         self.agent = agent
         self.team = team
@@ -45,7 +45,7 @@ class Discord(BaseInterface):
 
     def get_router(self) -> APIRouter:
         self.router = attach_routes(
-            router=APIRouter(prefix=self.prefix, tags=self.tags),  # type: ignore
+            router=APIRouter(prefix=self.prefix, tags=self.tags),  # type: ignore[arg-type]
             agent=self.agent,
             team=self.team,
             workflow=self.workflow,

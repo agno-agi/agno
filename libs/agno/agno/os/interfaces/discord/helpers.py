@@ -10,20 +10,28 @@ from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_error, log_warning
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
-DC_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
-DC_MAX_MESSAGE_CONTENT = 2000
-DC_MAX_EMBED_DESC = 4096
-# Leave room for [N/M] prefix on overflow
-DC_CHUNK_SIZE = 3900
+_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+_MAX_MESSAGE_CONTENT = 2000
+_MAX_EMBED_DESCRIPTION = 4096
+# Webhook follow-up messages have a 2000-char content limit; 1900 leaves room for overflow markers
+_FOLLOWUP_CHUNK_SIZE = 1900
 
 EMBED_COLOR_PROCESSING = 0x5865F2  # Discord blurple
 EMBED_COLOR_COMPLETE = 0x57F287  # Green
 EMBED_COLOR_ERROR = 0xED4245  # Red
 
-_ERROR_MESSAGE = "Sorry, there was an error processing your message."
+FALLBACK_ERROR_MESSAGE = "Sorry, there was an error processing your message."
 
-# Prevent model output from pinging @everyone/@here/roles
+# Suppress all mention parsing — prevents @everyone/@here/role pings from model output
 _SAFE_MENTIONS: Dict[str, Any] = {"parse": []}
+
+# (attribute_name, singular_label, default_filename) for media upload iteration
+_MEDIA_UPLOAD_CONFIG = [
+    ("images", "image", "image.png"),
+    ("files", "file", "file.bin"),
+    ("videos", "video", "video.mp4"),
+    ("audio", "audio", "audio.mp3"),
+]
 
 
 def build_status_embed(
@@ -40,7 +48,7 @@ def build_status_embed(
     return embed
 
 
-async def patch_webhook_message(
+async def edit_original_response(
     session: aiohttp.ClientSession,
     application_id: str,
     interaction_token: str,
@@ -60,11 +68,11 @@ async def patch_webhook_message(
     async with session.patch(url, json=payload) as resp:
         if not resp.ok:
             body = await resp.text()
-            log_error(f"Failed to patch webhook message ({resp.status}): {body}")
+            log_error(f"Failed to edit original response ({resp.status}): {body}")
             raise aiohttp.ClientResponseError(resp.request_info, resp.history, status=resp.status, message=body)
 
 
-async def post_followup_message(
+async def send_followup_message(
     session: aiohttp.ClientSession,
     application_id: str,
     interaction_token: str,
@@ -81,7 +89,7 @@ async def post_followup_message(
     async with session.post(url, json=payload) as resp:
         if not resp.ok:
             body = await resp.text()
-            log_error(f"Failed to post followup ({resp.status}): {body}")
+            log_error(f"Failed to send followup ({resp.status}): {body}")
             raise aiohttp.ClientResponseError(resp.request_info, resp.history, status=resp.status, message=body)
         data = await resp.json()
         return data.get("id")
@@ -112,14 +120,16 @@ async def upload_webhook_file(
 async def download_attachment(
     session: aiohttp.ClientSession,
     url: str,
-    max_size: int = DC_MAX_ATTACHMENT_BYTES,
+    max_size: int = _MAX_ATTACHMENT_BYTES,
 ) -> Optional[bytes]:
     try:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
             resp.raise_for_status()
+            # Fast check via Content-Length header when available
             if (resp.content_length or 0) > max_size:
                 log_warning(f"Attachment too large ({resp.content_length} bytes), skipping")
                 return None
+            # Safety net: Content-Length header may lie or be missing
             chunks: list[bytes] = []
             total = 0
             async for chunk in resp.content.iter_chunked(64 * 1024):
@@ -134,15 +144,16 @@ async def download_attachment(
         return None
 
 
-async def _download_one(
+async def _download_single_attachment(
     session: aiohttp.ClientSession,
     attachment: dict,
 ) -> Tuple[Optional[bytes], str, str]:
     url = attachment.get("url")
     if not url:
         return None, "", ""
+    # Fast-path reject using Discord metadata before opening the connection
     size = attachment.get("size", 0)
-    if size > DC_MAX_ATTACHMENT_BYTES:
+    if size > _MAX_ATTACHMENT_BYTES:
         log_warning(f"Attachment too large ({size} bytes), skipping: {attachment.get('filename')}")
         return None, "", ""
     content_bytes = await download_attachment(session, url)
@@ -158,7 +169,7 @@ async def download_resolved_attachments(
         return {}
 
     results = await asyncio.gather(
-        *[_download_one(session, att) for att in resolved.values()],
+        *[_download_single_attachment(session, att) for att in resolved.values()],
         return_exceptions=True,
     )
 
@@ -216,13 +227,7 @@ async def send_response_media(
     interaction_token: str,
     response: Any,
 ) -> None:
-    media_attrs = [
-        ("images", "image.png"),
-        ("files", "file"),
-        ("videos", "video.mp4"),
-        ("audio", "audio.mp3"),
-    ]
-    for attr, default_name in media_attrs:
+    for attr, label, default_name in _MEDIA_UPLOAD_CONFIG:
         items = getattr(response, attr, None)
         if not items:
             continue
@@ -234,4 +239,4 @@ async def send_response_media(
             try:
                 await upload_webhook_file(session, application_id, interaction_token, content_bytes, filename)
             except Exception as e:
-                log_error(f"Failed to upload {attr.rstrip('s')}: {e}")
+                log_error(f"Failed to upload {label}: {e}")

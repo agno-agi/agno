@@ -1,15 +1,12 @@
 """
 Discord Streaming Event Handlers
-=================================
 
 Processes streaming events from agents, teams, and workflows,
 translating them into Discord embed fields and buffered content.
 
-Key concepts:
-- Events are normalized (Team prefix stripped) for unified handling
-- Workflow mode suppresses inner agent events to reduce noise
-- Task cards track progress; content is buffered for streaming
-- Factory pattern generates simple paired handlers (Started/Completed)
+Events are normalized (Team prefix stripped) for unified handling.
+Workflow mode suppresses inner agent events to reduce noise.
+Task cards track progress; content is buffered for streaming display.
 """
 
 from __future__ import annotations
@@ -27,46 +24,37 @@ if TYPE_CHECKING:
     from agno.run.base import BaseRunOutputEvent
 
 
-# =============================================================================
-# Type Aliases
-# =============================================================================
-
-# Event handlers return True on terminal events to break the stream loop
+# True = terminal event; caller must break stream loop
 _EventHandler = Callable[["BaseRunOutputEvent", StreamState], Awaitable[bool]]
 
 
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
-
 @dataclass
-class _ToolRef:
-    """Reference to a tool call for task card tracking."""
+class ToolCallCard:
+    """Pre-computed values for tracking a tool call as a task card."""
 
-    tid: Optional[str]  # Task card key (None when tool_call_id is missing)
-    title: str  # Display title, e.g. "Researcher: web_search"
-    errored: bool
+    card_key: Optional[str]  # Task card key (None when tool_call_id is missing)
+    display_title: str  # e.g. "Researcher: web_search"
+    errored: bool  # True when tool_call_error is set on the event's tool object
 
 
-def _extract_tool_ref(
+def _build_tool_call_card(
     chunk: "BaseRunOutputEvent", state: StreamState, *, fallback_id: Optional[str] = None
-) -> _ToolRef:
+) -> ToolCallCard:
     tool = getattr(chunk, "tool", None)
     tool_name = (tool.tool_name if tool else None) or "tool"
     call_id = (tool.tool_call_id if tool else None) or fallback_id
     member = member_name(chunk, state.entity_name)
     title = f"{member}: {tool_name}" if member else tool_name
-    tid = task_id(member, call_id) if call_id else None  # type: ignore[arg-type]
+    key = task_id(member, call_id) if call_id else None  # type: ignore[arg-type]
     errored = bool(tool.tool_call_error) if tool else False
-    return _ToolRef(tid=tid, title=title, errored=errored)
+    return ToolCallCard(card_key=key, display_title=title, errored=errored)
 
 
-async def _wf_task(
+async def _update_workflow_card(
     chunk: "BaseRunOutputEvent",
     state: StreamState,
-    prefix: str,
-    label: str = "",
+    prefix: str,  # Key namespace, e.g. "step", "parallel"
+    label: str = "",  # Display prefix, e.g. "Parallel"; empty = use name only
     *,
     started: bool,
     name_attr: str = "step_name",
@@ -82,35 +70,24 @@ async def _wf_task(
     await state.update_display()
 
 
-# =============================================================================
-# Handler Factory
-# =============================================================================
-
-
-def _make_wf_handler(
+def _make_step_lifecycle_handler(
     prefix: str,
     label: str,
     *,
     started: bool,
     name_attr: str = "step_name",
 ) -> _EventHandler:
-    """
-    Factory to create workflow event handlers for simple paired events.
-
-    This eliminates boilerplate for events that just call _wf_task with
-    different parameters (e.g., ParallelStarted, ConditionCompleted, etc.).
-    """
+    """Factory for simple paired workflow events (Started/Completed) that just
+    track or complete a task card via _update_workflow_card."""
 
     async def handler(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
-        await _wf_task(chunk, state, prefix, label, started=started, name_attr=name_attr)
+        await _update_workflow_card(chunk, state, prefix, label, started=started, name_attr=name_attr)
         return False
 
     return handler
 
 
-# =============================================================================
-# Agent/Team Event Handlers (require custom logic)
-# =============================================================================
+# Agent/Team Event Handlers
 
 
 async def _on_reasoning_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
@@ -129,36 +106,36 @@ async def _on_reasoning_completed(chunk: "BaseRunOutputEvent", state: StreamStat
 
 
 async def _on_tool_call_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
-    # Fallback when SDK chunks omit tool_call_id so cards still render
-    ref = _extract_tool_ref(chunk, state, fallback_id=str(len(state.task_cards)))
-    if ref.tid:
-        state.track_task(ref.tid, ref.title)
+    # Fallback ID when SDK chunks omit tool_call_id so cards still render
+    ref = _build_tool_call_card(chunk, state, fallback_id=str(len(state.task_cards)))
+    if ref.card_key:
+        state.track_task(ref.card_key, ref.display_title)
         await state.update_display()
     return False
 
 
 async def _on_tool_call_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
-    ref = _extract_tool_ref(chunk, state)
-    if ref.tid:
+    ref = _build_tool_call_card(chunk, state)
+    if ref.card_key:
         # Backfill card when Completed arrives without a prior Started event
-        if ref.tid not in state.task_cards:
-            state.track_task(ref.tid, ref.title)
+        if ref.card_key not in state.task_cards:
+            state.track_task(ref.card_key, ref.display_title)
         if ref.errored:
-            state.error_task(ref.tid)
+            state.fail_task(ref.card_key)
         else:
-            state.complete_task(ref.tid)
+            state.complete_task(ref.card_key)
         await state.update_display()
     return False
 
 
 async def _on_tool_call_error(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
-    ref = _extract_tool_ref(chunk, state, fallback_id=f"tool_error_{state.error_count}")
+    ref = _build_tool_call_card(chunk, state, fallback_id=f"tool_error_{state.error_count}")
     error_msg = str(getattr(chunk, "error", None) or "Tool call failed")
     state.error_count += 1
-    if ref.tid:
-        if ref.tid not in state.task_cards:
-            state.track_task(ref.tid, ref.title)
-        state.error_task(ref.tid, error_msg)
+    if ref.card_key:
+        if ref.card_key not in state.task_cards:
+            state.track_task(ref.card_key, ref.display_title)
+        state.fail_task(ref.card_key, error_msg)
         await state.update_display()
     return False
 
@@ -176,7 +153,7 @@ async def _on_run_content(chunk: "BaseRunOutputEvent", state: StreamState) -> bo
 
 
 async def _on_run_intermediate_content(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
-    # Teams aggregate content at run_completed; only accumulate for single agents
+    # Teams emit run_completed with full content; accumulating intermediate chunks would double-count
     if state.entity_type != "team":
         content = getattr(chunk, "content", None)
         if content is not None:
@@ -206,13 +183,11 @@ async def _on_run_completed(chunk: "BaseRunOutputEvent", state: StreamState) -> 
 async def _on_run_error(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
     state.error_count += 1
     state.accumulated_content = state.error_message
-    state.terminal_status = "error"
+    state.error_status = "error"
     return True
 
 
-# =============================================================================
-# Workflow Event Handlers (require custom logic)
-# =============================================================================
+# Workflow Event Handlers
 
 
 async def _on_step_output(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
@@ -249,7 +224,7 @@ async def _on_workflow_error(chunk: "BaseRunOutputEvent", state: StreamState) ->
     state.error_count += 1
     error_msg = getattr(chunk, "error", None) or getattr(chunk, "content", None) or "Workflow failed"
     state.accumulated_content = str(error_msg)
-    state.terminal_status = "error"
+    state.error_status = "error"
     return True
 
 
@@ -260,14 +235,12 @@ async def _on_step_error(chunk: "BaseRunOutputEvent", state: StreamState) -> boo
     error_msg = str(getattr(chunk, "error", None) or "Step failed")
     if key not in state.task_cards:
         state.track_task(key, step_name)
-    state.error_task(key, error_msg)
+    state.fail_task(key, error_msg)
     await state.update_display()
     return False
 
 
-# =============================================================================
-# Loop Event Handlers (custom logic for iteration tracking)
-# =============================================================================
+# Loop Event Handlers
 
 
 async def _on_loop_execution_started(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
@@ -306,16 +279,12 @@ async def _on_loop_execution_completed(chunk: "BaseRunOutputEvent", state: Strea
     return False
 
 
-# =============================================================================
 # Dispatch Table
-# =============================================================================
 
-# Single dispatch table — keys are normalized (no "Team" prefix).
-# Workflow event names never start with "Team" so normalization is a no-op for them.
+# Keys are normalized (no "Team" prefix). Workflow event names never start with
+# "Team" so normalization is a no-op for them.
 HANDLERS: Dict[str, _EventHandler] = {
-    # -------------------------------------------------------------------------
-    # Agent/Team Events (normalized - use RunEvent values)
-    # -------------------------------------------------------------------------
+    # --- Agent/Team ---
     RunEvent.reasoning_started.value: _on_reasoning_started,
     RunEvent.reasoning_completed.value: _on_reasoning_completed,
     RunEvent.tool_call_started.value: _on_tool_call_started,
@@ -327,59 +296,50 @@ HANDLERS: Dict[str, _EventHandler] = {
     RunEvent.memory_update_completed.value: _on_memory_update_completed,
     RunEvent.run_completed.value: _on_run_completed,
     RunEvent.run_error.value: _on_run_error,
-    RunEvent.run_cancelled.value: _on_run_error,  # Treat cancellation as terminal error
-    # -------------------------------------------------------------------------
-    # Workflow Lifecycle Events
-    # -------------------------------------------------------------------------
+    RunEvent.run_cancelled.value: _on_run_error,
+    # --- Workflow Lifecycle ---
     WorkflowRunEvent.step_output.value: _on_step_output,
     WorkflowRunEvent.workflow_started.value: _on_workflow_started,
     WorkflowRunEvent.workflow_completed.value: _on_workflow_completed,
     WorkflowRunEvent.workflow_error.value: _on_workflow_error,
     WorkflowRunEvent.workflow_cancelled.value: _on_workflow_error,
-    # -------------------------------------------------------------------------
-    # Workflow Step Events
-    # -------------------------------------------------------------------------
-    WorkflowRunEvent.step_started.value: _make_wf_handler("step", "", started=True),
-    WorkflowRunEvent.step_completed.value: _make_wf_handler("step", "", started=False),
+    # --- Workflow Steps ---
+    WorkflowRunEvent.step_started.value: _make_step_lifecycle_handler("step", "", started=True),
+    WorkflowRunEvent.step_completed.value: _make_step_lifecycle_handler("step", "", started=False),
     WorkflowRunEvent.step_error.value: _on_step_error,
-    # -------------------------------------------------------------------------
-    # Workflow Loop Events
-    # -------------------------------------------------------------------------
+    # --- Workflow Loops ---
     WorkflowRunEvent.loop_execution_started.value: _on_loop_execution_started,
     WorkflowRunEvent.loop_iteration_started.value: _on_loop_iteration_started,
     WorkflowRunEvent.loop_iteration_completed.value: _on_loop_iteration_completed,
     WorkflowRunEvent.loop_execution_completed.value: _on_loop_execution_completed,
-    # -------------------------------------------------------------------------
-    # Workflow Structural Events (factory-generated)
-    # -------------------------------------------------------------------------
-    WorkflowRunEvent.parallel_execution_started.value: _make_wf_handler("parallel", "Parallel", started=True),
-    WorkflowRunEvent.parallel_execution_completed.value: _make_wf_handler("parallel", "Parallel", started=False),
-    WorkflowRunEvent.condition_execution_started.value: _make_wf_handler("cond", "Condition", started=True),
-    WorkflowRunEvent.condition_execution_completed.value: _make_wf_handler("cond", "Condition", started=False),
-    WorkflowRunEvent.router_execution_started.value: _make_wf_handler("router", "Router", started=True),
-    WorkflowRunEvent.router_execution_completed.value: _make_wf_handler("router", "Router", started=False),
-    WorkflowRunEvent.workflow_agent_started.value: _make_wf_handler(
+    # --- Workflow Structural ---
+    WorkflowRunEvent.parallel_execution_started.value: _make_step_lifecycle_handler(
+        "parallel", "Parallel", started=True
+    ),
+    WorkflowRunEvent.parallel_execution_completed.value: _make_step_lifecycle_handler(
+        "parallel", "Parallel", started=False
+    ),
+    WorkflowRunEvent.condition_execution_started.value: _make_step_lifecycle_handler("cond", "Condition", started=True),
+    WorkflowRunEvent.condition_execution_completed.value: _make_step_lifecycle_handler(
+        "cond", "Condition", started=False
+    ),
+    WorkflowRunEvent.router_execution_started.value: _make_step_lifecycle_handler("router", "Router", started=True),
+    WorkflowRunEvent.router_execution_completed.value: _make_step_lifecycle_handler("router", "Router", started=False),
+    WorkflowRunEvent.workflow_agent_started.value: _make_step_lifecycle_handler(
         "agent", "Running", started=True, name_attr="agent_name"
     ),
-    WorkflowRunEvent.workflow_agent_completed.value: _make_wf_handler(
+    WorkflowRunEvent.workflow_agent_completed.value: _make_step_lifecycle_handler(
         "agent", "Running", started=False, name_attr="agent_name"
     ),
-    WorkflowRunEvent.steps_execution_started.value: _make_wf_handler("steps", "Steps", started=True),
-    WorkflowRunEvent.steps_execution_completed.value: _make_wf_handler("steps", "Steps", started=False),
+    WorkflowRunEvent.steps_execution_started.value: _make_step_lifecycle_handler("steps", "Steps", started=True),
+    WorkflowRunEvent.steps_execution_completed.value: _make_step_lifecycle_handler("steps", "Steps", started=False),
 }
 
 
 async def process_event(ev_raw: str, chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
-    """
-    Process a streaming event and update Discord accordingly.
+    """Process a streaming event and update Discord accordingly.
 
-    Args:
-        ev_raw: Raw event name (e.g., "ToolCallStarted", "TeamRunContent")
-        chunk: Stream chunk containing event data
-        state: StreamState tracking session state
-
-    Returns:
-        True if this is a terminal event and the stream loop should break.
+    Returns True if this is a terminal event and the stream loop should break.
     """
     ev = normalize_event(ev_raw)
 

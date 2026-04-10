@@ -1,10 +1,16 @@
 import re
 
-# Preserves Discord mentions (<@id>, <#id>, <:emoji:id>, <a:emoji:id>, <@&role>)
-_HTML_TAG_RE = re.compile(r"<(?![#@:a][:\w]|a:)(?!/)[^>]+>|</[^>]+>")
+# Strips HTML but preserves all Discord angle-bracket markup:
+# <@id>, <@!id>, <#id>, <@&role>, <:emoji:id>, <a:emoji:id>, <t:timestamp:style>
+_HTML_TAG_RE = re.compile(r"<(?![#@:a][:\w&!]|a:|t:)(?!/)[^>]+>|</[^>]+>")
+
+# Bot messages ignore # headings; bold is the closest equivalent
 _HEADING_RE = re.compile(r"^#{1,6}\s+(.+)$", flags=re.MULTILINE)
+
 _FENCE_OPEN_RE = re.compile(r"^(?P<fence>`{3,})(?:\w+)?$")
-_COMPLETED_FENCE_RE = re.compile(r"`{3,}[^`]*`{3,}", re.DOTALL)
+
+# Matches self-contained ```...``` blocks; used to exclude them from backtick parity check
+_CLOSED_FENCE_BLOCK_RE = re.compile(r"`{3,}[^`]*`{3,}", re.DOTALL)
 
 
 def strip_html_tags(text: str) -> str:
@@ -12,12 +18,11 @@ def strip_html_tags(text: str) -> str:
 
 
 def normalize_headings(text: str) -> str:
-    # Bot messages ignore # headings; bold is the closest equivalent
     return _HEADING_RE.sub(r"**\1**", text)
 
 
 def close_unterminated_fences(text: str) -> str:
-    # Streaming chunks may split mid-code-block
+    # Phase 1: Track triple-backtick fence state and close any open fence
     open_fence = None
     for line in text.splitlines():
         stripped = line.strip()
@@ -33,18 +38,21 @@ def close_unterminated_fences(text: str) -> str:
             text += "\n"
         text += open_fence
 
-    cleaned = _COMPLETED_FENCE_RE.sub("", text)
-    if cleaned.count("`") % 2 != 0:
+    # Phase 2: Fix orphaned inline backticks (odd count outside fenced blocks)
+    without_closed_fences = _CLOSED_FENCE_BLOCK_RE.sub("", text)
+    if without_closed_fences.count("`") % 2 != 0:
         text += "`"
 
     return text
 
 
 def normalize_for_streaming(text: str) -> str:
+    # Lightweight — omits fence closing since chunks may be mid-block
     return strip_html_tags(normalize_headings(text))
 
 
 def normalize_discord_markdown(text: str) -> str:
+    # Full normalization for complete messages — closes unterminated fences
     text = strip_html_tags(text)
     text = normalize_headings(text)
     text = close_unterminated_fences(text)
