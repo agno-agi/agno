@@ -133,10 +133,10 @@ class GitHubLoader(BaseLoader):
                     response.raise_for_status()
                     data = response.json()
             except httpx.HTTPStatusError as e:
-                log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}")
+                log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}: {str(e)}")
                 raise
             except httpx.HTTPError as e:
-                log_error(f"GitHub App token exchange request failed: {e}")
+                log_error(f"GitHub App token exchange request failed: {str(e)}")
                 raise
 
             installation_token, expires_at_ts = self._parse_token_response(data)
@@ -185,10 +185,10 @@ class GitHubLoader(BaseLoader):
                     response.raise_for_status()
                     data = response.json()
             except httpx.HTTPStatusError as e:
-                log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}")
+                log_error(f"GitHub App token exchange failed: {e.response.status_code} {e.response.text}: {str(e)}")
                 raise
             except httpx.HTTPError as e:
-                log_error(f"GitHub App token exchange request failed: {e}")
+                log_error(f"GitHub App token exchange request failed: {str(e)}")
                 raise
 
             installation_token, expires_at_ts = self._parse_token_response(data)
@@ -369,7 +369,7 @@ class GitHubLoader(BaseLoader):
                             subdir_files = await list_files_recursive(item["path"])
                             files.extend(subdir_files)
                 except Exception as e:
-                    log_error(f"Error listing GitHub folder {folder}: {e}")
+                    log_error(f"Error listing GitHub folder {folder}: {str(e)}")
 
                 return files
 
@@ -393,7 +393,7 @@ class GitHubLoader(BaseLoader):
                     else:
                         files_to_process.append({"path": path_data["path"], "name": path_data["name"]})
                 except Exception as e:
-                    log_error(f"Error fetching GitHub path {path_to_process}: {e}")
+                    log_error(f"Error fetching GitHub path {path_to_process}: {str(e)}")
                     return
 
             if not files_to_process:
@@ -439,7 +439,7 @@ class GitHubLoader(BaseLoader):
                     file_data = response.json()
                     file_content = await self._aprocess_github_file_content(file_data, client, headers)
                 except Exception as e:
-                    log_error(f"Error fetching GitHub file {file_path}: {e}")
+                    log_error(f"Error fetching GitHub file {file_path}: {str(e)}")
                     content_entry.status = ContentStatus.FAILED
                     content_entry.status_message = str(e)
                     await self._aupdate_content(content_entry)
@@ -511,7 +511,7 @@ class GitHubLoader(BaseLoader):
                             subdir_files = list_files_recursive(item["path"])
                             files.extend(subdir_files)
                 except Exception as e:
-                    log_error(f"Error listing GitHub folder {folder}: {e}")
+                    log_error(f"Error listing GitHub folder {folder}: {str(e)}")
 
                 return files
 
@@ -535,7 +535,7 @@ class GitHubLoader(BaseLoader):
                     else:
                         files_to_process.append({"path": path_data["path"], "name": path_data["name"]})
                 except Exception as e:
-                    log_error(f"Error fetching GitHub path {path_to_process}: {e}")
+                    log_error(f"Error fetching GitHub path {path_to_process}: {str(e)}")
                     return
 
             if not files_to_process:
@@ -581,7 +581,7 @@ class GitHubLoader(BaseLoader):
                     file_data = response.json()
                     file_content = self._process_github_file_content(file_data, client, headers)
                 except Exception as e:
-                    log_error(f"Error fetching GitHub file {file_path}: {e}")
+                    log_error(f"Error fetching GitHub file {file_path}: {str(e)}")
                     content_entry.status = ContentStatus.FAILED
                     content_entry.status_message = str(e)
                     self._update_content(content_entry)

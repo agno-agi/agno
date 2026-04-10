@@ -6,6 +6,8 @@ from typing import Optional
 
 import httpx
 
+from agno.utils.log import log_warning
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_RETRIES = 3
@@ -187,13 +189,13 @@ def fetch_with_retry(
             return response
         except httpx.RequestError as e:
             if attempt == max_retries - 1:
-                logger.error(f"Failed to fetch {url} after {max_retries} attempts: {e}")
+                logger.exception(f"Failed to fetch {url} after {max_retries} attempts")
                 raise
             wait_time = backoff_factor**attempt
-            logger.warning("Connection error.")
+            log_warning(f"Connection error: {str(e)}")
             sleep(wait_time)
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error for {url}: {e.response.status_code} - {e.response.text}")
+            logger.exception(f"HTTP error for {url}: {e.response.status_code} - {e.response.text}")
             raise
 
     raise httpx.RequestError(f"Failed to fetch {url} after {max_retries} attempts")
@@ -223,13 +225,13 @@ async def async_fetch_with_retry(
             return response
         except httpx.RequestError as e:
             if attempt == max_retries - 1:
-                logger.error(f"Failed to fetch {url} after {max_retries} attempts: {e}")
+                logger.exception(f"Failed to fetch {url} after {max_retries} attempts")
                 raise
             wait_time = backoff_factor**attempt
-            logger.warning("Connection error.")
+            log_warning(f"Connection error: {str(e)}")
             await asyncio.sleep(wait_time)
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error for {url}: {e.response.status_code} - {e.response.text}")
+            logger.exception(f"HTTP error for {url}: {e.response.status_code} - {e.response.text}")
             raise
 
     raise httpx.RequestError(f"Failed to fetch {url} after {max_retries} attempts")

@@ -474,7 +474,7 @@ class Cerebras(Model):
                     for tool_call in message.tool_calls
                 ]
             except Exception as e:
-                log_warning(f"Error processing tool calls: {e}")
+                log_warning(f"Error processing tool calls: {str(e)}")
 
         # Add usage metrics
         if response.usage:
@@ -569,11 +569,11 @@ class Cerebras(Model):
             if tool_call_delta.get("type"):
                 tool_call_entry["type"] = tool_call_delta["type"]
 
-            # Update function name and arguments (concatenate for streaming)
+            # Assign function name (atomic); concatenate arguments (streamed incrementally)
             if tool_call_delta.get("function"):
                 func_delta = tool_call_delta["function"]
                 if func_delta.get("name"):
-                    tool_call_entry["function"]["name"] += func_delta["name"]
+                    tool_call_entry["function"]["name"] = func_delta["name"]
                 if func_delta.get("arguments"):
                     tool_call_entry["function"]["arguments"] += func_delta["arguments"]
 

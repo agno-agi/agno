@@ -773,7 +773,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to optimize memories for user {request.user_id}: {str(e)}")
+            logger.exception(f"Failed to optimize memories for user {request.user_id}")
             raise HTTPException(status_code=500, detail=f"Failed to optimize memories: {str(e)}")
 
     return router
