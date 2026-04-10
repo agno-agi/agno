@@ -2763,6 +2763,17 @@ class Step:
             if img_artifact.url:
                 images.append(Image(url=img_artifact.url))
 
+            elif img_artifact.filepath:
+                # Pass through filepath-based images directly
+                image_kwargs: Dict[str, Any] = {"filepath": img_artifact.filepath}
+                if img_artifact.format:
+                    image_kwargs["format"] = img_artifact.format
+                if img_artifact.mime_type:
+                    if "/" in img_artifact.mime_type:
+                        format_from_mime = img_artifact.mime_type.split("/")[-1]
+                        image_kwargs.setdefault("format", format_from_mime)
+                images.append(Image(**image_kwargs))
+
             elif img_artifact.content:
                 # Handle the case where content is base64-encoded bytes from OpenAI tools
                 try:
@@ -2795,8 +2806,8 @@ class Step:
                     continue
 
             else:
-                # Skip images that have neither URL nor content
-                logger.warning(f"Skipping ImageArtifact {i} with no URL or content: {img_artifact}")
+                # Skip images that have neither URL, filepath, nor content
+                logger.warning(f"Skipping ImageArtifact {i} with no URL, filepath, or content: {img_artifact}")
                 continue
 
         return images
@@ -2817,12 +2828,15 @@ class Step:
             if video_artifact.url:
                 videos.append(Video(url=video_artifact.url))
 
+            elif video_artifact.filepath:
+                videos.append(Video(filepath=video_artifact.filepath))
+
             elif video_artifact.content:
                 videos.append(Video(content=video_artifact.content))
 
             else:
-                # Skip videos that have neither URL nor content
-                logger.warning(f"Skipping VideoArtifact {i} with no URL or content: {video_artifact}")
+                # Skip videos that have neither URL, filepath, nor content
+                logger.warning(f"Skipping VideoArtifact {i} with no URL, filepath, or content: {video_artifact}")
                 continue
 
         return videos
