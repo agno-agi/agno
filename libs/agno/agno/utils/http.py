@@ -187,7 +187,10 @@ def fetch_with_retry(
     for attempt in range(max_retries):
         try:
             response = httpx.get(
-                url, proxy=proxy, follow_redirects=follow_redirects, timeout=timeout  # type: ignore[arg-type]
+                url,
+                proxy=proxy,
+                follow_redirects=follow_redirects,
+                timeout=timeout,  # type: ignore[arg-type]
             )
             response.raise_for_status()
             return response

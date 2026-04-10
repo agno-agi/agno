@@ -10,14 +10,13 @@ from agno.utils.log import log_debug, log_info
 
 
 class LLMsTxtTools(Toolkit):
-
     def __init__(
         self,
         knowledge: Optional[Knowledge] = None,
         max_urls: int = 20,
         timeout: int = 60,
         skip_optional: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ):
         self.knowledge: Optional[Knowledge] = knowledge
         self.max_urls = max_urls
@@ -31,18 +30,21 @@ class LLMsTxtTools(Toolkit):
 
         tools: List[Any] = []
         async_tools_list: List[tuple] = []
-        if self.knowledge is not None:
-            tools.append(self.read_llms_txt_and_load_knowledge)
-            async_tools_list.append((self.aread_llms_txt_and_load_knowledge, "read_llms_txt_and_load_knowledge"))
-        else:
+        # Agentic mode — agent picks which pages to read
+        if self.knowledge is None:
             tools.append(self.get_llms_txt_index)
             tools.append(self.read_llms_txt_url)
             async_tools_list.append((self.aget_llms_txt_index, "get_llms_txt_index"))
             async_tools_list.append((self.aread_llms_txt_url, "read_llms_txt_url"))
+        # Knowledge mode — bulk load all pages into vector DB
+        else:
+            tools.append(self.read_llms_txt_and_load_knowledge)
+            async_tools_list.append((self.aread_llms_txt_and_load_knowledge, "read_llms_txt_and_load_knowledge"))
 
         super().__init__(name="llms_txt_tools", tools=tools, async_tools=async_tools_list, **kwargs)
 
-    # ---- Helpers (not exposed to the agent) ----
+    def _async_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(timeout=self.timeout, proxy=self.reader.proxy)
 
     def _format_index(self, overview: str, entries: list) -> str:
         return json.dumps(
@@ -56,17 +58,16 @@ class LLMsTxtTools(Toolkit):
             }
         )
 
-    def _async_client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=self.timeout, proxy=self.reader.proxy)
-
-    # ---- Tools: Agentic mode (without knowledge) ----
-
     def get_llms_txt_index(self, url: str) -> str:
-        """Reads an llms.txt file and returns the index of all available documentation pages.
+        """
+        Reads an llms.txt file and returns the index of all available documentation pages.
         Use this to discover what pages are available, then use read_llms_txt_url to fetch specific pages.
 
-        :param url: The URL of the llms.txt file (e.g. https://docs.example.com/llms.txt).
-        :return: JSON with the overview and list of available documentation pages.
+        Args:
+            url (str): The URL of the llms.txt file (e.g. https://docs.example.com/llms.txt)
+
+        Returns:
+            str: JSON with the overview and list of available documentation pages
         """
         log_info(f"Reading llms.txt index from {url}")
         llms_txt_content = self.reader.fetch_url(url)
@@ -77,11 +78,15 @@ class LLMsTxtTools(Toolkit):
         return self._format_index(overview, entries)
 
     async def aget_llms_txt_index(self, url: str) -> str:
-        """Reads an llms.txt file and returns the index of all available documentation pages.
+        """
+        Reads an llms.txt file and returns the index of all available documentation pages.
         Use this to discover what pages are available, then use read_llms_txt_url to fetch specific pages.
 
-        :param url: The URL of the llms.txt file (e.g. https://docs.example.com/llms.txt).
-        :return: JSON with the overview and list of available documentation pages.
+        Args:
+            url (str): The URL of the llms.txt file (e.g. https://docs.example.com/llms.txt)
+
+        Returns:
+            str: JSON with the overview and list of available documentation pages
         """
         log_info(f"Reading llms.txt index from {url}")
         async with self._async_client() as client:
@@ -94,11 +99,15 @@ class LLMsTxtTools(Toolkit):
         return self._format_index(overview, entries)
 
     def read_llms_txt_url(self, url: str) -> str:
-        """Fetches and returns the content of a specific documentation page.
+        """
+        Fetches and returns the content of a specific documentation page.
         Use this after calling get_llms_txt_index to read pages relevant to the user's question.
 
-        :param url: The URL of the documentation page to read.
-        :return: The text content of the page.
+        Args:
+            url (str): The URL of the documentation page to read
+
+        Returns:
+            str: The text content of the page
         """
         log_debug(f"Fetching URL: {url}")
         content = self.reader.fetch_url(url)
@@ -107,11 +116,15 @@ class LLMsTxtTools(Toolkit):
         return content
 
     async def aread_llms_txt_url(self, url: str) -> str:
-        """Fetches and returns the content of a specific documentation page.
+        """
+        Fetches and returns the content of a specific documentation page.
         Use this after calling get_llms_txt_index to read pages relevant to the user's question.
 
-        :param url: The URL of the documentation page to read.
-        :return: The text content of the page.
+        Args:
+            url (str): The URL of the documentation page to read
+
+        Returns:
+            str: The text content of the page
         """
         log_debug(f"Fetching URL: {url}")
         async with self._async_client() as client:
@@ -121,13 +134,15 @@ class LLMsTxtTools(Toolkit):
             return f"Failed to fetch content from {url}"
         return content
 
-    # ---- Tools: Knowledge mode (with knowledge) ----
-
     def read_llms_txt_and_load_knowledge(self, url: str) -> str:
-        """Reads an llms.txt file, fetches all linked pages, and loads them into the knowledge base.
+        """
+        Reads an llms.txt file, fetches all linked pages, and loads them into the knowledge base.
 
-        :param url: The URL of the llms.txt file (e.g. https://docs.example.com/llms.txt).
-        :return: Summary of what was loaded into the knowledge base.
+        Args:
+            url (str): The URL of the llms.txt file (e.g. https://docs.example.com/llms.txt)
+
+        Returns:
+            str: Summary of what was loaded into the knowledge base
         """
         if self.knowledge is None:
             return "Knowledge base not provided"
@@ -137,10 +152,14 @@ class LLMsTxtTools(Toolkit):
         return f"Successfully loaded documentation from {url} into the knowledge base"
 
     async def aread_llms_txt_and_load_knowledge(self, url: str) -> str:
-        """Reads an llms.txt file, fetches all linked pages, and loads them into the knowledge base.
+        """
+        Reads an llms.txt file, fetches all linked pages, and loads them into the knowledge base.
 
-        :param url: The URL of the llms.txt file (e.g. https://docs.example.com/llms.txt).
-        :return: Summary of what was loaded into the knowledge base.
+        Args:
+            url (str): The URL of the llms.txt file (e.g. https://docs.example.com/llms.txt)
+
+        Returns:
+            str: Summary of what was loaded into the knowledge base
         """
         if self.knowledge is None:
             return "Knowledge base not provided"
