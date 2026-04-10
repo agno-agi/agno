@@ -761,25 +761,32 @@ class AsyncPostgresDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 # Sanitize session_name to remove null bytes
                 sanitized_session_name = sanitize_postgres_string(session_name)
-                stmt = (
-                    update(table)
-                    .where(table.c.session_id == session_id)
-                    .where(table.c.session_type == session_type.value)
-                    .values(
-                        session_data=func.cast(
-                            func.jsonb_set(
-                                func.cast(table.c.session_data, postgresql.JSONB),
-                                text("'{session_name}'"),
-                                func.to_jsonb(sanitized_session_name),
-                            ),
-                            postgresql.JSON,
-                        )
-                    )
-                    .returning(*table.c)
-                )
+
+                # Use raw SQL with explicit type casting to avoid polymorphic type error
+                # Cast session_data to JSONB, use jsonb_set, then cast back to JSON
+                user_filter = "AND user_id = :user_id" if user_id is not None else ""
+                query = text(f"""
+                    UPDATE {self.db_schema}.{self.session_table_name}
+                    SET session_data = jsonb_set(
+                        COALESCE(session_data::jsonb, '{{}}'::jsonb),
+                        '{{session_name}}',
+                        to_jsonb(CAST(:session_name AS TEXT))
+                    )::json
+                    WHERE session_id = :session_id
+                    AND session_type = :session_type
+                    {user_filter}
+                    RETURNING *
+                """)
+
+                params = {
+                    "session_name": sanitized_session_name,
+                    "session_id": session_id,
+                    "session_type": session_type.value,
+                }
                 if user_id is not None:
-                    stmt = stmt.where(table.c.user_id == user_id)
-                result = await sess.execute(stmt)
+                    params["user_id"] = user_id
+
+                result = await sess.execute(query, params)
                 row = result.fetchone()
                 if not row:
                     return None
