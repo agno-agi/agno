@@ -7,6 +7,11 @@ from urllib.parse import urljoin
 
 import httpx
 
+try:
+    from bs4 import BeautifulSoup  # noqa: F401
+except ImportError:
+    raise ImportError("The `bs4` package is not installed. Please install it via `pip install beautifulsoup4`.")
+
 from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
@@ -126,13 +131,6 @@ class LLMsTxtReader(Reader):
             return text
 
         if "text/html" in content_type or text.strip().startswith(("<!DOCTYPE", "<html", "<HTML")):
-            try:
-                from bs4 import BeautifulSoup
-            except ImportError:
-                raise ImportError(
-                    "The `bs4` package is not installed. Please install it via `pip install beautifulsoup4`."
-                )
-
             soup = BeautifulSoup(text, "html.parser")
             for tag in soup.find_all(["script", "style", "nav", "header", "footer", "aside"]):
                 tag.decompose()

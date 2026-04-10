@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reader.llms_txt_reader import LLMsTxtReader
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info
 
@@ -50,8 +51,6 @@ class LLMsTxtTools(Toolkit):
         skip_optional: bool = False,
         **kwargs,
     ):
-        from agno.knowledge.reader.llms_txt_reader import LLMsTxtReader
-
         self.knowledge: Optional[Knowledge] = knowledge
         self.max_urls = max_urls
         self.timeout = timeout
