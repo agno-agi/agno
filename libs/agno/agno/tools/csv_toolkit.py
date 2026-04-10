@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 
 
 class CsvTools(Toolkit):
@@ -46,8 +46,8 @@ class CsvTools(Toolkit):
                 import duckdb  # noqa: F401
 
                 tools.append(self.query_csv_file)
-            except ImportError:
-                logger.warning("`duckdb` not installed. Query functionality disabled.")
+            except ImportError as e:
+                log_warning(f"`duckdb` not installed. Query functionality disabled.: {str(e)}")
 
         super().__init__(name="csv_tools", tools=tools, **kwargs)
 
@@ -87,7 +87,7 @@ class CsvTools(Toolkit):
                     csv_data = [row for row in reader]
             return json.dumps(csv_data)
         except Exception as e:
-            logger.error(f"Error reading csv: {e}")
+            logger.exception("Error reading csv")
             return f"Error reading csv: {e}"
 
     def get_columns(self, csv_name: str) -> str:
@@ -113,7 +113,7 @@ class CsvTools(Toolkit):
 
             return json.dumps(columns)
         except Exception as e:
-            logger.error(f"Error getting columns: {e}")
+            logger.exception("Error getting columns")
             return f"Error getting columns: {e}"
 
     def query_csv_file(self, csv_name: str, sql_query: str) -> str:
@@ -146,7 +146,7 @@ class CsvTools(Toolkit):
             if not self.duckdb_connection:
                 con = duckdb.connect(**(self.duckdb_kwargs or {}))
             if con is None:
-                logger.error("Error connecting to DuckDB")
+                log_error("Error connecting to DuckDB")
                 return "Error connecting to DuckDB, please check the connection."
 
             # Create a table from the csv file
@@ -181,5 +181,5 @@ class CsvTools(Toolkit):
             log_debug(f"Query result: {result_output}")
             return result_output
         except Exception as e:
-            logger.error(f"Error querying csv: {e}")
+            logger.exception("Error querying csv")
             return f"Error querying csv: {e}"

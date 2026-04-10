@@ -9,7 +9,7 @@ from agno.media import Image, Video
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 try:
     import replicate
@@ -29,7 +29,7 @@ class ReplicateTools(Toolkit):
     ):
         self.api_key = api_key or getenv("REPLICATE_API_KEY")
         if not self.api_key:
-            logger.error("REPLICATE_API_KEY not set. Please set the REPLICATE_API_KEY environment variable.")
+            log_error("REPLICATE_API_KEY not set. Please set the REPLICATE_API_KEY environment variable.")
         self.model = model
 
         tools: List[Any] = []
@@ -47,7 +47,7 @@ class ReplicateTools(Toolkit):
             ToolResult: A ToolResult containing the generated media or error message.
         """
         if not self.api_key:
-            logger.error("API key is not set. Please provide a valid API key.")
+            log_error("API key is not set. Please provide a valid API key.")
             return ToolResult(content="API key is not set.")
 
         try:
@@ -57,7 +57,7 @@ class ReplicateTools(Toolkit):
             elif isinstance(outputs, (Iterable, Iterator)) and not isinstance(outputs, str):
                 outputs = list(outputs)
             else:
-                logger.error(f"Unexpected output type: {type(outputs)}")
+                log_error(f"Unexpected output type: {type(outputs)}")
                 return ToolResult(content=f"Unexpected output type: {type(outputs)}")
 
             images = []
@@ -66,7 +66,7 @@ class ReplicateTools(Toolkit):
 
             for output in outputs:
                 if not isinstance(output, FileOutput):
-                    logger.error(f"Unexpected output type: {type(output)}")
+                    log_error(f"Unexpected output type: {type(output)}")
                     return ToolResult(content=f"Unexpected output type: {type(output)}")
 
                 result_msg, media_artifact = self._parse_output(output)
@@ -84,7 +84,7 @@ class ReplicateTools(Toolkit):
                 videos=videos if videos else None,
             )
         except Exception as e:
-            logger.error(f"Failed to generate media: {e}")
+            logger.exception("Failed to generate media")
             return ToolResult(content=f"Error: {e}")
 
     def _parse_output(self, output: FileOutput) -> Tuple[str, Union[Image, Video]]:
@@ -111,7 +111,7 @@ class ReplicateTools(Toolkit):
             artifact = Video(id=media_id, url=output.url)
             media_type = "video"
         else:
-            logger.error(f"Unsupported media type with extension '{ext}' for URL: {output.url}")
+            log_error(f"Unsupported media type with extension '{ext}' for URL: {output.url}")
             raise ValueError(f"Unsupported media type with extension '{ext}'.")
 
         return f"{media_type.capitalize()} generated successfully at {output.url}", artifact

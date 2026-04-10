@@ -14,7 +14,6 @@ from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
-from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.openai_responses import images_to_message
 from agno.utils.models.schema_utils import get_response_schema_for_provider
@@ -160,9 +159,9 @@ class OpenAIResponses(Model):
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client is not None:
             client_params["http_client"] = self.http_client
-        else:
-            # Use global sync client when no custom http_client is provided
-            client_params["http_client"] = get_default_sync_client()
+        # When no custom http_client is provided, let the OpenAI SDK use its own default client.
+        # The SDK defaults to HTTP/1.1 which avoids transient 400 errors caused by HTTP/2
+        # protocol edge cases with OpenAI's infrastructure.
 
         self.client = OpenAI(**client_params)
         return self.client
@@ -180,9 +179,9 @@ class OpenAIResponses(Model):
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
             client_params["http_client"] = self.http_client
-        else:
-            # Use global async client when no custom http_client is provided
-            client_params["http_client"] = get_default_async_client()
+        # When no custom http_client is provided, let the OpenAI SDK use its own default client.
+        # The SDK defaults to HTTP/1.1 which avoids transient 400 errors caused by HTTP/2
+        # protocol edge cases with OpenAI's infrastructure.
 
         self.async_client = AsyncOpenAI(**client_params)
         return self.async_client
@@ -650,7 +649,7 @@ class OpenAIResponses(Model):
             )
             return response.input_tokens + count_schema_tokens(output_schema, self.id)
         except Exception as e:
-            log_warning(f"Failed to count tokens via API: {e}")
+            log_warning(f"Failed to count tokens via API: {str(e)}")
             return super().count_tokens(messages, tools, output_schema)
 
     async def acount_tokens(
@@ -672,7 +671,7 @@ class OpenAIResponses(Model):
             )
             return response.input_tokens + count_schema_tokens(output_schema, self.id)
         except Exception as e:
-            log_warning(f"Failed to count tokens via API: {e}")
+            log_warning(f"Failed to count tokens via API: {str(e)}")
             return await super().acount_tokens(messages, tools, output_schema)
 
     def invoke(

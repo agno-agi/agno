@@ -1275,7 +1275,7 @@ def _run(
                     else:
                         delay = team.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
 
@@ -1725,7 +1725,7 @@ def _run_stream(
                     else:
                         delay = team.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
 
@@ -3133,7 +3133,7 @@ async def _arun(
                     else:
                         delay = team.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -3237,15 +3237,15 @@ async def _arun_background(
                 background_tasks=background_tasks,
                 **kwargs,
             )
-        except Exception:
-            log_error(f"Background run {run_response.run_id} failed", exc_info=True)
+        except Exception as e:
+            log_error(f"Background run {run_response.run_id} failed: {str(e)}")
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
                 team_session.upsert_run(run_response=run_response)
                 await asave_session(team, session=team_session)
-            except Exception:
-                log_error(f"Failed to persist error state for background run {run_response.run_id}", exc_info=True)
+            except Exception as e:
+                log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
             # Note: acleanup_run is already called by _arun's finally block
 
     task = asyncio.create_task(_background_task())
@@ -3703,7 +3703,7 @@ async def _arun_stream(
                     else:
                         delay = team.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -4155,7 +4155,7 @@ def _resolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
 
             run_context.dependencies[key] = resolved_value
         except Exception as e:
-            log_warning(f"Failed to resolve dependencies for {key}: {e}")
+            log_warning(f"Failed to resolve dependencies for {key}: {str(e)}")
 
 
 async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
@@ -4190,7 +4190,7 @@ async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> N
 
             run_context.dependencies[key] = resolved_value
         except Exception as e:
-            log_warning(f"Failed to resolve context for '{key}': {e}")
+            log_warning(f"Failed to resolve context for '{key}': {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -5154,7 +5154,7 @@ def _continue_run(
                         delay = team.delay_between_retries * (2**attempt)
                     else:
                         delay = team.delay_between_retries
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     _time.sleep(delay)
                     continue
 
@@ -5418,7 +5418,7 @@ def _continue_run_stream(
                         delay = team.delay_between_retries * (2**attempt)
                     else:
                         delay = team.delay_between_retries
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     _time.sleep(delay)
                     continue
 
@@ -5834,7 +5834,7 @@ async def _acontinue_run(
                         delay = team.delay_between_retries * (2**attempt)
                     else:
                         delay = team.delay_between_retries
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -6254,7 +6254,7 @@ async def _acontinue_run_stream(
                         delay = team.delay_between_retries * (2**attempt)
                     else:
                         delay = team.delay_between_retries
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
