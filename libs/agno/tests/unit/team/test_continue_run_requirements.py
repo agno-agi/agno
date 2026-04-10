@@ -800,7 +800,6 @@ class TestPrepareMemberHitlContinuation:
         assert "Done" in tool.result
 
     def test_resets_run_state(self):
-        from agno.run import RunStatus
         from agno.team._run import _prepare_member_hitl_continuation
 
         tool = _make_tool_execution(
