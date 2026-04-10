@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, validate_call
 from agno.exceptions import AgentRunException
 from agno.media import Audio, File, Image, Video
 from agno.run import RunContext
-from agno.utils.log import log_debug, log_error, log_exception, log_warning
+from agno.utils.log import log_debug, log_exception, log_warning
 
 T = TypeVar("T")
 
@@ -382,7 +382,7 @@ class Function(BaseModel):
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
         except Exception as e:
-            log_warning(f"Could not parse args for {function_name}: {e}", exc_info=True)
+            log_warning(f"Could not parse args for {function_name}: {str(e)}")
 
         entrypoint = cls._wrap_callable(c)
 
@@ -536,7 +536,7 @@ class Function(BaseModel):
 
             # log_debug(f"JSON schema for {self.name}: {parameters}")
         except Exception as e:
-            log_warning(f"Could not parse args for {self.name}: {e}", exc_info=True)
+            log_warning(f"Could not parse args for {self.name}: {str(e)}")
 
         if not params_set_by_user:
             self.parameters = parameters
@@ -547,7 +547,7 @@ class Function(BaseModel):
         try:
             self.entrypoint = self._wrap_callable(self.entrypoint)
         except Exception as e:
-            log_warning(f"Failed to add validate decorator to entrypoint: {e}")
+            log_warning(f"Failed to add validate decorator to entrypoint: {str(e)}")
 
     @staticmethod
     def _wrap_callable(func: Callable) -> Callable:
@@ -716,8 +716,8 @@ class Function(BaseModel):
 
             # Remove expired entry
             cache_path.unlink()
-        except Exception as e:
-            log_error(f"Error reading cache: {e}")
+        except Exception:
+            log_exception("Error reading cache")
 
         return None
 
@@ -730,8 +730,8 @@ class Function(BaseModel):
             serializable_result = result.model_dump() if isinstance(result, BaseModel) else result
             with open(cache_file, "w") as f:
                 json.dump({"timestamp": time(), "result": serializable_result}, f)
-        except Exception as e:
-            log_error(f"Error writing cache: {e}")
+        except Exception:
+            log_exception("Error writing cache")
 
 
 class FunctionExecutionResult(BaseModel):
@@ -847,7 +847,7 @@ class FunctionCall(BaseModel):
                 self.error = str(e)
                 raise
             except Exception as e:
-                log_warning(f"Error in pre-hook callback: {e}")
+                log_warning(f"Error in pre-hook callback: {str(e)}")
                 log_exception(e)
 
     def _handle_post_hook(self):
@@ -875,7 +875,7 @@ class FunctionCall(BaseModel):
                 self.error = str(e)
                 raise
             except Exception as e:
-                log_warning(f"Error in post-hook callback: {e}")
+                log_warning(f"Error in post-hook callback: {str(e)}")
                 log_exception(e)
 
     def _build_entrypoint_args(self) -> Dict[str, Any]:
@@ -1081,7 +1081,7 @@ class FunctionCall(BaseModel):
             exception_to_raise = e
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
         except Exception as e:
-            log_warning(f"Could not run function {self.get_call_str()}")
+            log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
             log_exception(e)
             self.error = str(e)
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
@@ -1120,7 +1120,7 @@ class FunctionCall(BaseModel):
                 self.error = str(e)
                 raise
             except Exception as e:
-                log_warning(f"Error in pre-hook callback: {e}")
+                log_warning(f"Error in pre-hook callback: {str(e)}")
                 log_exception(e)
 
     async def _handle_post_hook_async(self):
@@ -1149,7 +1149,7 @@ class FunctionCall(BaseModel):
                 self.error = str(e)
                 raise
             except Exception as e:
-                log_warning(f"Error in post-hook callback: {e}")
+                log_warning(f"Error in post-hook callback: {str(e)}")
                 log_exception(e)
 
     async def _build_nested_execution_chain_async(self, entrypoint_args: Dict[str, Any]):
@@ -1301,7 +1301,7 @@ class FunctionCall(BaseModel):
             exception_to_raise = e
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
         except Exception as e:
-            log_warning(f"Could not run function {self.get_call_str()}")
+            log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
             log_exception(e)
             self.error = str(e)
             execution_result = FunctionExecutionResult(status="failure", error=str(e))

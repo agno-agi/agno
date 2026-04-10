@@ -143,7 +143,7 @@ def attach_routes(
         except HTTPException:
             raise
         except Exception as e:
-            log_error(f"Error processing webhook: {e}")
+            log_error(f"Error processing webhook: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     async def _handle_command(
@@ -183,7 +183,7 @@ def attach_routes(
                     cfg.db.upsert_session(session)
                 await send_message(bot, chat_id, new_message, message_thread_id=message_thread_id)
             except Exception as e:
-                log_warning(f"Failed to persist new session to DB: {e}")
+                log_warning(f"Failed to persist new session to DB: {str(e)}")
                 await send_message(
                     bot,
                     chat_id,
@@ -399,7 +399,7 @@ def attach_routes(
                     if found:
                         session_id = found
                 except Exception as e:
-                    log_warning(f"Session lookup failed, using default: {e}")
+                    log_warning(f"Session lookup failed, using default: {str(e)}")
 
             log_info(f"Processing message from user {user_id}")
             log_debug(f"Message content: {message_text}")
@@ -419,7 +419,7 @@ def attach_routes(
                 await _remove_reaction(chat_id, incoming_message_id)
 
         except Exception as e:
-            log_error(f"Error processing message: {e}", exc_info=True)
+            log_error(f"Error processing message: {str(e)}")
             try:
                 await send_message(bot, chat_id, error_message, message_thread_id=message_thread_id)
             except Exception as send_error:

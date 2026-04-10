@@ -75,7 +75,7 @@ class YouTubeReader(Reader):
             return documents
 
         except Exception as e:
-            log_error(f"Error reading transcript for {url}: {e}")
+            log_error(f"Error reading transcript for {url}: {str(e)}")
             return []
 
     async def async_read(self, url: str) -> List[Document]:
