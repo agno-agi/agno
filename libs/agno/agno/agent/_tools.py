@@ -626,14 +626,13 @@ def run_tool(
     tool: ToolExecution,
     functions: Optional[Dict[str, Function]] = None,
     stream_events: bool = False,
+    team_mode: bool = False,
 ) -> Iterator[RunOutputEvent]:
     from agno.run.agent import CustomEvent
-    from agno.run.team import TeamRunOutput
 
-    # Detect whether we're running a team-level tool (TeamRunOutput) or agent-level tool (RunOutput).
+    # team_mode=True when called from team continue path with a TeamRunOutput.
     # Team-level tools need team event creators since TeamRunOutput has team_id, not agent_id.
-    _is_team = isinstance(run_response, TeamRunOutput)
-    if _is_team:
+    if team_mode:
         from agno.utils.events import (
             create_team_tool_call_completed_event,
             create_team_tool_call_error_event,
@@ -652,7 +651,7 @@ def run_tool(
         if isinstance(call_result, ModelResponse):
             if call_result.event == ModelResponseEvent.tool_call_started.value:
                 if stream_events:
-                    if _is_team:
+                    if team_mode:
                         yield handle_event(  # type: ignore
                             create_team_tool_call_started_event(from_run_response=run_response, tool=tool),  # type: ignore
                             run_response,
@@ -672,10 +671,12 @@ def run_tool(
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
                 if stream_events:
-                    if _is_team:
+                    if team_mode:
                         yield handle_event(  # type: ignore
                             create_team_tool_call_completed_event(
-                                from_run_response=run_response, tool=tool, content=call_result.content  # type: ignore
+                                from_run_response=run_response,
+                                tool=tool,
+                                content=call_result.content,  # type: ignore
                             ),
                             run_response,
                             events_to_skip=agent.events_to_skip,  # type: ignore
@@ -684,7 +685,9 @@ def run_tool(
                         if tool.tool_call_error:
                             yield handle_event(  # type: ignore
                                 create_team_tool_call_error_event(
-                                    from_run_response=run_response, tool=tool, error=str(tool.result)  # type: ignore
+                                    from_run_response=run_response,
+                                    tool=tool,
+                                    error=str(tool.result),  # type: ignore
                                 ),
                                 run_response,
                                 events_to_skip=agent.events_to_skip,  # type: ignore
@@ -737,13 +740,12 @@ async def arun_tool(
     tool: ToolExecution,
     functions: Optional[Dict[str, Function]] = None,
     stream_events: bool = False,
+    team_mode: bool = False,
 ) -> AsyncIterator[RunOutputEvent]:
     from agno.run.agent import CustomEvent
-    from agno.run.team import TeamRunOutput
 
-    # Detect whether we're running a team-level tool (TeamRunOutput) or agent-level tool (RunOutput).
-    _is_team = isinstance(run_response, TeamRunOutput)
-    if _is_team:
+    # team_mode=True when called from team continue path with a TeamRunOutput.
+    if team_mode:
         from agno.utils.events import (
             create_team_tool_call_completed_event,
             create_team_tool_call_error_event,
@@ -764,7 +766,7 @@ async def arun_tool(
         if isinstance(call_result, ModelResponse):
             if call_result.event == ModelResponseEvent.tool_call_started.value:
                 if stream_events:
-                    if _is_team:
+                    if team_mode:
                         yield handle_event(  # type: ignore
                             create_team_tool_call_started_event(from_run_response=run_response, tool=tool),  # type: ignore
                             run_response,
@@ -783,10 +785,12 @@ async def arun_tool(
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
                 if stream_events:
-                    if _is_team:
+                    if team_mode:
                         yield handle_event(  # type: ignore
                             create_team_tool_call_completed_event(
-                                from_run_response=run_response, tool=tool, content=call_result.content  # type: ignore
+                                from_run_response=run_response,
+                                tool=tool,
+                                content=call_result.content,  # type: ignore
                             ),
                             run_response,
                             events_to_skip=agent.events_to_skip,  # type: ignore
@@ -795,7 +799,9 @@ async def arun_tool(
                         if tool.tool_call_error:
                             yield handle_event(  # type: ignore
                                 create_team_tool_call_error_event(
-                                    from_run_response=run_response, tool=tool, error=str(tool.result)  # type: ignore
+                                    from_run_response=run_response,
+                                    tool=tool,
+                                    error=str(tool.result),  # type: ignore
                                 ),
                                 run_response,
                                 events_to_skip=agent.events_to_skip,  # type: ignore

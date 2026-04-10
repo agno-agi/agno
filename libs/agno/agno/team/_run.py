@@ -4304,7 +4304,7 @@ def _handle_team_tool_call_updates(
         # Case 1: Handle confirmed tools and execute them
         if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
             if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
-                deque(run_tool(team, run_response, run_messages, _t, functions=_functions), maxlen=0)  # type: ignore
+                deque(run_tool(team, run_response, run_messages, _t, functions=_functions, team_mode=True), maxlen=0)  # type: ignore
             else:
                 reject_tool_call(team, run_messages, _t, functions=_functions)  # type: ignore
                 _t.confirmed = False
@@ -4327,7 +4327,7 @@ def _handle_team_tool_call_updates(
             handle_user_input_update(team, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
-            deque(run_tool(team, run_response, run_messages, _t, functions=_functions), maxlen=0)  # type: ignore
+            deque(run_tool(team, run_response, run_messages, _t, functions=_functions, team_mode=True), maxlen=0)  # type: ignore
 
 
 def _handle_team_tool_call_updates_stream(
@@ -4364,6 +4364,7 @@ def _handle_team_tool_call_updates_stream(
                     _t,
                     functions=_functions,
                     stream_events=stream_events,  # type: ignore
+                    team_mode=True,
                 )
             else:
                 reject_tool_call(team, run_messages, _t, functions=_functions)  # type: ignore
@@ -4392,6 +4393,7 @@ def _handle_team_tool_call_updates_stream(
                 _t,
                 functions=_functions,
                 stream_events=stream_events,  # type: ignore
+                team_mode=True,
             )
             _t.requires_user_input = False
             _t.answered = True
@@ -4421,7 +4423,7 @@ async def _ahandle_team_tool_call_updates(
     for _t in run_response.tools or []:
         if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
             if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
-                async for _ in arun_tool(team, run_response, run_messages, _t, functions=_functions):  # type: ignore
+                async for _ in arun_tool(team, run_response, run_messages, _t, functions=_functions, team_mode=True):  # type: ignore
                     pass
             else:
                 reject_tool_call(team, run_messages, _t, functions=_functions)  # type: ignore
@@ -4442,7 +4444,7 @@ async def _ahandle_team_tool_call_updates(
             handle_user_input_update(team, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
-            async for _ in arun_tool(team, run_response, run_messages, _t, functions=_functions):  # type: ignore
+            async for _ in arun_tool(team, run_response, run_messages, _t, functions=_functions, team_mode=True):  # type: ignore
                 pass
 
 
@@ -4480,6 +4482,7 @@ async def _ahandle_team_tool_call_updates_stream(
                     _t,
                     functions=_functions,
                     stream_events=stream_events,  # type: ignore
+                    team_mode=True,
                 ):
                     yield event  # type: ignore
             else:
@@ -4509,6 +4512,7 @@ async def _ahandle_team_tool_call_updates_stream(
                 _t,
                 functions=_functions,
                 stream_events=stream_events,  # type: ignore
+                team_mode=True,
             ):
                 yield event  # type: ignore
             _t.requires_user_input = False
