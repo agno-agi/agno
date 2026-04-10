@@ -83,7 +83,8 @@ def attach_routes(
     public_key: Optional[str] = None,
     application_id: Optional[str] = None,
     streaming: bool = True,
-    show_reasoning: bool = True,
+    # Sync path only — streaming always shows reasoning via task card events
+    show_reasoning: bool = False,
     error_message: str = FALLBACK_ERROR_MESSAGE,
 ) -> APIRouter:
     # Inner functions capture config via closure to keep each instance isolated
@@ -98,7 +99,8 @@ def attach_routes(
     session_config = build_session_store_config(entity, entity_type)
     instance_state = InstanceState(session_config=session_config, entity_id=entity_id)
 
-    # Empty string when not configured; per-interaction payload may override at runtime
+    # Defensive fallback — Discord payloads always include application_id,
+    # but the configured value covers edge cases (e.g. malformed webhooks)
     configured_app_id = application_id or ""
 
     # Lazy aiohttp session — attach_routes() runs at import time (sync),

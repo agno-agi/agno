@@ -26,7 +26,8 @@ class Discord(BaseInterface):
         public_key: Optional[str] = None,
         application_id: Optional[str] = None,
         streaming: bool = True,
-        show_reasoning: bool = True,
+        # Sync path only — streaming always shows reasoning via task card events
+        show_reasoning: bool = False,
         error_message: str = FALLBACK_ERROR_MESSAGE,
     ):
         self.agent = agent
