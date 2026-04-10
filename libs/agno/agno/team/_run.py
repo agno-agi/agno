@@ -33,7 +33,7 @@ from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.metrics import RunMetrics, merge_background_metrics
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ToolExecution
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.cancel import (
@@ -4997,6 +4997,11 @@ def _build_continuation_message(member_results: List[str]) -> str:
     return "\n".join(parts)
 
 
+def _tool_result_requires_human_input(tool: ToolExecution) -> bool:
+    result = tool.result or ""
+    return isinstance(result, str) and "requires human input" in result.lower()
+
+
 def _prepare_member_hitl_continuation(
     run_response: TeamRunOutput,
     run_messages: RunMessages,
@@ -5004,8 +5009,9 @@ def _prepare_member_hitl_continuation(
 ) -> None:
     """Prepare run_response and run_messages for member HITL continuation.
 
-    Updates the delegate_task_to_member tool result in both run_response.tools
-    and the corresponding message in run_messages. Also resets run state for continuation.
+    Updates the delegate_task_to_member/delegate_task_to_members tool result in both
+    run_response.tools and the corresponding message in run_messages. Also resets run
+    state for continuation.
 
     This is called after the member agent's HITL has been resolved and we need to
     continue the team run with the member's results.
@@ -5013,21 +5019,28 @@ def _prepare_member_hitl_continuation(
 
     continuation_message = _build_continuation_message(member_results)
 
-    # Find the tool_call_id for the delegate_task_to_member tool that needs updating
-    target_tool_call_id: Optional[str] = None
+    target_tool_call_ids: set[str] = set()
     for tool in run_response.tools or []:
-        if tool.tool_name == "delegate_task_to_member" and tool.result is not None:
-            if "requires human input" in (tool.result or ""):
-                tool.result = continuation_message
-                target_tool_call_id = tool.tool_call_id
-                break
+        if tool.tool_name in {
+            "delegate_task_to_member",
+            "delegate_task_to_members",
+        } and _tool_result_requires_human_input(tool):
+            tool.result = continuation_message
+            if tool.tool_call_id is not None:
+                target_tool_call_ids.add(tool.tool_call_id)
 
-    # Update the existing tool result message in run_messages
-    if target_tool_call_id:
+    if not target_tool_call_ids:
+        for tool in run_response.tools or []:
+            if _tool_result_requires_human_input(tool):
+                tool.result = continuation_message
+                if tool.tool_call_id is not None:
+                    target_tool_call_ids.add(tool.tool_call_id)
+
+    # Update the existing tool result messages in run_messages
+    if target_tool_call_ids:
         for msg in run_messages.messages:
-            if msg.role == "tool" and msg.tool_call_id == target_tool_call_id:
+            if msg.role == "tool" and msg.tool_call_id in target_tool_call_ids:
                 msg.content = continuation_message
-                break
 
     # Reset run state for continuation
     run_response.status = RunStatus.running
@@ -5215,6 +5228,18 @@ def continue_run_dispatch(
             run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
         elif updated_tools:
             run_response.tools = updated_tools
+    elif run_response.tools:
+        from agno.run.approval import check_and_apply_approval_resolution
+
+        try:
+            check_and_apply_approval_resolution(team.db, run_id_resolved, run_response)
+        except RuntimeError:
+            raise ValueError(
+                "To continue a run from a given run_id, the requirements parameter must be provided "
+                "(or resolve an admin approval first)."
+            )
+    else:
+        raise ValueError("To continue a run from a given run_id, the requirements parameter must be provided.")
 
     # Determine what kind of pause we're continuing from
     has_member = _has_member_requirements(run_response.requirements or [])
@@ -6226,6 +6251,22 @@ async def _acontinue_run(
                         ]
                     elif updated_tools:
                         run_response.tools = updated_tools
+                elif run_response.tools:
+                    from agno.run.approval import acheck_and_apply_approval_resolution
+
+                    try:
+                        await acheck_and_apply_approval_resolution(
+                            team.db, run_response.run_id or run_id or "", run_response
+                        )
+                    except RuntimeError:
+                        raise ValueError(
+                            "To continue a run from a given run_id, the requirements parameter must be provided "
+                            "(or resolve an admin approval first)."
+                        )
+                else:
+                    raise ValueError(
+                        "To continue a run from a given run_id, the requirements parameter must be provided."
+                    )
 
                 await aregister_run(run_response.run_id)  # type: ignore
 
@@ -6533,6 +6574,22 @@ async def _acontinue_run_stream(
                         ]
                     elif updated_tools:
                         run_response.tools = updated_tools
+                elif run_response.tools:
+                    from agno.run.approval import acheck_and_apply_approval_resolution
+
+                    try:
+                        await acheck_and_apply_approval_resolution(
+                            team.db, run_response.run_id or run_id or "", run_response
+                        )
+                    except RuntimeError:
+                        raise ValueError(
+                            "To continue a run from a given run_id, the requirements parameter must be provided "
+                            "(or resolve an admin approval first)."
+                        )
+                else:
+                    raise ValueError(
+                        "To continue a run from a given run_id, the requirements parameter must be provided."
+                    )
 
                 await aregister_run(run_response.run_id)  # type: ignore
 

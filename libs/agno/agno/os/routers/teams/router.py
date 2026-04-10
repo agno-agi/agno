@@ -19,7 +19,12 @@ from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.os.auth import get_auth_token_from_request, get_authentication_dependency, require_resource_access
+from agno.os.auth import (
+    get_auth_token_from_request,
+    get_authentication_dependency,
+    require_approval_resolved,
+    require_resource_access,
+)
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -449,9 +454,11 @@ def get_team_router(
             "Continue a paused or incomplete team run with updated requirements.\n\n"
             "**Use Cases:**\n"
             "- Resume execution after tool approval/rejection\n"
-            "- Provide manual tool execution results\n\n"
+            "- Provide manual tool execution results\n"
+            "- Resume after admin approval (requirements can be empty; resolution fetched from DB)\n\n"
             "**Requirements Parameter:**\n"
-            "JSON string containing array of requirement objects with tool execution results."
+            "JSON string containing array of requirement objects with tool execution results.\n"
+            "Can be empty when an admin-required approval has been resolved."
         ),
         responses={
             200: {
@@ -466,19 +473,23 @@ def get_team_router(
                 "description": "Invalid JSON in requirements field or invalid requirement structure",
                 "model": BadRequestResponse,
             },
+            403: {"description": "Run has a pending admin approval and cannot be continued by the user yet."},
             404: {"description": "Team not found", "model": NotFoundResponse},
             409: {
                 "description": "Run is not paused (e.g. run is already running, continued, or errored). Only PAUSED runs can be continued.",
             },
         },
-        dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
+        dependencies=[
+            Depends(require_resource_access("teams", "run", "team_id")),
+            Depends(require_approval_resolved(os.db)),
+        ],
     )
     async def continue_team_run(
         team_id: str,
         run_id: str,
         request: Request,
         background_tasks: BackgroundTasks,
-        requirements: str = Form(...),  # JSON string of requirements
+        requirements: str = Form(""),  # optional when admin approval resolved
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         stream: bool = Form(True),
@@ -531,7 +542,7 @@ def get_team_router(
                     )
 
         # Convert requirements dict to RunRequirement objects if provided
-        updated_requirements = []
+        updated_requirements = None
         if requirements_data:
             try:
                 from agno.run.requirement import RunRequirement
@@ -548,7 +559,7 @@ def get_team_router(
                 team_continue_response_streamer(
                     team,
                     run_id=run_id,
-                    requirements=updated_requirements,
+                    requirements=updated_requirements or [],
                     session_id=session_id,
                     user_id=user_id,
                     background_tasks=background_tasks,
@@ -574,7 +585,7 @@ def get_team_router(
                 )
                 return run_response_obj.to_dict()
 
-            except InputCheckError as e:
+            except (InputCheckError, ValueError) as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
     @router.get(
