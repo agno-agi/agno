@@ -896,8 +896,8 @@ class TeamRunOutput:
 
         try:
             _dict = self.to_dict()
-        except Exception:
-            log_error("Failed to convert response to json", exc_info=True)
+        except Exception as e:
+            log_error(f"Failed to convert response to json: {str(e)}")
             raise
 
         if indent is None:

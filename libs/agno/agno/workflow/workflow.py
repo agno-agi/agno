@@ -56,6 +56,7 @@ from agno.run.team import TeamRunEvent
 from agno.run.workflow import (
     StepErrorEvent,
     StepOutputEvent,
+    StepOutputReviewEvent,
     WorkflowCancelledEvent,
     WorkflowCompletedEvent,
     WorkflowRunEvent,
@@ -100,8 +101,12 @@ from agno.workflow.types import (
 )
 from agno.workflow.utils import (
     ContinueExecutionState,
+    StepPauseResult,
     apply_pause_state,
+    apply_post_execution_pause_state,
     asave_paused_session,
+    check_output_review_status,
+    check_timeout,
     create_router_paused_event,
     create_step_paused_event,
     finalize_workflow_completion,
@@ -197,6 +202,7 @@ WorkflowSteps = Union[
             Parallel,
             Condition,
             Router,
+            "Workflow",  # Nested workflow support
         ]
     ],
 ]
@@ -934,7 +940,7 @@ class Workflow:
             return config.get("version")
 
         except Exception as e:
-            log_error(f"Error saving workflow: {e}")
+            log_error(f"Error saving workflow: {str(e)}")
             return None
 
     @classmethod
@@ -1329,7 +1335,7 @@ class Workflow:
                 session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
             return session if isinstance(session, (WorkflowSession, type(None))) else None
         except Exception as e:
-            log_warning(f"Error getting session from db: {e}")
+            log_warning(f"Error getting session from db: {str(e)}")
             return None
 
     def _read_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
@@ -1340,7 +1346,7 @@ class Workflow:
             session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
             return session if isinstance(session, (WorkflowSession, type(None))) else None
         except Exception as e:
-            log_warning(f"Error getting session from db: {e}")
+            log_warning(f"Error getting session from db: {str(e)}")
             return None
 
     async def _aupsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
@@ -1351,7 +1357,7 @@ class Workflow:
             result = await self.db.upsert_session(session=session)  # type: ignore
             return result if isinstance(result, (WorkflowSession, type(None))) else None
         except Exception as e:
-            log_warning(f"Error upserting session into db: {e}")
+            log_warning(f"Error upserting session into db: {str(e)}")
             return None
 
     def _upsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
@@ -1362,7 +1368,7 @@ class Workflow:
             result = self.db.upsert_session(session=session)
             return result if isinstance(result, (WorkflowSession, type(None))) else None
         except Exception as e:
-            log_warning(f"Error upserting session into db: {e}")
+            log_warning(f"Error upserting session into db: {str(e)}")
             return None
 
     def _update_metadata(self, session: WorkflowSession):
@@ -1420,6 +1426,8 @@ class Workflow:
                     step_type = StepType.STEP
                 elif isinstance(step, Agent) or isinstance(step, Team):
                     step_type = StepType.STEP
+                elif isinstance(step, Workflow):
+                    step_type = StepType.WORKFLOW
                 else:
                     step_type = STEP_TYPE_MAPPING[type(step)]
                 step_dict = {
@@ -1469,6 +1477,7 @@ class Workflow:
 
         if isinstance(event, (RunOutput, TeamRunOutput)):
             return event
+
         if self.store_events:
             # Check if this event type should be skipped
             if self.events_to_skip:
@@ -1568,10 +1577,31 @@ class Workflow:
         step_id = getattr(step, "step_id", None) if step else None
         step_name = getattr(step, "name", None) if step else None
 
-        if hasattr(event, "workflow_id"):
-            event.workflow_id = workflow_run_response.workflow_id
-        if hasattr(event, "workflow_run_id"):
-            event.workflow_run_id = workflow_run_response.run_id
+        # Detect nested events: if the event's workflow_id differs from the current workflow,
+        # it originated from an inner workflow and should preserve its identity.
+        is_nested_event = (
+            hasattr(event, "workflow_id")
+            and event.workflow_id is not None
+            and event.workflow_id != workflow_run_response.workflow_id
+        )
+
+        # Increment nested_depth each time an outer workflow enriches a nested event
+        if is_nested_event and hasattr(event, "nested_depth"):
+            event.nested_depth = getattr(event, "nested_depth", 0) + 1
+
+        if not is_nested_event:
+            # Outer event: set workflow identity to current workflow
+            if hasattr(event, "workflow_id"):
+                event.workflow_id = workflow_run_response.workflow_id
+            if hasattr(event, "workflow_name"):
+                event.workflow_name = workflow_run_response.workflow_name
+            if hasattr(event, "workflow_run_id"):
+                event.workflow_run_id = workflow_run_response.run_id
+        else:
+            # Nested event: preserve original workflow_id/name, but update workflow_run_id
+            # for tracking which parent run processed the event
+            if hasattr(event, "workflow_run_id"):
+                event.workflow_run_id = workflow_run_response.run_id
         # Set session_id to match workflow's session_id for consistent event tracking
         if hasattr(event, "session_id") and workflow_run_response.session_id:
             event.session_id = workflow_run_response.session_id
@@ -1765,9 +1795,9 @@ class Workflow:
 
         try:
             return func(**call_kwargs)
-        except TypeError as e:
+        except TypeError:
             # If signature inspection fails, fall back to original method
-            logger.error(f"Function signature inspection failed: {e}. Falling back to original calling convention.")
+            logger.exception("Function signature inspection failed. Falling back to original calling convention.")
             return func(**kwargs)
 
     def _accumulate_partial_step_data(
@@ -1913,6 +1943,49 @@ class Workflow:
                     # Check for cancellation after step execution
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
+                    # Post-execution output review check
+                    # Note: apply_post_execution_pause_state appends step_output to
+                    # collected_step_outputs, so we return before the normal output storage below.
+                    if step_output is not None and isinstance(step, (Step, Router)):
+                        review_result = check_output_review_status(step, i, step_input, step_output)
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            save_paused_session(self, session, workflow_run_response)
+                            return workflow_run_response
+
+                    # Loop iteration review check
+                    if getattr(step_output, "requires_iteration_review_pause", False) and isinstance(step, Loop):
+                        # Build the review requirement from the Loop — not stored on StepOutput
+                        # to avoid circular references during serialization (asdict recursion).
+                        last_iter = step_output.steps[-1] if step_output.steps else step_output
+                        iteration_num = len(step_output.steps) - 1 if step_output.steps else 0
+                        req = step.create_iteration_review_requirement(
+                            step_index=i,
+                            iteration=iteration_num,
+                            step_input=step_input,
+                            iteration_output=last_iter,
+                        )
+                        pause_result = StepPauseResult(should_pause=True, step_requirement=req)
+                        apply_post_execution_pause_state(
+                            workflow_run_response,
+                            i,
+                            step_name,
+                            collected_step_outputs,
+                            pause_result,
+                            step_output,
+                            previous_step_outputs=previous_step_outputs,
+                        )
+                        save_paused_session(self, session, workflow_run_response)
+                        return workflow_run_response
+
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
@@ -1965,7 +2038,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                log_error(f"Validation failed | Check: {e.check_trigger}")
                 # Store error response
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Validation failed: {str(e)} | Check: {e.check_trigger}"
@@ -1979,7 +2052,7 @@ class Workflow:
                 import traceback
 
                 traceback.print_exc()
-                logger.error(f"Workflow execution failed: {e}")
+                logger.exception("Workflow execution failed")
                 # Store error response
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
@@ -2115,6 +2188,7 @@ class Workflow:
 
                     # Execute step with streaming and yield all events
                     step_error_occurred = False
+                    step_output = None
                     step_error_exception = None
                     try:
                         for event in step.execute_stream(  # type: ignore[union-attr]
@@ -2254,6 +2328,76 @@ class Workflow:
                             # Default behavior: re-raise the exception
                             raise step_error_exception
 
+                    # Post-execution output review check
+                    if not step_error_occurred and step_output is not None and isinstance(step, (Step, Router)):
+                        review_result = check_output_review_status(step, i, step_input, step_output)
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            review_event = StepOutputReviewEvent(
+                                run_id=workflow_run_response.run_id or "",
+                                workflow_name=workflow_run_response.workflow_name,
+                                workflow_id=workflow_run_response.workflow_id,
+                                session_id=workflow_run_response.session_id,
+                                step_name=step_name,
+                                step_index=i,
+                                step_id=getattr(step, "step_id", None),
+                                output_review_message=getattr(
+                                    review_result.step_requirement, "output_review_message", None
+                                )
+                                if review_result.step_requirement
+                                else None,
+                            )
+                            yield self._handle_event(review_event, workflow_run_response)
+                            save_paused_session(self, session, workflow_run_response)
+                            return
+
+                    # Loop iteration review check
+                    if (
+                        not step_error_occurred
+                        and step_output is not None
+                        and getattr(step_output, "requires_iteration_review_pause", False)
+                        and isinstance(step, Loop)
+                    ):
+                        last_iter = step_output.steps[-1] if step_output.steps else step_output
+                        iteration_num = len(step_output.steps) - 1 if step_output.steps else 0
+                        req = step.create_iteration_review_requirement(
+                            step_index=i,
+                            iteration=iteration_num,
+                            step_input=step_input,
+                            iteration_output=last_iter,
+                        )
+                        pause_result = StepPauseResult(should_pause=True, step_requirement=req)
+                        apply_post_execution_pause_state(
+                            workflow_run_response,
+                            i,
+                            step_name,
+                            collected_step_outputs,
+                            pause_result,
+                            step_output,
+                            previous_step_outputs=previous_step_outputs,
+                        )
+                        review_event = StepOutputReviewEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_name=workflow_run_response.workflow_name,
+                            workflow_id=workflow_run_response.workflow_id,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            step_id=getattr(step, "step_id", None),
+                            output_review_message=getattr(req, "output_review_message", None),
+                        )
+                        yield self._handle_event(review_event, workflow_run_response)
+                        save_paused_session(self, session, workflow_run_response)
+                        return
+
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
                         break
@@ -2292,7 +2436,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                log_error(f"Validation failed | Check: {e.check_trigger}")
 
                 from agno.run.workflow import WorkflowErrorEvent
 
@@ -2353,7 +2497,7 @@ class Workflow:
                 )
                 yield self._handle_event(cancelled_event, workflow_run_response)
             except Exception as e:
-                logger.error(f"Workflow execution failed: {e}")
+                logger.exception("Workflow execution failed")
 
                 from agno.run.workflow import WorkflowErrorEvent
 
@@ -2381,6 +2525,7 @@ class Workflow:
             session_id=workflow_run_response.session_id,
             step_results=workflow_run_response.step_results,  # type: ignore
             metadata=workflow_run_response.metadata,
+            run_output=workflow_run_response,  # Include full run output for nested workflows
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
@@ -2451,9 +2596,10 @@ class Workflow:
                 return await func(**call_kwargs)  # type: ignore
         except TypeError as e:
             # If signature inspection fails, fall back to original method
-            logger.warning(
-                f"Async function signature inspection failed: {e}. Falling back to original calling convention."
+            log_warning(
+                f"Async function signature inspection failed. Falling back to original calling convention.: {str(e)}"
             )
+
             if isasyncgenfunction(func):
                 # For async generators, use the same signature inspection logic in fallback
                 return func(**call_kwargs)  # type: ignore
@@ -2636,6 +2782,47 @@ class Workflow:
                     # Check for cancellation after step execution
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
+                    # Post-execution output review check
+                    if step_output is not None and isinstance(step, (Step, Router)):
+                        review_result = check_output_review_status(step, i, step_input, step_output)
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            await asave_paused_session(self, workflow_session, workflow_run_response)
+                            return workflow_run_response
+
+                    # Loop iteration review check
+                    if getattr(step_output, "requires_iteration_review_pause", False) and isinstance(step, Loop):
+                        # Build the review requirement from the Loop — not stored on StepOutput
+                        # to avoid circular references during serialization (asdict recursion).
+                        last_iter = step_output.steps[-1] if step_output.steps else step_output
+                        iteration_num = len(step_output.steps) - 1 if step_output.steps else 0
+                        req = step.create_iteration_review_requirement(
+                            step_index=i,
+                            iteration=iteration_num,
+                            step_input=step_input,
+                            iteration_output=last_iter,
+                        )
+                        pause_result = StepPauseResult(should_pause=True, step_requirement=req)
+                        apply_post_execution_pause_state(
+                            workflow_run_response,
+                            i,
+                            step_name,
+                            collected_step_outputs,
+                            pause_result,
+                            step_output,
+                            previous_step_outputs=previous_step_outputs,
+                        )
+                        await asave_paused_session(self, workflow_session, workflow_run_response)
+                        return workflow_run_response
+
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
@@ -2688,7 +2875,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                log_error(f"Validation failed | Check: {e.check_trigger}")
                 # Store error response
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Validation failed: {str(e)} | Check: {e.check_trigger}"
@@ -2699,7 +2886,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.content = str(e)
             except Exception as e:
-                logger.error(f"Workflow execution failed: {e}")
+                logger.exception("Workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
                 raise e
@@ -2855,6 +3042,7 @@ class Workflow:
 
                     # Execute step with streaming and yield all events
                     step_error_occurred = False
+                    step_output = None
                     step_error_exception = None
                     try:
                         async for event in step.aexecute_stream(  # type: ignore[union-attr]
@@ -3004,6 +3192,80 @@ class Workflow:
                             # Default behavior: re-raise the exception
                             raise step_error_exception
 
+                    # Post-execution output review check
+                    if not step_error_occurred and step_output is not None and isinstance(step, (Step, Router)):
+                        review_result = check_output_review_status(step, i, step_input, step_output)
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            review_event = StepOutputReviewEvent(
+                                run_id=workflow_run_response.run_id or "",
+                                workflow_name=workflow_run_response.workflow_name,
+                                workflow_id=workflow_run_response.workflow_id,
+                                session_id=workflow_run_response.session_id,
+                                step_name=step_name,
+                                step_index=i,
+                                step_id=getattr(step, "step_id", None),
+                                output_review_message=getattr(
+                                    review_result.step_requirement, "output_review_message", None
+                                )
+                                if review_result.step_requirement
+                                else None,
+                            )
+                            yield self._handle_event(
+                                review_event, workflow_run_response, websocket_handler=websocket_handler
+                            )
+                            await asave_paused_session(self, workflow_session, workflow_run_response)
+                            return
+
+                    # Loop iteration review check
+                    if (
+                        not step_error_occurred
+                        and step_output is not None
+                        and getattr(step_output, "requires_iteration_review_pause", False)
+                        and isinstance(step, Loop)
+                    ):
+                        last_iter = step_output.steps[-1] if step_output.steps else step_output
+                        iteration_num = len(step_output.steps) - 1 if step_output.steps else 0
+                        req = step.create_iteration_review_requirement(
+                            step_index=i,
+                            iteration=iteration_num,
+                            step_input=step_input,
+                            iteration_output=last_iter,
+                        )
+                        pause_result = StepPauseResult(should_pause=True, step_requirement=req)
+                        apply_post_execution_pause_state(
+                            workflow_run_response,
+                            i,
+                            step_name,
+                            collected_step_outputs,
+                            pause_result,
+                            step_output,
+                            previous_step_outputs=previous_step_outputs,
+                        )
+                        review_event = StepOutputReviewEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_name=workflow_run_response.workflow_name,
+                            workflow_id=workflow_run_response.workflow_id,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            step_id=getattr(step, "step_id", None),
+                            output_review_message=getattr(req, "output_review_message", None),
+                        )
+                        yield self._handle_event(
+                            review_event, workflow_run_response, websocket_handler=websocket_handler
+                        )
+                        await asave_paused_session(self, workflow_session, workflow_run_response)
+                        return
+
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
                         break
@@ -3042,7 +3304,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except (InputCheckError, OutputCheckError) as e:
-                log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
+                log_error(f"Validation failed | Check: {e.check_trigger}")
 
                 from agno.run.workflow import WorkflowErrorEvent
 
@@ -3107,7 +3369,7 @@ class Workflow:
                     websocket_handler=websocket_handler,
                 )
             except Exception as e:
-                logger.error(f"Workflow execution failed: {e}")
+                logger.exception("Workflow execution failed")
 
                 from agno.run.workflow import WorkflowErrorEvent
 
@@ -3135,6 +3397,7 @@ class Workflow:
             session_id=workflow_run_response.session_id,
             step_results=workflow_run_response.step_results,  # type: ignore[arg-type]
             metadata=workflow_run_response.metadata,
+            run_output=workflow_run_response,  # Include full run output for nested workflows
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
 
@@ -3288,7 +3551,7 @@ class Workflow:
                 log_debug(f"Background execution completed with status: {workflow_run_response.status}")
 
             except Exception as e:
-                logger.error(f"Background workflow execution failed: {e}")
+                logger.exception("Background workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
                 if self._has_async_db():
@@ -3434,7 +3697,7 @@ class Workflow:
                 log_debug(f"Background streaming execution completed with status: {workflow_run_response.status}")
 
             except Exception as e:
-                logger.error(f"Background streaming workflow execution failed: {e}")
+                logger.exception("Background streaming workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background streaming execution failed: {str(e)}"
                 if self._has_async_db():
@@ -4404,7 +4667,22 @@ class Workflow:
         if step_requirements is not None:
             run_response.step_requirements = step_requirements
 
-        # Validate that all step requirements are resolved
+        # Check for timeout on all step requirements (must run before validation
+        # so timed-out requirements are auto-resolved before we check for unresolved ones)
+        for step_req in run_response.step_requirements or []:
+            timeout_action = check_timeout(step_req)
+            if timeout_action is not None:
+                log_debug(f"Step '{step_req.step_name}' timed out - applying action: {timeout_action}")
+                if timeout_action == "approve":
+                    step_req.confirm()
+                elif timeout_action == "skip":
+                    step_req.confirmed = False
+                    step_req.on_reject = "skip"
+                else:  # "cancel"
+                    step_req.confirmed = False
+                    step_req.on_reject = "cancel"
+
+        # Validate that all step requirements are resolved (after timeout auto-resolution)
         if run_response.active_step_requirements:
             unresolved = [req.step_name for req in run_response.active_step_requirements]
             raise ValueError(f"Cannot continue run - unresolved step requirements: {unresolved}")
@@ -4413,6 +4691,18 @@ class Workflow:
         if run_response.active_error_requirements:
             unresolved = [req.step_name for req in run_response.active_error_requirements]
             raise ValueError(f"Cannot continue run - unresolved error requirements: {unresolved}")
+
+        # Detect post-execution review (step already ran)
+        is_post_execution_review = any(req.is_post_execution for req in (run_response.step_requirements or []))
+        # Detect loop iteration review specifically (confirmed = continue loop, not advance past it)
+        is_loop_iteration_review = any(
+            req.is_post_execution and req.step_type == "Loop" for req in (run_response.step_requirements or [])
+        )
+        # Detect router output review (reject = re-route to a different branch)
+        is_router_output_review = any(
+            req.is_post_execution and req.step_type == "Router" for req in (run_response.step_requirements or [])
+        )
+        retry_step = False
 
         # Check if any step was rejected
         rejected_steps = [
@@ -4430,6 +4720,46 @@ class Workflow:
                 # Skip the rejected step, continue with next step
                 skip_rejected_step = True
                 log_debug(f"Step '{rejected_step.step_name}' was rejected with on_reject='skip' - skipping step")
+            elif rejected_step.on_reject == "retry":
+                # Retry the rejected step (Feature 2: OnReject.retry)
+                if rejected_step.max_retries and rejected_step.retry_count >= rejected_step.max_retries:
+                    # Max retries reached — cancel
+                    run_response.status = RunStatus.cancelled
+                    run_response.content = (
+                        f"Max retries ({rejected_step.max_retries}) reached for step '{rejected_step.step_name}'"
+                    )
+                    session_id = run_response.session_id or self.session_id
+                    if session_id:
+                        _session = self.get_session(session_id=session_id)
+                        if _session:
+                            _session.upsert_run(run=run_response)
+                            self.save_session(session=_session)
+                    if stream:
+
+                        def max_retry_generator() -> Iterator[WorkflowRunOutputEvent]:
+                            yield WorkflowCancelledEvent(
+                                run_id=run_response.run_id or "",
+                                workflow_id=self.id,
+                                workflow_name=self.name,
+                                session_id=run_response.session_id,
+                                reason=str(run_response.content) if run_response.content else None,
+                            )
+
+                        return max_retry_generator()
+                    return run_response
+                else:
+                    retry_step = True
+                    kwargs["retry_step"] = True
+                    kwargs["retry_count"] = rejected_step.retry_count + 1
+                    if rejected_step.rejection_feedback:
+                        kwargs["rejection_feedback"] = rejected_step.rejection_feedback
+                    # Pass the previous output so the agent can see what it produced
+                    if rejected_step.step_output and rejected_step.step_output.content:
+                        kwargs["previous_output"] = str(rejected_step.step_output.content)
+                    log_debug(
+                        f"Step '{rejected_step.step_name}' was rejected with on_reject='retry' "
+                        f"(attempt {rejected_step.retry_count + 1})"
+                    )
             elif rejected_step.on_reject == "else":
                 # For Condition: execute else_steps branch
                 # Validate that this is actually a Condition step
@@ -4470,6 +4800,12 @@ class Workflow:
 
                     return cancelled_generator()
                 return run_response
+
+        # Handle edited output from post-execution review
+        for step_req in run_response.step_requirements or []:
+            if step_req.edited_output is not None:
+                kwargs["edited_output"] = step_req.edited_output
+                break
 
         # Get the paused step index
         paused_step_index = run_response.paused_step_index
@@ -4560,10 +4896,49 @@ class Workflow:
         if execute_else_branch:
             kwargs["execute_else_branch"] = True
 
-        # If step was rejected with on_reject="skip" or error with skip, start from next step
+        # Determine start index based on pause type and decision
         start_index = paused_step_index
-        if skip_rejected_step or error_should_skip:
+        if is_loop_iteration_review and not rejected_steps:
+            # Loop iteration review confirmed: human is happy with the output.
+            # Keep the loop output and advance to the next workflow step.
             start_index = paused_step_index + 1
+        elif is_loop_iteration_review and rejected_steps and rejected_steps[0].on_reject == "retry":
+            # Loop iteration review rejected with retry: continue to next iteration.
+            # Remove the partial loop output so the loop can produce a new complete output.
+            kwargs["remove_last_output"] = True
+            # Pass feedback to the next iteration if provided
+            if rejected_steps[0].rejection_feedback:
+                kwargs["rejection_feedback"] = rejected_steps[0].rejection_feedback
+            # Extract iteration info from the paused step output to resume from
+            if run_response.step_results:
+                paused_output = run_response.step_results[-1]
+                if isinstance(paused_output, StepOutput) and paused_output.steps:
+                    kwargs["loop_resume_from_iteration"] = len(paused_output.steps)
+                    # Note: this assumes single-step iterations (wraps each StepOutput
+                    # in its own list). Multi-step loop iterations would need grouping.
+                    kwargs["loop_previous_results"] = [[s] for s in paused_output.steps]
+            start_index = paused_step_index  # Re-execute the Loop step
+            # Reset flags so the generic rejection handling below doesn't also fire
+            skip_rejected_step = False
+            retry_step = False
+        elif skip_rejected_step and is_post_execution_review:
+            # Post-execution review rejected with skip: discard the output, advance to next
+            kwargs["remove_last_output"] = True
+            start_index = paused_step_index + 1
+        elif skip_rejected_step or error_should_skip:
+            start_index = paused_step_index + 1
+        elif is_post_execution_review and not retry_step:
+            # Post-execution review confirmed/edited: step already ran, advance to next
+            start_index = paused_step_index + 1
+        elif is_router_output_review and retry_step:
+            # Router output review rejected with retry: discard output, re-pause for user route selection
+            kwargs["remove_last_output"] = True
+            kwargs["router_reroute"] = True
+            start_index = paused_step_index
+        elif is_post_execution_review and retry_step:
+            # Post-execution review rejected with retry: re-run the same step
+            kwargs["remove_last_output"] = True
+            start_index = paused_step_index
 
         if stream:
             return self._continue_execute_stream(
@@ -4603,6 +4978,21 @@ class Workflow:
             # Get user input and router selection from kwargs if provided
             user_input = kwargs.get("user_input")
             router_selection = kwargs.get("router_selection")
+            rejection_feedback = kwargs.get("rejection_feedback")
+            retry_count = kwargs.get("retry_count", 0)
+
+            # Handle edited output from post-execution review
+            edited_output = kwargs.get("edited_output")
+            if edited_output is not None and state.collected_step_outputs:
+                last = state.collected_step_outputs[-1]
+                if isinstance(last, StepOutput):
+                    last.content = edited_output
+
+            # Handle retry — remove last output so step re-executes cleanly
+            if kwargs.get("remove_last_output") and state.collected_step_outputs:
+                removed = state.collected_step_outputs.pop()
+                if isinstance(removed, StepOutput) and removed.step_name:
+                    state.previous_step_outputs.pop(removed.step_name, None)
 
             # Local references for easier access within the loop
             collected_step_outputs = state.collected_step_outputs
@@ -4637,6 +5027,31 @@ class Workflow:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["user_input"] = user_input
+
+                # Inject rejection feedback and previous output for retry
+                if i == start_step_index and rejection_feedback:
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["rejection_feedback"] = rejection_feedback
+                if i == start_step_index and kwargs.get("previous_output"):
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["previous_output"] = kwargs["previous_output"]
+
+                # For loop iteration resume: forward the last iteration's output as input
+                # so the loop continues refining from where it left off
+                if (
+                    i == start_step_index
+                    and isinstance(step, Loop)
+                    and getattr(step, "forward_iteration_output", False)
+                    and kwargs.get("loop_previous_results")
+                ):
+                    prev_results = kwargs["loop_previous_results"]
+                    if prev_results and prev_results[-1]:
+                        last_iter_output = prev_results[-1][-1]
+                        if hasattr(last_iter_output, "content") and last_iter_output.content:
+                            step_input.previous_step_content = last_iter_output.content
+                            step_input.input = last_iter_output.content
 
                 # Handle Condition with on_reject="else" - execute else branch directly
                 execute_else_branch = kwargs.get("execute_else_branch", False)
@@ -4679,6 +5094,19 @@ class Workflow:
                     # Clear execute_else_branch after using it
                     kwargs["execute_else_branch"] = False
                     continue
+
+                # Handle Router re-route: pause for user route selection after review rejection
+                if i == start_step_index and isinstance(step, Router) and kwargs.get("router_reroute"):
+                    log_debug(f"Router '{step_name}' re-routing: pausing for user route selection")
+                    kwargs["router_reroute"] = False  # Clear flag
+                    reroute_pause = step_pause_status(step, i, step_input, "Router", for_route_selection=True)
+                    if not reroute_pause.should_pause:
+                        # Router doesn't have requires_user_input, create requirement manually
+                        reroute_req = step.create_step_requirement(i, step_input, for_route_selection=True)
+                        reroute_pause = StepPauseResult(should_pause=True, step_requirement=reroute_req)
+                    apply_pause_state(workflow_run_response, i, step_name, collected_step_outputs, reroute_pause)
+                    save_paused_session(self, session, workflow_run_response)
+                    return workflow_run_response
 
                 # Handle Router with user selection - execute only the selected steps
                 if i == start_step_index and isinstance(step, Router) and router_selection:
@@ -4739,6 +5167,24 @@ class Workflow:
                         logger.info(f"Early termination requested by router {step_name}")
                         break
 
+                    # Post-execution review check for Router after user-selected branch executes
+                    if isinstance(step, Router):
+                        review_result = check_output_review_status(
+                            step, i, step_input, step_output, retry_count=retry_count
+                        )
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            save_paused_session(self, session, workflow_run_response)
+                            return workflow_run_response
+
                     # Clear router_selection after using it
                     router_selection = None
                     continue
@@ -4761,6 +5207,14 @@ class Workflow:
                         return workflow_run_response
 
                 try:
+                    # Build extra kwargs for Loop resume if applicable
+                    extra_kwargs: Dict[str, Any] = {}
+                    if isinstance(step, Loop) and i == start_step_index:
+                        if kwargs.get("loop_resume_from_iteration"):
+                            extra_kwargs["resume_from_iteration"] = kwargs["loop_resume_from_iteration"]
+                        if kwargs.get("loop_previous_results"):
+                            extra_kwargs["previous_iteration_results"] = kwargs["loop_previous_results"]
+
                     step_output = step.execute(  # type: ignore[union-attr]
                         step_input,
                         session_id=session.session_id,
@@ -4774,6 +5228,7 @@ class Workflow:
                         else None,
                         num_history_runs=self.num_history_runs,
                         background_tasks=background_tasks,
+                        **extra_kwargs,
                     )
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
@@ -4810,6 +5265,47 @@ class Workflow:
 
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
+                # Post-execution output review check
+                if step_output is not None and isinstance(step, (Step, Router)):
+                    review_result = check_output_review_status(
+                        step, i, step_input, step_output, retry_count=retry_count
+                    )
+                    if review_result.should_pause:
+                        apply_post_execution_pause_state(
+                            workflow_run_response,
+                            i,
+                            step_name,
+                            collected_step_outputs,
+                            review_result,
+                            step_output,
+                            previous_step_outputs=previous_step_outputs,
+                        )
+                        save_paused_session(self, session, workflow_run_response)
+                        return workflow_run_response
+
+                # Loop iteration review check
+                if getattr(step_output, "requires_iteration_review_pause", False) and isinstance(step, Loop):
+                    last_iter = step_output.steps[-1] if step_output.steps else step_output
+                    iteration_num = len(step_output.steps) - 1 if step_output.steps else 0
+                    req = step.create_iteration_review_requirement(
+                        step_index=i,
+                        iteration=iteration_num,
+                        step_input=step_input,
+                        iteration_output=last_iter,
+                    )
+                    pause_result = StepPauseResult(should_pause=True, step_requirement=req)
+                    apply_post_execution_pause_state(
+                        workflow_run_response,
+                        i,
+                        step_name,
+                        collected_step_outputs,
+                        pause_result,
+                        step_output,
+                        previous_step_outputs=previous_step_outputs,
+                    )
+                    save_paused_session(self, session, workflow_run_response)
+                    return workflow_run_response
+
                 previous_step_outputs[step_name] = step_output
                 collected_step_outputs.append(step_output)
 
@@ -4838,7 +5334,7 @@ class Workflow:
             workflow_run_response.status = RunStatus.cancelled
             workflow_run_response.content = str(e)
         except Exception as e:
-            logger.error(f"Workflow execution failed: {e}")
+            logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
             workflow_run_response.content = f"Workflow execution failed: {e}"
             raise e
@@ -4889,6 +5385,21 @@ class Workflow:
             # Get user input and router selection from kwargs if provided
             user_input = kwargs.get("user_input")
             router_selection = kwargs.get("router_selection")
+            rejection_feedback = kwargs.get("rejection_feedback")
+            retry_count = kwargs.get("retry_count", 0)
+
+            # Handle edited output from post-execution review
+            edited_output = kwargs.get("edited_output")
+            if edited_output is not None and state.collected_step_outputs:
+                last = state.collected_step_outputs[-1]
+                if isinstance(last, StepOutput):
+                    last.content = edited_output
+
+            # Handle retry — remove last output so step re-executes cleanly
+            if kwargs.get("remove_last_output") and state.collected_step_outputs:
+                removed = state.collected_step_outputs.pop()
+                if isinstance(removed, StepOutput) and removed.step_name:
+                    state.previous_step_outputs.pop(removed.step_name, None)
 
             # Continue from the paused step
             for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type, index]
@@ -4911,6 +5422,31 @@ class Workflow:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["user_input"] = user_input
+
+                # Inject rejection feedback and previous output for retry
+                if i == start_step_index and rejection_feedback:
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["rejection_feedback"] = rejection_feedback
+                if i == start_step_index and kwargs.get("previous_output"):
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["previous_output"] = kwargs["previous_output"]
+
+                # For loop iteration resume: forward the last iteration's output as input
+                # so the loop continues refining from where it left off
+                if (
+                    i == start_step_index
+                    and isinstance(step, Loop)
+                    and getattr(step, "forward_iteration_output", False)
+                    and kwargs.get("loop_previous_results")
+                ):
+                    prev_results = kwargs["loop_previous_results"]
+                    if prev_results and prev_results[-1]:
+                        last_iter_output = prev_results[-1][-1]
+                        if hasattr(last_iter_output, "content") and last_iter_output.content:
+                            step_input.previous_step_content = last_iter_output.content
+                            step_input.input = last_iter_output.content
 
                 # Handle Condition with on_reject="else" - execute else branch directly (streaming)
                 execute_else_branch = kwargs.get("execute_else_branch", False)
@@ -4982,6 +5518,21 @@ class Workflow:
                     # Clear execute_else_branch after using it
                     kwargs["execute_else_branch"] = False
                     continue
+
+                # Handle Router re-route: pause for user route selection after review rejection (streaming)
+                if i == start_step_index and isinstance(step, Router) and kwargs.get("router_reroute"):
+                    log_debug(f"Router '{step_name}' re-routing: pausing for user route selection (streaming)")
+                    kwargs["router_reroute"] = False
+                    reroute_pause = step_pause_status(step, i, step_input, "Router", for_route_selection=True)
+                    if not reroute_pause.should_pause:
+                        reroute_req = step.create_step_requirement(i, step_input, for_route_selection=True)
+                        reroute_pause = StepPauseResult(should_pause=True, step_requirement=reroute_req)
+                    apply_pause_state(workflow_run_response, i, step_name, collected_step_outputs, reroute_pause)
+                    req = reroute_pause.step_requirement
+                    paused_event = create_router_paused_event(workflow_run_response, step_name, i, reroute_pause)
+                    yield self._handle_event(paused_event, workflow_run_response)
+                    save_paused_session(self, session, workflow_run_response)
+                    return
 
                 # Handle Router with user selection - execute only the selected steps (streaming)
                 if i == start_step_index and isinstance(step, Router) and router_selection:
@@ -5065,6 +5616,38 @@ class Workflow:
                     output_audio.extend(final_router_output.audio or [])
                     output_files.extend(final_router_output.files or [])
 
+                    # Post-execution review check for Router after user-selected branch (streaming)
+                    if isinstance(step, Router):
+                        review_result = check_output_review_status(
+                            step, i, step_input, final_router_output, retry_count=retry_count
+                        )
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                final_router_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            review_event = StepOutputReviewEvent(
+                                run_id=workflow_run_response.run_id or "",
+                                workflow_name=workflow_run_response.workflow_name,
+                                workflow_id=workflow_run_response.workflow_id,
+                                session_id=workflow_run_response.session_id,
+                                step_name=step_name,
+                                step_index=i,
+                                output_review_message=getattr(
+                                    review_result.step_requirement, "output_review_message", None
+                                )
+                                if review_result.step_requirement
+                                else None,
+                            )
+                            yield self._handle_event(review_event, workflow_run_response)
+                            save_paused_session(self, session, workflow_run_response)
+                            return
+
                     continue  # Move to next step
 
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
@@ -5096,6 +5679,7 @@ class Workflow:
                 # Execute step with streaming
                 step_error_occurred = False
                 step_error_exception = None
+                step_output = None
                 try:
                     for event in step.execute_stream(  # type: ignore[union-attr]
                         step_input,
@@ -5212,6 +5796,76 @@ class Workflow:
                     else:
                         raise step_error_exception
 
+                # Post-execution output review check
+                if not step_error_occurred and step_output is not None and isinstance(step, (Step, Router)):
+                    review_result = check_output_review_status(
+                        step, i, step_input, step_output, retry_count=retry_count
+                    )
+                    if review_result.should_pause:
+                        apply_post_execution_pause_state(
+                            workflow_run_response,
+                            i,
+                            step_name,
+                            collected_step_outputs,
+                            review_result,
+                            step_output,
+                            previous_step_outputs=previous_step_outputs,
+                        )
+                        review_event = StepOutputReviewEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_name=workflow_run_response.workflow_name,
+                            workflow_id=workflow_run_response.workflow_id,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            step_id=getattr(step, "step_id", None),
+                            output_review_message=getattr(review_result.step_requirement, "output_review_message", None)
+                            if review_result.step_requirement
+                            else None,
+                        )
+                        yield self._handle_event(review_event, workflow_run_response)
+                        save_paused_session(self, session, workflow_run_response)
+                        return
+
+                # Loop iteration review check
+                if (
+                    not step_error_occurred
+                    and step_output is not None
+                    and getattr(step_output, "requires_iteration_review_pause", False)
+                    and isinstance(step, Loop)
+                ):
+                    last_iter = step_output.steps[-1] if step_output.steps else step_output
+                    iteration_num = len(step_output.steps) - 1 if step_output.steps else 0
+                    req = step.create_iteration_review_requirement(
+                        step_index=i,
+                        iteration=iteration_num,
+                        step_input=step_input,
+                        iteration_output=last_iter,
+                    )
+                    pause_result = StepPauseResult(should_pause=True, step_requirement=req)
+                    apply_post_execution_pause_state(
+                        workflow_run_response,
+                        i,
+                        step_name,
+                        collected_step_outputs,
+                        pause_result,
+                        step_output,
+                        previous_step_outputs=previous_step_outputs,
+                    )
+                    review_event = StepOutputReviewEvent(
+                        run_id=workflow_run_response.run_id or "",
+                        workflow_name=workflow_run_response.workflow_name,
+                        workflow_id=workflow_run_response.workflow_id,
+                        session_id=workflow_run_response.session_id,
+                        step_name=step_name,
+                        step_index=i,
+                        step_id=getattr(step, "step_id", None),
+                        output_review_message=getattr(req, "output_review_message", None),
+                    )
+                    yield self._handle_event(review_event, workflow_run_response)
+                    save_paused_session(self, session, workflow_run_response)
+                    return
+
                 if early_termination:
                     break
 
@@ -5236,7 +5890,7 @@ class Workflow:
             )
             yield self._handle_event(cancelled_event, workflow_run_response)
         except Exception as e:
-            logger.error(f"Workflow execution failed: {e}")
+            logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
             workflow_run_response.content = f"Workflow execution failed: {e}"
             raise e
@@ -5359,7 +6013,22 @@ class Workflow:
         if step_requirements is not None:
             run_response.step_requirements = step_requirements
 
-        # Validate that all requirements are resolved
+        # Check for timeout on all step requirements (must run before validation
+        # so timed-out requirements are auto-resolved before we check for unresolved ones)
+        for step_req in run_response.step_requirements or []:
+            timeout_action = check_timeout(step_req)
+            if timeout_action is not None:
+                log_debug(f"Step '{step_req.step_name}' timed out - applying action: {timeout_action}")
+                if timeout_action == "approve":
+                    step_req.confirm()
+                elif timeout_action == "skip":
+                    step_req.confirmed = False
+                    step_req.on_reject = "skip"
+                else:  # "cancel"
+                    step_req.confirmed = False
+                    step_req.on_reject = "cancel"
+
+        # Validate that all step requirements are resolved (after timeout auto-resolution)
         if run_response.active_step_requirements:
             unresolved = [req.step_name for req in run_response.active_step_requirements]
             raise ValueError(f"Cannot continue run - unresolved step requirements: {unresolved}")
@@ -5368,6 +6037,18 @@ class Workflow:
         if run_response.active_error_requirements:
             unresolved = [req.step_name for req in run_response.active_error_requirements]
             raise ValueError(f"Cannot continue run - unresolved error requirements: {unresolved}")
+
+        # Detect post-execution review (step already ran)
+        is_post_execution_review = any(req.is_post_execution for req in (run_response.step_requirements or []))
+        # Detect loop iteration review specifically (confirmed = continue loop, not advance past it)
+        is_loop_iteration_review = any(
+            req.is_post_execution and req.step_type == "Loop" for req in (run_response.step_requirements or [])
+        )
+        # Detect router output review (reject = re-route to a different branch)
+        is_router_output_review = any(
+            req.is_post_execution and req.step_type == "Router" for req in (run_response.step_requirements or [])
+        )
+        retry_step = False
 
         # Check if any step was rejected
         rejected_steps = [
@@ -5385,9 +6066,46 @@ class Workflow:
                 # Skip the rejected step, continue with next step
                 skip_rejected_step = True
                 log_debug(f"Step '{rejected_step.step_name}' was rejected with on_reject='skip' - skipping step")
+            elif rejected_step.on_reject == "retry":
+                # Retry the rejected step
+                if rejected_step.max_retries and rejected_step.retry_count >= rejected_step.max_retries:
+                    run_response.status = RunStatus.cancelled
+                    run_response.content = (
+                        f"Max retries ({rejected_step.max_retries}) reached for step '{rejected_step.step_name}'"
+                    )
+                    session_id = run_response.session_id or self.session_id
+                    if session_id:
+                        _session = await self.aget_session(session_id=session_id)
+                        if _session:
+                            _session.upsert_run(run=run_response)
+                            await self.asave_session(session=_session)
+                    if stream:
+
+                        async def max_retry_generator() -> AsyncIterator[WorkflowRunOutputEvent]:
+                            yield WorkflowCancelledEvent(
+                                run_id=run_response.run_id or "",
+                                workflow_id=self.id,
+                                workflow_name=self.name,
+                                session_id=run_response.session_id,
+                                reason=str(run_response.content) if run_response.content else None,
+                            )
+
+                        return max_retry_generator()
+                    return run_response
+                else:
+                    retry_step = True
+                    kwargs["retry_step"] = True
+                    kwargs["retry_count"] = rejected_step.retry_count + 1
+                    if rejected_step.rejection_feedback:
+                        kwargs["rejection_feedback"] = rejected_step.rejection_feedback
+                    if rejected_step.step_output and rejected_step.step_output.content:
+                        kwargs["previous_output"] = str(rejected_step.step_output.content)
+                    log_debug(
+                        f"Step '{rejected_step.step_name}' was rejected with on_reject='retry' "
+                        f"(attempt {rejected_step.retry_count + 1})"
+                    )
             elif rejected_step.on_reject == "else":
                 # For Condition: execute else_steps branch
-                # Validate that this is actually a Condition step
                 if rejected_step.step_type != "Condition":
                     logger.warning(
                         f"on_reject='else' is only valid for Condition steps, but step '{rejected_step.step_name}' "
@@ -5425,6 +6143,12 @@ class Workflow:
 
                     return cancelled_generator()
                 return run_response
+
+        # Handle edited output from post-execution review
+        for step_req in run_response.step_requirements or []:
+            if step_req.edited_output is not None:
+                kwargs["edited_output"] = step_req.edited_output
+                break
 
         # Get the paused step index
         paused_step_index = run_response.paused_step_index
@@ -5515,9 +6239,41 @@ class Workflow:
         if execute_else_branch:
             kwargs["execute_else_branch"] = True
 
-        # Determine start index based on skip decisions
-        # If error skip or reject skip, start from next step
-        start_index = paused_step_index + 1 if (skip_rejected_step or error_should_skip) else paused_step_index
+        # Determine start index based on pause type and decision
+        start_index = paused_step_index
+        if is_loop_iteration_review and not rejected_steps:
+            # Loop iteration review confirmed: human is happy, keep output and advance
+            start_index = paused_step_index + 1
+        elif is_loop_iteration_review and rejected_steps and rejected_steps[0].on_reject == "retry":
+            # Loop iteration review rejected with retry: continue to next iteration
+            kwargs["remove_last_output"] = True
+            if rejected_steps[0].rejection_feedback:
+                kwargs["rejection_feedback"] = rejected_steps[0].rejection_feedback
+            if run_response.step_results:
+                paused_output = run_response.step_results[-1]
+                if isinstance(paused_output, StepOutput) and paused_output.steps:
+                    kwargs["loop_resume_from_iteration"] = len(paused_output.steps)
+                    # Note: this assumes single-step iterations (wraps each StepOutput
+                    # in its own list). Multi-step loop iterations would need grouping.
+                    kwargs["loop_previous_results"] = [[s] for s in paused_output.steps]
+            start_index = paused_step_index
+            skip_rejected_step = False
+            retry_step = False
+        elif skip_rejected_step and is_post_execution_review:
+            kwargs["remove_last_output"] = True
+            start_index = paused_step_index + 1
+        elif skip_rejected_step or error_should_skip:
+            start_index = paused_step_index + 1
+        elif is_router_output_review and retry_step:
+            # Router output review rejected with retry: discard output, re-pause for user route selection
+            kwargs["remove_last_output"] = True
+            kwargs["router_reroute"] = True
+            start_index = paused_step_index
+        elif is_post_execution_review and not retry_step:
+            start_index = paused_step_index + 1
+        elif is_post_execution_review and retry_step:
+            kwargs["remove_last_output"] = True
+            start_index = paused_step_index
 
         if stream:
             return self._acontinue_execute_stream(
@@ -5569,6 +6325,21 @@ class Workflow:
             # Get user input and router selection from kwargs if provided
             user_input = kwargs.get("user_input")
             router_selection = kwargs.get("router_selection")
+            rejection_feedback = kwargs.get("rejection_feedback")
+            retry_count = kwargs.get("retry_count", 0)
+
+            # Handle edited output from post-execution review
+            edited_output = kwargs.get("edited_output")
+            if edited_output is not None and state.collected_step_outputs:
+                last = state.collected_step_outputs[-1]
+                if isinstance(last, StepOutput):
+                    last.content = edited_output
+
+            # Handle retry — remove last output so step re-executes cleanly
+            if kwargs.get("remove_last_output") and state.collected_step_outputs:
+                removed = state.collected_step_outputs.pop()
+                if isinstance(removed, StepOutput) and removed.step_name:
+                    state.previous_step_outputs.pop(removed.step_name, None)
 
             # Continue from the paused step
             for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type, index]
@@ -5591,6 +6362,31 @@ class Workflow:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["user_input"] = user_input
+
+                # Inject rejection feedback and previous output for retry
+                if i == start_step_index and rejection_feedback:
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["rejection_feedback"] = rejection_feedback
+                if i == start_step_index and kwargs.get("previous_output"):
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["previous_output"] = kwargs["previous_output"]
+
+                # For loop iteration resume: forward the last iteration's output as input
+                # so the loop continues refining from where it left off
+                if (
+                    i == start_step_index
+                    and isinstance(step, Loop)
+                    and getattr(step, "forward_iteration_output", False)
+                    and kwargs.get("loop_previous_results")
+                ):
+                    prev_results = kwargs["loop_previous_results"]
+                    if prev_results and prev_results[-1]:
+                        last_iter_output = prev_results[-1][-1]
+                        if hasattr(last_iter_output, "content") and last_iter_output.content:
+                            step_input.previous_step_content = last_iter_output.content
+                            step_input.input = last_iter_output.content
 
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -5635,6 +6431,18 @@ class Workflow:
                     # Clear execute_else_branch after using it
                     kwargs["execute_else_branch"] = False
                     continue
+
+                # Handle Router re-route: pause for user route selection after review rejection (async)
+                if i == start_step_index and isinstance(step, Router) and kwargs.get("router_reroute"):
+                    log_debug(f"Router '{step_name}' re-routing: pausing for user route selection (async)")
+                    kwargs["router_reroute"] = False
+                    reroute_pause = step_pause_status(step, i, step_input, "Router", for_route_selection=True)
+                    if not reroute_pause.should_pause:
+                        reroute_req = step.create_step_requirement(i, step_input, for_route_selection=True)
+                        reroute_pause = StepPauseResult(should_pause=True, step_requirement=reroute_req)
+                    apply_pause_state(workflow_run_response, i, step_name, collected_step_outputs, reroute_pause)
+                    await asave_paused_session(self, session, workflow_run_response)
+                    return workflow_run_response
 
                 # Handle Router with user selection - execute only the selected steps (async)
                 if i == start_step_index and isinstance(step, Router) and router_selection:
@@ -5690,6 +6498,24 @@ class Workflow:
                     output_audio.extend(step_output.audio or [])
                     output_files.extend(step_output.files or [])
 
+                    # Post-execution review check for Router after user-selected branch (async)
+                    if isinstance(step, Router):
+                        review_result = check_output_review_status(
+                            step, i, step_input, step_output, retry_count=retry_count
+                        )
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            await asave_paused_session(self, session, workflow_run_response)
+                            return workflow_run_response
+
                     continue  # Move to next step
 
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
@@ -5708,6 +6534,14 @@ class Workflow:
                         return workflow_run_response
 
                 try:
+                    # Build extra kwargs for Loop resume if applicable
+                    extra_kwargs: Dict[str, Any] = {}
+                    if isinstance(step, Loop) and i == start_step_index:
+                        if kwargs.get("loop_resume_from_iteration"):
+                            extra_kwargs["resume_from_iteration"] = kwargs["loop_resume_from_iteration"]
+                        if kwargs.get("loop_previous_results"):
+                            extra_kwargs["previous_iteration_results"] = kwargs["loop_previous_results"]
+
                     step_output = await step.aexecute(  # type: ignore[union-attr]
                         step_input,
                         session_id=session.session_id,
@@ -5721,6 +6555,7 @@ class Workflow:
                         else None,
                         num_history_runs=self.num_history_runs,
                         background_tasks=background_tasks,
+                        **extra_kwargs,
                     )
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
@@ -5752,6 +6587,47 @@ class Workflow:
 
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
+                # Post-execution output review check
+                if step_output is not None and isinstance(step, (Step, Router)):
+                    review_result = check_output_review_status(
+                        step, i, step_input, step_output, retry_count=retry_count
+                    )
+                    if review_result.should_pause:
+                        apply_post_execution_pause_state(
+                            workflow_run_response,
+                            i,
+                            step_name,
+                            collected_step_outputs,
+                            review_result,
+                            step_output,
+                            previous_step_outputs=previous_step_outputs,
+                        )
+                        await asave_paused_session(self, session, workflow_run_response)
+                        return workflow_run_response
+
+                # Loop iteration review check
+                if getattr(step_output, "requires_iteration_review_pause", False) and isinstance(step, Loop):
+                    last_iter = step_output.steps[-1] if step_output.steps else step_output
+                    iteration_num = len(step_output.steps) - 1 if step_output.steps else 0
+                    req = step.create_iteration_review_requirement(
+                        step_index=i,
+                        iteration=iteration_num,
+                        step_input=step_input,
+                        iteration_output=last_iter,
+                    )
+                    pause_result = StepPauseResult(should_pause=True, step_requirement=req)
+                    apply_post_execution_pause_state(
+                        workflow_run_response,
+                        i,
+                        step_name,
+                        collected_step_outputs,
+                        pause_result,
+                        step_output,
+                        previous_step_outputs=previous_step_outputs,
+                    )
+                    await asave_paused_session(self, session, workflow_run_response)
+                    return workflow_run_response
+
                 previous_step_outputs[step_name] = step_output
                 collected_step_outputs.append(step_output)
 
@@ -5780,7 +6656,7 @@ class Workflow:
             workflow_run_response.status = RunStatus.cancelled
             workflow_run_response.content = str(e)
         except Exception as e:
-            logger.error(f"Workflow execution failed: {e}")
+            logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
             workflow_run_response.content = f"Workflow execution failed: {e}"
             raise e
@@ -5831,6 +6707,21 @@ class Workflow:
             # Get user input and router selection from kwargs if provided
             user_input = kwargs.get("user_input")
             router_selection = kwargs.get("router_selection")
+            rejection_feedback = kwargs.get("rejection_feedback")
+            retry_count = kwargs.get("retry_count", 0)
+
+            # Handle edited output from post-execution review
+            edited_output = kwargs.get("edited_output")
+            if edited_output is not None and state.collected_step_outputs:
+                last = state.collected_step_outputs[-1]
+                if isinstance(last, StepOutput):
+                    last.content = edited_output
+
+            # Handle retry — remove last output so step re-executes cleanly
+            if kwargs.get("remove_last_output") and state.collected_step_outputs:
+                removed = state.collected_step_outputs.pop()
+                if isinstance(removed, StepOutput) and removed.step_name:
+                    state.previous_step_outputs.pop(removed.step_name, None)
 
             # Continue from the paused step
             for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type, index]
@@ -5853,6 +6744,31 @@ class Workflow:
                     if step_input.additional_data is None:
                         step_input.additional_data = {}
                     step_input.additional_data["user_input"] = user_input
+
+                # Inject rejection feedback and previous output for retry
+                if i == start_step_index and rejection_feedback:
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["rejection_feedback"] = rejection_feedback
+                if i == start_step_index and kwargs.get("previous_output"):
+                    if step_input.additional_data is None:
+                        step_input.additional_data = {}
+                    step_input.additional_data["previous_output"] = kwargs["previous_output"]
+
+                # For loop iteration resume: forward the last iteration's output as input
+                # so the loop continues refining from where it left off
+                if (
+                    i == start_step_index
+                    and isinstance(step, Loop)
+                    and getattr(step, "forward_iteration_output", False)
+                    and kwargs.get("loop_previous_results")
+                ):
+                    prev_results = kwargs["loop_previous_results"]
+                    if prev_results and prev_results[-1]:
+                        last_iter_output = prev_results[-1][-1]
+                        if hasattr(last_iter_output, "content") and last_iter_output.content:
+                            step_input.previous_step_content = last_iter_output.content
+                            step_input.input = last_iter_output.content
 
                 # Handle Condition with on_reject="else" - execute else branch directly (async streaming)
                 execute_else_branch = kwargs.get("execute_else_branch", False)
@@ -5924,6 +6840,20 @@ class Workflow:
                     # Clear execute_else_branch after using it
                     kwargs["execute_else_branch"] = False
                     continue
+
+                # Handle Router re-route: pause for user route selection after review rejection (async streaming)
+                if i == start_step_index and isinstance(step, Router) and kwargs.get("router_reroute"):
+                    log_debug(f"Router '{step_name}' re-routing: pausing for user route selection (async streaming)")
+                    kwargs["router_reroute"] = False
+                    reroute_pause = step_pause_status(step, i, step_input, "Router", for_route_selection=True)
+                    if not reroute_pause.should_pause:
+                        reroute_req = step.create_step_requirement(i, step_input, for_route_selection=True)
+                        reroute_pause = StepPauseResult(should_pause=True, step_requirement=reroute_req)
+                    apply_pause_state(workflow_run_response, i, step_name, collected_step_outputs, reroute_pause)
+                    paused_event = create_router_paused_event(workflow_run_response, step_name, i, reroute_pause)
+                    yield self._handle_event(paused_event, workflow_run_response)
+                    await asave_paused_session(self, session, workflow_run_response)
+                    return
 
                 # Handle Router with user selection - execute only the selected steps (async streaming)
                 if i == start_step_index and isinstance(step, Router) and router_selection:
@@ -6009,6 +6939,38 @@ class Workflow:
                     output_audio.extend(final_router_output.audio or [])
                     output_files.extend(final_router_output.files or [])
 
+                    # Post-execution review check for Router after user-selected branch (streaming)
+                    if isinstance(step, Router):
+                        review_result = check_output_review_status(
+                            step, i, step_input, final_router_output, retry_count=retry_count
+                        )
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                final_router_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            review_event = StepOutputReviewEvent(
+                                run_id=workflow_run_response.run_id or "",
+                                workflow_name=workflow_run_response.workflow_name,
+                                workflow_id=workflow_run_response.workflow_id,
+                                session_id=workflow_run_response.session_id,
+                                step_name=step_name,
+                                step_index=i,
+                                output_review_message=getattr(
+                                    review_result.step_requirement, "output_review_message", None
+                                )
+                                if review_result.step_requirement
+                                else None,
+                            )
+                            yield self._handle_event(review_event, workflow_run_response)
+                            save_paused_session(self, session, workflow_run_response)
+                            return
+
                     continue  # Move to next step
 
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
@@ -6040,6 +7002,7 @@ class Workflow:
                 # Execute step with streaming
                 step_error_occurred = False
                 step_error_exception = None
+                step_output = None
                 try:
                     async for event in step.aexecute_stream(  # type: ignore[union-attr]
                         step_input,
@@ -6156,6 +7119,76 @@ class Workflow:
                     else:
                         raise step_error_exception
 
+                # Post-execution output review check
+                if not step_error_occurred and step_output is not None and isinstance(step, (Step, Router)):
+                    review_result = check_output_review_status(
+                        step, i, step_input, step_output, retry_count=retry_count
+                    )
+                    if review_result.should_pause:
+                        apply_post_execution_pause_state(
+                            workflow_run_response,
+                            i,
+                            step_name,
+                            collected_step_outputs,
+                            review_result,
+                            step_output,
+                            previous_step_outputs=previous_step_outputs,
+                        )
+                        review_event = StepOutputReviewEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_name=workflow_run_response.workflow_name,
+                            workflow_id=workflow_run_response.workflow_id,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            step_id=getattr(step, "step_id", None),
+                            output_review_message=getattr(review_result.step_requirement, "output_review_message", None)
+                            if review_result.step_requirement
+                            else None,
+                        )
+                        yield self._handle_event(review_event, workflow_run_response)
+                        await asave_paused_session(self, session, workflow_run_response)
+                        return
+
+                # Loop iteration review check
+                if (
+                    not step_error_occurred
+                    and step_output is not None
+                    and getattr(step_output, "requires_iteration_review_pause", False)
+                    and isinstance(step, Loop)
+                ):
+                    last_iter = step_output.steps[-1] if step_output.steps else step_output
+                    iteration_num = len(step_output.steps) - 1 if step_output.steps else 0
+                    req = step.create_iteration_review_requirement(
+                        step_index=i,
+                        iteration=iteration_num,
+                        step_input=step_input,
+                        iteration_output=last_iter,
+                    )
+                    pause_result = StepPauseResult(should_pause=True, step_requirement=req)
+                    apply_post_execution_pause_state(
+                        workflow_run_response,
+                        i,
+                        step_name,
+                        collected_step_outputs,
+                        pause_result,
+                        step_output,
+                        previous_step_outputs=previous_step_outputs,
+                    )
+                    review_event = StepOutputReviewEvent(
+                        run_id=workflow_run_response.run_id or "",
+                        workflow_name=workflow_run_response.workflow_name,
+                        workflow_id=workflow_run_response.workflow_id,
+                        session_id=workflow_run_response.session_id,
+                        step_name=step_name,
+                        step_index=i,
+                        step_id=getattr(step, "step_id", None),
+                        output_review_message=getattr(req, "output_review_message", None),
+                    )
+                    yield self._handle_event(review_event, workflow_run_response)
+                    await asave_paused_session(self, session, workflow_run_response)
+                    return
+
                 if early_termination:
                     break
 
@@ -6180,7 +7213,7 @@ class Workflow:
             )
             yield self._handle_event(cancelled_event, workflow_run_response)
         except Exception as e:
-            logger.error(f"Workflow execution failed: {e}")
+            logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
             workflow_run_response.content = f"Workflow execution failed: {e}"
             raise e
@@ -6661,7 +7694,7 @@ class Workflow:
     def _prepare_steps(self):
         """Prepare the steps for execution"""
         if not callable(self.steps) and self.steps is not None:
-            prepared_steps: List[Union[Step, Steps, Loop, Parallel, Condition, Router]] = []
+            prepared_steps: List[Union[Step, Steps, Loop, Parallel, Condition, Router, "Workflow"]] = []
             for i, step in enumerate(self.steps):  # type: ignore
                 if callable(step) and hasattr(step, "__name__"):
                     step_name = step.__name__
@@ -6675,6 +7708,10 @@ class Workflow:
                     step_name = step.name or f"step_{i + 1}"
                     log_debug(f"Step {i + 1}: Team '{step_name}' with {len(step.members)} members")
                     prepared_steps.append(Step(name=step_name, description=step.description, team=step))
+                elif isinstance(step, Workflow):
+                    step_name = step.name or f"step_{i + 1}"
+                    log_debug(f"Step {i + 1}: Nested Workflow '{step_name}'")
+                    prepared_steps.append(Step(name=step_name, description=step.description, workflow=step))
                 elif isinstance(step, Step) and step.add_workflow_history is True and self.db is None:
                     log_warning(
                         f"Step '{step.name or f'step_{i + 1}'}' has add_workflow_history=True "
@@ -6883,7 +7920,11 @@ class Workflow:
             step_dict = {
                 "name": step.name if hasattr(step, "name") else f"unnamed_{type(step).__name__.lower()}",
                 "description": step.description if hasattr(step, "description") else "User-defined callable step",
-                "type": STEP_TYPE_MAPPING[type(step)].value,  # type: ignore
+                "type": (
+                    StepType.WORKFLOW
+                    if isinstance(step, Workflow)
+                    else STEP_TYPE_MAPPING.get(type(step), StepType.STEP)
+                ).value,
             }
 
             # Handle agent/team/tools
@@ -7296,7 +8337,7 @@ class Workflow:
                         try:
                             fields_for_new_workflow[f.name] = copy(field_value)
                         except Exception as e:
-                            log_warning(f"Failed to copy field: {f.name} - {e}")
+                            log_warning(f"Failed to copy field: {f.name}: {str(e)}")
                             fields_for_new_workflow[f.name] = field_value
                 # For pydantic models, attempt a model_copy
                 elif isinstance(field_value, BaseModel):
@@ -7324,9 +8365,7 @@ class Workflow:
             log_debug(f"Created new {self.__class__.__name__}")
             return new_workflow
         except Exception as e:
-            from agno.utils.log import log_error
-
-            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {e}")
+            log_error(f"Failed to create deep copy of {self.__class__.__name__}: {str(e)}")
             raise
 
     def _deep_copy_steps(self, steps: Any) -> Any:
@@ -7500,7 +8539,7 @@ def get_workflow_by_id(
         return workflow
 
     except Exception as e:
-        log_error(f"Error loading Workflow {id} from database: {e}")
+        log_error(f"Error loading Workflow {id} from database: {str(e)}")
         return None
 
 
@@ -7532,10 +8571,10 @@ def get_workflows(
                         workflows.append(workflow)
             except Exception as e:
                 component_id = component.get("component_id", "unknown")
-                log_error(f"Error loading Workflow {component_id} from database: {e}")
+                log_error(f"Error loading Workflow {component_id} from database: {str(e)}")
                 continue
         return workflows
 
     except Exception as e:
-        log_error(f"Error loading Workflows from database: {e}")
+        log_error(f"Error loading Workflows from database: {str(e)}")
         return []

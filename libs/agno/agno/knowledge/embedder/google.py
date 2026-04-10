@@ -91,7 +91,7 @@ class GeminiEmbedder(Embedder):
             log_info("No embeddings found in response")
             return []
         except Exception as e:
-            log_error(f"Error extracting embeddings: {e}")
+            log_error(f"Error extracting embeddings: {str(e)}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
@@ -108,7 +108,7 @@ class GeminiEmbedder(Embedder):
             log_info("No embeddings found in response")
             return [], usage
         except Exception as e:
-            log_error(f"Error extracting embeddings: {e}")
+            log_error(f"Error extracting embeddings: {str(e)}")
             return [], usage
 
     async def async_get_embedding(self, text: str) -> List[float]:
@@ -140,7 +140,7 @@ class GeminiEmbedder(Embedder):
             log_info("No embeddings found in response")
             return []
         except Exception as e:
-            log_error(f"Error extracting embeddings: {e}")
+            log_error(f"Error extracting embeddings: {str(e)}")
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
@@ -176,7 +176,7 @@ class GeminiEmbedder(Embedder):
             log_info("No embeddings found in response")
             return [], usage
         except Exception as e:
-            log_error(f"Error extracting embeddings: {e}")
+            log_error(f"Error extracting embeddings: {str(e)}")
             return [], usage
 
     async def async_get_embeddings_batch_and_usage(
@@ -241,7 +241,7 @@ class GeminiEmbedder(Embedder):
                 all_usage.extend([usage_dict] * len(batch_texts))
 
             except Exception as e:
-                log_warning(f"Error in async batch embedding: {e}")
+                log_warning(f"Error in async batch embedding: {str(e)}")
                 # Fallback to individual calls for this batch
                 for text in batch_texts:
                     try:
@@ -251,7 +251,7 @@ class GeminiEmbedder(Embedder):
                         all_embeddings.append(text_embedding)
                         all_usage.append(text_usage)
                     except Exception as e2:
-                        log_warning(f"Error in individual async embedding fallback: {e2}")
+                        log_warning(f"Error in individual async embedding fallback: {e2}: {e2}")
                         all_embeddings.append([])
                         all_usage.append(None)
 

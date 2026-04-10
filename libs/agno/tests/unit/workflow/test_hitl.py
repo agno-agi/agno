@@ -503,12 +503,14 @@ class TestStepHITLConfiguration:
 
         data = step.to_dict()
 
-        assert data["requires_confirmation"] is True
-        assert data["confirmation_message"] == "Confirm?"
-        assert data["requires_user_input"] is True
-        assert data["user_input_message"] == "Input?"
-        assert data["on_reject"] == "skip"
-        assert data["on_error"] == "pause"
+        assert "human_review" in data
+        hitl = data["human_review"]
+        assert hitl["requires_confirmation"] is True
+        assert hitl["confirmation_message"] == "Confirm?"
+        assert hitl["requires_user_input"] is True
+        assert hitl["user_input_message"] == "Input?"
+        assert hitl["on_reject"] == "skip"
+        assert hitl["on_error"] == "pause"
 
 
 # =============================================================================
@@ -1009,8 +1011,8 @@ class TestConditionOnReject:
 
         data = condition.to_dict()
 
-        assert "on_reject" in data
-        assert data["on_reject"] == "OnReject.else_branch" or data["on_reject"] == "else"
+        assert "human_review" in data
+        assert data["human_review"]["on_reject"] == "else"
 
     def test_condition_from_dict_restores_on_reject(self):
         """Test that Condition.from_dict restores on_reject field."""

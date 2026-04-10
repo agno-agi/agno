@@ -2,9 +2,10 @@
 Tests for httpx client caching and resource leak prevention.
 
 This test suite verifies that:
-1. Global httpx clients are singletons and reused across models
-2. OpenAI clients are cached per model instance
-3. No new httpx clients are created on every request
+1. Global httpx clients are singletons and reused across non-OpenAI models
+2. OpenAI models do NOT use the global httpx client (they use the SDK's own HTTP/1.1 default)
+3. OpenAI clients are cached per model instance to prevent resource leaks
+4. Custom http_client is respected when explicitly provided
 """
 
 import os
@@ -112,41 +113,46 @@ class TestOpenAIChatClientCaching:
         assert model.async_client is not None
         assert model.async_client is client1
 
-    def test_multiple_models_share_global_httpx_client(self):
-        """Verify that multiple models can share the same global httpx client."""
-        model1 = OpenAIChat(id="gpt-4o")
-        model2 = OpenAIChat(id="gpt-4-turbo")
-        model3 = OpenAIChat(id="gpt-3.5-turbo")
+    def test_sync_client_does_not_use_global_httpx_client(self):
+        """Verify that OpenAIChat does NOT use the global shared httpx client.
 
-        # Get clients from each model
-        model1.get_client()
-        model2.get_client()
-        model3.get_client()
-
-        # All models should use the same global httpx client internally
-        # We verify this by checking that only one global client exists
-        global_sync_client = get_default_sync_client()
-        assert isinstance(global_sync_client, httpx.Client)
-
-    def test_sync_client_uses_global_httpx_client(self):
-        """Verify that OpenAIChat uses the global httpx client for sync operations."""
+        OpenAI's infrastructure has issues with HTTP/2. The SDK intentionally defaults
+        to HTTP/1.1. We must not inject the shared HTTP/2 client.
+        """
         global_sync_client = get_default_sync_client()
         model = OpenAIChat(id="gpt-4o")
 
         openai_client = model.get_client()
 
-        # The OpenAI client should have the global httpx client
-        assert openai_client._client is global_sync_client
+        # The OpenAI client must NOT have the global httpx client
+        assert openai_client._client is not global_sync_client
 
-    def test_async_client_uses_global_httpx_client(self):
-        """Verify that OpenAIChat uses the global httpx client for async operations."""
+    def test_async_client_does_not_use_global_httpx_client(self):
+        """Verify that OpenAIChat does NOT use the global shared httpx client for async.
+
+        The global async client uses HTTP/2 which causes transient 400 errors with OpenAI.
+        """
         global_async_client = get_default_async_client()
         model = OpenAIChat(id="gpt-4o")
 
         openai_client = model.get_async_client()
 
-        # The OpenAI client should have the global httpx client
-        assert openai_client._client is global_async_client
+        # The OpenAI client must NOT have the global httpx client
+        assert openai_client._client is not global_async_client
+
+    def test_each_model_instance_has_own_cached_client(self):
+        """Verify that each OpenAIChat instance caches its own client independently."""
+        model1 = OpenAIChat(id="gpt-4o")
+        model2 = OpenAIChat(id="gpt-4-turbo")
+
+        client1 = model1.get_client()
+        client2 = model2.get_client()
+
+        # Each model has its own cached OpenAI client
+        assert model1.client is client1
+        assert model2.client is client2
+        # But they are different OpenAI client instances
+        assert client1 is not client2
 
 
 class TestOpenAIResponsesClientCaching:
@@ -178,8 +184,8 @@ class TestOpenAIResponsesClientCaching:
         assert model.async_client is not None
         assert model.async_client is client1
 
-    def test_uses_global_httpx_client(self):
-        """Verify that OpenAIResponses uses the global httpx client."""
+    def test_does_not_use_global_httpx_client(self):
+        """Verify that OpenAIResponses does NOT use the global shared httpx client."""
         global_sync_client = get_default_sync_client()
         global_async_client = get_default_async_client()
 
@@ -188,9 +194,9 @@ class TestOpenAIResponsesClientCaching:
         sync_openai = model.get_client()
         async_openai = model.get_async_client()
 
-        # Both should use global clients
-        assert sync_openai._client is global_sync_client
-        assert async_openai._client is global_async_client
+        # Neither should use global clients
+        assert sync_openai._client is not global_sync_client
+        assert async_openai._client is not global_async_client
 
 
 class TestCustomHttpClient:
@@ -219,6 +225,25 @@ class TestCustomHttpClient:
         openai_client = model.get_async_client()
 
         # Should use the custom client
+        assert openai_client._client is custom_client
+
+    def test_custom_sync_client_respected_on_responses(self):
+        """Verify that custom sync httpx client is used on OpenAIResponses."""
+        custom_client = httpx.Client()
+        model = OpenAIResponses(id="gpt-4o", http_client=custom_client)
+
+        openai_client = model.get_client()
+
+        assert openai_client._client is custom_client
+        custom_client.close()
+
+    def test_custom_async_client_respected_on_responses(self):
+        """Verify that custom async httpx client is used on OpenAIResponses."""
+        custom_client = httpx.AsyncClient()
+        model = OpenAIResponses(id="gpt-4o", http_client=custom_client)
+
+        openai_client = model.get_async_client()
+
         assert openai_client._client is custom_client
 
 
@@ -257,51 +282,16 @@ class TestAsyncCleanup:
 
 
 class TestSetGlobalClients:
-    """Test suite for setting custom global clients."""
+    """Test suite for setting custom global clients.
+
+    Note: set_default_sync_client/set_default_async_client affect non-OpenAI providers
+    (Anthropic, Groq, etc.) that use the global shared httpx client. OpenAI models
+    do not use the global client, so these settings do not affect them.
+    """
 
     def teardown_method(self):
         """Clean up global clients after each test."""
         close_sync_client()
-
-    def test_set_custom_sync_client_affects_all_models(self):
-        """Verify that setting a custom sync client affects all models."""
-        custom_client = httpx.Client(limits=httpx.Limits(max_connections=100, max_keepalive_connections=50))
-        set_default_sync_client(custom_client)
-
-        # Create models after setting custom client
-        model1 = OpenAIChat(id="gpt-4o")
-        model2 = OpenAIResponses(id="gpt-4o")
-
-        # Both should use the custom client
-        assert model1.get_client()._client is custom_client
-        assert model2.get_client()._client is custom_client
-        custom_client.close()
-
-    def test_set_custom_async_client_affects_all_models(self):
-        """Verify that setting a custom async client affects all models."""
-        custom_client = httpx.AsyncClient(limits=httpx.Limits(max_connections=100, max_keepalive_connections=50))
-        set_default_async_client(custom_client)
-
-        # Create models after setting custom client
-        model1 = OpenAIChat(id="gpt-4o")
-        model2 = OpenAIResponses(id="gpt-4o")
-
-        # Both should use the custom client
-        assert model1.get_async_client()._client is custom_client
-        assert model2.get_async_client()._client is custom_client
-
-    def test_custom_client_persists_across_multiple_calls(self):
-        """Verify that custom client persists across multiple calls."""
-        custom_client = httpx.Client(limits=httpx.Limits(max_connections=250))
-        set_default_sync_client(custom_client)
-
-        model = OpenAIChat(id="gpt-4o")
-
-        # Multiple calls should use the same custom client
-        for _ in range(5):
-            openai_client = model.get_client()
-            assert openai_client._client is custom_client
-        custom_client.close()
 
     def test_set_client_overrides_previous_default(self):
         """Verify that setting a new client replaces the previous default."""
@@ -319,6 +309,42 @@ class TestSetGlobalClients:
 
         custom_client.close()
 
+    def test_set_custom_sync_client_retrievable(self):
+        """Verify that a custom sync client set globally is returned by get_default_sync_client."""
+        custom_client = httpx.Client(limits=httpx.Limits(max_connections=100, max_keepalive_connections=50))
+        set_default_sync_client(custom_client)
+
+        retrieved = get_default_sync_client()
+        assert retrieved is custom_client
+        custom_client.close()
+
+    def test_set_custom_async_client_retrievable(self):
+        """Verify that a custom async client set globally is returned by get_default_async_client."""
+        custom_client = httpx.AsyncClient(limits=httpx.Limits(max_connections=100, max_keepalive_connections=50))
+        set_default_async_client(custom_client)
+
+        retrieved = get_default_async_client()
+        assert retrieved is custom_client
+
+    def test_openai_models_ignore_global_client_override(self):
+        """Verify that OpenAI models do NOT pick up globally set httpx clients.
+
+        This is the key behavioral change: OpenAI models let the SDK manage its own
+        HTTP client to avoid HTTP/2-related transient errors.
+        """
+        custom_sync = httpx.Client(limits=httpx.Limits(max_connections=100))
+        custom_async = httpx.AsyncClient(limits=httpx.Limits(max_connections=100))
+        set_default_sync_client(custom_sync)
+        set_default_async_client(custom_async)
+
+        model = OpenAIChat(id="gpt-4o")
+
+        # OpenAI models should NOT use the global client
+        assert model.get_client()._client is not custom_sync
+        assert model.get_async_client()._client is not custom_async
+
+        custom_sync.close()
+
 
 class TestResourceLeakPrevention:
     """Test suite for resource leak prevention."""
@@ -327,37 +353,43 @@ class TestResourceLeakPrevention:
         """Clean up global clients after each test."""
         close_sync_client()
 
-    def test_no_new_httpx_clients_created_per_request(self):
-        """Verify that no new httpx clients are created on repeated requests."""
+    def test_no_new_openai_clients_created_per_request(self):
+        """Verify that repeated get_client() calls return the same cached OpenAI client."""
         model = OpenAIChat(id="gpt-4o")
-        global_client = get_default_sync_client()
 
+        first_client = model.get_client()
         # Simulate multiple requests
         for _ in range(10):
             client = model.get_client()
-            # Same client should be used
-            assert client._client is global_client
+            assert client is first_client, "Same cached OpenAI client should be returned"
 
-        # Only one global client should exist
-        new_global_client = get_default_sync_client()
-        assert new_global_client is global_client
+    def test_no_new_openai_async_clients_created_per_request(self):
+        """Verify that repeated get_async_client() calls return the same cached OpenAI client."""
+        model = OpenAIChat(id="gpt-4o")
 
-    def test_multiple_models_share_single_global_client(self):
-        """Verify that multiple models share a single global httpx client."""
+        first_client = model.get_async_client()
+        for _ in range(10):
+            client = model.get_async_client()
+            assert client is first_client, "Same cached async OpenAI client should be returned"
+
+    def test_responses_model_caches_across_calls(self):
+        """Verify that OpenAIResponses also caches clients across repeated calls."""
+        model = OpenAIResponses(id="gpt-4o")
+
+        first_sync = model.get_client()
+        first_async = model.get_async_client()
+
+        for _ in range(10):
+            assert model.get_client() is first_sync
+            assert model.get_async_client() is first_async
+
+    def test_global_httpx_client_singleton_unchanged(self):
+        """Verify the global httpx client remains a singleton for non-OpenAI providers."""
         global_client = get_default_sync_client()
 
-        # Create multiple models
-        models = [
-            OpenAIChat(id="gpt-4o"),
-            OpenAIChat(id="gpt-4-turbo"),
-            OpenAIChat(id="gpt-3.5-turbo"),
-            OpenAIResponses(id="gpt-4o"),
-        ]
-
-        # All should use the same global client
-        for model in models:
-            openai_client = model.get_client()
-            assert openai_client._client is global_client
+        # Multiple retrievals return the same instance
+        for _ in range(10):
+            assert get_default_sync_client() is global_client
 
 
 if __name__ == "__main__":
