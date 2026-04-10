@@ -279,3 +279,97 @@ async def test_rename_session(async_postgres_db_real: AsyncPostgresDb, sample_ag
         session_id="test_agent_session_1", session_type=SessionType.AGENT
     )
     assert retrieved.session_data["session_name"] == "New Session Name"
+
+
+@pytest.mark.asyncio
+async def test_rename_session_with_null_session_data(async_postgres_db_real: AsyncPostgresDb):
+    """Test renaming a session with null session_data (edge case for COALESCE)"""
+    # Create a session and manually set session_data to NULL
+    session = AgentSession(
+        session_id="null_data_session",
+        agent_id="agent_1",
+        user_id="user_1",
+        session_data=None,
+        created_at=int(time.time()),
+    )
+
+    # Insert with null session_data
+    sessions_table = await async_postgres_db_real._get_table("sessions")
+    async with async_postgres_db_real.async_session_factory() as sess:
+        await sess.execute(
+            sessions_table.insert().values(
+                session_id=session.session_id,
+                agent_id=session.agent_id,
+                user_id=session.user_id,
+                session_type=SessionType.AGENT.value,
+                session_data=None,
+                created_at=session.created_at,
+            )
+        )
+        await sess.commit()
+
+    # Rename should work even with null session_data
+    result = await async_postgres_db_real.rename_session(
+        session_id="null_data_session",
+        session_type=SessionType.AGENT,
+        session_name="New Name From Null",
+    )
+
+    assert result is not None
+    assert result.session_data is not None
+    assert result.session_data["session_name"] == "New Name From Null"
+
+
+@pytest.mark.asyncio
+async def test_rename_session_with_special_characters(
+    async_postgres_db_real: AsyncPostgresDb, sample_agent_session: AgentSession
+):
+    """Test renaming with special characters that might cause type casting issues"""
+    await async_postgres_db_real.upsert_session(sample_agent_session)
+
+    # Test with various special characters that could cause SQL/type issues
+    special_names = [
+        "Name with 'single quotes'",
+        'Name with "double quotes"',
+        "Name with {braces} and [brackets]",
+        "Name with special chars: !@#$%^&*()",
+        "Name with unicode: 你好世界 🎉",
+        "Name with newline\nand tab\there",
+    ]
+
+    for special_name in special_names:
+        result = await async_postgres_db_real.rename_session(
+            session_id=sample_agent_session.session_id,
+            session_type=SessionType.AGENT,
+            session_name=special_name,
+        )
+
+        assert result is not None
+        # Note: sanitize_postgres_string may modify some characters (like newlines)
+        assert result.session_data is not None
+        assert "session_name" in result.session_data
+
+
+@pytest.mark.asyncio
+async def test_rename_session_with_empty_session_data(async_postgres_db_real: AsyncPostgresDb):
+    """Test renaming a session with empty session_data dict"""
+    session = AgentSession(
+        session_id="empty_data_session",
+        agent_id="agent_1",
+        user_id="user_1",
+        session_data={},
+        created_at=int(time.time()),
+    )
+
+    await async_postgres_db_real.upsert_session(session)
+
+    # Rename session with empty dict
+    result = await async_postgres_db_real.rename_session(
+        session_id="empty_data_session",
+        session_type=SessionType.AGENT,
+        session_name="Name From Empty Dict",
+    )
+
+    assert result is not None
+    assert result.session_data is not None
+    assert result.session_data["session_name"] == "Name From Empty Dict"
