@@ -10,38 +10,6 @@ from agno.utils.log import log_debug, log_info
 
 
 class LLMsTxtTools(Toolkit):
-    """Tools for reading llms.txt files and loading their linked documentation into a knowledge base.
-
-    The llms.txt format (see https://llmstxt.org) is a standardized way for websites to provide
-    LLM-friendly documentation indexes.
-
-    This toolkit provides two usage modes:
-
-    **Agentic mode (without knowledge):** The agent gets two tools:
-    - `get_llms_txt_index` - reads the llms.txt and returns the index of available docs
-    - `read_llms_txt_url` - fetches a specific URL from the index
-    The agent reads the index, decides which pages are relevant, and fetches only those.
-
-    **Knowledge mode (with knowledge):** The agent gets one tool:
-    - `read_llms_txt_and_load_knowledge` - reads the llms.txt, fetches all linked pages,
-      and loads them into the knowledge base.
-
-    Args:
-        knowledge: Optional Knowledge instance. When provided, enables knowledge loading mode.
-        max_urls: Maximum number of linked URLs to fetch when loading into knowledge. Defaults to 20.
-        timeout: HTTP request timeout in seconds. Defaults to 60.
-        skip_optional: Whether to skip URLs listed in the "Optional" section. Defaults to False.
-
-    Example:
-        # Agentic mode - agent reads index and picks which docs to fetch
-        tools = LLMsTxtTools()
-        agent = Agent(tools=[tools])
-
-        # Knowledge mode - bulk load all docs into KB
-        knowledge = Knowledge(vector_db=my_vector_db)
-        tools = LLMsTxtTools(knowledge=knowledge)
-        agent = Agent(tools=[tools], knowledge=knowledge)
-    """
 
     def __init__(
         self,

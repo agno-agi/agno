@@ -195,7 +195,6 @@ class LLMsTxtReader(Reader):
             else:
                 documents.append(doc)
 
-        # Add each fetched page as a document
         for entry in entries:
             content = fetched.get(entry.url)
             if not content:
