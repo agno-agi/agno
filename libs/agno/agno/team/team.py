@@ -47,6 +47,7 @@ from agno.run.team import (
 )
 from agno.session import SessionSummaryManager, TeamSession
 from agno.session.summary import SessionSummary
+from agno.skills import Skills
 from agno.team import (
     _cli,
     _default_tools,
@@ -239,6 +240,10 @@ class Team:
     store_tool_messages: bool = True
     # If True, store history messages in run output
     store_history_messages: bool = False
+
+    # --- Skills ---
+    # Skills provide additional instructions, references, and scripts to the team leader.
+    skills: Optional[Skills] = None
 
     # --- Team Tools ---
     # A list of tools provided to the Model.
@@ -489,6 +494,7 @@ class Team:
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
+        skills: Optional[Skills] = None,
         tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -610,6 +616,7 @@ class Team:
             num_history_runs=num_history_runs,
             num_history_messages=num_history_messages,
             max_tool_calls_from_history=max_tool_calls_from_history,
+            skills=skills,
             tools=tools,
             tool_call_limit=tool_call_limit,
             tool_choice=tool_choice,
@@ -1747,7 +1754,7 @@ def get_team_by_id(
         return team
 
     except Exception as e:
-        log_error(f"Error loading Team {id} from database: {e}")
+        log_error(f"Error loading Team {id} from database: {str(e)}")
         return None
 
 
@@ -1788,5 +1795,5 @@ def get_teams(
         return teams
 
     except Exception as e:
-        log_error(f"Error loading Teams from database: {e}")
+        log_error(f"Error loading Teams from database: {str(e)}")
         return []

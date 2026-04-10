@@ -127,7 +127,7 @@ class BotState:
             self.commands_registered = True
             log_info("Bot commands registered successfully")
         except Exception as e:
-            log_warning(f"Failed to register bot commands: {e}")
+            log_warning(f"Failed to register bot commands: {str(e)}")
 
     def is_duplicate_update(self, update_id: int) -> bool:
         now = time.monotonic()
@@ -225,7 +225,7 @@ class StreamState:
             await self.bot.edit_message_text(html, self.chat_id, self.sent_message_id, parse_mode="HTML")
         except Exception as e:
             if "message is not modified" not in str(e):
-                log_warning(f"Failed to edit message: {e}")
+                log_warning(f"Failed to edit message: {str(e)}")
 
     async def _send_chunks(self, content: str) -> None:
         await send_message(
@@ -264,7 +264,7 @@ class StreamState:
         try:
             await self.send_or_edit(self.build_display_html())
         except Exception as e:
-            log_warning(f"Stream display update failed: {e}")
+            log_warning(f"Stream display update failed: {str(e)}")
 
     async def finalize(self) -> None:
         self.close_pending_statuses()
@@ -275,7 +275,7 @@ class StreamState:
         try:
             await self._finalize_inner(final_html)
         except Exception as e:
-            log_warning(f"Finalize failed ({e}), falling back to plain text")
+            log_warning(f"Finalize failed (), falling back to plain text: {str(e)}")
             await self._finalize_plaintext()
 
     async def _finalize_inner(self, final_html: str) -> None:
@@ -317,4 +317,4 @@ class StreamState:
                 message_thread_id=self.message_thread_id,
             )
         except Exception as e:
-            log_warning(f"Plain text fallback also failed: {e}")
+            log_warning(f"Plain text fallback also failed: {str(e)}")
