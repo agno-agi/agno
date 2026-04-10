@@ -377,48 +377,23 @@ class TestReadLLMsTxtUrl:
 
 
 class TestLoadKnowledge:
-    def test_inserts_into_knowledge(self):
+    def test_delegates_to_knowledge_insert(self):
         mock_knowledge = MagicMock()
         tools = LLMsTxtTools(knowledge=mock_knowledge)
 
-        mock_response = MagicMock()
-        mock_response.headers = {"content-type": "text/plain"}
-        mock_response.text = "Page content"
-        mock_response.raise_for_status = MagicMock()
+        tools.read_llms_txt_and_load_knowledge("https://example.com/llms.txt")
 
-        # Simple llms.txt with one link
-        llms_content = "# Test\n\n## Docs\n\n- [Page](https://example.com/page): A page\n"
-        call_count = 0
-
-        def mock_get(url, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            resp = MagicMock()
-            resp.headers = {"content-type": "text/plain"}
-            resp.raise_for_status = MagicMock()
-            if call_count == 1:
-                resp.text = llms_content
-            else:
-                resp.text = "Page content"
-            return resp
-
-        with patch("httpx.get", side_effect=mock_get):
-            result = tools.read_llms_txt_and_load_knowledge("https://example.com/llms.txt")
-
-        assert mock_knowledge.insert.called
-        assert "Successfully loaded" in result
+        mock_knowledge.insert.assert_called_once_with(url="https://example.com/llms.txt", reader=tools.reader)
 
     def test_returns_message_when_no_knowledge(self):
         tools = LLMsTxtTools()
-        # Force-call the knowledge method even though it wouldn't be registered
         result = tools.read_llms_txt_and_load_knowledge("https://example.com/llms.txt")
         assert result == "Knowledge base not provided"
 
-    def test_returns_message_when_no_docs(self):
+    def test_returns_success_message(self):
         mock_knowledge = MagicMock()
         tools = LLMsTxtTools(knowledge=mock_knowledge)
 
-        with patch("httpx.get", side_effect=httpx.RequestError("connection failed")):
-            result = tools.read_llms_txt_and_load_knowledge("https://example.com/llms.txt")
+        result = tools.read_llms_txt_and_load_knowledge("https://example.com/llms.txt")
 
-        assert "No documents found" in result
+        assert "Successfully loaded" in result

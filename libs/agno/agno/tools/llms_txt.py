@@ -3,7 +3,6 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info
@@ -199,20 +198,8 @@ class LLMsTxtTools(Toolkit):
             return "Knowledge base not provided"
 
         log_info(f"Reading llms.txt from {url}")
-        documents: List[Document] = self.reader.read(url=url)
-
-        if not documents:
-            return f"No documents found in llms.txt at {url}"
-
-        log_debug(f"Loading {len(documents)} documents into knowledge base")
-        for doc in documents:
-            self.knowledge.insert(
-                text_content=doc.content,
-                name=doc.name,
-                metadata=doc.meta_data,
-            )
-
-        return f"Successfully loaded {len(documents)} documents from llms.txt into the knowledge base"
+        self.knowledge.insert(url=url, reader=self.reader)
+        return f"Successfully loaded documentation from {url} into the knowledge base"
 
     async def aread_llms_txt_and_load_knowledge(self, url: str) -> str:
         """Reads an llms.txt file, fetches all linked documentation pages, and loads them into the knowledge base.
@@ -228,17 +215,5 @@ class LLMsTxtTools(Toolkit):
             return "Knowledge base not provided"
 
         log_info(f"Reading llms.txt from {url}")
-        documents: List[Document] = await self.reader.async_read(url=url)
-
-        if not documents:
-            return f"No documents found in llms.txt at {url}"
-
-        log_debug(f"Loading {len(documents)} documents into knowledge base")
-        for doc in documents:
-            await self.knowledge.ainsert(
-                text_content=doc.content,
-                name=doc.name,
-                metadata=doc.meta_data,
-            )
-
-        return f"Successfully loaded {len(documents)} documents from llms.txt into the knowledge base"
+        await self.knowledge.ainsert(url=url, reader=self.reader)
+        return f"Successfully loaded documentation from {url} into the knowledge base"
