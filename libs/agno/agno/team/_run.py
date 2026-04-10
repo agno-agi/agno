@@ -4290,6 +4290,8 @@ def _handle_team_tool_call_updates(
     etc.) that ``Team`` also provides, so passing a ``Team`` is safe at runtime.
     """
     from agno.agent._tools import (
+        _maybe_create_audit_approval,
+        handle_ask_user_tool_update,
         handle_external_execution_update,
         handle_get_user_input_tool_update,
         handle_user_input_update,
@@ -4310,15 +4312,23 @@ def _handle_team_tool_call_updates(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+            _maybe_create_audit_approval(team, _t, run_response, "approved" if _t.confirmed is True else "rejected")  # type: ignore
             _t.requires_confirmation = False
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _maybe_create_audit_approval(team, _t, run_response, "approved")  # type: ignore
 
-        # Case 3: Agentic user input required
+        # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _t.requires_user_input = False
+            _t.answered = True
+
+        # Case 3b: User feedback (ask_user) required
+        elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
@@ -4328,6 +4338,7 @@ def _handle_team_tool_call_updates(
             _t.requires_user_input = False
             _t.answered = True
             deque(run_tool(team, run_response, run_messages, _t, functions=_functions), maxlen=0)  # type: ignore
+            _maybe_create_audit_approval(team, _t, run_response, "approved")  # type: ignore
 
 
 def _handle_team_tool_call_updates_stream(
@@ -4343,6 +4354,8 @@ def _handle_team_tool_call_updates_stream(
     Yields events during tool execution for streaming responses.
     """
     from agno.agent._tools import (
+        _maybe_create_audit_approval,
+        handle_ask_user_tool_update,
         handle_external_execution_update,
         handle_get_user_input_tool_update,
         handle_user_input_update,
@@ -4370,15 +4383,23 @@ def _handle_team_tool_call_updates_stream(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+            _maybe_create_audit_approval(team, _t, run_response, "approved" if _t.confirmed is True else "rejected")  # type: ignore
             _t.requires_confirmation = False
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _maybe_create_audit_approval(team, _t, run_response, "approved")  # type: ignore
 
-        # Case 3: Agentic user input required
+        # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _t.requires_user_input = False
+            _t.answered = True
+
+        # Case 3b: User feedback (ask_user) required
+        elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
@@ -4395,6 +4416,7 @@ def _handle_team_tool_call_updates_stream(
             )
             _t.requires_user_input = False
             _t.answered = True
+            _maybe_create_audit_approval(team, _t, run_response, "approved")  # type: ignore
 
 
 async def _ahandle_team_tool_call_updates(
@@ -4408,7 +4430,9 @@ async def _ahandle_team_tool_call_updates(
     See _handle_team_tool_call_updates docstring for the Team/Agent duck-typing note.
     """
     from agno.agent._tools import (
+        _maybe_create_audit_approval,
         arun_tool,
+        handle_ask_user_tool_update,
         handle_external_execution_update,
         handle_get_user_input_tool_update,
         handle_user_input_update,
@@ -4428,13 +4452,20 @@ async def _ahandle_team_tool_call_updates(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+            _maybe_create_audit_approval(team, _t, run_response, "approved" if _t.confirmed is True else "rejected")  # type: ignore
             _t.requires_confirmation = False
 
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _maybe_create_audit_approval(team, _t, run_response, "approved")  # type: ignore
 
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _t.requires_user_input = False
+            _t.answered = True
+
+        elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
@@ -4444,6 +4475,7 @@ async def _ahandle_team_tool_call_updates(
             _t.answered = True
             async for _ in arun_tool(team, run_response, run_messages, _t, functions=_functions):  # type: ignore
                 pass
+            _maybe_create_audit_approval(team, _t, run_response, "approved")  # type: ignore
 
 
 async def _ahandle_team_tool_call_updates_stream(
@@ -4459,7 +4491,9 @@ async def _ahandle_team_tool_call_updates_stream(
     Yields events during tool execution for async streaming responses.
     """
     from agno.agent._tools import (
+        _maybe_create_audit_approval,
         arun_tool,
+        handle_ask_user_tool_update,
         handle_external_execution_update,
         handle_get_user_input_tool_update,
         handle_user_input_update,
@@ -4487,15 +4521,23 @@ async def _ahandle_team_tool_call_updates_stream(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+            _maybe_create_audit_approval(team, _t, run_response, "approved" if _t.confirmed is True else "rejected")  # type: ignore
             _t.requires_confirmation = False
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
             handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _maybe_create_audit_approval(team, _t, run_response, "approved")  # type: ignore
 
-        # Case 3: Agentic user input required
+        # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
             handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            _t.requires_user_input = False
+            _t.answered = True
+
+        # Case 3b: User feedback (ask_user) required
+        elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
@@ -4513,6 +4555,7 @@ async def _ahandle_team_tool_call_updates_stream(
                 yield event  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
+            _maybe_create_audit_approval(team, _t, run_response, "approved")  # type: ignore
 
 
 def _normalize_requirements_payload(
@@ -4720,7 +4763,7 @@ def _route_requirements_to_members_stream(
             event.parent_run_id = getattr(event, "parent_run_id", None) or run_response.run_id
 
             # Store event and yield (same as _handle_model_response_chunk for member events)
-            if team.stream_member_events:
+            if stream_events or team.stream_member_events:
                 yield handle_event(
                     event,
                     run_response,
@@ -4930,7 +4973,7 @@ async def _aroute_requirements_to_members_stream(
             event.parent_run_id = getattr(event, "parent_run_id", None) or run_response.run_id
 
             # Store event and yield (same as _handle_model_response_chunk for member events)
-            if team.stream_member_events:
+            if stream_events or team.stream_member_events:
                 yield handle_event(
                     event,
                     run_response,
@@ -5613,7 +5656,7 @@ def _continue_run(
     handle_event(
         create_team_run_continued_event(run_response),
         run_response,
-        # events_to_skip=team.events_to_skip,
+        events_to_skip=team.events_to_skip,
         store_events=team.store_events,
     )
 
