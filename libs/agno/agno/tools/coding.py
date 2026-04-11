@@ -1,7 +1,11 @@
 import functools
+import queue
 import shlex
+import shutil
 import subprocess
 import tempfile
+import threading
+import time
 from pathlib import Path
 from textwrap import dedent
 from typing import Any, List, Optional, Union
@@ -15,11 +19,16 @@ def _warn_coding_tools() -> None:
     logger.warning("CodingTools can run arbitrary shell commands, please provide human supervision.")
 
 
+@functools.lru_cache(maxsize=1)
+def _get_rg_path() -> Optional[str]:
+    return shutil.which("rg")
+
+
 class CodingTools(Toolkit):
     """A minimal, powerful toolkit for coding agents.
 
-    Provides four core tools (read, edit, write, shell) and three optional
-    exploration tools (grep, find, ls). With these primitives, an agent can
+    Provides four core tools (read, edit, write, shell) and four optional
+    exploration tools (grep, rg, find, ls). With these primitives, an agent can
     perform any file operation, run tests, use git, install packages, search
     codebases, and more.
 
@@ -40,6 +49,7 @@ class CodingTools(Toolkit):
         "ls",
         "find",
         "grep",
+        "rg",
         "mkdir",
         "rm",
         "mv",
@@ -83,6 +93,11 @@ class CodingTools(Toolkit):
             - Use for finding code patterns, function definitions, imports, etc.
             - Supports regex patterns and case-insensitive search.
             - Use the include parameter to filter by file type (e.g. "*.py")."""),
+        "rg": dedent("""\
+            **rg** - Search with ripgrep defaults for fast codebase exploration.
+            - Respects ignore files, skips hidden and binary files by default, and is optimized for large repos.
+            - Supports regex patterns, case-insensitive search, and glob filters.
+            - Use the glob parameter to scope matches to file types or paths (e.g. "*.py", "src/**")."""),
         "find": dedent("""\
             **find** - Search for files by glob pattern.
             - Use for discovering files in the project structure.
@@ -129,6 +144,7 @@ class CodingTools(Toolkit):
         enable_write_file: bool = True,
         enable_run_shell: bool = True,
         enable_grep: bool = False,
+        enable_rg: bool = False,
         enable_find: bool = False,
         enable_ls: bool = False,
         instructions: Optional[str] = None,
@@ -150,6 +166,7 @@ class CodingTools(Toolkit):
             enable_write_file: Enable the write_file tool.
             enable_run_shell: Enable the run_shell tool.
             enable_grep: Enable the grep tool (disabled by default).
+            enable_rg: Enable the rg tool (disabled by default).
             enable_find: Enable the find tool (disabled by default).
             enable_ls: Enable the ls tool (disabled by default).
             instructions: Custom instructions for the LLM. Uses defaults if None.
@@ -184,6 +201,8 @@ class CodingTools(Toolkit):
             _enabled.append(("run_shell", self.run_shell))
         if all or enable_grep:
             _enabled.append(("grep", self.grep))
+        if all or enable_rg:
+            _enabled.append(("rg", self.rg))
         if all or enable_find:
             _enabled.append(("find", self.find))
         if all or enable_ls:
@@ -247,6 +266,9 @@ class CodingTools(Toolkit):
 
     # Shell operators that enable command chaining or substitution
     _DANGEROUS_PATTERNS: List[str] = ["&&", "||", ";", "|", "$(", "`", ">", ">>", "<"]
+    _REGEX_META_CHARS = frozenset(".^$*+?{}[]\\|()")
+    _SEARCH_TIMEOUT_SECONDS = 30
+    _SEARCH_QUEUE_POLL_SECONDS = 0.1
 
     def _check_command(self, command: str) -> Optional[str]:
         """Check if a shell command is safe to execute.
@@ -304,6 +326,124 @@ class CodingTools(Toolkit):
                     continue
 
         return None
+
+    @classmethod
+    def _is_literal_pattern(cls, pattern: str) -> bool:
+        return not any(char in cls._REGEX_META_CHARS for char in pattern)
+
+    def _build_rg_command(
+        self,
+        pattern: str,
+        search_target: str,
+        ignore_case: bool,
+        glob: Optional[str],
+        context: int,
+    ) -> List[str]:
+        literal = self._is_literal_pattern(pattern)
+        rg_path = _get_rg_path()
+
+        if rg_path is None:
+            raise FileNotFoundError("ripgrep executable not found")
+
+        cmd = [
+            rg_path,
+            "--line-number",
+            "--with-filename",
+            "--color",
+            "never",
+            "--no-heading",
+            "--engine",
+            "auto",
+        ]
+        if literal:
+            cmd.append("--fixed-strings")
+        if ignore_case:
+            cmd.append("--ignore-case")
+        if context > 0:
+            cmd.extend(["--context", str(context)])
+        if glob:
+            cmd.extend(["--glob", glob])
+        cmd.extend([pattern, search_target])
+        return cmd
+
+    def _collect_search_output(self, cmd: List[str], limit: int) -> tuple[str, bool, bool, int, str]:
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            cwd=str(self.base_dir),
+        )
+
+        output_queue: "queue.Queue[Optional[str]]" = queue.Queue()
+
+        def _enqueue_stdout() -> None:
+            assert process.stdout is not None
+            for line in process.stdout:
+                output_queue.put(line.rstrip("\n"))
+            output_queue.put(None)
+
+        reader = threading.Thread(target=_enqueue_stdout, daemon=True)
+        reader.start()
+
+        collected_lines: List[str] = []
+        byte_count = 0
+        was_limited = False
+        stopped_for_output_budget = False
+        start = time.monotonic()
+
+        try:
+            while True:
+                remaining = self._SEARCH_TIMEOUT_SECONDS - (time.monotonic() - start)
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(cmd=cmd, timeout=self._SEARCH_TIMEOUT_SECONDS)
+
+                try:
+                    item = output_queue.get(timeout=min(self._SEARCH_QUEUE_POLL_SECONDS, remaining))
+                except queue.Empty:
+                    if process.poll() is not None and output_queue.empty():
+                        break
+                    continue
+
+                if item is None:
+                    break
+
+                collected_lines.append(item)
+                byte_count += len((item + "\n").encode("utf-8", errors="replace"))
+
+                if len(collected_lines) > limit:
+                    was_limited = True
+                    collected_lines = collected_lines[:limit]
+                    process.terminate()
+                    break
+
+                if len(collected_lines) > self.max_lines or byte_count > self.max_bytes:
+                    stopped_for_output_budget = True
+                    process.terminate()
+                    break
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+            reader.join(timeout=1)
+            raise
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
+        stderr = ""
+        if process.stderr is not None:
+            stderr = process.stderr.read().strip()
+
+        reader.join(timeout=1)
+        return "\n".join(collected_lines), was_limited, stopped_for_output_budget, process.returncode, stderr
 
     def read_file(self, file_path: str, offset: int = 0, limit: Optional[int] = None) -> str:
         """Read the contents of a file with line numbers.
@@ -569,8 +709,8 @@ class CodingTools(Toolkit):
     ) -> str:
         """Search file contents for a pattern.
 
-        Returns matching lines with file paths and line numbers. Respects
-        .gitignore when using grep -r. Output is truncated if it exceeds limits.
+        Returns matching lines with file paths and line numbers. Output is
+        truncated if it exceeds limits.
 
         :param pattern: Search pattern (regex by default).
         :param path: Directory or file to search in (default: base directory).
@@ -595,7 +735,6 @@ class CodingTools(Toolkit):
             if not resolved_path.exists():
                 return f"Error: Path not found: {path or '.'}"
 
-            # Build grep command
             cmd = ["grep", "-rn"]
             if ignore_case:
                 cmd.append("-i")
@@ -623,17 +762,14 @@ class CodingTools(Toolkit):
                     return f"Error: {result.stderr.strip()}"
                 return f"No matches found for pattern: {pattern}"
 
-            # Make paths relative to base_dir
             base_str = str(self.base_dir) + "/"
             output = output.replace(base_str, "")
 
-            # Enforce global match limit
             output_lines = output.split("\n")
             if len(output_lines) > limit:
                 output = "\n".join(output_lines[:limit])
                 output += f"\n[Results limited to {limit} matches]"
 
-            # Apply truncation
             output, was_truncated, total_lines = self._truncate_output(output)
             if was_truncated:
                 output += f"\n[Output truncated: {total_lines} lines total]"
@@ -647,6 +783,83 @@ class CodingTools(Toolkit):
         except Exception as e:
             log_error(f"Error running grep: {str(e)}")
             return f"Error running grep: {e}"
+
+    def rg(
+        self,
+        pattern: str,
+        path: Optional[str] = None,
+        ignore_case: bool = False,
+        glob: Optional[str] = None,
+        context: int = 0,
+        limit: int = 100,
+    ) -> str:
+        """Search file contents with ripgrep.
+
+        Uses ripgrep defaults, which respect ignore files and skip hidden and
+        binary files unless the user's ripgrep config changes that behavior.
+
+        :param pattern: Search pattern.
+        :param path: Directory or file to search in (default: base directory).
+        :param ignore_case: Case-insensitive search (default: False).
+        :param glob: Filter files by glob pattern, e.g. '*.py' or 'src/**'.
+        :param context: Number of lines to show before and after each match (default: 0).
+        :param limit: Maximum number of matches to return (default: 100).
+        :return: Matching lines with file paths and line numbers, or an error message.
+        """
+        try:
+            if not pattern:
+                return "Error: Pattern cannot be empty"
+
+            if path:
+                safe, resolved_path = self._check_path(path, self.base_dir, self.restrict_to_base_dir)
+                if not safe:
+                    return f"Error: Path '{path}' is outside the allowed base directory"
+            else:
+                resolved_path = self.base_dir
+
+            if not resolved_path.exists():
+                return f"Error: Path not found: {path or '.'}"
+
+            search_target = "."
+            if resolved_path != self.base_dir:
+                search_target = str(resolved_path.relative_to(self.base_dir))
+
+            cmd = self._build_rg_command(
+                pattern=pattern,
+                search_target=search_target,
+                ignore_case=ignore_case,
+                glob=glob,
+                context=context,
+            )
+
+            output, was_limited, stopped_for_output_budget, returncode, stderr = self._collect_search_output(
+                cmd=cmd, limit=limit
+            )
+
+            if not output:
+                if returncode == 1:
+                    return f"No matches found for pattern: {pattern}"
+                if stderr:
+                    return f"Error: {stderr}"
+                return f"No matches found for pattern: {pattern}"
+
+            output, was_truncated, total_lines = self._truncate_output(output)
+            if was_limited:
+                output += f"\n[Results limited to {limit} matches]"
+            if was_truncated:
+                output += f"\n[Output truncated: {total_lines} lines total]"
+            elif stopped_for_output_budget:
+                output += "\n[Output truncated to respect tool output limits]"
+
+            return output
+
+        except subprocess.TimeoutExpired:
+            return f"Error: rg timed out after {self._SEARCH_TIMEOUT_SECONDS} seconds"
+        except FileNotFoundError:
+            return "Error: rg command not found. Install ripgrep to use this tool."
+        except Exception as e:
+            log_error(f"Error running rg: {str(e)}")
+            return f"Error running rg: {e}"
 
     def find(self, pattern: str, path: Optional[str] = None, limit: int = 500) -> str:
         """Search for files by glob pattern.
