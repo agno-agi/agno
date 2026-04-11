@@ -7,6 +7,7 @@ __all__ = [
     "GmailTools",
     "GoogleMapTools",
     "GoogleSheetsTools",
+    "GoogleTasksTools",
 ]
 
 
@@ -43,4 +44,8 @@ def __getattr__(name: str):
         from agno.tools.google.sheets import GoogleSheetsTools
 
         return GoogleSheetsTools
+    if name == "GoogleTasksTools":
+        from agno.tools.google.tasks import GoogleTasksTools
+
+        return GoogleTasksTools
     raise AttributeError(f"module 'agno.tools.google' has no attribute {name!r}")
