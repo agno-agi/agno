@@ -81,6 +81,19 @@ def _get_task_management_tools(
     _audio: List[Audio] = list(audio) if audio else []
     _files: List[File] = list(files) if files else []
 
+    if team.add_team_media_to_delegation and session:
+        from agno.team._media_delegation import merge_team_media_for_delegation
+
+        _images, _videos, _audio, _files = merge_team_media_for_delegation(
+            team=team,
+            session=session,
+            current_run_id=run_response.run_id,
+            images=_images,
+            videos=_videos,
+            audio=_audio,
+            files=_files,
+        )
+
     from agno.team._init import _initialize_member
     from agno.team._run import _update_team_media
     from agno.team._tools import (

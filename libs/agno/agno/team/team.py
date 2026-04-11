@@ -137,6 +137,10 @@ class Team:
     num_team_history_runs: int = 3
     # If True, send all member interactions (request/response) during the current run to members that have been delegated a task to
     share_member_interactions: bool = False
+    # If True, merge media from prior team-level runs and team-visible session messages into delegated
+    # member ``run()`` / ``arun`` kwargs (images, videos, audio, files), bounded like ``num_history_runs`` /
+    # ``num_history_messages``. Current-turn media is unchanged; this adds historical team context only.
+    add_team_media_to_delegation: bool = False
 
     # If True, adds a tool to allow searching through previous sessions
     search_past_sessions: Optional[bool] = False
@@ -482,6 +486,7 @@ class Team:
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         share_member_interactions: bool = False,
+        add_team_media_to_delegation: bool = False,
         get_member_information_tool: bool = False,
         search_knowledge: bool = True,
         add_search_knowledge_instructions: bool = True,
@@ -604,6 +609,7 @@ class Team:
             knowledge_retriever=knowledge_retriever,
             references_format=references_format,
             share_member_interactions=share_member_interactions,
+            add_team_media_to_delegation=add_team_media_to_delegation,
             get_member_information_tool=get_member_information_tool,
             search_knowledge=search_knowledge,
             add_search_knowledge_instructions=add_search_knowledge_instructions,

@@ -419,6 +419,19 @@ def _get_delegate_task_function(
     if not files:
         files = []
 
+    if team.add_team_media_to_delegation and session:
+        from agno.team._media_delegation import merge_team_media_for_delegation
+
+        images, videos, audio, files = merge_team_media_for_delegation(
+            team=team,
+            session=session,
+            current_run_id=run_response.run_id,
+            images=images,
+            videos=videos,
+            audio=audio,
+            files=files,
+        )
+
     def _setup_delegate_task_to_member(member_agent: Union[Agent, "Team"], task: str):
         # 1. Initialize the member agent
 

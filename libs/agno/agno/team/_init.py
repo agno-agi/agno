@@ -116,6 +116,7 @@ def __init__(
     knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
     references_format: Literal["json", "yaml"] = "json",
     share_member_interactions: bool = False,
+    add_team_media_to_delegation: bool = False,
     get_member_information_tool: bool = False,
     search_knowledge: bool = True,
     add_search_knowledge_instructions: bool = True,
@@ -291,6 +292,7 @@ def __init__(
     team.references_format = references_format
 
     team.share_member_interactions = share_member_interactions
+    team.add_team_media_to_delegation = add_team_media_to_delegation
     team.get_member_information_tool = get_member_information_tool
     team.search_knowledge = search_knowledge
     team.add_search_knowledge_instructions = add_search_knowledge_instructions
