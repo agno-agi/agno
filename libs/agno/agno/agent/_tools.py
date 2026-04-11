@@ -251,13 +251,13 @@ async def aget_tools(
                         if not is_alive:
                             await tool.connect(force=True)  # type: ignore
                     except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to check if MCP tool is alive or to connect to it: {e}")
+                        log_warning(f"Failed to check if MCP tool is alive or to connect to it: {str(e)}")
                         continue
 
                     try:
                         await tool.build_tools()  # type: ignore
                     except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to build tools for {str(tool)}: {e}")
+                        log_warning(f"Failed to build tools for {str(tool)}: {str(e)}")
                         continue
 
                 # Only add the tool if it successfully connected and built its tools
@@ -452,7 +452,7 @@ def parse_tools(
                 _functions.append(_func)
                 log_debug(f"Added tool {_func.name}")
             except Exception as e:
-                log_warning(f"Could not add tool {tool}: {e}")
+                log_warning(f"Could not add tool {tool}: {str(e)}")
 
     return _functions
 

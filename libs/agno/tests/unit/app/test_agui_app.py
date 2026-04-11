@@ -2,8 +2,13 @@ from unittest.mock import MagicMock
 
 import pytest
 from ag_ui.core import EventType
+from ag_ui.core.types import AssistantMessage, SystemMessage, TextInputContent, UserMessage
 
-from agno.os.interfaces.agui.utils import EventBuffer, async_stream_agno_response_as_agui_events
+from agno.os.interfaces.agui.utils import (
+    EventBuffer,
+    async_stream_agno_response_as_agui_events,
+    extract_agui_user_input,
+)
 from agno.run.agent import RunContentEvent, ToolCallCompletedEvent, ToolCallStartedEvent
 
 
@@ -564,33 +569,29 @@ async def test_stream_ends_without_completion_event():
 
 @pytest.mark.asyncio
 async def test_reasoning_events_handling():
-    """Test that reasoning events are properly converted to step events"""
-    from agno.run.agent import RunEvent
+    """Test that reasoning events emit proper REASONING_* AG-UI events"""
+    from agno.run.agent import (
+        ReasoningCompletedEvent,
+        ReasoningContentDeltaEvent,
+        ReasoningStartedEvent,
+        RunCompletedEvent,
+    )
 
     async def mock_stream_with_reasoning():
-        # Start reasoning
-        reasoning_start = RunContentEvent()
-        reasoning_start.event = RunEvent.reasoning_started
-        reasoning_start.content = ""
-        yield reasoning_start
+        yield ReasoningStartedEvent()
 
-        # Some reasoning content
-        reasoning_content = RunContentEvent()
-        reasoning_content.event = RunEvent.run_content
-        reasoning_content.content = "Thinking about this problem..."
-        yield reasoning_content
+        delta = ReasoningContentDeltaEvent()
+        delta.reasoning_content = "Thinking about this problem..."
+        yield delta
 
-        # End reasoning
-        reasoning_end = RunContentEvent()
-        reasoning_end.event = RunEvent.reasoning_completed
-        reasoning_end.content = ""
-        yield reasoning_end
+        yield ReasoningCompletedEvent()
 
-        # Complete run
-        completed_response = RunContentEvent()
-        completed_response.event = RunEvent.run_completed
-        completed_response.content = ""
-        yield completed_response
+        # Text response after reasoning
+        text = RunContentEvent()
+        text.content = "The answer is 42."
+        yield text
+
+        yield RunCompletedEvent()
 
     events = []
     async for event in async_stream_agno_response_as_agui_events(mock_stream_with_reasoning(), "thread_1", "run_1"):
@@ -598,13 +599,105 @@ async def test_reasoning_events_handling():
 
     event_types = [event.type for event in events]
 
-    # Should have step events for reasoning
-    assert EventType.STEP_STARTED in event_types, "Should have STEP_STARTED for reasoning"
-    assert EventType.STEP_FINISHED in event_types, "Should have STEP_FINISHED for reasoning"
+    # Should have REASONING_* events (not generic STEP events)
+    assert EventType.REASONING_START in event_types, "Should have REASONING_START"
+    assert EventType.REASONING_MESSAGE_START in event_types, "Should have REASONING_MESSAGE_START"
+    assert EventType.REASONING_MESSAGE_CONTENT in event_types, "Should have REASONING_MESSAGE_CONTENT"
+    assert EventType.REASONING_MESSAGE_END in event_types, "Should have REASONING_MESSAGE_END"
+    assert EventType.REASONING_END in event_types, "Should have REASONING_END"
 
-    # Should have text content during reasoning
+    # Verify correct ordering: START before CONTENT before END
+    r_start = event_types.index(EventType.REASONING_START)
+    r_msg_start = event_types.index(EventType.REASONING_MESSAGE_START)
+    r_content = event_types.index(EventType.REASONING_MESSAGE_CONTENT)
+    r_msg_end = event_types.index(EventType.REASONING_MESSAGE_END)
+    r_end = event_types.index(EventType.REASONING_END)
+    assert r_start < r_msg_start < r_content < r_msg_end < r_end
+
+    # Should have text content after reasoning
     assert EventType.TEXT_MESSAGE_CONTENT in event_types
     assert EventType.RUN_FINISHED in event_types
+
+
+@pytest.mark.asyncio
+async def test_reasoning_step_events_no_duplication():
+    """Test that ReasoningStepEvent formatting avoids accumulated content duplication"""
+    from agno.reasoning.step import ReasoningStep
+    from agno.run.agent import (
+        ReasoningCompletedEvent,
+        ReasoningStartedEvent,
+        ReasoningStepEvent,
+        RunCompletedEvent,
+    )
+
+    async def mock_stream_with_steps():
+        yield ReasoningStartedEvent()
+
+        # Step 1: reasoning_content is just this step
+        step1 = ReasoningStepEvent()
+        step1.content = ReasoningStep(title="Calculate", reasoning="15 * 37 = 555")
+        step1.reasoning_content = "## Calculate\n15 * 37 = 555\n\n"
+        yield step1
+
+        # Step 2: reasoning_content is accumulated (step1 + step2)
+        step2 = ReasoningStepEvent()
+        step2.content = ReasoningStep(title="Verify", reasoning="555 / 15 = 37, correct")
+        step2.reasoning_content = "## Calculate\n15 * 37 = 555\n\n## Verify\n555 / 15 = 37, correct\n\n"
+        yield step2
+
+        yield ReasoningCompletedEvent()
+        yield RunCompletedEvent()
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_with_steps(), "thread_1", "run_1"):
+        events.append(event)
+
+    # Extract reasoning content deltas
+    content_events = [e for e in events if e.type == EventType.REASONING_MESSAGE_CONTENT]
+    assert len(content_events) == 2, f"Expected 2 content events, got {len(content_events)}"
+
+    # Each delta should contain only its own step, not accumulated
+    assert "Calculate" in content_events[0].delta
+    assert "Verify" in content_events[1].delta
+
+    # "Calculate" should NOT appear in the second delta (no duplication)
+    assert "Calculate" not in content_events[1].delta
+
+    # Step numbers should be present
+    assert "Step 1" in content_events[0].delta
+    assert "Step 2" in content_events[1].delta
+
+
+@pytest.mark.asyncio
+async def test_orphaned_reasoning_cleanup():
+    """Test that reasoning sessions are closed when stream ends without ReasoningCompletedEvent"""
+    from agno.run.agent import (
+        ReasoningContentDeltaEvent,
+        ReasoningStartedEvent,
+    )
+
+    async def mock_stream_orphaned():
+        yield ReasoningStartedEvent()
+
+        delta = ReasoningContentDeltaEvent()
+        delta.reasoning_content = "Thinking..."
+        yield delta
+
+        # Stream ends without ReasoningCompletedEvent or RunCompletedEvent
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_orphaned(), "thread_1", "run_1"):
+        events.append(event)
+
+    event_types = [e.type for e in events]
+
+    # Reasoning session should be properly opened AND closed
+    assert EventType.REASONING_START in event_types
+    assert EventType.REASONING_MESSAGE_START in event_types
+    assert EventType.REASONING_MESSAGE_CONTENT in event_types
+    assert EventType.REASONING_MESSAGE_END in event_types, "Orphaned session should be closed"
+    assert EventType.REASONING_END in event_types, "Orphaned session should be closed"
+    assert EventType.RUN_FINISHED in event_types, "Should still emit RUN_FINISHED"
 
 
 @pytest.mark.asyncio
@@ -1358,3 +1451,54 @@ def test_validate_agui_state_with_invalid_to_dict():
     obj = TestClass()
     result = validate_agui_state(obj, "test_thread")
     assert result is None
+
+
+def test_extract_agui_user_input_from_full_history():
+    """Test extracting last user message from a CopilotKit-style full conversation history."""
+    messages = [
+        UserMessage(id="u1", content="hello 1"),
+        AssistantMessage(id="a1", content="response 1"),
+        UserMessage(id="u2", content="hello 2"),
+    ]
+
+    result = extract_agui_user_input(messages)
+
+    # Should extract only the last user message, not the first
+    assert result == "hello 2"
+
+
+def test_extract_agui_user_input_single_message():
+    """Test extraction when only one user message is present."""
+    messages = [UserMessage(id="u1", content="just one")]
+
+    result = extract_agui_user_input(messages)
+
+    assert result == "just one"
+
+
+def test_extract_agui_user_input_empty_list():
+    """Test extraction from empty message list returns empty string."""
+    assert extract_agui_user_input([]) == ""
+
+
+def test_extract_agui_user_input_no_user_messages():
+    """Test extraction when no user messages exist returns empty string."""
+    messages = [
+        AssistantMessage(id="a1", content="hello"),
+        SystemMessage(id="s1", content="you are helpful"),
+    ]
+
+    result = extract_agui_user_input(messages)
+
+    assert result == ""
+
+
+def test_extract_agui_user_input_multimodal_content():
+    """Test extraction handles multimodal UserMessage.content (List[InputContent])."""
+    messages = [
+        UserMessage(id="u1", content=[TextInputContent(text="describe this image")]),
+    ]
+
+    result = extract_agui_user_input(messages)
+
+    assert result == "describe this image"
