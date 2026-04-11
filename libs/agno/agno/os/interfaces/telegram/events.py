@@ -1,3 +1,4 @@
+import re
 import time
 from typing import TYPE_CHECKING, Awaitable, Callable, Dict
 
@@ -8,6 +9,9 @@ from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
     from agno.run.base import BaseRunOutputEvent
+
+# Matches Telegram 429 "retry after N" in error messages
+_RETRY_AFTER_RE = re.compile(r"retry after (\d+)", re.IGNORECASE)
 
 # Suppress inner-agent events in workflow mode — only workflow-level
 # lifecycle events (step/loop/parallel/etc.) are shown
@@ -118,7 +122,15 @@ async def _on_run_content(chunk: "BaseRunOutputEvent", state: StreamState) -> bo
             try:
                 await state.send_or_edit(state.build_display_html())
             except Exception as e:
-                log_warning(f"Stream edit failed (will retry on next chunk): {str(e)}")
+                err_str = str(e)
+                if "429" in err_str or "Too Many Requests" in err_str:
+                    m = _RETRY_AFTER_RE.search(err_str)
+                    if m:
+                        wait = int(m.group(1))
+                        state._rate_limited_until = time.monotonic() + wait
+                        log_warning(f"Telegram rate limited during stream, pausing edits for {wait}s")
+                else:
+                    log_warning(f"Stream edit failed (will retry on next chunk): {err_str}")
     return False
 
 

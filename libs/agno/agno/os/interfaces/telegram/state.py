@@ -28,6 +28,9 @@ import re as _re
 # Matches any HTML tag (opening, closing, self-closing)
 _TAG_RE = _re.compile(r"<[^>]+>")
 
+# Matches Telegram 429 "retry after N" in error messages
+_RETRY_AFTER_RE = _re.compile(r"retry after (\d+)", _re.IGNORECASE)
+
 TG_STREAM_EDIT_INTERVAL = 1.0
 
 EntityType = Literal["agent", "team", "workflow"]
@@ -161,6 +164,7 @@ class StreamState:
         self.accumulated_content: str = ""
         self.status_lines: list[str] = []
         self.last_edit_time: float = 0.0
+        self._rate_limited_until: float = 0.0  # monotonic timestamp; skip edits until this time
         # Set by router after stream ends; used for error/media handling
         self.final_run_output: Optional[Union["RunOutput", "TeamRunOutput"]] = None
         # Set by step_output handler; fallback if workflow omits final content
@@ -221,11 +225,24 @@ class StreamState:
         )
 
     async def _edit(self, html: str) -> None:
+        # Skip edit while rate-limited
+        if time.monotonic() < self._rate_limited_until:
+            return
         try:
             await self.bot.edit_message_text(html, self.chat_id, self.sent_message_id, parse_mode="HTML")
         except Exception as e:
-            if "message is not modified" not in str(e):
-                log_warning(f"Failed to edit message: {str(e)}")
+            err_str = str(e)
+            if "message is not modified" not in err_str:
+                if "429" in err_str or "Too Many Requests" in err_str:
+                    m = _RETRY_AFTER_RE.search(err_str)
+                    if m:
+                        wait = int(m.group(1))
+                        self._rate_limited_until = time.monotonic() + wait
+                        log_warning(f"Telegram rate limited, pausing edits for {wait}s")
+                    else:
+                        log_warning(f"Failed to edit message: {err_str}")
+                else:
+                    log_warning(f"Failed to edit message: {err_str}")
 
     async def _send_chunks(self, content: str) -> None:
         await send_message(
@@ -251,6 +268,9 @@ class StreamState:
 
     async def send_or_edit(self, html: str) -> None:
         if not html or not html.strip():
+            return
+        # Skip edit while rate-limited (but allow new message sends)
+        if self.sent_message_id is not None and time.monotonic() < self._rate_limited_until:
             return
         display = self._truncate_html(html)
         if self.sent_message_id is None:
