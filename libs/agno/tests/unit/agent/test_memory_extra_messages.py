@@ -1,6 +1,5 @@
 """Test that memory pipeline processes extra_messages when user_message is None.
 
-Regression test for https://github.com/agno-agi/agno/issues/7469
 When input_content is a List[Message], Agno sets extra_messages instead of
 user_message. The memory pipeline should still run in this case.
 """
