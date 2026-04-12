@@ -639,7 +639,8 @@ def _run(
 
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
-                # Handle exceptions during streaming
+                # Handle validation exceptions — propagate to caller so
+                # try/except OutputCheckError works as documented.
                 run_response.status = RunStatus.error
                 # If the content is None, set it to the error message
                 if run_response.content is None:
@@ -656,7 +657,7 @@ def _run(
                         user_id=user_id,
                     )
 
-                return run_response
+                raise
             except KeyboardInterrupt:
                 run_response = cast(RunOutput, run_response)
                 run_response.status = RunStatus.cancelled
@@ -1734,7 +1735,8 @@ async def _arun(
 
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
-                # Handle exceptions during streaming
+                # Handle validation exceptions — propagate to caller so
+                # try/except OutputCheckError works as documented.
                 run_response.status = RunStatus.error
                 # If the content is None, set it to the error message
                 if run_response.content is None:
@@ -1751,7 +1753,7 @@ async def _arun(
                         user_id=user_id,
                     )
 
-                return run_response
+                raise
 
             except KeyboardInterrupt:
                 run_response = cast(RunOutput, run_response)
@@ -3049,7 +3051,8 @@ def _continue_run(
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
                 run_response = cast(RunOutput, run_response)
-                # Handle exceptions during streaming
+                # Handle validation exceptions — propagate to caller so
+                # try/except OutputCheckError works as documented.
                 run_response.status = RunStatus.error
                 # If the content is None, set it to the error message
                 if run_response.content is None:
@@ -3061,7 +3064,7 @@ def _continue_run(
                     agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
 
-                return run_response
+                raise
             except KeyboardInterrupt:
                 run_response = cast(RunOutput, run_response)
                 run_response.status = RunStatus.cancelled
@@ -3842,7 +3845,8 @@ async def _acontinue_run(
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
                 run_response = cast(RunOutput, run_response)
-                # Handle exceptions during streaming
+                # Handle validation exceptions — propagate to caller so
+                # try/except OutputCheckError works as documented.
                 run_response.status = RunStatus.error
                 # If the content is None, set it to the error message
                 if run_response.content is None:
@@ -3859,7 +3863,7 @@ async def _acontinue_run(
                         user_id=user_id,
                     )
 
-                return run_response
+                raise
 
             except KeyboardInterrupt:
                 run_response = cast(RunOutput, run_response)
