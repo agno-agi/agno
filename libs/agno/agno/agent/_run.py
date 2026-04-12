@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 import warnings
 from collections import deque
@@ -4498,10 +4499,8 @@ def cleanup_and_store(
         user_id=user_id,
     )
 
-    # Add scrubbed RunOutput to Agent Session
+    # Calculate session metrics (needs run in session temporarily)
     session.upsert_run(run=storage_copy)
-
-    # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)
 
     # Update session state before saving the session
@@ -4511,8 +4510,25 @@ def cleanup_and_store(
         else:
             session.session_data = {"session_state": run_context.session_state}
 
-    # Save session to memory
-    _session.save_session(agent, session=session)
+    # Persist the run atomically via upsert_run (uses SELECT FOR UPDATE in Postgres
+    # to prevent concurrent writes from silently dropping runs), then save session
+    # metadata separately without overwriting the runs column.
+    if agent.db is not None and hasattr(agent.db, "upsert_run"):
+        from agno.db.base import SessionType
+
+        run_dict = storage_copy.to_dict()
+        agent.db.upsert_run(
+            session_id=session.session_id,
+            session_type=SessionType.AGENT,
+            run_data=run_dict,
+            user_id=user_id,
+        )
+        # Save session metadata without clobbering atomically-persisted runs
+        meta_session = copy.copy(session)
+        meta_session.runs = None
+        _session.save_session(agent, session=meta_session)
+    else:
+        _session.save_session(agent, session=session)
 
     # Update approval run_status if this run has an associated approval.
     # This is a no-op if no approval exists for this run_id.
@@ -4555,10 +4571,8 @@ async def acleanup_and_store(
         user_id=user_id,
     )
 
-    # Add scrubbed RunOutput to Agent Session
+    # Calculate session metrics (needs run in session temporarily)
     session.upsert_run(run=storage_copy)
-
-    # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)
 
     # Update session state before saving the session
@@ -4568,8 +4582,28 @@ async def acleanup_and_store(
         else:
             session.session_data = {"session_state": run_context.session_state}
 
-    # Save session to memory
-    await _session.asave_session(agent, session=session)
+    # Persist the run atomically via upsert_run (uses SELECT FOR UPDATE in Postgres
+    # to prevent concurrent writes from silently dropping runs), then save session
+    # metadata separately without overwriting the runs column.
+    if agent.db is not None and hasattr(agent.db, "upsert_run"):
+        from agno.db.base import SessionType
+
+        run_dict = storage_copy.to_dict()
+        result = agent.db.upsert_run(  # type: ignore[union-attr]
+            session_id=session.session_id,
+            session_type=SessionType.AGENT,
+            run_data=run_dict,
+            user_id=user_id,
+        )
+        # If the backend is async, the call returns a coroutine — await it.
+        if inspect.isawaitable(result):
+            await result
+        # Save session metadata without clobbering atomically-persisted runs
+        meta_session = copy.copy(session)
+        meta_session.runs = None
+        await _session.asave_session(agent, session=meta_session)
+    else:
+        await _session.asave_session(agent, session=session)
 
     # Update approval run_status if this run has an associated approval.
     # This is a no-op if no approval exists for this run_id.

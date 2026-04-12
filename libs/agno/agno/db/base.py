@@ -209,6 +209,36 @@ class BaseDb(ABC):
         """Bulk upsert multiple sessions for improved performance on large datasets."""
         raise NotImplementedError
 
+    def upsert_run(
+        self,
+        session_id: str,
+        session_type: SessionType,
+        run_data: Dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Atomically persist a single run into a session's runs array.
+
+        The default implementation falls back to a non-atomic read-merge-write cycle.
+        Backends that support row-level locking (e.g. PostgreSQL) should override this
+        with an atomic implementation to prevent concurrent writes from losing runs.
+        """
+        session = self.get_session(session_id, session_type, user_id)
+        if session is None:
+            return
+        existing_runs: list = session.runs or []  # type: ignore[union-attr]
+        run_id = run_data.get("run_id")
+        merged = False
+        for i, existing in enumerate(existing_runs):
+            existing_id = existing.run_id if hasattr(existing, "run_id") else existing.get("run_id")
+            if existing_id == run_id:
+                existing_runs[i] = run_data  # type: ignore[assignment]
+                merged = True
+                break
+        if not merged:
+            existing_runs.append(run_data)  # type: ignore[arg-type]
+        session.runs = existing_runs  # type: ignore[union-attr]
+        self.upsert_session(session)  # type: ignore[arg-type]
+
     # --- Memory ---
     @abstractmethod
     def clear_memories(self) -> None:
@@ -1221,6 +1251,36 @@ class AsyncBaseDb(ABC):
         self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
+
+    async def upsert_run(
+        self,
+        session_id: str,
+        session_type: SessionType,
+        run_data: Dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Atomically persist a single run into a session's runs array.
+
+        The default implementation falls back to a non-atomic read-merge-write cycle.
+        Backends that support row-level locking (e.g. PostgreSQL) should override this
+        with an atomic implementation to prevent concurrent writes from losing runs.
+        """
+        session = await self.get_session(session_id, session_type, user_id)
+        if session is None:
+            return
+        existing_runs: list = session.runs or []  # type: ignore[union-attr]
+        run_id = run_data.get("run_id")
+        merged = False
+        for i, existing in enumerate(existing_runs):
+            existing_id = existing.run_id if hasattr(existing, "run_id") else existing.get("run_id")
+            if existing_id == run_id:
+                existing_runs[i] = run_data  # type: ignore[assignment]
+                merged = True
+                break
+        if not merged:
+            existing_runs.append(run_data)  # type: ignore[arg-type]
+        session.runs = existing_runs  # type: ignore[union-attr]
+        await self.upsert_session(session)  # type: ignore[arg-type]
 
     # --- Memory ---
     @abstractmethod

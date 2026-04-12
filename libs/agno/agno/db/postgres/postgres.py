@@ -1013,18 +1013,22 @@ class PostgresDb(BaseDb):
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
+                    update_fields: Dict[str, Any] = dict(
+                        agent_id=session_dict.get("agent_id"),
+                        user_id=session_dict.get("user_id"),
+                        agent_data=session_dict.get("agent_data"),
+                        session_data=session_dict.get("session_data"),
+                        summary=session_dict.get("summary"),
+                        metadata=session_dict.get("metadata"),
+                        updated_at=int(time.time()),
+                    )
+                    # Only overwrite runs if explicitly provided — allows upsert_run()
+                    # to persist runs atomically without upsert_session clobbering them.
+                    if session_dict.get("runs") is not None:
+                        update_fields["runs"] = session_dict["runs"]
                     stmt = stmt.on_conflict_do_update(  # type: ignore
                         index_elements=["session_id"],
-                        set_=dict(
-                            agent_id=session_dict.get("agent_id"),
-                            user_id=session_dict.get("user_id"),
-                            agent_data=session_dict.get("agent_data"),
-                            session_data=session_dict.get("session_data"),
-                            summary=session_dict.get("summary"),
-                            metadata=session_dict.get("metadata"),
-                            runs=session_dict.get("runs"),
-                            updated_at=int(time.time()),
-                        ),
+                        set_=update_fields,
                         where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = sess.execute(stmt)
@@ -1052,18 +1056,20 @@ class PostgresDb(BaseDb):
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
+                    update_fields = dict(
+                        team_id=session_dict.get("team_id"),
+                        user_id=session_dict.get("user_id"),
+                        team_data=session_dict.get("team_data"),
+                        session_data=session_dict.get("session_data"),
+                        summary=session_dict.get("summary"),
+                        metadata=session_dict.get("metadata"),
+                        updated_at=int(time.time()),
+                    )
+                    if session_dict.get("runs") is not None:
+                        update_fields["runs"] = session_dict["runs"]
                     stmt = stmt.on_conflict_do_update(  # type: ignore
                         index_elements=["session_id"],
-                        set_=dict(
-                            team_id=session_dict.get("team_id"),
-                            user_id=session_dict.get("user_id"),
-                            team_data=session_dict.get("team_data"),
-                            session_data=session_dict.get("session_data"),
-                            summary=session_dict.get("summary"),
-                            metadata=session_dict.get("metadata"),
-                            runs=session_dict.get("runs"),
-                            updated_at=int(time.time()),
-                        ),
+                        set_=update_fields,
                         where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = sess.execute(stmt)
@@ -1091,18 +1097,20 @@ class PostgresDb(BaseDb):
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
+                    update_fields = dict(
+                        workflow_id=session_dict.get("workflow_id"),
+                        user_id=session_dict.get("user_id"),
+                        workflow_data=session_dict.get("workflow_data"),
+                        session_data=session_dict.get("session_data"),
+                        summary=session_dict.get("summary"),
+                        metadata=session_dict.get("metadata"),
+                        updated_at=int(time.time()),
+                    )
+                    if session_dict.get("runs") is not None:
+                        update_fields["runs"] = session_dict["runs"]
                     stmt = stmt.on_conflict_do_update(  # type: ignore
                         index_elements=["session_id"],
-                        set_=dict(
-                            workflow_id=session_dict.get("workflow_id"),
-                            user_id=session_dict.get("user_id"),
-                            workflow_data=session_dict.get("workflow_data"),
-                            session_data=session_dict.get("session_data"),
-                            summary=session_dict.get("summary"),
-                            metadata=session_dict.get("metadata"),
-                            runs=session_dict.get("runs"),
-                            updated_at=int(time.time()),
-                        ),
+                        set_=update_fields,
                         where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = sess.execute(stmt)
@@ -1336,6 +1344,62 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Exception bulk upserting sessions: {str(e)}")
             return []
+
+    def upsert_run(
+        self,
+        session_id: str,
+        session_type: SessionType,
+        run_data: Dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Atomically persist a single run into a session's runs array.
+
+        Uses SELECT FOR UPDATE to prevent concurrent writes from losing runs.
+        The row lock is scoped to the specific session_id, so different sessions
+        remain fully concurrent.
+        """
+        try:
+            table = self._get_table(table_type="sessions")
+            if table is None:
+                return
+
+            run_data = cast(Dict[str, Any], sanitize_postgres_strings(run_data))
+
+            with self.Session() as sess, sess.begin():
+                # Lock the session row to prevent concurrent overwrites
+                row = sess.execute(
+                    select(table.c.runs).where(table.c.session_id == session_id).with_for_update()
+                ).fetchone()
+
+                if row is None:
+                    log_warning(f"Session {session_id} not found, cannot upsert run")
+                    return
+
+                existing_runs: list = row.runs or []
+                run_id = run_data.get("run_id")
+
+                # Merge: update existing run or append new one
+                merged = False
+                for i, existing in enumerate(existing_runs):
+                    existing_id = (
+                        existing.get("run_id") if isinstance(existing, dict) else getattr(existing, "run_id", None)
+                    )
+                    if existing_id == run_id:
+                        existing_runs[i] = run_data
+                        merged = True
+                        break
+                if not merged:
+                    existing_runs.append(run_data)
+
+                sess.execute(
+                    update(table)
+                    .where(table.c.session_id == session_id)
+                    .values(runs=existing_runs, updated_at=int(time.time()))
+                )
+
+        except Exception as e:
+            log_error(f"Exception upserting run into session {session_id}: {e}")
+            raise e
 
     # -- Memory methods --
     def delete_user_memory(self, memory_id: str, user_id: Optional[str] = None):
