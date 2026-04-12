@@ -1,5 +1,7 @@
 """Integration tests for the Session related methods of the AsyncPostgresDb class"""
 
+import asyncio
+import copy
 import time
 
 import pytest
@@ -279,3 +281,173 @@ async def test_rename_session(async_postgres_db_real: AsyncPostgresDb, sample_ag
         session_id="test_agent_session_1", session_type=SessionType.AGENT
     )
     assert retrieved.session_data["session_name"] == "New Session Name"
+
+
+# ---------------------------------------------------------------------------
+# upsert_run — atomic per-run persistence
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_upsert_run_appends_new_run(async_postgres_db_real: AsyncPostgresDb, sample_agent_session: AgentSession):
+    """upsert_run appends a new run to an existing session."""
+    await async_postgres_db_real.upsert_session(sample_agent_session)
+
+    new_run = RunOutput(
+        run_id="test_agent_run_2",
+        agent_id="test_agent_1",
+        user_id="test_user_1",
+        status=RunStatus.completed,
+        messages=[],
+    )
+    await async_postgres_db_real.upsert_run(
+        session_id="test_agent_session_1",
+        session_type=SessionType.AGENT,
+        run_data=new_run.to_dict(),
+    )
+
+    result = await async_postgres_db_real.get_session(session_id="test_agent_session_1", session_type=SessionType.AGENT)
+    assert result is not None
+    assert len(result.runs) == 2
+    run_ids = {r.run_id for r in result.runs}
+    assert run_ids == {"test_agent_run_1", "test_agent_run_2"}
+
+
+@pytest.mark.asyncio
+async def test_upsert_run_updates_existing_run(
+    async_postgres_db_real: AsyncPostgresDb, sample_agent_session: AgentSession
+):
+    """upsert_run with the same run_id updates the existing entry instead of duplicating."""
+    await async_postgres_db_real.upsert_session(sample_agent_session)
+
+    updated_run = RunOutput(
+        run_id="test_agent_run_1",  # same as original
+        agent_id="test_agent_1",
+        user_id="test_user_1",
+        status=RunStatus.error,  # changed
+        messages=[],
+    )
+    await async_postgres_db_real.upsert_run(
+        session_id="test_agent_session_1",
+        session_type=SessionType.AGENT,
+        run_data=updated_run.to_dict(),
+    )
+
+    result = await async_postgres_db_real.get_session(session_id="test_agent_session_1", session_type=SessionType.AGENT)
+    assert result is not None
+    assert len(result.runs) == 1
+    assert result.runs[0].run_id == "test_agent_run_1"
+    assert result.runs[0].status == RunStatus.error
+
+
+@pytest.mark.asyncio
+async def test_upsert_run_concurrent_same_session(
+    async_postgres_db_real: AsyncPostgresDb, sample_agent_session: AgentSession
+):
+    """Two concurrent upsert_run calls for the same session must both survive.
+
+    This is the core race condition test — before the fix, the last writer would
+    silently overwrite the first writer's run.
+    """
+    await async_postgres_db_real.upsert_session(sample_agent_session)
+
+    run_a = RunOutput(
+        run_id="concurrent_run_a",
+        agent_id="test_agent_1",
+        user_id="test_user_1",
+        status=RunStatus.completed,
+        messages=[],
+    )
+    run_b = RunOutput(
+        run_id="concurrent_run_b",
+        agent_id="test_agent_1",
+        user_id="test_user_1",
+        status=RunStatus.completed,
+        messages=[],
+    )
+
+    await asyncio.gather(
+        async_postgres_db_real.upsert_run(
+            session_id="test_agent_session_1",
+            session_type=SessionType.AGENT,
+            run_data=run_a.to_dict(),
+        ),
+        async_postgres_db_real.upsert_run(
+            session_id="test_agent_session_1",
+            session_type=SessionType.AGENT,
+            run_data=run_b.to_dict(),
+        ),
+    )
+
+    result = await async_postgres_db_real.get_session(session_id="test_agent_session_1", session_type=SessionType.AGENT)
+    assert result is not None
+    # Original run + two concurrent runs = 3
+    assert len(result.runs) == 3, f"Expected 3 runs, got {len(result.runs)} — concurrent write lost a run"
+    run_ids = {r.run_id for r in result.runs}
+    assert {"test_agent_run_1", "concurrent_run_a", "concurrent_run_b"} == run_ids
+
+
+@pytest.mark.asyncio
+async def test_upsert_run_cross_session_no_contention(
+    async_postgres_db_real: AsyncPostgresDb,
+):
+    """Concurrent upsert_run to different sessions must not block each other."""
+    session_a = AgentSession(
+        session_id="cross_session_a",
+        agent_id="test_agent_1",
+        user_id="test_user_1",
+        runs=[],
+        created_at=int(time.time()),
+    )
+    session_b = AgentSession(
+        session_id="cross_session_b",
+        agent_id="test_agent_1",
+        user_id="test_user_2",
+        runs=[],
+        created_at=int(time.time()),
+    )
+    await async_postgres_db_real.upsert_session(session_a)
+    await async_postgres_db_real.upsert_session(session_b)
+
+    run_a = RunOutput(run_id="run_a", agent_id="test_agent_1", status=RunStatus.completed, messages=[])
+    run_b = RunOutput(run_id="run_b", agent_id="test_agent_1", status=RunStatus.completed, messages=[])
+
+    await asyncio.gather(
+        async_postgres_db_real.upsert_run(
+            session_id="cross_session_a", session_type=SessionType.AGENT, run_data=run_a.to_dict()
+        ),
+        async_postgres_db_real.upsert_run(
+            session_id="cross_session_b", session_type=SessionType.AGENT, run_data=run_b.to_dict()
+        ),
+    )
+
+    result_a = await async_postgres_db_real.get_session(session_id="cross_session_a", session_type=SessionType.AGENT)
+    result_b = await async_postgres_db_real.get_session(session_id="cross_session_b", session_type=SessionType.AGENT)
+    assert result_a is not None and len(result_a.runs) == 1
+    assert result_b is not None and len(result_b.runs) == 1
+
+
+@pytest.mark.asyncio
+async def test_upsert_session_with_none_runs_preserves_existing(
+    async_postgres_db_real: AsyncPostgresDb, sample_agent_session: AgentSession
+):
+    """upsert_session with runs=None must not overwrite existing runs.
+
+    This supports the split save path where upsert_run() persists the run
+    atomically, then upsert_session() saves metadata without touching runs.
+    """
+    await async_postgres_db_real.upsert_session(sample_agent_session)
+
+    # Save metadata-only update with runs=None
+    meta_session = copy.copy(sample_agent_session)
+    meta_session.runs = None
+    meta_session.session_data = {"session_name": "Updated Metadata"}
+    await async_postgres_db_real.upsert_session(meta_session)
+
+    result = await async_postgres_db_real.get_session(session_id="test_agent_session_1", session_type=SessionType.AGENT)
+    assert result is not None
+    # Metadata was updated
+    assert result.session_data["session_name"] == "Updated Metadata"
+    # Runs were NOT clobbered
+    assert len(result.runs) == 1
+    assert result.runs[0].run_id == "test_agent_run_1"
