@@ -490,7 +490,24 @@ class Function(BaseModel):
                             param_descriptions[param_name] = param.description or ""
                         param_descriptions_clean[param_name] = param.description or ""
 
-            # If the function requires user input, we should set the user_input_schema to all parameters. The arguments provided by the model are filled in later.
+            # If the function requires user input, we should set the user_input_schema to all parameters
+            # EXCEPT framework-injected ones which are never provided by the user or the model.
+            # We filter by both name AND type to handle cases like `my_ctx: RunContext`. See #7484.
+            _framework_injected_params = {
+                "agent", "team", "run_context", "self",
+                "images", "videos", "audios", "files",
+            }
+            try:
+                from agno.agent.agent import Agent as _Agent
+                from agno.team.team import Team as _Team
+
+                _framework_types = (_Agent, _Team, RunContext, Image, Video, Audio, File)
+                for _pname, _phint in get_type_hints(self.entrypoint).items():
+                    if isinstance(_phint, type) and issubclass(_phint, _framework_types):
+                        _framework_injected_params.add(_pname)
+            except Exception:
+                pass
+
             if self.requires_user_input:
                 self.user_input_schema = [
                     UserInputField(
@@ -499,6 +516,7 @@ class Function(BaseModel):
                         field_type=type_hints.get(name, str),
                     )
                     for name in sig.parameters
+                    if name not in _framework_injected_params
                 ]
 
             # Get JSON schema for parameters only
