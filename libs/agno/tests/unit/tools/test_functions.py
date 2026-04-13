@@ -194,6 +194,116 @@ def test_function_process_entrypoint_with_user_input():
     assert func.user_input_schema[1].field_type is int
 
 
+def test_function_process_entrypoint_with_user_input_excludes_run_context():
+    """Test that user_input_schema excludes run_context when requires_user_input=True."""
+
+    def test_func(run_context: RunContext, param1: str, param2: int = 42) -> str:
+        """Test function with run_context and user input.
+
+        Args:
+            param1 (str): First parameter.
+            param2 (int): Second parameter.
+        """
+        return f"{param1}-{param2}"
+
+    func = Function(
+        name="test_func", entrypoint=test_func, requires_user_input=True, user_input_fields=["param1"]
+    )
+    func.process_entrypoint()
+
+    assert func.user_input_schema is not None
+    field_names = [f.name for f in func.user_input_schema]
+    assert "run_context" not in field_names
+    assert "param1" in field_names
+    assert "param2" in field_names
+    assert len(func.user_input_schema) == 2
+
+
+def test_function_process_entrypoint_with_user_input_excludes_all_framework_params():
+    """Test that user_input_schema excludes all framework-injected params (agent, team, self, media)."""
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
+    def test_func(agent: Agent, team: Team, run_context: RunContext, param1: str) -> str:
+        """Test function.
+
+        Args:
+            param1 (str): First parameter.
+        """
+        return param1
+
+    func = Function(
+        name="test_func", entrypoint=test_func, requires_user_input=True, user_input_fields=[]
+    )
+    func.process_entrypoint()
+
+    assert func.user_input_schema is not None
+    field_names = [f.name for f in func.user_input_schema]
+    assert field_names == ["param1"]
+
+
+def test_function_process_entrypoint_with_user_input_excludes_by_type():
+    """Test that user_input_schema excludes params by type, not just name (e.g. my_ctx: RunContext)."""
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
+    def test_func(my_ctx: RunContext, my_agent: Agent, my_team: Team, param1: str) -> str:
+        """Test function.
+
+        Args:
+            param1 (str): First parameter.
+        """
+        return param1
+
+    func = Function(
+        name="test_func", entrypoint=test_func, requires_user_input=True, user_input_fields=["param1"]
+    )
+    func.process_entrypoint()
+
+    assert func.user_input_schema is not None
+    field_names = [f.name for f in func.user_input_schema]
+    assert "my_ctx" not in field_names
+    assert "my_agent" not in field_names
+    assert "my_team" not in field_names
+    assert field_names == ["param1"]
+
+
+def test_user_input_with_run_context_execution():
+    """Test that a tool with requires_user_input=True and run_context executes without error."""
+
+    @tool(requires_user_input=True, user_input_fields=["to_address"])
+    def send_email(run_context: RunContext, subject: str, body: str, to_address: str) -> str:
+        """Send an email.
+
+        Args:
+            subject (str): The subject.
+            body (str): The body.
+            to_address (str): The address.
+        """
+        count = run_context.session_state.get("sent", 0)
+        run_context.session_state["sent"] = count + 1
+        return f"Sent to {to_address}"
+
+    send_email.process_entrypoint()
+
+    # Verify run_context is not in user_input_schema
+    field_names = [f.name for f in (send_email.user_input_schema or [])]
+    assert "run_context" not in field_names
+    assert "subject" in field_names
+    assert "body" in field_names
+    assert "to_address" in field_names
+
+    # Verify execution succeeds without "multiple values for keyword argument" error
+    run_context = RunContext(run_id="test", session_id="test", session_state={"sent": 0})
+    send_email._run_context = run_context
+
+    fc = FunctionCall(function=send_email, arguments={"subject": "Hi", "body": "Hello", "to_address": "a@b.com"})
+    result = fc.execute()
+    assert result.status == "success"
+    assert result.result == "Sent to a@b.com"
+    assert run_context.session_state["sent"] == 1
+
+
 def test_function_process_entrypoint_skip_processing():
     """Test that entrypoint processing is skipped when skip_entrypoint_processing is True."""
 

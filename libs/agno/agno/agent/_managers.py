@@ -162,8 +162,11 @@ async def astart_memory_task(
             pass
 
     # Create new task if conditions are met
+    has_content = run_messages.user_message is not None or (
+        run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0
+    )
     if (
-        run_messages.user_message is not None
+        has_content
         and agent.memory_manager is not None
         and agent.update_memory_on_run
         and not agent.enable_agentic_memory
@@ -197,8 +200,11 @@ def start_memory_future(
         existing_future.cancel()
 
     # Create new future if conditions are met
+    has_content = run_messages.user_message is not None or (
+        run_messages.extra_messages is not None and len(run_messages.extra_messages) > 0
+    )
     if (
-        run_messages.user_message is not None
+        has_content
         and agent.memory_manager is not None
         and agent.update_memory_on_run
         and not agent.enable_agentic_memory
