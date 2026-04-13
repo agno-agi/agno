@@ -1186,6 +1186,8 @@ class MySQLDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 # MySQL approach: extract JSON array elements differently
                 stmt = select(table.c.topics)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchall()
 
                 topics_set = set()

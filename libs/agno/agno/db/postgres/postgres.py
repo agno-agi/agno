@@ -1406,8 +1406,11 @@ class PostgresDb(BaseDb):
             log_error(f"Error deleting user memories: {str(e)}")
             raise e
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: List of memory topics.
@@ -1424,6 +1427,8 @@ class PostgresDb(BaseDb):
                     table.c.topics.is_not(None),
                     func.jsonb_typeof(table.c.topics) == "array",
                 ]
+                if user_id is not None:
+                    conditions.append(table.c.user_id == user_id)
 
                 try:
                     # jsonb_array_elements_text is a set-returning function that must be used with select_from
@@ -1439,6 +1444,8 @@ class PostgresDb(BaseDb):
                         table.c.topics.is_not(None),
                         func.json_typeof(table.c.topics) == "array",
                     ]
+                    if user_id is not None:
+                        json_conditions.append(table.c.user_id == user_id)
                     stmt = select(func.json_array_elements_text(table.c.topics).label("topic"))
                     stmt = stmt.select_from(table)
                     stmt = stmt.where(and_(*json_conditions))

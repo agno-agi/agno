@@ -794,8 +794,11 @@ class FirestoreDb(BaseDb):
             log_error(f"Error deleting memories: {str(e)}")
             raise e
 
-    def get_all_memory_topics(self, create_collection_if_not_found: Optional[bool] = True) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: The topics.
@@ -808,7 +811,8 @@ class FirestoreDb(BaseDb):
             if collection_ref is None:
                 return []
 
-            docs = collection_ref.stream()
+            query = collection_ref if user_id is None else collection_ref.where("user_id", "==", user_id)
+            docs = query.stream()
 
             all_topics = set()
             for doc in docs:

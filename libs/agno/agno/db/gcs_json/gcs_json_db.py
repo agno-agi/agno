@@ -554,8 +554,11 @@ class GcsJsonDb(BaseDb):
             log_warning(f"Error deleting user memories: {str(e)}")
             raise e
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the GCS JSON file.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: List of unique memory topics.
@@ -564,6 +567,8 @@ class GcsJsonDb(BaseDb):
             memories = self._read_json_file(self.memory_table_name)
             topics = set()
             for memory in memories:
+                if user_id is not None and memory.get("user_id") != user_id:
+                    continue
                 memory_topics = memory.get("topics", [])
                 if isinstance(memory_topics, list):
                     topics.update(memory_topics)

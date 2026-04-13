@@ -1192,6 +1192,8 @@ class AsyncMySQLDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 # MySQL approach: extract JSON array elements differently
                 stmt = select(table.c.topics)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(stmt)
                 records = result.fetchall()
 

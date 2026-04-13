@@ -715,11 +715,11 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to delete user memories: {str(e)}")
             raise e
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
 
         Args:
-            user_id: The ID of the user (optional, for filtering).
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: List of unique memory topics.
@@ -729,8 +729,10 @@ class DynamoDb(BaseDb):
             if table_name is None:
                 return []
 
-            # Build filter expression for user_id if provided
-            scan_kwargs = {"TableName": table_name}
+            scan_kwargs: Dict[str, Any] = {"TableName": table_name}
+            if user_id is not None:
+                scan_kwargs["FilterExpression"] = "user_id = :uid"
+                scan_kwargs["ExpressionAttributeValues"] = {":uid": {"S": user_id}}
 
             # Scan the table to get memories
             response = self.client.scan(**scan_kwargs)

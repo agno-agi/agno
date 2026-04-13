@@ -755,8 +755,11 @@ class RedisDb(BaseDb):
             log_error(f"Error deleting user memories: {str(e)}")
             raise e
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from Redis.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: The list of memory topics.
@@ -766,6 +769,8 @@ class RedisDb(BaseDb):
 
             topics = set()
             for memory in all_memories:
+                if user_id is not None and memory.get("user_id") != user_id:
+                    continue
                 memory_topics = memory.get("topics", [])
                 if isinstance(memory_topics, list):
                     topics.update(memory_topics)
