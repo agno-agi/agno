@@ -807,7 +807,7 @@ class FirestoreDb(BaseDb):
             Exception: If there is an error getting the topics.
         """
         try:
-            collection_ref = self._get_collection(table_type="memories")
+            collection_ref = self._get_collection(table_type="memories", create_collection_if_not_found=False)
             if collection_ref is None:
                 return []
 
