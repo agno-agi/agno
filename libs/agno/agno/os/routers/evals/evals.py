@@ -121,7 +121,7 @@ def attach_routes(
         limit: Optional[int] = Query(default=20, description="Number of eval runs to return", ge=1),
         page: Optional[int] = Query(default=1, description="Page number", ge=0),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
-        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
+        sort_order: Optional[SortOrder] = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
         table: Optional[str] = Query(default=None, description="The database table to use"),
     ) -> PaginatedResponse[EvalSchema]:
