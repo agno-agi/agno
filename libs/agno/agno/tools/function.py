@@ -492,7 +492,7 @@ class Function(BaseModel):
 
             # If the function requires user input, we should set the user_input_schema to all parameters
             # EXCEPT framework-injected ones which are never provided by the user or the model.
-            # We filter by both name AND type to handle cases like `my_ctx: RunContext`. See #7484.
+            # We filter by both name AND type to handle cases like `my_ctx: RunContext`.
             _framework_injected_params = {
                 "agent", "team", "run_context", "self",
                 "images", "videos", "audios", "files",
