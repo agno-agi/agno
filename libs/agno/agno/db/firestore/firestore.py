@@ -110,18 +110,15 @@ class FirestoreDb(BaseDb):
         """
         return table_name in self.db_client.list_collections()
 
-    def _get_collection(self, table_type: str, create_collection_if_not_found: Optional[bool] = False):
+    def _get_collection(self, table_type: str, create_collection_if_not_found: Optional[bool] = True):
         """Get or create a collection based on table type.
 
         Args:
             table_type (str): The type of table to get or create.
-            create_collection_if_not_found (Optional[bool]): Whether to create the collection (and its indexes)
-                if it has not been initialized yet. Defaults to False so reads do not trigger index-creation
-                writes as a side effect; writes should pass True explicitly.
+            create_collection_if_not_found (Optional[bool]): Whether to create the collection if it doesn't exist.
 
         Returns:
-            Optional[CollectionReference]: The collection reference, or None if the collection has not been
-            initialized and create_collection_if_not_found is False.
+            CollectionReference: The collection reference.
         """
         if table_type == "sessions":
             if self.session_table_name is None:
@@ -209,7 +206,7 @@ class FirestoreDb(BaseDb):
         raise ValueError(f"Unknown table type: {table_type}")
 
     def _get_or_create_collection(
-        self, collection_name: str, collection_type: str, create_collection_if_not_found: Optional[bool] = False
+        self, collection_name: str, collection_type: str, create_collection_if_not_found: Optional[bool] = True
     ):
         """Get or create a collection with proper indexes.
 
@@ -726,9 +723,6 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="memories")
-            if collection_ref is None:
-                log_debug(f"Memory collection not initialized, nothing to delete for id: {memory_id}")
-                return
 
             # If user_id is provided, verify the memory belongs to the user before deleting
             if user_id is not None:
@@ -770,9 +764,6 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="memories")
-            if collection_ref is None:
-                log_debug("Memory collection not initialized, nothing to delete")
-                return
             batch = self.db_client.batch()
             deleted_count = 0
 
@@ -860,8 +851,6 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="memories")
-            if collection_ref is None:
-                return None
             docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
 
             result = None
@@ -984,8 +973,6 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="memories")
-            if collection_ref is None:
-                return [], 0
 
             if user_id is not None:
                 query = collection_ref.where(filter=FieldFilter("user_id", "==", user_id))
@@ -1119,9 +1106,6 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="memories")
-            if collection_ref is None:
-                log_debug("Memory collection not initialized, nothing to clear")
-                return
 
             # Get all documents in the collection
             docs = collection_ref.stream()
