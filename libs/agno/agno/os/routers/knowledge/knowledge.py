@@ -470,7 +470,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         limit: Optional[int] = Query(default=20, description="Number of content entries to return", ge=1),
         page: Optional[int] = Query(default=1, description="Page number", ge=0),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
-        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
+        sort_order: Optional[SortOrder] = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use"),
         knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
     ) -> PaginatedResponse[ContentResponseSchema]:
