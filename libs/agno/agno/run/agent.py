@@ -12,7 +12,7 @@ from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.run.requirement import RunRequirement
-from agno.utils.log import logger
+from agno.utils.log import log_error
 from agno.utils.media import (
     reconstruct_audio_list,
     reconstruct_files,
@@ -816,8 +816,8 @@ class RunOutput:
 
         try:
             _dict = self.to_dict()
-        except Exception:
-            logger.error("Failed to convert response to json", exc_info=True)
+        except Exception as e:
+            log_error(f"Failed to convert response to json: {str(e)}")
             raise
 
         if indent is None:

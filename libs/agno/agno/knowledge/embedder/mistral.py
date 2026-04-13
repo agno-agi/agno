@@ -62,7 +62,7 @@ class MistralEmbedder(Embedder):
                 return response.data[0].embedding
             return []
         except Exception as e:
-            log_warning(f"Error getting embedding: {e}")
+            log_warning(f"Error getting embedding: {str(e)}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
@@ -74,7 +74,7 @@ class MistralEmbedder(Embedder):
             usage: Dict[str, Any] = response.usage.model_dump() if response.usage else {}
             return embedding, usage
         except Exception as e:
-            log_warning(f"Error getting embedding and usage: {e}")
+            log_warning(f"Error getting embedding and usage: {str(e)}")
             return [], {}
 
     async def async_get_embedding(self, text: str) -> List[float]:
@@ -101,7 +101,7 @@ class MistralEmbedder(Embedder):
                 return response.data[0].embedding
             return []
         except Exception as e:
-            log_warning(f"Error getting embedding: {e}")
+            log_warning(f"Error getting embedding: {str(e)}")
             return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
@@ -130,7 +130,7 @@ class MistralEmbedder(Embedder):
             usage: Dict[str, Any] = response.usage.model_dump() if response.usage else {}
             return embedding, usage
         except Exception as e:
-            log_warning(f"Error getting embedding and usage: {e}")
+            log_warning(f"Error getting embedding and usage: {str(e)}")
             return [], {}
 
     async def async_get_embeddings_batch_and_usage(
@@ -186,7 +186,7 @@ class MistralEmbedder(Embedder):
                 all_usage.extend([usage_dict] * len(batch_texts))
 
             except Exception as e:
-                log_warning(f"Error in async batch embedding: {e}")
+                log_warning(f"Error in async batch embedding: {str(e)}")
                 # Fallback to individual calls for this batch
                 for text in batch_texts:
                     try:
@@ -194,7 +194,7 @@ class MistralEmbedder(Embedder):
                         all_embeddings.append(embedding)
                         all_usage.append(usage)
                     except Exception as e2:
-                        log_warning(f"Error in individual async embedding fallback: {e2}")
+                        log_warning(f"Error in individual async embedding fallback: {e2}: {e2}")
                         all_embeddings.append([])
                         all_usage.append(None)
 

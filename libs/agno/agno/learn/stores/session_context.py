@@ -875,7 +875,7 @@ class SessionContextStore(LearningStore):
                 functions.append(func)
                 log_debug(f"Added function {func.name}")
             except Exception as e:
-                log_warning(f"Could not add function {tool}: {e}")
+                log_warning(f"Could not add function {tool}: {str(e)}")
 
         return functions
 
@@ -966,7 +966,7 @@ class SessionContextStore(LearningStore):
                     log_debug(f"Session context saved: {summary[:50]}...")
                     return "Session context saved"
                 except Exception as e:
-                    log_warning(f"Error saving session context: {e}")
+                    log_warning(f"Error saving session context: {str(e)}")
                     return f"Error: {e}"
 
         else:
@@ -1015,7 +1015,7 @@ class SessionContextStore(LearningStore):
                     log_debug(f"Session context saved: {summary[:50]}...")
                     return "Session context saved"
                 except Exception as e:
-                    log_warning(f"Error saving session context: {e}")
+                    log_warning(f"Error saving session context: {str(e)}")
                     return f"Error: {e}"
 
         return [save_session_context]
@@ -1107,7 +1107,7 @@ class SessionContextStore(LearningStore):
                     log_debug(f"Session context saved: {summary[:50]}...")
                     return "Session context saved"
                 except Exception as e:
-                    log_warning(f"Error saving session context: {e}")
+                    log_warning(f"Error saving session context: {str(e)}")
                     return f"Error: {e}"
 
         else:
@@ -1156,7 +1156,7 @@ class SessionContextStore(LearningStore):
                     log_debug(f"Session context saved: {summary[:50]}...")
                     return "Session context saved"
                 except Exception as e:
-                    log_warning(f"Error saving session context: {e}")
+                    log_warning(f"Error saving session context: {str(e)}")
                     return f"Error: {e}"
 
         return [save_session_context]
