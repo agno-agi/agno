@@ -811,7 +811,11 @@ class FirestoreDb(BaseDb):
             if collection_ref is None:
                 return []
 
-            query = collection_ref if user_id is None else collection_ref.where("user_id", "==", user_id)
+            query = (
+                collection_ref
+                if user_id is None
+                else collection_ref.where(filter=FieldFilter("user_id", "==", user_id))
+            )
             docs = query.stream()
 
             all_topics = set()
