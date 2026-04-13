@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 import pytest
+from pydantic import BaseModel
 
 from agno.exceptions import ModelAuthenticationError
 from agno.models.openrouter import OpenRouterResponses
@@ -91,3 +92,28 @@ def test_openrouter_responses_client_params():
     assert params["base_url"] == "https://openrouter.ai/api/v1"
     assert params["timeout"] == 30.0
     assert params["max_retries"] == 3
+
+
+class _Decision(BaseModel):
+    action: str
+    reason: str
+
+
+def test_openrouter_responses_guided_mode_skips_openai_schema_sanitizing_for_non_openai_models():
+    model = OpenRouterResponses(api_key="test-key", id="x-ai/grok-4.20", strict_output=False)
+
+    request_params = model.get_request_params(response_format=_Decision)
+
+    schema = request_params["text"]["format"]["schema"]
+    assert request_params["text"]["format"]["strict"] is False
+    assert "additionalProperties" not in schema
+
+
+def test_openrouter_responses_guided_mode_keeps_openai_schema_sanitizing_for_openai_models():
+    model = OpenRouterResponses(api_key="test-key", id="openai/gpt-4o", strict_output=False)
+
+    request_params = model.get_request_params(response_format=_Decision)
+
+    schema = request_params["text"]["format"]["schema"]
+    assert request_params["text"]["format"]["strict"] is False
+    assert schema["additionalProperties"] is False

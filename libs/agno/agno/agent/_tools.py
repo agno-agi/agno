@@ -357,6 +357,7 @@ def parse_tools(
         output_schema is not None
         and (agent.structured_outputs or (not agent.use_json_mode))
         and model.supports_native_structured_outputs
+        and getattr(model, "strict_output", True)
     ):
         strict = True
 

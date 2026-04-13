@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelAuthenticationError
 from agno.models.message import Message
 from agno.models.openai.open_responses import OpenResponses
+from agno.utils.models.schema_utils import get_response_schema_for_provider
 
 
 @dataclass
@@ -117,6 +118,12 @@ class OpenRouterResponses(OpenResponses):
 
         return client_params
 
+    def _response_schema_provider(self) -> str:
+        """Pick the schema normalizer that matches the downstream OpenRouter model."""
+        if self.id.startswith("openai/"):
+            return "openai"
+        return "openrouter"
+
     def get_request_params(
         self,
         messages: Optional[List[Message]] = None,
@@ -130,10 +137,25 @@ class OpenRouterResponses(OpenResponses):
         Returns:
             Dict[str, Any]: A dictionary of keyword arguments for API requests.
         """
+        normalized_response_format = response_format
+        if (
+            response_format is not None
+            and isinstance(response_format, type)
+            and issubclass(response_format, BaseModel)
+            and not self.strict_output
+        ):
+            schema = get_response_schema_for_provider(response_format, self._response_schema_provider())
+            normalized_response_format = {
+                "type": "json_schema",
+                "name": response_format.__name__,
+                "schema": schema,
+                "strict": self.strict_output,
+            }
+
         # Get base request params from parent class
         request_params = super().get_request_params(
             messages=messages,
-            response_format=response_format,
+            response_format=normalized_response_format,
             tools=tools,
             tool_choice=tool_choice,
         )
