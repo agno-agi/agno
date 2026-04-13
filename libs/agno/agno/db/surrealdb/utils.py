@@ -25,9 +25,9 @@ def _query_aux(
 ) -> Union[list, dict, str, int]:
     try:
         response = client.query(query, vars)
-    except Exception as e:
-        msg = f"!! Query execution error: {query} with {vars}, Error: {e}"
-        logger.error(msg)
+    except Exception:
+        msg = f"!! Query execution error: {query} with {vars}"
+        logger.exception(msg)
         raise RuntimeError(msg)
     return response
 

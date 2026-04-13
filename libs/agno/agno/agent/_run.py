@@ -37,6 +37,7 @@ from agno.exceptions import (
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
+from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.metrics import RunMetrics, merge_background_metrics
 from agno.models.response import ModelResponse, ToolExecution
@@ -147,7 +148,7 @@ def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
                     run_context.dependencies[key] = result
 
             except Exception as e:
-                log_warning(f"Failed to resolve dependencies for '{key}': {e}")
+                log_warning(f"Failed to resolve dependencies for '{key}': {str(e)}")
         else:
             run_context.dependencies[key] = value
 
@@ -181,7 +182,7 @@ async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> No
 
             run_context.dependencies[key] = result
         except Exception as e:
-            log_warning(f"Failed to resolve context for '{key}': {e}")
+            log_warning(f"Failed to resolve context for '{key}': {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -506,7 +507,9 @@ def _run(
                 # 6. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
 
-                model_response: ModelResponse = agent.model.response(
+                model_response: ModelResponse = call_model_with_fallback(
+                    agent.model,
+                    agent.fallback_config,
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=agent.tool_choice,
@@ -668,7 +671,7 @@ def _run(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
 
@@ -1173,7 +1176,7 @@ def _run_stream(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
 
@@ -1588,7 +1591,9 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 9. Generate a response from the Model (includes running function calls)
-                model_response: ModelResponse = await agent.model.aresponse(
+                model_response: ModelResponse = await acall_model_with_fallback(
+                    agent.model,
+                    agent.fallback_config,
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=agent.tool_choice,
@@ -1762,7 +1767,7 @@ async def _arun(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -1879,15 +1884,15 @@ async def _arun_background(
                 background_tasks=background_tasks,
                 **kwargs,
             )
-        except Exception:
-            log_error(f"Background run {run_response.run_id} failed", exc_info=True)
+        except Exception as e:
+            log_error(f"Background run {run_response.run_id} failed: {str(e)}")
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
                 agent_session.upsert_run(run=run_response)
                 await asave_session(agent, session=agent_session)
-            except Exception:
-                log_error(f"Failed to persist error state for background run {run_response.run_id}", exc_info=True)
+            except Exception as e:
+                log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
             # Note: acleanup_run is already called by _arun's finally block
 
     task = asyncio.create_task(_background_task())
@@ -2388,7 +2393,7 @@ async def _arun_stream(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -2940,7 +2945,9 @@ def _continue_run(
 
                 # 2. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
-                model_response: ModelResponse = agent.model.response(
+                model_response: ModelResponse = call_model_with_fallback(
+                    agent.model,
+                    agent.fallback_config,
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=tools,
@@ -3071,7 +3078,7 @@ def _continue_run(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
                 run_response.status = RunStatus.error
@@ -3357,7 +3364,7 @@ def _continue_run_stream(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
                 run_response.status = RunStatus.error
@@ -3705,7 +3712,9 @@ async def _acontinue_run(
                 )
 
                 # 8. Get model response
-                model_response: ModelResponse = await agent.model.aresponse(
+                model_response: ModelResponse = await acall_model_with_fallback(
+                    agent.model,
+                    agent.fallback_config,
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=_tools,
@@ -3867,7 +3876,7 @@ async def _acontinue_run(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -4354,7 +4363,7 @@ async def _acontinue_run_stream(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -4438,7 +4447,7 @@ def save_run_response_to_file(
 
                 fn_path.write_text(json.dumps(run_response.content, indent=2))
         except Exception as e:
-            log_warning(f"Failed to save output to file: {e}")
+            log_warning(f"Failed to save output to file: {str(e)}")
 
 
 def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
