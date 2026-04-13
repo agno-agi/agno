@@ -22,7 +22,7 @@ from agno.utils.log import log_debug, log_error, logger
 from agno.utils.merge_dict import merge_parallel_session_states
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput, StepType
+from agno.workflow.types import HumanReview, StepInput, StepOutput, StepType
 
 WorkflowSteps = List[
     Union[
@@ -35,6 +35,7 @@ WorkflowSteps = List[
         "Parallel",  # type: ignore # noqa: F821
         "Condition",  # type: ignore # noqa: F821
         "Router",  # type: ignore # noqa: F821
+        "Workflow",  # type: ignore # noqa: F821 - Nested workflow support
     ]
 ]
 
@@ -61,6 +62,7 @@ class Parallel:
         *args: Union[str, WorkflowSteps],
         name: Optional[str] = None,
         description: Optional[str] = None,
+        human_review: Optional[HumanReview] = None,
     ):
         resolved_name = name
         resolved_steps: List[Any] = []
@@ -83,6 +85,11 @@ class Parallel:
         self.steps = resolved_steps
         self.name = resolved_name
         self.description = description
+        self.human_review = human_review or HumanReview()
+
+        from agno.workflow.types import validate_human_review_for_parallel
+
+        validate_human_review_for_parallel(self.human_review)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -135,6 +142,7 @@ class Parallel:
         from agno.workflow.router import Router
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
+        from agno.workflow.workflow import Workflow
 
         prepared_steps: WorkflowSteps = []
         for step in self.steps:
@@ -144,6 +152,8 @@ class Parallel:
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
             elif isinstance(step, Team):
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
+            elif isinstance(step, Workflow):
+                prepared_steps.append(Step(name=step.name, description=step.description, workflow=step))
             elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
                 prepared_steps.append(step)
             else:
