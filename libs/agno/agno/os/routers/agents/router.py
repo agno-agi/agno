@@ -773,6 +773,16 @@ def get_agent_router(
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
 
+        # If the run is paused and has tools requiring approval, merge any resolved
+        # approval data so the FE can display admin-filled values on the chat page.
+        if getattr(run_output, "is_paused", False):
+            try:
+                from agno.run.approval import acheck_and_apply_approval_resolution
+
+                await acheck_and_apply_approval_resolution(agent.db, run_id, run_output)
+            except (RuntimeError, Exception):
+                pass  # Approval still pending or not found — return run as-is
+
         return run_output.to_dict()
 
     @router.get(
