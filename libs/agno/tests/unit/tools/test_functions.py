@@ -195,7 +195,7 @@ def test_function_process_entrypoint_with_user_input():
 
 
 def test_function_process_entrypoint_with_user_input_excludes_run_context():
-    """Test that user_input_schema excludes run_context when requires_user_input=True (issue #7484)."""
+    """Test that user_input_schema excludes run_context when requires_user_input=True."""
 
     def test_func(run_context: RunContext, param1: str, param2: int = 42) -> str:
         """Test function with run_context and user input.
@@ -269,7 +269,7 @@ def test_function_process_entrypoint_with_user_input_excludes_by_type():
 
 
 def test_user_input_with_run_context_execution():
-    """Test that a tool with requires_user_input=True and run_context executes without error (issue #7484)."""
+    """Test that a tool with requires_user_input=True and run_context executes without error."""
 
     @tool(requires_user_input=True, user_input_fields=["to_address"])
     def send_email(run_context: RunContext, subject: str, body: str, to_address: str) -> str:
