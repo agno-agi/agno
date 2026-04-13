@@ -8420,6 +8420,8 @@ class Workflow:
                 step_kwargs["agent"] = step.agent.deep_copy() if hasattr(step.agent, "deep_copy") else step.agent
             if step.team:
                 step_kwargs["team"] = step.team.deep_copy() if hasattr(step.team, "deep_copy") else step.team
+            if step.workflow:
+                step_kwargs["workflow"] = step.workflow.deep_copy() if hasattr(step.workflow, "deep_copy") else step.workflow
             # Copy Step configuration attributes
             for attr in [
                 "max_retries",
@@ -8443,6 +8445,10 @@ class Workflow:
         # Handle direct Team
         if isinstance(step, Team):
             return step.deep_copy() if hasattr(step, "deep_copy") else step
+
+        # Handle direct Workflow (auto-wrapped as a step)
+        if isinstance(step, Workflow):
+            return step.deep_copy()
 
         # Handle Parallel steps
         if isinstance(step, Parallel):
