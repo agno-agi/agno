@@ -18,6 +18,7 @@ import textwrap
 import pytest
 
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.db.in_memory.in_memory_db import InMemoryDb
 
 _SYNC_CANDIDATES = [
     ("agno.db.postgres.postgres", "PostgresDb"),
@@ -59,6 +60,24 @@ for mod_path, cls_name in _ASYNC_CANDIDATES:
         ASYNC_BACKENDS.append(pytest.param(cls, id=cls_name))
     except Exception:
         pass
+
+
+# -- 0. Coverage integrity (prevents silent backend drop-outs) --
+
+
+def test_backend_discovery_is_complete():
+    discovered_sync_ids = sorted(str(p.id) for p in SYNC_BACKENDS)
+    discovered_async_ids = sorted(str(p.id) for p in ASYNC_BACKENDS)
+    assert len(SYNC_BACKENDS) == len(_SYNC_CANDIDATES), (
+        f"Sync backend discovery collapsed — expected {len(_SYNC_CANDIDATES)} backends, "
+        f"got {len(SYNC_BACKENDS)}: {discovered_sync_ids}. "
+        "An import-time failure in a backend module would make the regression suite "
+        "go green without exercising that backend."
+    )
+    assert len(ASYNC_BACKENDS) == len(_ASYNC_CANDIDATES), (
+        f"Async backend discovery collapsed — expected {len(_ASYNC_CANDIDATES)} backends, "
+        f"got {len(ASYNC_BACKENDS)}: {discovered_async_ids}."
+    )
 
 
 # -- 1. Base contract verification (these SHOULD pass) --
@@ -180,3 +199,28 @@ class TestFirestoreWrongParam:
             f"Firestore has spurious 'create_collection_if_not_found' param (dead code). Params: {params}"
         )
         assert "user_id" in params, f"Firestore.get_all_memory_topics missing 'user_id'. Params: {params}"
+
+
+# -- 6. In-memory semantic filter correctness (catches MySQL-style silent tenant leak) --
+
+
+@pytest.fixture
+def db():
+    db = InMemoryDb()
+    db._memories = [
+        {"memory_id": "m1", "user_id": "alice", "memory": "alice thing", "topics": ["pref", "ui"]},
+        {"memory_id": "m2", "user_id": "bob", "memory": "bob thing", "topics": ["code", "ts"]},
+    ]
+    return db
+
+
+class TestGetAllMemoryTopicsIsolation:
+    def test_returns_all_topics_when_no_user_filter(self, db):
+        assert set(db.get_all_memory_topics()) == {"pref", "ui", "code", "ts"}
+
+    def test_returns_only_own_topics_when_filtered_by_user(self, db):
+        assert set(db.get_all_memory_topics(user_id="alice")) == {"pref", "ui"}
+        assert set(db.get_all_memory_topics(user_id="bob")) == {"code", "ts"}
+
+    def test_returns_empty_for_unknown_user(self, db):
+        assert db.get_all_memory_topics(user_id="nobody") == []
