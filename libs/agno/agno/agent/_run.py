@@ -4669,6 +4669,9 @@ def regenerate_dispatch(
     if not last_run.messages:
         raise ValueError("Last run has no messages to regenerate from.")
 
+    # Capture the predecessor run_id before any mutation for lineage tracking.
+    predecessor_run_id = last_run.run_id
+
     # Build message context: everything except the final assistant response
     trimmed_messages = _strip_final_assistant_messages(last_run.messages)
     if not trimmed_messages:
@@ -4739,6 +4742,7 @@ def regenerate_dispatch(
         input=last_run.input,
         metadata=run_context.metadata,
         session_state=run_context.session_state,
+        regenerated_from=predecessor_run_id,
     )
     run_response.model = agent.model.id if agent.model is not None else None
     run_response.model_provider = agent.model.provider if agent.model is not None else None
@@ -4869,6 +4873,7 @@ def aregenerate_dispatch(  # type: ignore
 
     # Read existing session and update metadata (sync pre-read; async DB defers to inner function)
     _session_state: Dict[str, Any] = {}
+    predecessor_run_id: Optional[str] = None
     if not has_async_db(agent):
         from agno.agent._storage import read_or_create_session
 
@@ -4883,6 +4888,9 @@ def aregenerate_dispatch(  # type: ignore
 
         if not last_run.messages:
             raise ValueError("Last run has no messages to regenerate from.")
+
+        # Capture the predecessor run_id before any mutation for lineage tracking.
+        predecessor_run_id = last_run.run_id
 
         # Build message context: everything except the final assistant response
         trimmed_messages = _strip_final_assistant_messages(last_run.messages)
@@ -4962,6 +4970,7 @@ def aregenerate_dispatch(  # type: ignore
             agent_name=agent.name,
             input=last_run.input,
             metadata=run_context.metadata,
+            regenerated_from=predecessor_run_id,
         )
         new_run_response.model = agent.model.id if agent.model is not None else None
         new_run_response.model_provider = agent.model.provider if agent.model is not None else None
@@ -5064,6 +5073,8 @@ async def _aregenerate_run(
     if not last_run.messages:
         raise ValueError("Last run has no messages to regenerate from.")
 
+    predecessor_run_id = last_run.run_id
+
     trimmed_messages = _strip_final_assistant_messages(last_run.messages)
     if not trimmed_messages:
         raise ValueError("Cannot regenerate: no user messages found in the last run.")
@@ -5087,6 +5098,7 @@ async def _aregenerate_run(
         agent_name=agent.name,
         input=last_run.input,
         metadata=run_context.metadata,
+        regenerated_from=predecessor_run_id,
     )
     agent.model = cast(Model, agent.model)
     new_run_response.model = agent.model.id if agent.model is not None else None
@@ -5145,6 +5157,8 @@ async def _aregenerate_run_stream(
     if not last_run.messages:
         raise ValueError("Last run has no messages to regenerate from.")
 
+    predecessor_run_id = last_run.run_id
+
     trimmed_messages = _strip_final_assistant_messages(last_run.messages)
     if not trimmed_messages:
         raise ValueError("Cannot regenerate: no user messages found in the last run.")
@@ -5168,6 +5182,7 @@ async def _aregenerate_run_stream(
         agent_name=agent.name,
         input=last_run.input,
         metadata=run_context.metadata,
+        regenerated_from=predecessor_run_id,
     )
     agent.model = cast(Model, agent.model)
     new_run_response.model = agent.model.id if agent.model is not None else None

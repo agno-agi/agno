@@ -202,6 +202,63 @@ class TestRegenerateDispatch:
         # Old run should still be there with regenerated status
         assert old_run.status == RunStatus.regenerated
 
+    def test_regenerate_sets_regenerated_from_on_new_run(self, monkeypatch: pytest.MonkeyPatch):
+        """The new run should record the predecessor run_id it was regenerated from."""
+        agent = Agent(name="test")
+        old_run = _make_run(
+            run_id="run-original",
+            messages=[
+                Message(role="user", content="hi"),
+                Message(role="assistant", content="hello"),
+            ],
+            input="hi",
+        )
+        session = _make_session(runs=[old_run])
+        _patch_regenerate_deps(agent, monkeypatch, session)
+
+        captured: list = []
+
+        def capture_continue(agent_arg, run_response=None, **kw):
+            captured.append(run_response)
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", capture_continue)
+
+        _run.regenerate_dispatch(agent, session_id="sess-1", stream=False)
+
+        assert len(captured) == 1
+        assert captured[0].regenerated_from == "run-original"
+        assert captured[0].run_id != "run-original"
+
+    def test_regenerate_chains_regenerated_from_immediate_predecessor(self, monkeypatch: pytest.MonkeyPatch):
+        """When regenerating a preserved-original run, lineage points at the immediate predecessor."""
+        agent = Agent(name="test")
+        # Simulate a run that itself came from a prior regenerate (run-A -> run-B)
+        run_b = _make_run(
+            run_id="run-B",
+            messages=[
+                Message(role="user", content="hi"),
+                Message(role="assistant", content="second answer"),
+            ],
+            input="hi",
+        )
+        run_b.regenerated_from = "run-A"
+        session = _make_session(runs=[run_b])
+        _patch_regenerate_deps(agent, monkeypatch, session)
+
+        captured: list = []
+
+        def capture_continue(agent_arg, run_response=None, **kw):
+            captured.append(run_response)
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", capture_continue)
+
+        _run.regenerate_dispatch(agent, session_id="sess-1", preserve_original=True, stream=False)
+
+        # Immediate predecessor is run-B, not the grand-predecessor run-A
+        assert captured[0].regenerated_from == "run-B"
+
     def test_regenerate_raises_on_empty_session(self, monkeypatch: pytest.MonkeyPatch):
         agent = Agent(name="test")
         session = _make_session(runs=[])
