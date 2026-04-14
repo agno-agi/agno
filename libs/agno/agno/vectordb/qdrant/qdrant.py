@@ -590,12 +590,14 @@ class Qdrant(VectorDb):
         formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
         dense_embedding = self.embedder.get_embedding(query)
-        sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
+        sparse_embedding = self._get_sparse_vector(query)
+        if hasattr(sparse_embedding, "as_object"):
+            sparse_embedding = sparse_embedding.as_object()
         call = self.client.query_points(
             collection_name=self.collection,
             prefetch=[
                 models.Prefetch(
-                    query=models.SparseVector(**sparse_embedding),  # type: ignore  # type: ignore
+                    query=models.SparseVector(**sparse_embedding),   # type: ignore
                     limit=limit,
                     using=self.sparse_vector_name,
                 ),
@@ -714,7 +716,9 @@ class Qdrant(VectorDb):
         formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
         dense_embedding = await self.embedder.async_get_embedding(query)
-        sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
+        sparse_embedding = self._get_sparse_vector(query)
+        if hasattr(sparse_embedding, "as_object"):
+            sparse_embedding = sparse_embedding.as_object()
         call = await self.async_client.query_points(
             collection_name=self.collection,
             prefetch=[
