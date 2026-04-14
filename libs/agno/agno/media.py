@@ -474,8 +474,8 @@ class File(BaseModel):
                 content = response.content
                 mime_type = response.headers.get("Content-Type", "").split(";")[0]
                 return content, mime_type
-            except Exception:
-                log_error(f"Failed to download file from {self.url}")
+            except Exception as e:
+                log_error(f"Failed to download file from {self.url}: {str(e)}")
                 return None
         else:
             return None

@@ -83,7 +83,7 @@ class XTools(Toolkit):
             result = {"message": "Post successfully created!", "url": post_url}
             return json.dumps(result, indent=2)
         except tweepy.TweepyException as e:
-            logger.error(f"Error creating post: {e}")
+            logger.exception("Error creating post")
             return json.dumps({"error": str(e)})
 
     def reply_to_post(self, post_id: str, text: str) -> str:
@@ -107,7 +107,7 @@ class XTools(Toolkit):
             result = {"message": "Reply successfully posted!", "url": reply_url}
             return json.dumps(result, indent=2)
         except tweepy.TweepyException as e:
-            logger.error(f"Error replying to post: {e}")
+            logger.exception("Error replying to post")
             return json.dumps({"error": str(e)})
 
     def send_dm(self, recipient: str, text: str) -> str:
@@ -143,7 +143,7 @@ class XTools(Toolkit):
             }
             return json.dumps(result, indent=2)
         except tweepy.TweepyException as e:
-            logger.error(f"Error from X while sending DM: {e}")
+            logger.exception("Error from X while sending DM")
             error_message = str(e)
             if "User not found" in error_message:
                 error_message = f"User '{recipient}' not found. Please check the username or user ID."
@@ -153,7 +153,7 @@ class XTools(Toolkit):
                 )
             return json.dumps({"error": error_message}, indent=2)
         except Exception as e:
-            logger.error(f"Unexpected error sending DM: {e}")
+            logger.exception("Unexpected error sending DM")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
 
     def get_my_info(self) -> str:
@@ -180,7 +180,7 @@ class XTools(Toolkit):
             }
             return json.dumps(result, indent=2)
         except tweepy.TweepyException as e:
-            logger.error(f"Error fetching user info: {e}")
+            logger.exception("Error fetching user info")
             return json.dumps({"error": str(e)})
 
     def get_user_info(self, username: str) -> str:
@@ -210,7 +210,7 @@ class XTools(Toolkit):
             }
             return json.dumps(result, indent=2)
         except tweepy.TweepyException as e:
-            logger.error(f"Error fetching user info: {e}")
+            logger.exception("Error fetching user info")
             return json.dumps({"error": str(e)})
 
     def get_home_timeline(self, max_results: int = 10) -> str:
@@ -244,7 +244,7 @@ class XTools(Toolkit):
             result = {"home_timeline": timeline}
             return json.dumps(result, indent=2)
         except tweepy.TweepyException as e:
-            logger.error(f"Error fetching home timeline: {e}")
+            logger.exception("Error fetching home timeline")
             return json.dumps({"error": str(e)})
 
     def search_posts(self, query: str, max_results: int = 10) -> str:
@@ -328,8 +328,8 @@ class XTools(Toolkit):
             return json.dumps(result, indent=2)
 
         except tweepy.TweepyException as e:
-            logger.error(f"Error searching posts: {e}")
+            logger.exception("Error searching posts")
             return json.dumps({"error": str(e), "query": query})
         except Exception as e:
-            logger.error(f"Unexpected error searching posts: {e}")
+            logger.exception("Unexpected error searching posts")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}", "query": query})

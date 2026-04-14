@@ -14,7 +14,6 @@ from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
-from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import (
     MCPServerConfiguration,
@@ -360,7 +359,7 @@ class Claude(Model):
 
     def get_client(self) -> AnthropicClient:
         """
-        Returns an instance of the Anthropic client.
+        Returns an instance of the Anthropic client. Caches the client to avoid recreating it on every request.
         """
         if self.client and not self.client.is_closed():
             return self.client
@@ -370,18 +369,17 @@ class Claude(Model):
             if isinstance(self.http_client, httpx.Client):
                 _client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
-                # Use global sync client when user http_client is invalid
-                _client_params["http_client"] = get_default_sync_client()
-        else:
-            # Use global sync client when no custom http_client is provided
-            _client_params["http_client"] = get_default_sync_client()
+                log_warning("http_client is not an instance of httpx.Client. Ignoring and using Anthropic SDK default.")
+        # When no custom http_client is provided, let the Anthropic SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
         self.client = AnthropicClient(**_client_params)
         return self.client
 
     def get_async_client(self) -> AsyncAnthropicClient:
         """
-        Returns an instance of the async Anthropic client.
+        Returns an instance of the async Anthropic client. Caches the client to avoid recreating it on every request.
         """
         if self.async_client and not self.async_client.is_closed():
             return self.async_client
@@ -392,13 +390,12 @@ class Claude(Model):
                 _client_params["http_client"] = self.http_client
             else:
                 log_warning(
-                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                    "http_client is not an instance of httpx.AsyncClient. Ignoring and using Anthropic SDK default."
                 )
-                # Use global async client when user http_client is invalid
-                _client_params["http_client"] = get_default_async_client()
-        else:
-            # Use global async client when no custom http_client is provided
-            _client_params["http_client"] = get_default_async_client()
+        # When no custom http_client is provided, let the Anthropic SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
         self.async_client = AsyncAnthropicClient(**_client_params)
         return self.async_client
 
@@ -618,13 +615,13 @@ class Claude(Model):
         Always raises — never returns normally.
         """
         if isinstance(e, APIConnectionError):
-            log_error(f"Connection error while calling Claude API: {str(e)}")
+            log_error("Connection error while calling Claude API")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         if isinstance(e, RateLimitError):
-            log_warning(f"Rate limit exceeded: {str(e)}")
+            log_warning("Rate limit exceeded")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         if isinstance(e, APIStatusError):
-            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
+            log_error(f"Claude API error (status {e.status_code})")
             if e.status_code == 529 or "overloaded_error" in str(e):
                 raise ModelRateLimitError(
                     message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
@@ -632,7 +629,7 @@ class Claude(Model):
             raise ModelProviderError(
                 message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
             ) from e
-        log_error(f"Unexpected error calling Claude API: {str(e)}")
+        log_error("Unexpected error calling Claude API")
         raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke(
@@ -901,11 +898,11 @@ class Claude(Model):
                                 model_response.parsed = response_format.model_validate(parsed_data)
                                 log_debug(f"Successfully parsed structured output: {model_response.parsed}")
                             except json.JSONDecodeError as e:
-                                log_warning(f"Failed to parse JSON from structured output: {e}")
+                                log_warning(f"Failed to parse JSON from structured output: {str(e)}")
                             except ValidationError as e:
-                                log_warning(f"Failed to validate structured output against schema: {e}")
+                                log_warning(f"Failed to validate structured output against schema: {str(e)}")
                             except Exception as e:
-                                log_warning(f"Unexpected error parsing structured output: {e}")
+                                log_warning(f"Unexpected error parsing structured output: {str(e)}")
 
                     # Capture citations from the response
                     if block.citations is not None:
@@ -1122,11 +1119,11 @@ class Claude(Model):
                         model_response.parsed = response_format.model_validate(parsed_data)
                         log_debug(f"Successfully parsed structured output from stream: {model_response.parsed}")
                     except json.JSONDecodeError as e:
-                        log_warning(f"Failed to parse JSON from structured output in stream: {e}")
+                        log_warning(f"Failed to parse JSON from structured output in stream: {str(e)}")
                     except ValidationError as e:
-                        log_warning(f"Failed to validate structured output against schema in stream: {e}")
+                        log_warning(f"Failed to validate structured output against schema in stream: {str(e)}")
                     except Exception as e:
-                        log_warning(f"Unexpected error parsing structured output in stream: {e}")
+                        log_warning(f"Unexpected error parsing structured output in stream: {str(e)}")
 
             # Capture context management information if present
             if self.context_management is not None and hasattr(response.message, "context_management"):  # type: ignore
@@ -1177,7 +1174,7 @@ class Claude(Model):
             ):
                 model_response.content = response.delta.text
         except Exception as e:
-            log_error(f"Error parsing Beta response: {e}")
+            log_error(f"Error parsing Beta response: {str(e)}")
 
         return model_response
 

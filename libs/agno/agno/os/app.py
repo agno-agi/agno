@@ -1061,7 +1061,7 @@ class AgentOS:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     db._create_all_tables()
             except Exception as e:
-                log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db.id}): {e}")
+                log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
     async def _initialize_async_databases(self) -> None:
         """Initialize async databases."""
@@ -1085,7 +1085,7 @@ class AgentOS:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     await db._create_all_tables()
             except Exception as e:
-                log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {e}")
+                log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
     async def _close_databases(self) -> None:
         """Close all database connections and release connection pools."""
@@ -1111,7 +1111,7 @@ class AgentOS:
                     else:
                         db.close()
             except Exception as e:
-                log_warning(f"Failed to close {db.__class__.__name__} (id: {db.id}): {e}")
+                log_warning(f"Failed to close {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
     def _get_db_table_names(self, db: BaseDb) -> Dict[str, str]:
         """Get the table names for a database"""
@@ -1268,6 +1268,8 @@ class AgentOS:
 
         # Track seen knowledge IDs to deduplicate
         seen_knowledge_ids: set[str] = set()
+        # Collect db_id → table_names from knowledge instances for building dbs below
+        discovered_db_tables: Dict[str, set] = {}
 
         # Build flat list of knowledge instances
         for knowledge in self.knowledge_instances:
@@ -1282,6 +1284,11 @@ class AgentOS:
             table_name = getattr(contents_db, "knowledge_table_name", "unknown")
             knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{db_id}"
             knowledge_id = _generate_knowledge_id(knowledge_name, db_id, table_name)
+
+            # Collect table names per db_id for building dbs list
+            if db_id not in discovered_db_tables:
+                discovered_db_tables[db_id] = set()
+            discovered_db_tables[db_id].add(table_name)
 
             # Skip if already processed (deduplicate by knowledge_id)
             if knowledge_id in seen_knowledge_ids:
@@ -1300,16 +1307,13 @@ class AgentOS:
         # Build KnowledgeDatabaseConfig for each db with its tables (as strings)
         dbs_with_specific_config = [db.db_id for db in knowledge_config.dbs]
 
-        for db_id, dbs in self.knowledge_dbs.items():
+        for db_id, table_names in discovered_db_tables.items():
             if db_id not in dbs_with_specific_config:
-                # Get all unique table names for this db
-                unique_tables = list(set(db.knowledge_table_name for db in dbs))
-
                 knowledge_config.dbs.append(
                     KnowledgeDatabaseConfig(
                         db_id=db_id,
                         domain_config=KnowledgeDomainConfig(display_name=db_id),
-                        tables=unique_tables,
+                        tables=list(table_names),
                     )
                 )
 

@@ -326,7 +326,7 @@ def get_websocket_router(
 
         except Exception as e:
             if "1012" not in str(e) and "1001" not in str(e):
-                logger.error(f"WebSocket error: {e}")
+                logger.exception("WebSocket error")
         finally:
             # Clean up the websocket connection
             await websocket_manager.disconnect_websocket(websocket)

@@ -124,7 +124,7 @@ class MigrationManager:
             else:
                 return migration_module.up(self.db, table_type, table_name)
         except Exception as e:
-            log_error(f"Error running migration to version {version}: {e}")
+            log_error(f"Error running migration to version {version}: {str(e)}")
             raise
 
     async def down(self, target_version: str, table_type: Optional[str] = None, force: bool = False):
@@ -203,5 +203,5 @@ class MigrationManager:
             else:
                 return migration_module.down(self.db, table_type, table_name)
         except Exception as e:
-            log_error(f"Error running migration to version {version}: {e}")
+            log_error(f"Error running migration to version {version}: {str(e)}")
             raise

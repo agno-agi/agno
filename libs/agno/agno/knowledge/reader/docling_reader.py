@@ -250,7 +250,7 @@ class DoclingReader(Reader):
             raise
 
         except Exception as e:
-            log_error(f"Error converting document: {file}: {e}")
+            log_error(f"Error converting document: {file}: {str(e)}")
             return []
 
     async def async_read(self, file: Union[Path, str, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -260,5 +260,5 @@ class DoclingReader(Reader):
         except (FileNotFoundError, ValueError):
             raise
         except Exception as e:
-            log_error(f"Error reading file asynchronously: {e}")
+            log_error(f"Error reading file asynchronously: {str(e)}")
             return []

@@ -22,6 +22,7 @@ from agno.knowledge.remote_content.remote_content import (
     RemoteContent,
 )
 from agno.knowledge.remote_knowledge import RemoteKnowledge
+from agno.knowledge.types import ContentType
 from agno.knowledge.utils import merge_user_metadata, set_agno_metadata, strip_agno_metadata
 from agno.utils.http import async_fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -542,7 +543,7 @@ class Knowledge(RemoteKnowledge):
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
         except Exception as e:
-            log_error(f"Error searching for documents: {e}")
+            log_error(f"Error searching for documents: {str(e)}")
             return []
 
     async def asearch(
@@ -586,7 +587,7 @@ class Knowledge(RemoteKnowledge):
                 log_info("Vector db does not support async search")
                 return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
         except Exception as e:
-            log_error(f"Error searching for documents: {e}")
+            log_error(f"Error searching for documents: {str(e)}")
             return []
 
     # ==========================================
@@ -948,7 +949,7 @@ class Knowledge(RemoteKnowledge):
                     return None
 
             except Exception as e:
-                log_warning(f"Cannot create {reader_type} reader {e}")
+                log_warning(f"Cannot create {reader_type} reader: {str(e)}")
                 return None
 
         return self.readers.get(reader_type)
@@ -1383,7 +1384,7 @@ class Knowledge(RemoteKnowledge):
                     try:
                         content.size = path.stat().st_size
                     except (OSError, IOError) as e:
-                        log_warning(f"Could not get file size for {path}: {e}")
+                        log_warning(f"Could not get file size for {path}: {str(e)}")
                         content.size = 0
 
                 if not content.id:
@@ -1468,7 +1469,7 @@ class Knowledge(RemoteKnowledge):
                     try:
                         content.size = path.stat().st_size
                     except (OSError, IOError) as e:
-                        log_warning(f"Could not get file size for {path}: {e}")
+                        log_warning(f"Could not get file size for {path}: {str(e)}")
                         content.size = 0
 
                 if not content.id:
@@ -1558,13 +1559,20 @@ class Knowledge(RemoteKnowledge):
             content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             await self._aupdate_content(content)
-            log_warning(f"Invalid URL: {content.url} - {str(e)}")
+            log_warning(f"Invalid URL: {content.url}: {str(e)}")
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
 
         bytes_content = None
-        if file_extension:
+        # Skip pre-download when a custom URL-based reader is provided —
+        # it handles the URL directly (e.g. LLMsTxtReader fetches linked pages)
+        skip_download = (
+            content.reader is not None
+            and hasattr(content.reader, "get_supported_content_types")
+            and ContentType.URL in content.reader.get_supported_content_types()
+        )
+        if file_extension and not skip_download:
             async with AsyncClient() as client:
                 response = await async_fetch_with_retry(content.url, client=client)
             bytes_content = BytesIO(response.content)
@@ -1590,7 +1598,7 @@ class Knowledge(RemoteKnowledge):
                     read_documents = await self._aread(reader, source, name=name, password=password)
 
         except Exception as e:
-            log_error(f"Error reading URL: {content.url} - {str(e)}")
+            log_error(f"Error reading URL: {content.url}: {str(e)}")
             content.status = ContentStatus.FAILED
             content.status_message = f"Error reading URL: {content.url} - {str(e)}"
             await self._aupdate_content(content)
@@ -1628,13 +1636,13 @@ class Knowledge(RemoteKnowledge):
                     try:
                         await self.vector_db.async_upsert(doc_hash, source_docs, content.metadata)
                     except Exception as e:
-                        log_error(f"Error upserting document from {source_url}: {e}")
+                        log_error(f"Error upserting document from {source_url}: {str(e)}")
                         continue
                 else:
                     try:
                         await self.vector_db.async_insert(doc_hash, documents=source_docs, filters=content.metadata)
                     except Exception as e:
-                        log_error(f"Error inserting document from {source_url}: {e}")
+                        log_error(f"Error inserting document from {source_url}: {str(e)}")
                         continue
 
             content.status = ContentStatus.COMPLETED
@@ -1709,14 +1717,21 @@ class Knowledge(RemoteKnowledge):
             content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             self._update_content(content)
-            log_warning(f"Invalid URL: {content.url} - {str(e)}")
+            log_warning(f"Invalid URL: {content.url}: {str(e)}")
 
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
 
         bytes_content = None
-        if file_extension:
+        # Skip pre-download when a custom URL-based reader is provided —
+        # it handles the URL directly (e.g. LLMsTxtReader fetches linked pages)
+        skip_download = (
+            content.reader is not None
+            and hasattr(content.reader, "get_supported_content_types")
+            and ContentType.URL in content.reader.get_supported_content_types()
+        )
+        if file_extension and not skip_download:
             response = fetch_with_retry(content.url)
             bytes_content = BytesIO(response.content)
 
@@ -1742,7 +1757,7 @@ class Knowledge(RemoteKnowledge):
                     read_documents = self._read(reader, source, name=name, password=password)
 
         except Exception as e:
-            log_error(f"Error reading URL: {content.url} - {str(e)}")
+            log_error(f"Error reading URL: {content.url}: {str(e)}")
             content.status = ContentStatus.FAILED
             content.status_message = f"Error reading URL: {content.url} - {str(e)}"
             self._update_content(content)
@@ -1780,13 +1795,13 @@ class Knowledge(RemoteKnowledge):
                     try:
                         self.vector_db.upsert(doc_hash, source_docs, content.metadata)
                     except Exception as e:
-                        log_error(f"Error upserting document from {source_url}: {e}")
+                        log_error(f"Error upserting document from {source_url}: {str(e)}")
                         continue
                 else:
                     try:
                         self.vector_db.insert(doc_hash, documents=source_docs, filters=content.metadata)
                     except Exception as e:
-                        log_error(f"Error inserting document from {source_url}: {e}")
+                        log_error(f"Error inserting document from {source_url}: {str(e)}")
                         continue
 
             content.status = ContentStatus.COMPLETED
@@ -2272,7 +2287,7 @@ class Knowledge(RemoteKnowledge):
             try:
                 return str(value)
             except Exception as e:
-                log_warning(f"Failed to convert {field_name} to string: {e}, using default")
+                log_warning(f"Failed to convert {field_name} to string, using default: {str(e)}")
                 return default
 
         # Already a string, return as-is
@@ -2375,7 +2390,7 @@ class Knowledge(RemoteKnowledge):
             try:
                 await self.vector_db.async_upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
             except Exception as e:
-                log_error(f"Error upserting document: {e}")
+                log_error(f"Error upserting document: {str(e)}")
                 content.status = ContentStatus.FAILED
                 content.status_message = "Could not upsert embedding"
                 await self._aupdate_content(content)
@@ -2388,7 +2403,7 @@ class Knowledge(RemoteKnowledge):
                     filters=content.metadata,  # type: ignore[arg-type]
                 )
             except Exception as e:
-                log_error(f"Error inserting document: {e}")
+                log_error(f"Error inserting document: {str(e)}")
                 content.status = ContentStatus.FAILED
                 content.status_message = "Could not insert embedding"
                 await self._aupdate_content(content)
@@ -2414,7 +2429,7 @@ class Knowledge(RemoteKnowledge):
             try:
                 self.vector_db.upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
             except Exception as e:
-                log_error(f"Error upserting document: {e}")
+                log_error(f"Error upserting document: {str(e)}")
                 content.status = ContentStatus.FAILED
                 content.status_message = "Could not upsert embedding"
                 self._update_content(content)
@@ -2427,7 +2442,7 @@ class Knowledge(RemoteKnowledge):
                     filters=content.metadata,  # type: ignore[arg-type]
                 )
             except Exception as e:
-                log_error(f"Error inserting document: {e}")
+                log_error(f"Error inserting document: {str(e)}")
                 content.status = ContentStatus.FAILED
                 content.status_message = "Could not insert embedding"
                 self._update_content(content)
@@ -2589,7 +2604,7 @@ class Knowledge(RemoteKnowledge):
                 return
 
             except Exception as e:
-                log_error(f"Error uploading file to LightRAG: {e}")
+                log_error(f"Error uploading file to LightRAG: {str(e)}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 await self._aupdate_content(content)
@@ -2634,7 +2649,7 @@ class Knowledge(RemoteKnowledge):
                 return
 
             except Exception as e:
-                log_error(f"Error uploading file to LightRAG: {e}")
+                log_error(f"Error uploading file to LightRAG: {str(e)}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 await self._aupdate_content(content)
@@ -2749,7 +2764,7 @@ class Knowledge(RemoteKnowledge):
                 return
 
             except Exception as e:
-                log_error(f"Error uploading file to LightRAG: {e}")
+                log_error(f"Error uploading file to LightRAG: {str(e)}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 self._update_content(content)
@@ -2797,7 +2812,7 @@ class Knowledge(RemoteKnowledge):
                 return
 
             except Exception as e:
-                log_error(f"Error uploading file to LightRAG: {e}")
+                log_error(f"Error uploading file to LightRAG: {str(e)}")
                 content.status = ContentStatus.FAILED
                 content.status_message = f"Could not upload to LightRAG: {str(e)}"
                 self._update_content(content)
@@ -3058,7 +3073,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                 docs = self.search(query=query, filters=knowledge_filters)
             except Exception as e:
                 retrieval_timer.stop()
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
@@ -3095,7 +3110,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                 docs = await self.asearch(query=query, filters=knowledge_filters)
             except Exception as e:
                 retrieval_timer.stop()
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
@@ -3182,7 +3197,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                 docs = self.search(query=query, filters=search_filters)
             except Exception as e:
                 retrieval_timer.stop()
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
@@ -3241,7 +3256,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
                 docs = await self.asearch(query=query, filters=search_filters)
             except Exception as e:
                 retrieval_timer.stop()
-                log_warning(f"Knowledge search failed: {e}")
+                log_warning(f"Knowledge search failed: {str(e)}")
                 return f"Error searching knowledge base: {type(e).__name__}"
 
             if run_response is not None and docs:
