@@ -1492,8 +1492,10 @@ class AgentOSClient:
             return AgentSessionDetailSchema.model_validate(data)
         elif session_type == SessionType.TEAM:
             return TeamSessionDetailSchema.model_validate(data)
-        else:
+        elif session_type == SessionType.WORKFLOW:
             return WorkflowSessionDetailSchema.model_validate(data)
+        else:
+            raise ValueError(f"Invalid session type: {session_type}")
 
     async def get_sessions(
         self,
@@ -1590,8 +1592,10 @@ class AgentOSClient:
             return AgentSessionDetailSchema.model_validate(data)
         elif session_type == SessionType.TEAM or (session_type is None and data.get("team_id") is not None):
             return TeamSessionDetailSchema.model_validate(data)
-        else:
+        elif session_type == SessionType.WORKFLOW or (session_type is None and data.get("workflow_id") is not None):
             return WorkflowSessionDetailSchema.model_validate(data)
+        else:
+            raise ValueError(f"Could not determine session type for session {session_id}")
 
     async def get_session_runs(
         self,
@@ -1794,8 +1798,10 @@ class AgentOSClient:
             return AgentSessionDetailSchema.model_validate(data)
         elif session_type == SessionType.TEAM or (session_type is None and data.get("team_id") is not None):
             return TeamSessionDetailSchema.model_validate(data)
-        else:
+        elif session_type == SessionType.WORKFLOW or (session_type is None and data.get("workflow_id") is not None):
             return WorkflowSessionDetailSchema.model_validate(data)
+        else:
+            raise ValueError(f"Could not determine session type for session {session_id}")
 
     async def update_session(
         self,
@@ -1855,8 +1861,10 @@ class AgentOSClient:
             return AgentSessionDetailSchema.model_validate(data)
         elif session_type == SessionType.TEAM or (session_type is None and data.get("team_id") is not None):
             return TeamSessionDetailSchema.model_validate(data)
-        else:
+        elif session_type == SessionType.WORKFLOW or (session_type is None and data.get("workflow_id") is not None):
             return WorkflowSessionDetailSchema.model_validate(data)
+        else:
+            raise ValueError(f"Could not determine session type for session {session_id}")
 
     # Eval Operations
 

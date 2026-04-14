@@ -919,12 +919,12 @@ class TestPaginationEdgeCases:
 class TestDetectSessionType:
     """Unit tests for detect_session_type function."""
 
-    def test_agent_id_takes_priority(self):
+    def test_stored_session_type_takes_priority(self):
         from agno.db.utils import detect_session_type
 
-        # Even if session_type says "team", agent_id presence means "agent"
+        # Stored session_type is authoritative — it wins over component IDs
         record = {"agent_id": "a1", "session_type": "team"}
-        assert detect_session_type(record) == "agent"
+        assert detect_session_type(record) == "team"
 
     def test_team_id_over_workflow_id(self):
         from agno.db.utils import detect_session_type

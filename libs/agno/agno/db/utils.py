@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 def detect_session_type(record: Dict[str, Any]) -> str:
     """Detect session type from a raw session dict, inferring from component IDs if needed.
 
-    Priority: component IDs (agent_id > team_id > workflow_id) > stored session_type > fallback "agent".
+    Priority: stored session_type > component IDs (agent_id > team_id > workflow_id) > fallback "agent".
 
     Args:
         record: Raw session dictionary.
@@ -25,15 +25,15 @@ def detect_session_type(record: Dict[str, Any]) -> str:
     Returns:
         Session type string ("agent", "team", or "workflow").
     """
+    st = record.get("session_type")
+    if st:
+        return st.value if hasattr(st, "value") else st
     if record.get("agent_id"):
         return "agent"
     if record.get("team_id"):
         return "team"
     if record.get("workflow_id"):
         return "workflow"
-    st = record.get("session_type")
-    if st:
-        return st.value if hasattr(st, "value") else st
     return "agent"
 
 
