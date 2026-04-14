@@ -129,7 +129,12 @@ class TeamResponse(BaseModel):
             model_provider = model_id
 
         session_table = team.db.session_table_name if team.db else None
-        knowledge_table = team.db.knowledge_table_name if team.db and team.knowledge else None
+        contents_db = getattr(team.knowledge, "contents_db", None) if team.knowledge else None
+        knowledge_table = (
+            contents_db.knowledge_table_name
+            if contents_db
+            else (team.db.knowledge_table_name if team.db and team.knowledge else None)
+        )
 
         tools_info = {
             "tools": formatted_tools,
@@ -144,8 +149,6 @@ class TeamResponse(BaseModel):
             "num_history_runs": team.num_history_runs,
             "cache_session": team.cache_session,
         }
-
-        contents_db = getattr(team.knowledge, "contents_db", None) if team.knowledge else None
         knowledge_info = {
             "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
