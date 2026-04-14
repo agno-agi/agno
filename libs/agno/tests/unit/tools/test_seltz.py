@@ -5,17 +5,19 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-pytest.importorskip("seltz")
+try:
+    from seltz import Includes, Seltz  # noqa: F401
+    from seltz.exceptions import (
+        SeltzAPIError,
+        SeltzAuthenticationError,
+        SeltzConnectionError,
+        SeltzRateLimitError,
+        SeltzTimeoutError,
+    )
 
-from seltz.exceptions import (
-    SeltzAPIError,
-    SeltzAuthenticationError,
-    SeltzConnectionError,
-    SeltzRateLimitError,
-    SeltzTimeoutError,
-)
-
-from agno.tools.seltz import SeltzTools
+    from agno.tools.seltz import SeltzTools
+except (ImportError, Exception):
+    pytest.skip("seltz not installed or incompatible version", allow_module_level=True)
 
 
 @pytest.fixture
