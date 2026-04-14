@@ -648,7 +648,9 @@ class Qdrant(VectorDb):
         limit: int,
         formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
-        sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
+        sparse_embedding = self._get_sparse_vector(query)
+        if hasattr(sparse_embedding, "as_object"):
+            sparse_embedding = sparse_embedding.as_object()
         call = self.client.query_points(
             collection_name=self.collection,
             query=models.SparseVector(**sparse_embedding),  # type: ignore
@@ -697,7 +699,9 @@ class Qdrant(VectorDb):
         limit: int,
         formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
-        sparse_embedding = next(iter(self.sparse_encoder.embed([query]))).as_object()
+        sparse_embedding = self._get_sparse_vector(query)
+        if hasattr(sparse_embedding, "as_object"):
+            sparse_embedding = sparse_embedding.as_object()
         call = await self.async_client.query_points(
             collection_name=self.collection,
             query=models.SparseVector(**sparse_embedding),  # type: ignore
