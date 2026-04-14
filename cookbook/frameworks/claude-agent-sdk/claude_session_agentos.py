@@ -37,7 +37,6 @@ agent_os = AgentOS(
     name="Claude Agent SDK Example",
     description="AgentOS serving a Claude Agent SDK agent",
     agents=[agent],
-    db=pg_db,
 )
 app = agent_os.get_app()
 
