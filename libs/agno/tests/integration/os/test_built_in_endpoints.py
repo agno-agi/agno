@@ -176,3 +176,46 @@ def test_config_endpoint_with_knowledge_tables(test_os_client_with_knowledge: Te
     assert sorted(response_data["knowledge"]["dbs"][0]["tables"]) == sorted(
         ["knowledge_contents1", "knowledge_contents2"]
     )
+
+
+def test_config_knowledge_dbs_consistent_when_contents_db_set_after_init():
+    """Tests knowledge dbs now built live, consistent with knowledge instances."""
+
+    # Create Knowledge without contents_db
+    knowledge = Knowledge(name="patient_kb")
+    assert knowledge.contents_db is None
+
+    # Build AgentOS and get app, self.knowledge_dbs stays empty
+    agent = Agent(name="test-agent", knowledge=knowledge)
+    agent_os = AgentOS(
+        id="test-os-late-init",
+        agents=[agent],
+    )
+    app = agent_os.get_app()
+
+    # Set contents_db
+    db = SqliteDb("tmp/test.db", id="patient-db", knowledge_table="patient_knowledge")
+    knowledge.contents_db = db
+
+    # Add to knowledge_instances
+    if knowledge not in agent_os.knowledge_instances:
+        agent_os.knowledge_instances.append(knowledge)
+
+    # Hit /config — both knowledge_instances and dbs should be populated
+    client = TestClient(app)
+    response = client.get("/config")
+    assert response.status_code == 200
+    data = response.json()
+
+    knowledge_config = data.get("knowledge", {})
+    knowledge_instances = knowledge_config.get("knowledge_instances") or []
+    knowledge_dbs = knowledge_config.get("dbs") or []
+
+    assert len(knowledge_instances) == 1
+    assert knowledge_instances[0]["name"] == "patient_kb"
+    assert knowledge_instances[0]["db_id"] == "patient-db"
+
+    # dbs is built live from knowledge_instances, so it's consistent
+    assert len(knowledge_dbs) == 1
+    assert knowledge_dbs[0]["db_id"] == "patient-db"
+    assert knowledge_dbs[0]["tables"] == ["patient_knowledge"]
