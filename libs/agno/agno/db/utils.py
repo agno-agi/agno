@@ -220,6 +220,53 @@ def db_from_dict(db_data: Dict[str, Any]) -> Optional[Union["BaseDb"]]:
         return None
 
 
+def _clone_db_with_table_overrides(
+    source_db: "BaseDb",
+    db_data: Dict[str, Any],
+) -> Optional["BaseDb"]:
+    """Create a new ``BaseDb`` that shares ``source_db``'s engine but
+    applies the table-name overrides from ``db_data``.
+
+    Sharing the underlying SQLAlchemy engine is critical: otherwise every
+    component load would spin up its own connection pool and blow past
+    backend connection limits. This helper is used when the stored
+    config references a known db (same id) but customizes table names.
+
+    Returns ``None`` if the source db type is not recognized, so the
+    caller can fall back to a fresh ``db_from_dict`` construction.
+    """
+    overrides: Dict[str, Any] = {key: db_data[key] for key in DB_TABLE_NAME_KEYS if key in db_data}
+
+    try:
+        from agno.db.postgres import PostgresDb
+
+        if isinstance(source_db, PostgresDb):
+            return PostgresDb(
+                db_engine=source_db.db_engine,
+                db_schema=source_db.db_schema,
+                id=source_db.id,
+                **overrides,
+            )
+    except Exception as e:
+        log_error(f"Error cloning PostgresDb with table overrides: {str(e)}")
+        return None
+
+    try:
+        from agno.db.sqlite import SqliteDb
+
+        if isinstance(source_db, SqliteDb):
+            return SqliteDb(
+                db_engine=source_db.db_engine,
+                id=source_db.id,
+                **overrides,
+            )
+    except Exception as e:
+        log_error(f"Error cloning SqliteDb with table overrides: {str(e)}")
+        return None
+
+    return None
+
+
 def resolve_db_from_config(
     db_data: Dict[str, Any],
     registry: Optional["Registry"] = None,
@@ -228,9 +275,13 @@ def resolve_db_from_config(
 
     Prefers a registered db instance (for connection reuse) when the
     serialized config does not override any table names. If it does, a
-    fresh instance is built via :func:`db_from_dict` so that those
-    overrides are honored without mutating the shared registered
-    instance.
+    clone of the registered instance is returned that **shares the same
+    engine/connection pool** but carries the table-name overrides, so
+    component reloads don't proliferate engines.
+
+    Only when there is no registry match (or the registered db type is
+    unknown to the cloner) do we fall through to :func:`db_from_dict`,
+    which builds a fresh instance with its own engine.
 
     Args:
         db_data: Serialized db config dict (as produced by
@@ -252,8 +303,11 @@ def resolve_db_from_config(
             )
             if not has_table_overrides:
                 return registry_db
-            # Fall through: the stored config customizes table names, so
-            # we need a fresh instance rather than the shared registered
-            # one (which would expose default table names).
+            # Stored config customizes table names. Clone the registered
+            # db so we reuse its engine/pool and only swap table names.
+            clone = _clone_db_with_table_overrides(registry_db, db_data)
+            if clone is not None:
+                return clone
+            # Unknown db type: fall through to a fresh instance.
 
     return db_from_dict(db_data)
