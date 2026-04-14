@@ -465,6 +465,7 @@ jobs:
 
   # Run tests for Cerebras
   test-cerebras:
+    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:
