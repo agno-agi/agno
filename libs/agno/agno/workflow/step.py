@@ -993,11 +993,17 @@ class Step:
         # Set session_id to match workflow's session_id for consistent event tracking
         if hasattr(event, "session_id") and workflow_run_response.session_id:
             event.session_id = workflow_run_response.session_id
-        if hasattr(event, "step_id"):
-            event.step_id = self.step_id
-        if hasattr(event, "step_name") and self.name is not None:
-            if getattr(event, "step_name", None) is None:
-                event.step_name = self.name
+        # For nested events, preserve the inner workflow's step_id/step_name
+        if not is_nested_event:
+            if hasattr(event, "step_id"):
+                event.step_id = self.step_id
+            if hasattr(event, "step_name") and self.name is not None:
+                if getattr(event, "step_name", None) is None:
+                    event.step_name = self.name
+        else:
+            # For nested events, set parent_step_id so consumers know which outer step contains them
+            if hasattr(event, "parent_step_id"):
+                event.parent_step_id = self.step_id
         # Only set step_index if it's not already set (preserve parallel.py's tuples)
         if hasattr(event, "step_index") and step_index is not None:
             if event.step_index is None:
