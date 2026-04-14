@@ -137,7 +137,9 @@ class GmailTools(Toolkit):
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
         scopes: Optional[List[str]] = None,
-        port: Optional[int] = None,
+        # Port 0 lets the OS pick a free port — supports parallel toolkit OAuth flows
+        # and matches sheets/slides. Google's installed-app OAuth accepts any localhost port.
+        port: int = 0,
         login_hint: Optional[str] = None,
         include_html: bool = False,
         max_body_length: Optional[int] = None,
