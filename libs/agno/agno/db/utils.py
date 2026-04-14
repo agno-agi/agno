@@ -11,6 +11,31 @@ from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
     from agno.db.base import BaseDb
+    from agno.os.registry import Registry
+
+
+# Keys in a serialized db dict that correspond to table-name overrides.
+# Matches the parameters BaseDb.__init__ accepts for customizing table names.
+DB_TABLE_NAME_KEYS: frozenset = frozenset(
+    {
+        "session_table",
+        "culture_table",
+        "memory_table",
+        "metrics_table",
+        "eval_table",
+        "knowledge_table",
+        "traces_table",
+        "spans_table",
+        "versions_table",
+        "components_table",
+        "component_configs_table",
+        "component_links_table",
+        "learnings_table",
+        "schedules_table",
+        "schedule_runs_table",
+        "approvals_table",
+    }
+)
 
 
 def get_sort_value(record: Dict[str, Any], sort_by: str) -> Any:
@@ -193,3 +218,42 @@ def db_from_dict(db_data: Dict[str, Any]) -> Optional[Union["BaseDb"]]:
     else:
         log_warning(f"Unknown database type: {db_type}")
         return None
+
+
+def resolve_db_from_config(
+    db_data: Dict[str, Any],
+    registry: Optional["Registry"] = None,
+) -> Optional["BaseDb"]:
+    """Resolve a serialized db config to a concrete ``BaseDb`` instance.
+
+    Prefers a registered db instance (for connection reuse) when the
+    serialized config does not override any table names. If it does, a
+    fresh instance is built via :func:`db_from_dict` so that those
+    overrides are honored without mutating the shared registered
+    instance.
+
+    Args:
+        db_data: Serialized db config dict (as produced by
+            ``BaseDb.to_dict``). Expected to carry a ``type`` plus any
+            table-name overrides.
+        registry: Optional ``Registry`` to look up an already-constructed
+            db instance by id.
+
+    Returns:
+        A ``BaseDb`` instance, or ``None`` if reconstruction fails.
+    """
+    db_id = db_data.get("id")
+    if registry is not None and db_id:
+        registry_db = registry.get_db(db_id)
+        if registry_db is not None:
+            registry_dict = registry_db.to_dict()
+            has_table_overrides = any(
+                key in db_data and db_data[key] != registry_dict.get(key) for key in DB_TABLE_NAME_KEYS
+            )
+            if not has_table_overrides:
+                return registry_db
+            # Fall through: the stored config customizes table names, so
+            # we need a fresh instance rather than the shared registered
+            # one (which would expose default table names).
+
+    return db_from_dict(db_data)

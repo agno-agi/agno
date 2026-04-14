@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.base import ComponentType as DbComponentType
+from agno.db.utils import DB_TABLE_NAME_KEYS
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     BadRequestResponse,
@@ -68,13 +69,15 @@ def _resolve_db_in_config(
             elif registry is not None:
                 resolved_db = registry.get_db(component_db_id)
 
-            # Merge resolved db with caller-provided fields. Caller wins so
-            # that custom table names (e.g. session_table, memory_table) are
-            # preserved instead of being clobbered by the resolved db's
-            # defaults.
+            # Merge resolved db with caller-provided table-name overrides.
+            # Connection-defining fields (type, db_url, db_file, db_schema,
+            # id, ...) always come from the resolved db so the caller can't
+            # redirect a referenced db to a different backend. Only the
+            # whitelisted table-name keys are taken from the caller.
             if resolved_db is not None:
                 resolved_dict = resolved_db.to_dict()
-                config["db"] = {**resolved_dict, **component_db}
+                table_overrides = {key: component_db[key] for key in DB_TABLE_NAME_KEYS if key in component_db}
+                config["db"] = {**resolved_dict, **table_overrides}
             else:
                 log_error(f"Could not resolve db with id: {component_db_id}")
     elif component_db is None and "db" in config:
