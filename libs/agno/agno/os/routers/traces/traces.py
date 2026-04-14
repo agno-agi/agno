@@ -6,6 +6,7 @@ from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
+from agno.os.middleware.user_scope import get_user_scoped_db
 from agno.os.routers.traces.schemas import (
     TRACE_FILTER_SCHEMA,
     FilterSchemaResponse,
@@ -26,7 +27,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db, timestamp_to_datetime
+from agno.os.utils import timestamp_to_datetime
 from agno.remote.base import RemoteDb
 from agno.utils.log import log_error
 
@@ -137,8 +138,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         """Get list of traces with optional filters and pagination"""
         import time as time_module
 
-        # Get database using db_id or default to first available
-        db = await get_db(dbs, db_id)
+        # Get database scoped to the authenticated user (if JWT user_id is present).
+        # This ensures users can only see their own traces.
+        db = await get_user_scoped_db(request, dbs, db_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -354,8 +356,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query trace from"),
     ):
         """Get detailed trace with hierarchical span tree, or a specific span within the trace"""
-        # Get database using db_id or default to first available
-        db = await get_db(dbs, db_id)
+        # Get database scoped to the authenticated user
+        db = await get_user_scoped_db(request, dbs, db_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -484,8 +486,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         """Get trace statistics grouped by session"""
         import time as time_module
 
-        # Get database using db_id or default to first available
-        db = await get_db(dbs, db_id)
+        # Get database scoped to the authenticated user
+        db = await get_user_scoped_db(request, dbs, db_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -623,8 +625,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         """
         import time as time_module
 
-        # Get database using db_id or default to first available
-        db = await get_db(dbs, db_id)
+        # Get database scoped to the authenticated user
+        db = await get_user_scoped_db(request, dbs, db_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
