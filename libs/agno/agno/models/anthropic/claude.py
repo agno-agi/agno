@@ -14,7 +14,6 @@ from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
-from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import (
     MCPServerConfiguration,
@@ -360,7 +359,7 @@ class Claude(Model):
 
     def get_client(self) -> AnthropicClient:
         """
-        Returns an instance of the Anthropic client.
+        Returns an instance of the Anthropic client. Caches the client to avoid recreating it on every request.
         """
         if self.client and not self.client.is_closed():
             return self.client
@@ -370,18 +369,17 @@ class Claude(Model):
             if isinstance(self.http_client, httpx.Client):
                 _client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
-                # Use global sync client when user http_client is invalid
-                _client_params["http_client"] = get_default_sync_client()
-        else:
-            # Use global sync client when no custom http_client is provided
-            _client_params["http_client"] = get_default_sync_client()
+                log_warning("http_client is not an instance of httpx.Client. Ignoring and using Anthropic SDK default.")
+        # When no custom http_client is provided, let the Anthropic SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
         self.client = AnthropicClient(**_client_params)
         return self.client
 
     def get_async_client(self) -> AsyncAnthropicClient:
         """
-        Returns an instance of the async Anthropic client.
+        Returns an instance of the async Anthropic client. Caches the client to avoid recreating it on every request.
         """
         if self.async_client and not self.async_client.is_closed():
             return self.async_client
@@ -392,13 +390,12 @@ class Claude(Model):
                 _client_params["http_client"] = self.http_client
             else:
                 log_warning(
-                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                    "http_client is not an instance of httpx.AsyncClient. Ignoring and using Anthropic SDK default."
                 )
-                # Use global async client when user http_client is invalid
-                _client_params["http_client"] = get_default_async_client()
-        else:
-            # Use global async client when no custom http_client is provided
-            _client_params["http_client"] = get_default_async_client()
+        # When no custom http_client is provided, let the Anthropic SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
         self.async_client = AsyncAnthropicClient(**_client_params)
         return self.async_client
 
