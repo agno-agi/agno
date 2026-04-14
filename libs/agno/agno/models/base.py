@@ -596,7 +596,7 @@ class Model(ABC):
                 # If a dict is passed, it is a builtin tool
                 _tool_dicts.append(tool)
         # Deterministic ordering so prompt caching gets consistent cache hits.
-        _tool_dicts.sort(key=lambda t: t.get("function", {}).get("name", "") or t.get("name", ""))
+        _tool_dicts.sort(key=lambda t: str(t.get("function", {}).get("name", "") or t.get("name", "")))
         return _tool_dicts
 
     def _ensure_message_metrics_initialized(self, assistant_message: Message) -> None:
