@@ -438,7 +438,7 @@ class TestRegenerateSessionPersistence:
         assert captured_sessions[0][0][1] == RunStatus.regenerated
 
     def test_async_regenerate_saves_session_before_continue(self, monkeypatch: pytest.MonkeyPatch):
-        """aregenerate_dispatch (sync DB path) must persist session before _acontinue_run re-reads."""
+        """aregenerate_dispatch must persist session before _acontinue_run re-reads."""
         agent = Agent(name="test")
         old_run = _make_run(
             messages=[
@@ -450,13 +450,16 @@ class TestRegenerateSessionPersistence:
         session = _make_session(runs=[old_run])
 
         # Patch deps for aregenerate_dispatch
-        monkeypatch.setattr(_init, "has_async_db", lambda a: False)
         monkeypatch.setattr(_init, "set_default_model", lambda a: None)
         monkeypatch.setattr(_storage, "update_metadata", lambda a, session=None: None)
         monkeypatch.setattr(
             _storage, "load_session_state", lambda a, session=None, session_state=None: session_state or {}
         )
-        monkeypatch.setattr(_storage, "read_or_create_session", lambda a, session_id=None, user_id=None: session)
+
+        async def mock_aread(a, session_id=None, user_id=None):
+            return session
+
+        monkeypatch.setattr(_storage, "aread_or_create_session", mock_aread)
         monkeypatch.setattr(_response, "get_response_format", lambda a, run_context=None: None)
         monkeypatch.setattr(
             _run,
@@ -481,11 +484,11 @@ class TestRegenerateSessionPersistence:
         call_order: list = []
         saved_run_counts: list = []
 
-        def tracking_save(agent_arg, session=None):
+        async def tracking_save(agent_arg, session=None):
             call_order.append("save_session")
             saved_run_counts.append(len(session.runs) if session and session.runs else 0)
 
-        monkeypatch.setattr(_session, "save_session", tracking_save)
+        monkeypatch.setattr(_session, "asave_session", tracking_save)
 
         # Mock _acontinue_run as an async function
         result_run = RunOutput(run_id="new-run", session_id="sess-1")
@@ -509,7 +512,7 @@ class TestRegenerateSessionPersistence:
         assert saved_run_counts[0] == 0
 
     def test_async_regenerate_stream_saves_session_before_continue(self, monkeypatch: pytest.MonkeyPatch):
-        """aregenerate_dispatch (sync DB, stream=True) must persist session before _acontinue_run_stream re-reads."""
+        """aregenerate_dispatch (stream=True) must persist session before _acontinue_run_stream re-reads."""
         agent = Agent(name="test")
         old_run = _make_run(
             messages=[
@@ -520,13 +523,16 @@ class TestRegenerateSessionPersistence:
         )
         session = _make_session(runs=[old_run])
 
-        monkeypatch.setattr(_init, "has_async_db", lambda a: False)
         monkeypatch.setattr(_init, "set_default_model", lambda a: None)
         monkeypatch.setattr(_storage, "update_metadata", lambda a, session=None: None)
         monkeypatch.setattr(
             _storage, "load_session_state", lambda a, session=None, session_state=None: session_state or {}
         )
-        monkeypatch.setattr(_storage, "read_or_create_session", lambda a, session_id=None, user_id=None: session)
+
+        async def mock_aread(a, session_id=None, user_id=None):
+            return session
+
+        monkeypatch.setattr(_storage, "aread_or_create_session", mock_aread)
         monkeypatch.setattr(_response, "get_response_format", lambda a, run_context=None: None)
         monkeypatch.setattr(
             _run,
@@ -550,11 +556,11 @@ class TestRegenerateSessionPersistence:
         call_order: list = []
         saved_run_counts: list = []
 
-        def tracking_save(agent_arg, session=None):
+        async def tracking_save(agent_arg, session=None):
             call_order.append("save_session")
             saved_run_counts.append(len(session.runs) if session and session.runs else 0)
 
-        monkeypatch.setattr(_session, "save_session", tracking_save)
+        monkeypatch.setattr(_session, "asave_session", tracking_save)
 
         # Mock _acontinue_run_stream as an async generator
         async def mock_acontinue_run_stream(*args, **kwargs):
@@ -591,13 +597,16 @@ class TestRegenerateSessionPersistence:
         )
         session = _make_session(runs=[old_run])
 
-        monkeypatch.setattr(_init, "has_async_db", lambda a: False)
         monkeypatch.setattr(_init, "set_default_model", lambda a: None)
         monkeypatch.setattr(_storage, "update_metadata", lambda a, session=None: None)
         monkeypatch.setattr(
             _storage, "load_session_state", lambda a, session=None, session_state=None: session_state or {}
         )
-        monkeypatch.setattr(_storage, "read_or_create_session", lambda a, session_id=None, user_id=None: session)
+
+        async def mock_aread(a, session_id=None, user_id=None):
+            return session
+
+        monkeypatch.setattr(_storage, "aread_or_create_session", mock_aread)
         monkeypatch.setattr(_response, "get_response_format", lambda a, run_context=None: None)
         monkeypatch.setattr(
             _run,
@@ -620,11 +629,11 @@ class TestRegenerateSessionPersistence:
 
         saved_statuses: list = []
 
-        def tracking_save(agent_arg, session=None):
+        async def tracking_save(agent_arg, session=None):
             if session and session.runs:
                 saved_statuses.append([(r.run_id, r.status) for r in session.runs])
 
-        monkeypatch.setattr(_session, "save_session", tracking_save)
+        monkeypatch.setattr(_session, "asave_session", tracking_save)
 
         result_run = RunOutput(run_id="new-run", session_id="sess-1")
         result_run.content = "regenerated"
