@@ -1605,15 +1605,21 @@ class Workflow:
         # Set session_id to match workflow's session_id for consistent event tracking
         if hasattr(event, "session_id") and workflow_run_response.session_id:
             event.session_id = workflow_run_response.session_id
-        if hasattr(event, "step_id") and step_id:
-            event.step_id = step_id
-        if hasattr(event, "step_name") and step_name is not None:
-            if event.step_name is None:
-                event.step_name = step_name
-        # Only set step_index if it's not already set (preserve parallel.py's tuples)
-        if hasattr(event, "step_index") and step_index is not None:
-            if event.step_index is None:
-                event.step_index = step_index
+        # For nested events, preserve the inner workflow's step_id/step_name/step_index.
+        # Set parent_step_id so consumers know which outer step contains them.
+        if not is_nested_event:
+            if hasattr(event, "step_id") and step_id:
+                event.step_id = step_id
+            if hasattr(event, "step_name") and step_name is not None:
+                if event.step_name is None:
+                    event.step_name = step_name
+            # Only set step_index if it's not already set (preserve parallel.py's tuples)
+            if hasattr(event, "step_index") and step_index is not None:
+                if event.step_index is None:
+                    event.step_index = step_index
+        else:
+            if hasattr(event, "parent_step_id") and step_id:
+                event.parent_step_id = step_id
 
         return event
 
@@ -8420,6 +8426,8 @@ class Workflow:
                 step_kwargs["agent"] = step.agent.deep_copy() if hasattr(step.agent, "deep_copy") else step.agent
             if step.team:
                 step_kwargs["team"] = step.team.deep_copy() if hasattr(step.team, "deep_copy") else step.team
+            if step.workflow:
+                step_kwargs["workflow"] = step.workflow.deep_copy() if hasattr(step.workflow, "deep_copy") else step.workflow
             # Copy Step configuration attributes
             for attr in [
                 "max_retries",
@@ -8443,6 +8451,10 @@ class Workflow:
         # Handle direct Team
         if isinstance(step, Team):
             return step.deep_copy() if hasattr(step, "deep_copy") else step
+
+        # Handle direct Workflow (auto-wrapped as a step)
+        if isinstance(step, Workflow):
+            return step.deep_copy()
 
         # Handle Parallel steps
         if isinstance(step, Parallel):
