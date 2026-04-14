@@ -19,20 +19,20 @@ import time
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.workflow.step import Step
 from agno.workflow.types import HumanReview, OnTimeout
 from agno.workflow.workflow import Workflow
 
 draft_agent = Agent(
     name="Drafter",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You draft short professional emails. Keep it under 3 sentences.",
 )
 
 send_agent = Agent(
     name="Sender",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You confirm sending the email. Summarize what was sent.",
 )
 

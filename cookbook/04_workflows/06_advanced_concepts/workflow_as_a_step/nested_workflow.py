@@ -12,7 +12,7 @@ In this example:
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
@@ -32,7 +32,7 @@ def create_summary(step_input: StepInput) -> StepOutput:
 # Create a simple inner workflow that does research
 research_agent = Agent(
     name="Research Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You are a research assistant. Provide concise, factual information.",
 )
 
@@ -48,7 +48,7 @@ inner_workflow = Workflow(
 # Create the outer workflow that uses the inner workflow as a step
 writer_agent = Agent(
     name="Writer Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You are a professional writer. Take the research provided and write a polished article.",
 )
 

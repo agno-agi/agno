@@ -57,8 +57,9 @@ class TeamSession:
             return None
 
         summary = data.get("summary")
+        summary_obj = summary
         if summary is not None and isinstance(summary, dict):
-            data["summary"] = SessionSummary.from_dict(data["summary"])  # type: ignore
+            summary_obj = SessionSummary.from_dict(summary)
 
         runs = data.get("runs")
         serialized_runs: List[Union[TeamRunOutput, RunOutput]] = []
@@ -80,7 +81,7 @@ class TeamSession:
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
             runs=serialized_runs,
-            summary=data.get("summary"),
+            summary=summary_obj,
         )
 
     def get_run(self, run_id: str) -> Optional[Union[TeamRunOutput, RunOutput]]:
