@@ -179,12 +179,19 @@ def fetch_with_retry(
     max_retries: int = DEFAULT_MAX_RETRIES,
     backoff_factor: int = DEFAULT_BACKOFF_FACTOR,
     proxy: Optional[str] = None,
+    timeout: Optional[int] = None,
+    follow_redirects: Optional[bool] = None,
 ) -> httpx.Response:
     """Synchronous HTTP GET with retry logic."""
 
     for attempt in range(max_retries):
         try:
-            response = httpx.get(url, proxy=proxy) if proxy else httpx.get(url)
+            kwargs: dict = {"proxy": proxy}
+            if timeout is not None:
+                kwargs["timeout"] = timeout
+            if follow_redirects is not None:
+                kwargs["follow_redirects"] = follow_redirects
+            response = httpx.get(url, **kwargs)
             response.raise_for_status()
             return response
         except httpx.RequestError as e:
@@ -198,7 +205,7 @@ def fetch_with_retry(
             logger.exception(f"HTTP error for {url}: {e.response.status_code} - {e.response.text}")
             raise
 
-    raise httpx.RequestError(f"Failed to fetch {url} after {max_retries} attempts")
+    raise httpx.RequestError(f"Failed to fetch {url} after {max_retries} attempts")  # type: ignore[call-arg]
 
 
 async def async_fetch_with_retry(
@@ -207,16 +214,23 @@ async def async_fetch_with_retry(
     max_retries: int = DEFAULT_MAX_RETRIES,
     backoff_factor: int = DEFAULT_BACKOFF_FACTOR,
     proxy: Optional[str] = None,
+    timeout: Optional[int] = None,
+    follow_redirects: Optional[bool] = None,
 ) -> httpx.Response:
     """Asynchronous HTTP GET with retry logic."""
 
     async def _fetch():
+        kwargs: dict = {}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        if follow_redirects is not None:
+            kwargs["follow_redirects"] = follow_redirects
+
         if client is None:
-            client_args = {"proxy": proxy} if proxy else {}
-            async with httpx.AsyncClient(**client_args) as local_client:  # type: ignore
-                return await local_client.get(url)
+            async with httpx.AsyncClient(proxy=proxy) as local_client:
+                return await local_client.get(url, **kwargs)
         else:
-            return await client.get(url)
+            return await client.get(url, **kwargs)
 
     for attempt in range(max_retries):
         try:
@@ -234,4 +248,4 @@ async def async_fetch_with_retry(
             logger.exception(f"HTTP error for {url}: {e.response.status_code} - {e.response.text}")
             raise
 
-    raise httpx.RequestError(f"Failed to fetch {url} after {max_retries} attempts")
+    raise httpx.RequestError(f"Failed to fetch {url} after {max_retries} attempts")  # type: ignore[call-arg]
