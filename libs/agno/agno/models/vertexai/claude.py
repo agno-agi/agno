@@ -180,9 +180,7 @@ class Claude(AnthropicClaude):
         if tools:
             request_kwargs["tools"] = format_tools_for_model(tools)
 
-        # Add cache_control to the last tool when cache_tools is enabled
-        if self.cache_tools and "tools" in request_kwargs and request_kwargs["tools"]:
-            request_kwargs["tools"][-1]["cache_control"] = {"type": "ephemeral"}
+        self._apply_cache_tools(request_kwargs)
 
         if request_kwargs:
             log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)

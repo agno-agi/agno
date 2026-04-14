@@ -510,6 +510,12 @@ def format_messages(
         merged_messages.append({"role": "user", "content": [{"type": "text", "text": trailing_user_message_content}]})
 
     if system_blocks is not None:
+        if system_messages:
+            log_warning(
+                "Both system_prompt_blocks and plain system messages are present. "
+                "Plain system messages will be dropped. Consolidate all system "
+                "content into SystemPromptBlock entries to avoid silent content loss."
+            )
         return merged_messages, system_blocks
     return merged_messages, " ".join(system_messages)
 

@@ -116,7 +116,7 @@ class Claude(Model):
     top_k: Optional[int] = None
     cache_system_prompt: Optional[bool] = False
     extended_cache_time: Optional[bool] = False
-    cache_tools: Optional[bool] = False
+    cache_tools: bool = False
     request_params: Optional[Dict[str, Any]] = None
 
     # Anthropic beta and experimental features
@@ -545,6 +545,11 @@ class Claude(Model):
                 return container_id
         return None
 
+    def _apply_cache_tools(self, request_kwargs: Dict[str, Any]) -> None:
+        """Tag the last tool with cache_control when cache_tools is enabled."""
+        if self.cache_tools and "tools" in request_kwargs and request_kwargs["tools"]:
+            request_kwargs["tools"][-1]["cache_control"] = {"type": "ephemeral"}
+
     def _prepare_request_kwargs(
         self,
         system_message: Union[str, List[SystemPromptBlock]],
@@ -598,9 +603,7 @@ class Claude(Model):
         if tools:
             request_kwargs["tools"] = format_tools_for_model(tools)
 
-        # Add cache_control to the last tool when cache_tools is enabled
-        if self.cache_tools and "tools" in request_kwargs and request_kwargs["tools"]:
-            request_kwargs["tools"][-1]["cache_control"] = {"type": "ephemeral"}
+        self._apply_cache_tools(request_kwargs)
 
         # Build output_format if response_format is provided
         output_format = self._build_output_format(response_format)
