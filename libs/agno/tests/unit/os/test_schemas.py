@@ -2,6 +2,11 @@
 
 import json
 
+import pytest
+
+from agno.agent import Agent
+from agno.knowledge import Knowledge
+from agno.os.routers.agents.schema import AgentResponse
 from agno.os.routers.memory.schemas import UserMemorySchema
 
 
@@ -54,3 +59,53 @@ def test_user_memory_schema_complex_memory_content():
     assert user_memory_schema is not None
     assert json.loads(user_memory_schema.memory) == complex_content
     assert user_memory_schema.user_id == "456"
+
+
+class _FakeDb:
+    """Minimal stand-in for a BaseDb with configurable table names."""
+
+    def __init__(self, id="fake", knowledge_table="agno_knowledge"):
+        self.id = id
+        self.session_table_name = "agno_sessions"
+        self.knowledge_table_name = knowledge_table
+        self.memory_table_name = "agno_memory"
+
+
+@pytest.mark.asyncio
+async def test_knowledge_table_from_contents_db():
+    """knowledge_table should reflect knowledge.contents_db, not agent.db."""
+    knowledge = Knowledge(
+        name="Test Knowledge",
+        contents_db=_FakeDb(id="custom-db", knowledge_table="custom_knowledge_table"),  # type: ignore[arg-type]
+    )
+    agent = Agent(name="test-agent", knowledge=knowledge, search_knowledge=True)
+    agent.db = _FakeDb(id="agent-db", knowledge_table="agno_knowledge")  # type: ignore[arg-type]
+
+    resp = await AgentResponse.from_agent(agent)
+
+    assert resp.knowledge is not None
+    assert resp.knowledge["knowledge_table"] == "custom_knowledge_table"
+
+
+@pytest.mark.asyncio
+async def test_knowledge_table_fallback_to_agent_db():
+    """When knowledge.contents_db is None, fall back to agent.db."""
+    knowledge = Knowledge(name="Test Knowledge")
+    agent = Agent(name="test-agent", knowledge=knowledge, search_knowledge=True)
+    agent.db = _FakeDb(id="agent-db", knowledge_table="agent_level_table")  # type: ignore[arg-type]
+
+    resp = await AgentResponse.from_agent(agent)
+
+    assert resp.knowledge is not None
+    assert resp.knowledge["knowledge_table"] == "agent_level_table"
+
+
+@pytest.mark.asyncio
+async def test_knowledge_table_none_when_no_knowledge():
+    """No knowledge_table when agent has no knowledge."""
+    agent = Agent(name="test-agent")
+
+    resp = await AgentResponse.from_agent(agent)
+
+    if resp.knowledge is not None:
+        assert resp.knowledge.get("knowledge_table") is None

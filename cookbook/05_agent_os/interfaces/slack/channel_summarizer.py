@@ -13,7 +13,7 @@ Key concepts:
   - ``num_history_runs=5`` includes the last 5 exchanges for context.
 
 Slack scopes: app_mentions:read, assistant:write, chat:write, im:history,
-             channels:history, search:read, users:read
+             channels:history, channels:read, search:read, users:read
 """
 
 from agno.agent import Agent
@@ -42,13 +42,16 @@ summarizer = Agent(
     ],
     instructions=[
         "You summarize Slack channel activity.",
+        "Your context includes the Slack channel_id and thread_ts you are responding in.",
+        "When asked to summarize 'this channel', use the channel_id from your context.",
         "When asked about a channel:",
-        "1. Get recent message history",
-        "2. Identify active threads and expand them",
-        "3. Group messages by topic/theme",
-        "4. Highlight decisions, action items, and blockers",
+        "1. Use get_channel_history with the channel_id to fetch recent messages",
+        "2. Look for messages with thread_ts and reply_count > 0 — these have threaded replies",
+        "3. Use get_thread with the channel_id and thread_ts to expand important threads",
+        "4. Group messages by topic/theme",
+        "5. Highlight decisions, action items, and blockers",
         "Format summaries with clear sections:",
-        "- Key Discussions",
+        "- Key Discussions (include expanded thread context)",
         "- Decisions Made",
         "- Action Items",
         "- Questions/Blockers",

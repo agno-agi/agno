@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
 from agno.media import Audio, File, Image, Video
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
 
 
 def task_id(agent_name: Optional[str], base_id: str) -> str:
@@ -40,6 +40,20 @@ def should_respond(event: dict, reply_to_mentions_only: bool) -> bool:
     return True
 
 
+def build_run_metadata(
+    display_name: Optional[str],
+    resolved_user_id: str,
+    ctx: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    metadata: Dict[str, Any] = {}
+    if display_name:
+        metadata["user_name"] = display_name
+        metadata["user_id"] = resolved_user_id
+    if ctx.get("action_token"):
+        metadata["action_token"] = ctx["action_token"]
+    return metadata or None
+
+
 def extract_event_context(event: dict) -> Dict[str, Any]:
     return {
         "message_text": event.get("text", ""),
@@ -47,7 +61,63 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
         "user": event.get("user", ""),
         # Prefer existing thread; fall back to message ts for new conversations
         "thread_id": event.get("thread_ts") or event.get("ts", ""),
+        # User-scoped token for assistant.search.context workspace search
+        "action_token": event.get("assistant_thread", {}).get("action_token"),
     }
+
+
+def strip_bot_mention(text: str, bot_user_id: Optional[str]) -> str:
+    """Remove the bot's own @mention from message text.
+
+    Slack encodes mentions as ``<@U123>``. When a user @-mentions the bot,
+    the agent shouldn't see its own ID in the text — it just adds noise and
+    causes the model to echo back the raw mention tag.
+
+    Only strips the *bot's* mention; other users' mentions are preserved.
+    """
+    if not bot_user_id or not text:
+        return text
+    import re
+
+    # Replace the mention and any surrounding whitespace with a single space,
+    # then strip leading/trailing whitespace left at the edges.
+    return re.sub(rf"\s*<@{re.escape(bot_user_id)}>\s*", " ", text).strip()
+
+
+async def resolve_slack_user(async_client: Any, slack_user_id: str) -> Tuple[str, Optional[str]]:
+    """Resolve a Slack user ID to (canonical_user_id, display_name).
+
+    Returns the user's email as canonical_user_id if available, otherwise
+    falls back to the raw Slack user ID. Display name is best-effort.
+    """
+    try:
+        resp = await async_client.users_info(user=slack_user_id)
+        user = resp.get("user", {}) if resp else {}
+        profile = user.get("profile", {})
+
+        email = profile.get("email")
+        resolved_id = email if email else slack_user_id
+
+        display_name = profile.get("display_name") or profile.get("real_name") or user.get("name") or None
+        if display_name is not None and not display_name.strip():
+            display_name = None
+
+        return (resolved_id, display_name)
+    except Exception as e:
+        log_warning(f"Failed to resolve Slack user {slack_user_id}: {str(e)}")
+        return (slack_user_id, None)
+
+
+async def resolve_channel_name(async_client: Any, channel_id: str) -> Optional[str]:
+    """Resolve a Slack channel ID to its human-readable name."""
+    try:
+        resp = await async_client.conversations_info(channel=channel_id)
+        channel = resp.get("channel", {}) if resp else {}
+        # API returns "" for unnamed channels; normalize to None
+        return channel.get("name") or None
+    except Exception as e:
+        log_warning(f"Failed to resolve channel name for {channel_id}: {str(e)}")
+        return None
 
 
 async def download_event_files_async(
@@ -98,7 +168,7 @@ async def download_event_files_async(
                     safe_mime = mimetype if mimetype in File.valid_mime_types() else None
                     files.append(File(content=file_content, filename=filename, mime_type=safe_mime))
             except Exception as e:
-                log_error(f"Failed to download file {file_id}: {e}")
+                log_error(f"Failed to download file {file_id}: {str(e)}")
 
     return files, images, videos, audio, skipped
 
@@ -125,7 +195,7 @@ async def upload_response_media_async(async_client: Any, response: Any, channel_
                         thread_ts=thread_ts,
                     )
                 except Exception as e:
-                    log_error(f"Failed to upload {attr.rstrip('s')}: {e}")
+                    log_error(f"Failed to upload {attr.rstrip('s')}: {str(e)}")
 
 
 async def send_slack_message_async(

@@ -1,3 +1,4 @@
+import asyncio
 from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union
 from uuid import uuid4
 
@@ -98,7 +99,9 @@ async def team_response_streamer(
         )
         yield format_sse_event(error_response)
 
-    except BaseException as e:
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
         import traceback
 
         traceback.print_exc()
@@ -236,15 +239,15 @@ def get_team_router(
                     try:
                         base64_image = process_image(file)
                         base64_images.append(base64_image)
-                    except Exception as e:
-                        logger.error(f"Error processing image {file.filename}: {e}")
+                    except Exception:
+                        logger.exception(f"Error processing image {file.filename}")
                         continue
                 elif file.content_type in ["audio/wav", "audio/mp3", "audio/mpeg"]:
                     try:
                         base64_audio = process_audio(file)
                         base64_audios.append(base64_audio)
-                    except Exception as e:
-                        logger.error(f"Error processing audio {file.filename}: {e}")
+                    except Exception:
+                        logger.exception(f"Error processing audio {file.filename}")
                         continue
                 elif file.content_type in [
                     "video/x-flv",
@@ -262,13 +265,14 @@ def get_team_router(
                     try:
                         base64_video = process_video(file)
                         base64_videos.append(base64_video)
-                    except Exception as e:
-                        logger.error(f"Error processing video {file.filename}: {e}")
+                    except Exception:
+                        logger.exception(f"Error processing video {file.filename}")
                         continue
                 elif file.content_type in [
                     "application/pdf",
                     "text/csv",
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "application/vnd.ms-outlook",
                     "text/plain",
                     "application/json",
                 ]:

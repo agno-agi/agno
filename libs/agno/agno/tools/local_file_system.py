@@ -3,7 +3,7 @@ from typing import Optional
 from uuid import uuid4
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error
 
 
 class LocalFileSystemTools(Toolkit):
@@ -77,7 +77,7 @@ class LocalFileSystemTools(Toolkit):
 
         except Exception as e:
             error_msg = f"Failed to write file: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return f"Error: {error_msg}"
 
     def read_file(self, filename: str, directory: Optional[str] = None) -> str:
