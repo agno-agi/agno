@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union, cast
 from uuid import uuid4
@@ -103,6 +104,8 @@ async def agent_response_streamer(
             additional_data=e.additional_data,
         )
         yield format_sse_event(error_response)
+    except asyncio.CancelledError:
+        return
     except Exception as e:
         import traceback
 
@@ -149,6 +152,8 @@ async def agent_continue_response_streamer(
         )
         yield format_sse_event(error_response)
 
+    except asyncio.CancelledError:
+        return
     except Exception as e:
         import traceback
 
