@@ -21,6 +21,7 @@ Usage:
     >>> stmt = select(table).where(where_clause)
 """
 
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Set
 
 # Maximum recursion depth for nested filter expressions (prevents stack overflow attacks)
@@ -42,6 +43,29 @@ TRACE_COLUMNS: Set[str] = {
     "workflow_id",
     "created_at",
 }
+
+# Columns that store ISO 8601 datetime strings in UTC.
+# Filter values for these columns are normalized to UTC before comparison
+# so that timezone-aware inputs (e.g. "+05:30") compare correctly against
+# the stored UTC strings via lexicographic ordering.
+DATETIME_COLUMNS: Set[str] = {"start_time", "end_time", "created_at"}
+
+
+def _normalize_datetime_value(value: Any) -> str:
+    """Parse an ISO 8601 string and return it in UTC for consistent comparison."""
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone(timezone.utc).isoformat()
+        return value.replace(tzinfo=timezone.utc).isoformat()
+    if isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if dt.tzinfo is not None:
+                return dt.astimezone(timezone.utc).isoformat()
+            return dt.replace(tzinfo=timezone.utc).isoformat()
+        except ValueError:
+            pass
+    return value
 
 
 def filter_expr_to_sqlalchemy(
@@ -89,6 +113,11 @@ def filter_expr_to_sqlalchemy(
         if allowed_columns and key not in allowed_columns:
             raise ValueError(f"Invalid filter field: '{key}'. Allowed: {sorted(allowed_columns)}")
 
+        # Normalize timezone-aware datetime strings to UTC so that
+        # lexicographic comparison against stored UTC values is correct.
+        if key in DATETIME_COLUMNS:
+            value = _normalize_datetime_value(value)
+
         col = table.c[key]
 
         if op == "EQ":
@@ -119,6 +148,9 @@ def filter_expr_to_sqlalchemy(
 
         if allowed_columns and key not in allowed_columns:
             raise ValueError(f"Invalid filter field: '{key}'. Allowed: {sorted(allowed_columns)}")
+
+        if key in DATETIME_COLUMNS:
+            values = [_normalize_datetime_value(v) for v in values]
 
         return table.c[key].in_(values)
 
