@@ -304,6 +304,29 @@ class Qdrant(VectorDb):
             )
             return len(scroll_result[0]) > 0
         return False
+    def _get_sparse_vector(self, text: str):
+        """
+        Return a sparse vector for the given text.
+
+        Priority:
+        1. Native sparse embeddings from the configured embedder
+        2. FastEmbed sparse encoder fallback
+        """
+        if not text:
+            return None
+
+        # Prefer native sparse embeddings from the configured embedder
+        if self.embedder is not None and hasattr(self.embedder, "get_sparse_embedding"):
+            sparse_vector = self.embedder.get_sparse_embedding(text)
+            if sparse_vector is not None:
+                return sparse_vector
+
+        # Fallback to FastEmbed sparse encoder, if available
+        if getattr(self, "sparse_encoder", None) is not None:
+            sparse_vectors = list(self.sparse_encoder.embed([text]))
+            if sparse_vectors:
+                return sparse_vectors[0]
+        return None
 
     def insert(
         self,
