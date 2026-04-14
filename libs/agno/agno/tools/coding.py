@@ -56,54 +56,66 @@ class CodingTools(Toolkit):
         "cut",
     ]
 
-    DEFAULT_INSTRUCTIONS = dedent("""\
-        You have access to coding tools: read_file, edit_file, write_file, and run_shell.
-        With these tools, you can perform any coding task including reading code, making edits,
-        creating files, running tests, using git, installing packages, and searching codebases.
+    # Per-tool instruction blocks — composed dynamically based on enabled tools.
+    _TOOL_INSTRUCTIONS = {
+        "read_file": dedent("""\
+            **read_file** - Read files with line numbers. Use offset and limit to paginate large files.
+            - Always read a file before editing it to understand its current contents.
+            - Use the line numbers in the output to understand the file structure."""),
+        "edit_file": dedent("""\
+            **edit_file** - Make precise edits using exact text matching (find and replace).
+            - The old_text must match exactly one location in the file, including whitespace and indentation.
+            - Include enough surrounding context in old_text to ensure a unique match.
+            - Prefer small, focused edits over rewriting entire files.
+            - If an edit fails due to multiple matches, include more surrounding lines in old_text."""),
+        "write_file": dedent("""\
+            **write_file** - Create new files or overwrite existing ones entirely.
+            - Use this for creating new files. For modifying existing files, prefer edit_file.
+            - Parent directories are created automatically."""),
+        "run_shell": dedent("""\
+            **run_shell** - Execute shell commands with timeout protection.
+            - Use this for: running tests, git operations, installing packages, searching files (grep/find),
+              checking system state, compiling code, and any other command-line task.
+            - Commands run from the base directory.
+            - Output is truncated if too long; the full output is saved to a temp file."""),
+        "grep": dedent("""\
+            **grep** - Search file contents for a pattern with line numbers.
+            - Use for finding code patterns, function definitions, imports, etc.
+            - Supports regex patterns and case-insensitive search.
+            - Use the include parameter to filter by file type (e.g. "*.py")."""),
+        "find": dedent("""\
+            **find** - Search for files by glob pattern.
+            - Use for discovering files in the project structure.
+            - Supports recursive patterns like "**/*.py"."""),
+        "ls": dedent("""\
+            **ls** - List directory contents.
+            - Use for quick directory exploration.
+            - Directories are shown with a trailing /."""),
+    }
 
-        ## Tool Usage Guidelines
+    @classmethod
+    def _build_instructions(cls, tool_names: List[str]) -> str:
+        """Build instructions string for only the enabled tools."""
+        preamble = (
+            f"You have access to coding tools: {', '.join(tool_names)}.\n"
+            "With these tools, you can perform any coding task including reading code, making edits,\n"
+            "creating files, running tests, using git, installing packages, and searching codebases."
+        )
 
-        **read_file** - Read files with line numbers. Use offset and limit to paginate large files.
-        - Always read a file before editing it to understand its current contents.
-        - Use the line numbers in the output to understand the file structure.
+        sections = [cls._TOOL_INSTRUCTIONS[name] for name in tool_names if name in cls._TOOL_INSTRUCTIONS]
 
-        **edit_file** - Make precise edits using exact text matching (find and replace).
-        - The old_text must match exactly one location in the file, including whitespace and indentation.
-        - Include enough surrounding context in old_text to ensure a unique match.
-        - Prefer small, focused edits over rewriting entire files.
-        - If an edit fails due to multiple matches, include more surrounding lines in old_text.
+        best_practices = []
+        if "read_file" in tool_names and "edit_file" in tool_names:
+            best_practices.append("- Read before editing: always read_file before edit_file to see current contents.")
+        if "edit_file" in tool_names:
+            best_practices.append("- Make small, incremental edits rather than rewriting entire files.")
+        if "run_shell" in tool_names:
+            best_practices.append("- Run tests after making changes to verify correctness.")
 
-        **write_file** - Create new files or overwrite existing ones entirely.
-        - Use this for creating new files. For modifying existing files, prefer edit_file.
-        - Parent directories are created automatically.
-
-        **run_shell** - Execute shell commands with timeout protection.
-        - Use this for: running tests, git operations, installing packages, searching files (grep/find),
-          checking system state, compiling code, and any other command-line task.
-        - Commands run from the base directory.
-        - Output is truncated if too long; the full output is saved to a temp file.
-
-        ## Best Practices
-        - Read before editing: always read_file before edit_file to see current contents.
-        - Make small, incremental edits rather than rewriting entire files.
-        - Run tests after making changes to verify correctness.\
-    """)
-
-    EXPLORATION_INSTRUCTIONS = dedent("""\
-
-        **grep** - Search file contents for a pattern with line numbers.
-        - Use for finding code patterns, function definitions, imports, etc.
-        - Supports regex patterns and case-insensitive search.
-        - Use the include parameter to filter by file type (e.g. "*.py").
-
-        **find** - Search for files by glob pattern.
-        - Use for discovering files in the project structure.
-        - Supports recursive patterns like "**/*.py".
-
-        **ls** - List directory contents.
-        - Use for quick directory exploration.
-        - Directories are shown with a trailing /.\
-    """)
+        result = preamble + "\n\n## Tool Usage Guidelines\n\n" + "\n\n".join(sections)
+        if best_practices:
+            result += "\n\n## Best Practices\n" + "\n".join(best_practices)
+        return result
 
     def __init__(
         self,
@@ -160,30 +172,30 @@ class CodingTools(Toolkit):
 
         atexit.register(self._cleanup_temp_files)
 
-        has_exploration = all or enable_grep or enable_find or enable_ls
+        # Build the list of enabled tools (used for both registration and instructions)
+        _enabled: List[tuple] = []
+        if all or enable_read_file:
+            _enabled.append(("read_file", self.read_file))
+        if all or enable_edit_file:
+            _enabled.append(("edit_file", self.edit_file))
+        if all or enable_write_file:
+            _enabled.append(("write_file", self.write_file))
+        if all or enable_run_shell:
+            _enabled.append(("run_shell", self.run_shell))
+        if all or enable_grep:
+            _enabled.append(("grep", self.grep))
+        if all or enable_find:
+            _enabled.append(("find", self.find))
+        if all or enable_ls:
+            _enabled.append(("ls", self.ls))
+
+        tool_names = [name for name, _ in _enabled]
+        tools = [fn for _, fn in _enabled]
 
         if instructions is None:
-            resolved_instructions = self.DEFAULT_INSTRUCTIONS
-            if has_exploration:
-                resolved_instructions += self.EXPLORATION_INSTRUCTIONS
+            resolved_instructions = self._build_instructions(tool_names)
         else:
             resolved_instructions = instructions
-
-        tools: List[Any] = []
-        if all or enable_read_file:
-            tools.append(self.read_file)
-        if all or enable_edit_file:
-            tools.append(self.edit_file)
-        if all or enable_write_file:
-            tools.append(self.write_file)
-        if all or enable_run_shell:
-            tools.append(self.run_shell)
-        if all or enable_grep:
-            tools.append(self.grep)
-        if all or enable_find:
-            tools.append(self.find)
-        if all or enable_ls:
-            tools.append(self.ls)
 
         super().__init__(
             name="coding_tools",
@@ -365,7 +377,7 @@ class CodingTools(Toolkit):
         except PermissionError:
             return f"Error: Permission denied: {file_path}"
         except Exception as e:
-            log_error(f"Error reading file: {e}")
+            log_error(f"Error reading file: {str(e)}")
             return f"Error reading file: {e}"
 
     def edit_file(self, file_path: str, old_text: str, new_text: str) -> str:
@@ -449,7 +461,7 @@ class CodingTools(Toolkit):
         except PermissionError:
             return f"Error: Permission denied: {file_path}"
         except Exception as e:
-            log_error(f"Error editing file: {e}")
+            log_error(f"Error editing file: {str(e)}")
             return f"Error editing file: {e}"
 
     def write_file(self, file_path: str, contents: str) -> str:
@@ -479,7 +491,7 @@ class CodingTools(Toolkit):
         except PermissionError:
             return f"Error: Permission denied: {file_path}"
         except Exception as e:
-            log_error(f"Error writing file: {e}")
+            log_error(f"Error writing file: {str(e)}")
             return f"Error writing file: {e}"
 
     def run_shell(self, command: str, timeout: Optional[int] = None) -> str:
@@ -543,7 +555,7 @@ class CodingTools(Toolkit):
             effective_timeout = timeout if timeout is not None else self.shell_timeout
             return f"Error: Command timed out after {effective_timeout} seconds"
         except Exception as e:
-            log_error(f"Error running shell command: {e}")
+            log_error(f"Error running shell command: {str(e)}")
             return f"Error running shell command: {e}"
 
     def grep(
@@ -633,7 +645,7 @@ class CodingTools(Toolkit):
         except FileNotFoundError:
             return "Error: grep command not found. Install grep to use this tool."
         except Exception as e:
-            log_error(f"Error running grep: {e}")
+            log_error(f"Error running grep: {str(e)}")
             return f"Error running grep: {e}"
 
     def find(self, pattern: str, path: Optional[str] = None, limit: int = 500) -> str:
@@ -689,7 +701,7 @@ class CodingTools(Toolkit):
             return result + footer
 
         except Exception as e:
-            log_error(f"Error finding files: {e}")
+            log_error(f"Error finding files: {str(e)}")
             return f"Error finding files: {e}"
 
     def ls(self, path: Optional[str] = None, limit: int = 500) -> str:
@@ -737,5 +749,5 @@ class CodingTools(Toolkit):
         except PermissionError:
             return f"Error: Permission denied: {path or '.'}"
         except Exception as e:
-            log_error(f"Error listing directory: {e}")
+            log_error(f"Error listing directory: {str(e)}")
             return f"Error listing directory: {e}"

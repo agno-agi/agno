@@ -303,8 +303,8 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 score=accuracy_agent_response.accuracy_score,
                 reason=accuracy_agent_response.accuracy_reason,
             )
-        except Exception as e:
-            logger.exception(f"Failed to evaluate accuracy: {e}")
+        except Exception:
+            logger.exception("Failed to evaluate accuracy")
             return None
 
     async def aevaluate_answer(
@@ -336,8 +336,8 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 score=accuracy_agent_response.accuracy_score,
                 reason=accuracy_agent_response.accuracy_reason,
             )
-        except Exception as e:
-            logger.exception(f"Failed to evaluate accuracy asynchronously: {e}")
+        except Exception:
+            logger.exception("Failed to evaluate accuracy asynchronously")
             return None
 
     def run(
@@ -350,11 +350,11 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             raise ValueError("run() is not supported with an async DB. Please use arun() instead.")
 
         if self.agent is None and self.team is None:
-            logger.error("You need to provide one of 'agent' or 'team' to run the evaluation.")
+            log_error("You need to provide one of 'agent' or 'team' to run the evaluation.")
             return None
 
         if self.agent is not None and self.team is not None:
-            logger.error("Provide only one of 'agent' or 'team' to run the evaluation.")
+            log_error("Provide only one of 'agent' or 'team' to run the evaluation.")
             return None
 
         from rich.console import Console
@@ -389,7 +389,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                     output = run_response.content
 
                 if not output:
-                    logger.error(f"Failed to generate a valid answer on iteration {i + 1}: {output}")
+                    log_error(f"Failed to generate a valid answer on iteration {i + 1}: {output}")
                     continue
 
                 evaluation_input = dedent(f"""\
@@ -415,7 +415,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                     run_metrics=run_response.metrics if run_response is not None else None,
                 )
                 if result is None:
-                    logger.error(f"Failed to evaluate accuracy on iteration {i + 1}")
+                    log_error(f"Failed to evaluate accuracy on iteration {i + 1}")
                     continue
 
                 self.result.results.append(result)
@@ -497,11 +497,11 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         print_results: bool = True,
     ) -> Optional[AccuracyResult]:
         if self.agent is None and self.team is None:
-            logger.error("You need to provide one of 'agent' or 'team' to run the evaluation.")
+            log_error("You need to provide one of 'agent' or 'team' to run the evaluation.")
             return None
 
         if self.agent is not None and self.team is not None:
-            logger.error("Provide only one of 'agent' or 'team' to run the evaluation.")
+            log_error("Provide only one of 'agent' or 'team' to run the evaluation.")
             return None
 
         from rich.console import Console
@@ -536,7 +536,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                     output = run_response.content
 
                 if not output:
-                    logger.error(f"Failed to generate a valid answer on iteration {i + 1}: {output}")
+                    log_error(f"Failed to generate a valid answer on iteration {i + 1}: {output}")
                     continue
 
                 evaluation_input = dedent(f"""\
@@ -562,7 +562,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                     run_metrics=run_response.metrics if run_response is not None else None,
                 )
                 if result is None:
-                    logger.error(f"Failed to evaluate accuracy on iteration {i + 1}")
+                    log_error(f"Failed to evaluate accuracy on iteration {i + 1}")
                     continue
 
                 self.result.results.append(result)

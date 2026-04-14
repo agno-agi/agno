@@ -390,7 +390,7 @@ class GoogleDriveTools(Toolkit):
         except HttpError as e:
             return json.dumps({"error": f"Google Drive API error: {e}"})
         except Exception as e:
-            log_error(f"Could not search Google Drive files: {e}")
+            log_error(f"Could not search Google Drive files: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     async def asearch_files(
@@ -465,7 +465,7 @@ class GoogleDriveTools(Toolkit):
         except HttpError as e:
             return json.dumps({"error": f"Google Drive API error: {e}"})
         except Exception as e:
-            log_error(f"Could not read Google Drive file {file_id}: {e}")
+            log_error(f"Could not read Google Drive file {file_id}: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     async def aread_file(self, file_id: str) -> str:
@@ -514,7 +514,7 @@ class GoogleDriveTools(Toolkit):
         except HttpError as e:
             return json.dumps({"error": f"Google Drive API error: {e}"})
         except Exception as e:
-            log_error(f"Could not upload file '{path}': {e}")
+            log_error(f"Could not upload file '{path}': {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     async def aupload_file(self, file_path: Union[str, Path]) -> str:
@@ -589,7 +589,7 @@ class GoogleDriveTools(Toolkit):
         except HttpError as e:
             return json.dumps({"error": f"Google Drive API error: {e}"})
         except Exception as e:
-            log_error(f"Could not download file '{file_id}': {e}")
+            log_error(f"Could not download file '{file_id}': {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     async def adownload_file(self, file_id: str, export_format: Optional[str] = None) -> str:

@@ -273,7 +273,7 @@ class MCPTools(Toolkit):
                     # Function takes no parameters
                     return header_provider()
         except Exception as e:
-            log_warning(f"Error calling header_provider: {e}")
+            log_warning(f"Error calling header_provider: {str(e)}")
             return {}
 
     async def _cleanup_stale_sessions(self) -> None:
@@ -478,8 +478,8 @@ class MCPTools(Toolkit):
 
         try:
             await self._connect()
-        except (RuntimeError, BaseException) as e:
-            log_error(f"Failed to connect to {str(self)}: {e}")
+        except (RuntimeError, BaseException):
+            log_error(f"Failed to connect to {str(self)}")
 
     async def _connect(self) -> None:
         """Connects to the MCP server and initializes the tools"""
@@ -685,9 +685,14 @@ class MCPTools(Toolkit):
                         log_debug(f"Function: {f.name} registered with {self.name}")
                     except Exception as e:
                         log_error(f"Failed to register tool {tool.name}: {e}")
+                    # Register the Function with the toolkit
+                    self.functions[f.name] = f
+                    log_debug(f"Function: {f.name} registered with {self.name}")
+                except Exception as e:
+                    log_error(f"Failed to register tool {tool.name}: {str(e)}")
 
-        except (RuntimeError, BaseException) as e:
-            log_error(f"Failed to get tools for {str(self)}: {e}")
+        except (RuntimeError, BaseException):
+            log_error(f"Failed to get tools for {str(self)}")
             raise
 
     async def _search_tools_entrypoint(self, query: str) -> str:
@@ -801,5 +806,5 @@ class MCPTools(Toolkit):
 
             self._initialized = True
 
-        except (RuntimeError, BaseException) as e:
-            log_error(f"Failed to initialize MCP toolkit: {e}")
+        except (RuntimeError, BaseException):
+            log_error("Failed to initialize MCP toolkit")

@@ -1,14 +1,12 @@
 name: Main Validation
 
 on:
+  schedule:
+    - cron: "30 21 * * 6"  # Every Saturday 9:30 pm UTC
   push:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
-      - "v2.5-phase1"
-      - "fix/ci-test-failures"
-      - "fix/team-hitl-streaming"
-      - "v2.5-phase2"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
@@ -854,6 +852,7 @@ jobs:
           ./libs/agno/tests/integration/teams/test_tasks_mode_streaming.py \
           ./libs/agno/tests/integration/teams/test_followups.py \
           ./libs/agno/tests/integration/teams/test_tool_hooks.py \
+          ./libs/agno/tests/integration/teams/test_member_dedup.py \
 
   verify-split-test-coverage:
     runs-on: ubuntu-latest

@@ -6,7 +6,6 @@ import httpx
 from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
-from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_warning
 from agno.utils.models.claude import format_tools_for_model
 
@@ -45,9 +44,7 @@ class Claude(AnthropicClaude):
 
     def __post_init__(self):
         """Validate model configuration after initialization"""
-        # Validate thinking support immediately at model creation
-        if self.thinking:
-            self._validate_thinking_support()
+        super().__post_init__()
         # Overwrite output schema support for AWS Bedrock Claude
         self.supports_native_structured_outputs = False
         self.supports_json_schema_outputs = False
@@ -123,12 +120,15 @@ class Claude(AnthropicClaude):
             if isinstance(self.http_client, httpx.Client):
                 client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
-                # Use global sync client when user http_client is invalid
-                client_params["http_client"] = get_default_sync_client()
-        else:
-            # Use global sync client when no custom http_client is provided
-            client_params["http_client"] = get_default_sync_client()
+                log_warning("http_client is not an instance of httpx.Client. Ignoring and using SDK default.")
+        # When no custom http_client is provided, let the SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
+        # Close the previous client before creating a new one to avoid leaking
+        # connection pools when session-based credential refresh forces recreation.
+        if self.session and self.client is not None and not self.client.is_closed():
+            self.client.close()
 
         # Use a local variable so concurrent callers on the same model
         # instance cannot overwrite each other's client via self.client.
@@ -157,14 +157,15 @@ class Claude(AnthropicClaude):
             if isinstance(self.http_client, httpx.AsyncClient):
                 client_params["http_client"] = self.http_client
             else:
-                log_warning(
-                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
-                )
-                # Use global async client when user http_client is invalid
-                client_params["http_client"] = get_default_async_client()
-        else:
-            # Use global async client when no custom http_client is provided
-            client_params["http_client"] = get_default_async_client()
+                log_warning("http_client is not an instance of httpx.AsyncClient. Ignoring and using SDK default.")
+        # When no custom http_client is provided, let the SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
+        # Close the previous client before creating a new one to avoid leaking
+        # connection pools when session-based credential refresh forces recreation.
+        if self.session and self.async_client is not None and not self.async_client.is_closed():
+            self.async_client.close()
 
         # Use a local variable so concurrent callers on the same model
         # instance cannot overwrite each other's client via self.async_client.
@@ -227,6 +228,7 @@ class Claude(AnthropicClaude):
         system_message: str,
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        messages: Optional[List[Any]] = None,
     ) -> Dict[str, Any]:
         """
         Prepare the request keyword arguments for the API call.
@@ -235,6 +237,7 @@ class Claude(AnthropicClaude):
             system_message (str): The concatenated system messages.
             tools: Optional list of tools
             response_format: Optional response format (Pydantic model or dict)
+            messages: Optional list of Message objects for the conversation.
 
         Returns:
             Dict[str, Any]: The request keyword arguments.

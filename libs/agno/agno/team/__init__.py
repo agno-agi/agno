@@ -1,3 +1,4 @@
+from agno.models.fallback import FallbackConfig
 from agno.run.team import (
     FollowupsCompletedEvent,
     FollowupsStartedEvent,
@@ -23,6 +24,7 @@ from agno.team.task import Task, TaskList, TaskStatus
 from agno.team.team import Team, get_team_by_id, get_teams
 
 __all__ = [
+    "FallbackConfig",
     "Team",
     "TeamMode",
     "RemoteTeam",

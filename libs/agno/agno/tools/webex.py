@@ -3,13 +3,15 @@ from os import getenv
 from typing import Any, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 try:
     from webexpythonsdk import WebexAPI
     from webexpythonsdk.exceptions import ApiError
-except ImportError:
-    logger.error("Webex tools require the `webexpythonsdk` package. Run `pip install webexpythonsdk` to install it.")
+except ImportError as e:
+    log_error(
+        f"Webex tools require the `webexpythonsdk` package. Run `pip install webexpythonsdk` to install it.: {str(e)}"
+    )
 
 
 class WebexTools(Toolkit):
@@ -48,7 +50,7 @@ class WebexTools(Toolkit):
             response = self.client.messages.create(roomId=room_id, text=text)
             return json.dumps(response.json_data)
         except ApiError as e:
-            logger.error(f"Error sending message: {e} in room: {room_id}")
+            logger.exception(f"Error sending message in room: {room_id}")
             return json.dumps({"error": str(e)})
 
     def list_rooms(self) -> str:
@@ -72,5 +74,5 @@ class WebexTools(Toolkit):
 
             return json.dumps({"rooms": rooms_list}, indent=4)
         except ApiError as e:
-            logger.error(f"Error listing rooms: {e}")
+            logger.exception("Error listing rooms")
             return json.dumps({"error": str(e)})
