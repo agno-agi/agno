@@ -6,6 +6,8 @@ from typing import Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from agno.utils.log import log_warning
+
 from agno.os.routers.approvals.schema import (
     ApprovalCountResponse,
     ApprovalResolve,
@@ -154,6 +156,48 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
                 status_code=409,
                 detail=f"Approval is already '{existing.get('status')}' and cannot be resolved",
             )
+
+        # Update the paused run in the session DB with the resolved approval data.
+        # This ensures GET /sessions/runs APIs show correct values immediately after
+        # admin approval, without waiting for /continue to be called.
+        try:
+            from agno.run.approval import _apply_approval_to_tools
+
+            run_id = result.get("run_id")
+            session_id = result.get("session_id")
+            session_type = "team" if result.get("team_id") else "agent"
+            if run_id and session_id:
+                session_obj = await _db_call(
+                    "get_session",
+                    session_id=session_id,
+                    session_type=session_type,
+                    deserialize=True,
+                )
+                if session_obj and hasattr(session_obj, "runs"):
+                    for run in session_obj.runs or []:
+                        if getattr(run, "run_id", None) == run_id:
+                            status = body.status
+                            res_data = body.resolution_data
+                            tools = getattr(run, "tools", None)
+                            if tools:
+                                _apply_approval_to_tools(tools, status, res_data)
+                            for req in getattr(run, "requirements", None) or []:
+                                te = getattr(req, "tool_execution", None)
+                                if te and getattr(te, "approval_type", None) == "required":
+                                    _apply_approval_to_tools([te], status, res_data)
+                            for mr in getattr(run, "member_responses", None) or []:
+                                mr_tools = getattr(mr, "tools", None)
+                                if mr_tools:
+                                    _apply_approval_to_tools(mr_tools, status, res_data)
+                                for mr_req in getattr(mr, "requirements", None) or []:
+                                    mr_te = getattr(mr_req, "tool_execution", None)
+                                    if mr_te and getattr(mr_te, "approval_type", None) == "required":
+                                        _apply_approval_to_tools([mr_te], status, res_data)
+                            await _db_call("upsert_session", session=session_obj)
+                            break
+        except Exception as exc:
+            log_warning(f"Failed to update session with approval resolution: {exc}")
+
         return result
 
     @router.delete("/approvals/{approval_id}", status_code=204)

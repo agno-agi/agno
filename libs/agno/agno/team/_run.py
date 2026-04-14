@@ -5225,6 +5225,15 @@ def continue_run_dispatch(
             run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
         elif updated_tools:
             run_response.tools = updated_tools
+
+        # Also apply any resolved approval
+        if run_response.tools:
+            try:
+                from agno.run.approval import check_and_apply_approval_resolution
+
+                check_and_apply_approval_resolution(team.db, run_id_resolved, run_response)
+            except Exception:
+                pass
     elif run_response.tools:
         from agno.run.approval import check_and_apply_approval_resolution
 
@@ -6245,6 +6254,17 @@ async def _acontinue_run(
                         ]
                     elif updated_tools:
                         run_response.tools = updated_tools
+
+                    # Also apply any resolved approval
+                    if run_response.tools:
+                        try:
+                            from agno.run.approval import acheck_and_apply_approval_resolution
+
+                            await acheck_and_apply_approval_resolution(
+                                team.db, run_response.run_id or run_id or "", run_response
+                            )
+                        except Exception:
+                            pass
                 elif run_response.tools:
                     from agno.run.approval import acheck_and_apply_approval_resolution
 
@@ -6566,6 +6586,17 @@ async def _acontinue_run_stream(
                         ]
                     elif updated_tools:
                         run_response.tools = updated_tools
+
+                    # Also apply any resolved approval
+                    if run_response.tools:
+                        try:
+                            from agno.run.approval import acheck_and_apply_approval_resolution
+
+                            await acheck_and_apply_approval_resolution(
+                                team.db, run_response.run_id or run_id or "", run_response
+                            )
+                        except Exception:
+                            pass
                 elif run_response.tools:
                     from agno.run.approval import acheck_and_apply_approval_resolution
 

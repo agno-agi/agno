@@ -175,6 +175,11 @@ def create_approval_from_pause(
     if not _has_approval_requirement(tools, requirements):
         return None
 
+    # Skip if an approval_id is already stamped (avoids duplicates when pause hook fires twice)
+    for t in tools or []:
+        if getattr(t, "approval_type", None) == "required" and getattr(t, "approval_id", None) is not None:
+            return getattr(t, "approval_id", None)
+
     try:
         approval_data = _build_approval_dict(
             run_response,
@@ -225,6 +230,11 @@ async def acreate_approval_from_pause(
     requirements = getattr(run_response, "requirements", None)
     if not _has_approval_requirement(tools, requirements):
         return None
+
+    # Skip if an approval_id is already stamped (avoids duplicates when pause hook fires twice)
+    for t in tools or []:
+        if getattr(t, "approval_type", None) == "required" and getattr(t, "approval_id", None) is not None:
+            return getattr(t, "approval_id", None)
 
     try:
         approval_data = _build_approval_dict(
@@ -478,6 +488,60 @@ async def amerge_approval_into_run(db: Any, run_id: str, run_response: Any) -> N
             mr_te = getattr(mr_req, "tool_execution", None)
             if mr_te and getattr(mr_te, "approval_type", None) == "required":
                 _apply_approval_to_tools([mr_te], status, res_data)
+
+
+def _apply_approval_to_raw_run(run: Dict[str, Any], approval_status: str, resolution_data: Optional[Dict[str, Any]]) -> bool:
+    """Apply approval resolution to a raw run dict (from DB with deserialize=False).
+
+    Modifies the dict in-place. Returns True if any changes were made.
+    """
+    modified = False
+
+    def _apply_to_tool_dict(t: Dict[str, Any]) -> bool:
+        if t.get("approval_type") != "required":
+            return False
+        changed = False
+        if approval_status == "approved":
+            if t.get("requires_confirmation"):
+                t["confirmed"] = True
+                changed = True
+            if t.get("requires_user_input") and resolution_data:
+                values = resolution_data.get("values", resolution_data)
+                for f in t.get("user_input_schema") or []:
+                    if f.get("name") in values:
+                        f["value"] = values[f["name"]]
+                        changed = True
+            if t.get("external_execution_required") and resolution_data and "result" in resolution_data:
+                t["result"] = resolution_data["result"]
+                changed = True
+        elif approval_status == "rejected":
+            if t.get("requires_confirmation"):
+                t["confirmed"] = False
+                changed = True
+        return changed
+
+    # Top-level tools
+    for t in run.get("tools") or []:
+        if _apply_to_tool_dict(t):
+            modified = True
+
+    # Requirements
+    for req in run.get("requirements") or []:
+        te = req.get("tool_execution", {})
+        if _apply_to_tool_dict(te):
+            modified = True
+
+    # Member responses
+    for mr in run.get("member_responses") or []:
+        for t in mr.get("tools") or []:
+            if _apply_to_tool_dict(t):
+                modified = True
+        for mr_req in mr.get("requirements") or []:
+            mr_te = mr_req.get("tool_execution", {})
+            if _apply_to_tool_dict(mr_te):
+                modified = True
+
+    return modified
 
 
 async def acreate_audit_approval(
