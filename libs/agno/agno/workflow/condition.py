@@ -14,10 +14,10 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_condition_evaluator, is_cel_expression
 from agno.workflow.step import Step
-from agno.workflow.types import OnReject, StepInput, StepOutput, StepRequirement, StepType
+from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput, StepRequirement, StepType
 
 # Constants for condition branch identifiers
 CONDITION_BRANCH_IF = "if"
@@ -34,6 +34,7 @@ WorkflowSteps = List[
         "Parallel",  # type: ignore # noqa: F821
         "Condition",  # type: ignore # noqa: F821
         "Router",  # type: ignore # noqa: F821
+        "Workflow",  # type: ignore # noqa: F821 - Nested workflow support
     ]
 ]
 
@@ -105,6 +106,28 @@ class Condition:
     # - "cancel": Cancel the workflow
     on_reject: Union[OnReject, str] = OnReject.else_branch
 
+    # HumanReview config (alternative to flat params above)
+    human_review: Optional[HumanReview] = None
+
+    def __post_init__(self) -> None:
+        if self.human_review is not None:
+            pass  # Use the explicit config
+        else:
+            self.human_review = HumanReview(
+                requires_confirmation=self.requires_confirmation,
+                confirmation_message=self.confirmation_message,
+                on_reject=self.on_reject,
+            )
+
+        from agno.workflow.types import validate_human_review_for_condition
+
+        validate_human_review_for_condition(self.human_review)
+
+        # Backward compat attributes
+        self.requires_confirmation = self.human_review.requires_confirmation
+        self.confirmation_message = self.human_review.confirmation_message
+        self.on_reject = self.human_review.on_reject
+
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
             "type": "Condition",
@@ -126,10 +149,9 @@ class Condition:
         else:
             raise ValueError(f"Invalid evaluator type: {type(self.evaluator).__name__}")
 
-        # Add HITL fields
-        result["requires_confirmation"] = self.requires_confirmation
-        result["confirmation_message"] = self.confirmation_message
-        result["on_reject"] = str(self.on_reject)
+        # Add human review config
+        if self.human_review:
+            result["human_review"] = self.human_review.to_dict()
 
         return result
 
@@ -147,15 +169,20 @@ class Condition:
         Returns:
             StepRequirement configured for this condition's HITL needs.
         """
+        on_reject = self.human_review.on_reject if self.human_review else self.on_reject
         return StepRequirement(
             step_id=str(uuid4()),
             step_name=self.name or f"condition_{step_index + 1}",
             step_index=step_index,
             step_type="Condition",
-            requires_confirmation=self.requires_confirmation,
-            confirmation_message=self.confirmation_message
+            requires_confirmation=self.human_review.requires_confirmation
+            if self.human_review
+            else self.requires_confirmation,
+            confirmation_message=(
+                self.human_review.confirmation_message if self.human_review else self.confirmation_message
+            )
             or f"Execute condition '{self.name or 'condition'}'? (yes=if branch, no=else branch)",
-            on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
+            on_reject=on_reject.value if isinstance(on_reject, OnReject) else str(on_reject),
             requires_user_input=False,
             step_input=step_input,
         )
@@ -212,15 +239,23 @@ class Condition:
         else:
             raise ValueError(f"Invalid evaluator type in data: {type(evaluator_data).__name__}")
 
+        # Build HumanReview from serialized data
+        if data.get("human_review"):
+            human_review = HumanReview.from_dict(data["human_review"])
+        else:
+            human_review = HumanReview(
+                requires_confirmation=data.get("requires_confirmation", False),
+                confirmation_message=data.get("confirmation_message"),
+                on_reject=data.get("on_reject", "else"),
+            )
+
         return cls(
             evaluator=evaluator,
             steps=[deserialize_step(step) for step in data.get("steps", [])],
             else_steps=[deserialize_step(step) for step in data.get("else_steps", [])],
             name=data.get("name"),
             description=data.get("description"),
-            requires_confirmation=data.get("requires_confirmation", False),
-            confirmation_message=data.get("confirmation_message"),
-            on_reject=data.get("on_reject", OnReject.skip),
+            human_review=human_review,
         )
 
     def _prepare_steps(self):
@@ -232,6 +267,7 @@ class Condition:
         from agno.workflow.router import Router
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
+        from agno.workflow.workflow import Workflow
 
         def prepare_step_list(steps: WorkflowSteps) -> WorkflowSteps:
             """Helper to prepare a list of steps."""
@@ -243,6 +279,8 @@ class Condition:
                     prepared.append(Step(name=step.name, description=step.description, agent=step))
                 elif isinstance(step, Team):
                     prepared.append(Step(name=step.name, description=step.description, team=step))
+                elif isinstance(step, Workflow):
+                    prepared.append(Step(name=step.name, description=step.description, workflow=step))
                 elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
                     prepared.append(step)
                 else:
@@ -309,14 +347,12 @@ class Condition:
         if isinstance(self.evaluator, str):
             # CEL expression
             if not CEL_AVAILABLE:
-                logger.error(
-                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
-                )
+                log_error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return False
             try:
                 return evaluate_cel_condition_evaluator(self.evaluator, step_input, session_state)
-            except Exception as e:
-                logger.error(f"CEL expression evaluation failed: {e}")
+            except Exception:
+                logger.exception("CEL expression evaluation failed")
                 return False
 
         if callable(self.evaluator):
@@ -347,14 +383,12 @@ class Condition:
         if isinstance(self.evaluator, str):
             # CEL expression - CEL evaluation is synchronous
             if not CEL_AVAILABLE:
-                logger.error(
-                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
-                )
+                log_error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return False
             try:
                 return evaluate_cel_condition_evaluator(self.evaluator, step_input, session_state)
-            except Exception as e:
-                logger.error(f"CEL expression evaluation failed: {e}")
+            except Exception:
+                logger.exception("CEL expression evaluation failed")
                 return False
 
         if callable(self.evaluator):
@@ -526,7 +560,7 @@ class Condition:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} failed: {e}")
+                logger.exception(f"Condition step {step_name} failed")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -749,7 +783,7 @@ class Condition:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} streaming failed: {e}")
+                logger.exception(f"Condition step {step_name} streaming failed")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -917,7 +951,7 @@ class Condition:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} async failed: {e}")
+                logger.exception(f"Condition step {step_name} async failed")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -1141,7 +1175,7 @@ class Condition:
 
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.error(f"Condition step {step_name} async streaming failed: {e}")
+                logger.exception(f"Condition step {step_name} async streaming failed")
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",

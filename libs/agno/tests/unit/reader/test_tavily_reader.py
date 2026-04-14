@@ -386,3 +386,23 @@ def test_supported_chunking_strategies():
     assert ChunkingStrategyType.AGENTIC_CHUNKER in supported_strategies
     assert ChunkingStrategyType.DOCUMENT_CHUNKER in supported_strategies
     assert ChunkingStrategyType.RECURSIVE_CHUNKER in supported_strategies
+
+
+def test_tavily_reader_chunk_size_propagation():
+    """Test that chunk_size is propagated to default chunking strategy"""
+    from agno.knowledge.chunking.semantic import SemanticChunking
+
+    reader = TavilyReader(chunk_size=150, api_key="test")
+    assert reader.chunk_size == 150
+    assert reader.chunking_strategy.chunk_size == 150
+    assert isinstance(reader.chunking_strategy, SemanticChunking)
+
+
+def test_tavily_reader_default_chunk_size():
+    """Test default chunk_size is 5000"""
+    from agno.knowledge.chunking.semantic import SemanticChunking
+
+    reader = TavilyReader(api_key="test")
+    assert reader.chunk_size == 5000
+    assert reader.chunking_strategy.chunk_size == 5000
+    assert isinstance(reader.chunking_strategy, SemanticChunking)

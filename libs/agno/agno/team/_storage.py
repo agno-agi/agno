@@ -169,7 +169,7 @@ def _read_session(
         session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
         return session  # type: ignore
     except Exception as e:
-        log_warning(f"Error getting session from db: {e}")
+        log_warning(f"Error getting session from db: {str(e)}")
         return None
 
 
@@ -189,7 +189,7 @@ async def _aread_session(
             session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore[assignment]
         return session  # type: ignore
     except Exception as e:
-        log_warning(f"Error getting session from db: {e}")
+        log_warning(f"Error getting session from db: {str(e)}")
         return None
 
 
@@ -201,7 +201,7 @@ def _upsert_session(team: "Team", session: TeamSession) -> Optional[TeamSession]
             raise ValueError("Db not initialized")
         return team.db.upsert_session(session=session)  # type: ignore
     except Exception as e:
-        log_warning(f"Error upserting session into db: {e}")
+        log_warning(f"Error upserting session into db: {str(e)}")
     return None
 
 
@@ -217,7 +217,7 @@ async def _aupsert_session(team: "Team", session: TeamSession) -> Optional[TeamS
         else:
             return team.db.upsert_session(session=session)  # type: ignore
     except Exception as e:
-        log_warning(f"Error upserting session into db: {e}")
+        log_warning(f"Error upserting session into db: {str(e)}")
     return None
 
 
@@ -550,7 +550,7 @@ def to_dict(team: "Team") -> Dict[str, Any]:
                     func = Function.from_callable(tool)
                     serialized_tools.append(func.to_dict())
             except Exception as e:
-                log_warning(f"Could not serialize tool {tool}: {e}")
+                log_warning(f"Could not serialize tool {tool}: {str(e)}")
         if serialized_tools:
             config["tools"] = serialized_tools
     if team.tool_choice is not None:
@@ -1080,7 +1080,7 @@ def save(
         return config["version"]
 
     except Exception as e:
-        log_error(f"Error saving Team to database: {e}")
+        log_error(f"Error saving Team to database: {str(e)}")
         raise
 
 

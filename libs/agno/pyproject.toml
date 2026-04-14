@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.5.10"
+version = "2.5.16"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -106,12 +106,13 @@ brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
 confluence = ["atlassian-python-api"]
+docling = ["docling"]
 ddg = ["ddgs"]
 duckdb = ["duckdb"]
 elevenlabs = ["elevenlabs"]
 evm = ["web3"]
 exa = ["exa_py"]
-seltz = ["seltz"]
+seltz = ["seltz>=0.2.0"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py==3.4.0"]
 tavily = ["tavily-python"]
@@ -133,6 +134,7 @@ parallel = ["parallel-web"]
 psycopg = ["psycopg-binary", "psycopg"]
 redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
+salesforce = ["simple-salesforce"]
 scrapegraph = ["scrapegraph-py"]
 todoist = ["todoist-api-python"]
 valyu = ["valyu"]
@@ -151,7 +153,7 @@ sql = ["sqlalchemy"]
 postgres = ["psycopg-binary"]
 async_postgres = ["asyncpg"]
 async_mongo = ["pymongo>=4.9", "motor"]
-sqlite = ["sqlalchemy"]
+sqlite = ["sqlalchemy", "aiosqlite"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
 redis = ["redis", "redisvl>=0.12.1"]
@@ -182,7 +184,6 @@ text = ["aiofiles"]
 csv = ["aiofiles"]
 excel = ["openpyxl", "xlrd"]
 markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
-docling = ["docling"]
 chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
 # Dependencies for AG-UI integration
@@ -262,10 +263,12 @@ tools = [
   "agno[agentql]",
   "agno[opencv]",
   "agno[parallel]",
+  "agno[salesforce]",
   "agno[scrapegraph]",
   "agno[valyu]",
   "agno[yfinance]",
   "agno[confluence]",
+  "agno[docling]",
   "agno[notion]",
   "agno[oxylabs]",
   "agno[zep]",
@@ -347,7 +350,7 @@ tests = [
     "agno[integration-tests]",
     "twine",
     "build",
-    "grpcio==1.74.0",
+    "grpcio>=1.76.0",
 ]
 
 # Models integration test dependencies
@@ -390,8 +393,9 @@ demo = [
 ]
 
 [project.urls]
-homepage = "https://agno.com"
-documentation = "https://docs.agno.com"
+Homepage = "https://agno.com"
+Documentation = "https://docs.agno.com"
+Repository = "https://github.com/agno-agi/agno"
 
 [build-system]
 requires = ["setuptools"]
