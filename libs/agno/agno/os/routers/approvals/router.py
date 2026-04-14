@@ -196,7 +196,7 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
                             break
         except Exception as exc:
             log_warning(f"Failed to update session with approval resolution: {exc}")
-            logger.debug("Session update error details", exc_info=True)
+            log_debug("Session update error details", exc_info=True)
 
         return result
 
