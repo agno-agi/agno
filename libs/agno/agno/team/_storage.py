@@ -1104,7 +1104,11 @@ def _hydrate_from_graph(
 
     team = cls.from_dict(config, db=db, registry=registry)
     team.id = graph["component"]["component_id"]
-    team.db = db
+    # Only fall back to the caller-provided db if the config didn't
+    # reconstruct one. Otherwise we'd clobber any custom table names
+    # (session_table, memory_table, ...) that were serialized with the team.
+    if team.db is None:
+        team.db = db
 
     # Hydrate members from graph children
     team.members = []
@@ -1123,7 +1127,8 @@ def _hydrate_from_graph(
         if member_type == "agent":
             agent = Agent.from_dict(child_config)
             agent.id = child_graph["component"]["component_id"]
-            agent.db = db
+            if agent.db is None:
+                agent.db = db
             team.members.append(agent)
         elif member_type == "team":
             # Recursively hydrate nested teams from the already-loaded child graph

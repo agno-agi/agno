@@ -1077,7 +1077,11 @@ def load(
 
     agent = cls.from_dict(config, registry=registry)
     agent.id = id
-    agent.db = db
+    # Only fall back to the caller-provided db if the config didn't
+    # reconstruct one. Otherwise we'd clobber any custom table names
+    # (session_table, memory_table, ...) that were serialized with the agent.
+    if agent.db is None:
+        agent.db = db
 
     return agent
 

@@ -976,7 +976,12 @@ class Workflow:
         workflow = cls.from_dict(config, db=db, registry=registry)
 
         workflow.id = id
-        workflow.db = db
+        # Only fall back to the caller-provided db if the config didn't
+        # reconstruct one. Otherwise we'd clobber any custom table names
+        # (session_table, memory_table, ...) that were serialized with the
+        # workflow.
+        if workflow.db is None:
+            workflow.db = db
 
         return workflow
 
