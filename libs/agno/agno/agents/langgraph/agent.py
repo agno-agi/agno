@@ -78,7 +78,7 @@ class LangGraphAgent(BaseExternalAgent):
     async def _arun_impl(self, input: Any, **kwargs: Any) -> Any:
         """Non-streaming LangGraph invocation."""
         try:
-            from langchain_core.messages import AIMessage, HumanMessage
+            from langchain_core.messages import AIMessage
         except ImportError:
             raise ImportError("langchain-core is required: pip install langchain-core langgraph")
 
@@ -104,11 +104,6 @@ class LangGraphAgent(BaseExternalAgent):
 
     async def _arun_stream_impl(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
         """Streaming LangGraph invocation with tool call visibility."""
-        try:
-            from langchain_core.messages import HumanMessage
-        except ImportError:
-            raise ImportError("langchain-core is required: pip install langchain-core langgraph")
-
         if self.graph is None:
             raise ValueError("No graph provided to LangGraphAgent")
 

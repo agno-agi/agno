@@ -401,8 +401,8 @@ class BaseExternalAgent:
                 created_at=int(time()),
             )
 
-        self._session_cache = session
-        return session
+        self._session_cache = session  # type: ignore[assignment]
+        return session  # type: ignore[return-value]
 
     async def _save_session(self, session: AgentSession) -> None:
         """Persist a session to the DB."""
