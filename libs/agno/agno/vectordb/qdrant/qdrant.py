@@ -591,6 +591,8 @@ class Qdrant(VectorDb):
     ) -> List[models.ScoredPoint]:
         dense_embedding = self.embedder.get_embedding(query)
         sparse_embedding = self._get_sparse_vector(query)
+        if sparse_embedding is None:
+            raise ValueError("Sparse embedding could not be generated for hybrid search.")
         if hasattr(sparse_embedding, "as_object"):
             sparse_embedding = sparse_embedding.as_object()
         call = self.client.query_points(
@@ -649,6 +651,9 @@ class Qdrant(VectorDb):
         formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
         sparse_embedding = self._get_sparse_vector(query)
+        if sparse_embedding is None:
+            raise ValueError("Sparse embedding could not be generated for keyword search.")
+    
         if hasattr(sparse_embedding, "as_object"):
             sparse_embedding = sparse_embedding.as_object()
         call = self.client.query_points(
@@ -700,6 +705,8 @@ class Qdrant(VectorDb):
         formatted_filters: Optional[models.Filter],
     ) -> List[models.ScoredPoint]:
         sparse_embedding = self._get_sparse_vector(query)
+        if sparse_embedding is None:
+            raise ValueError("Sparse embedding could not be generated for keyword search.")
         if hasattr(sparse_embedding, "as_object"):
             sparse_embedding = sparse_embedding.as_object()
         call = await self.async_client.query_points(
@@ -721,6 +728,8 @@ class Qdrant(VectorDb):
     ) -> List[models.ScoredPoint]:
         dense_embedding = await self.embedder.async_get_embedding(query)
         sparse_embedding = self._get_sparse_vector(query)
+        if sparse_embedding is None:
+            raise ValueError("Sparse embedding could not be generated for hybrid search.")
         if hasattr(sparse_embedding, "as_object"):
             sparse_embedding = sparse_embedding.as_object()
         call = await self.async_client.query_points(
