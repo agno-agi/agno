@@ -28,8 +28,8 @@ from agno.os.schema import (
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
+from agno.os.middleware.user_scope import get_user_scoped_db
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db
 from agno.remote.base import RemoteDb
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if payload.user_id is None:
             raise HTTPException(status_code=400, detail="User ID is required")
 
-        db = await get_db(dbs, db_id, table)
+        db = await get_user_scoped_db(request, dbs, db_id, table)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -158,7 +158,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
-        db = await get_db(dbs, db_id, table)
+        db = await get_user_scoped_db(request, dbs, db_id, table)
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -200,7 +200,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
-        db = await get_db(dbs, db_id, table)
+        db = await get_user_scoped_db(http_request, dbs, db_id, table)
 
         if hasattr(http_request.state, "user_id") and http_request.state.user_id is not None:
             request.user_id = http_request.state.user_id
@@ -269,7 +269,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query memories from"),
         table: Optional[str] = Query(default=None, description="The database table to use"),
     ) -> PaginatedResponse[UserMemorySchema]:
-        db = await get_db(dbs, db_id, table)
+        db = await get_user_scoped_db(request, dbs, db_id, table)
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -365,7 +365,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query memory from"),
         table: Optional[str] = Query(default=None, description="Table to query memory from"),
     ) -> UserMemorySchema:
-        db = await get_db(dbs, db_id, table)
+        db = await get_user_scoped_db(request, dbs, db_id, table)
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -428,7 +428,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query topics from"),
         table: Optional[str] = Query(default=None, description="Table to query topics from"),
     ) -> List[str]:
-        db = await get_db(dbs, db_id, table)
+        db = await get_user_scoped_db(request, dbs, db_id, table)
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -495,7 +495,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if payload.user_id is None:
             raise HTTPException(status_code=400, detail="User ID is required")
 
-        db = await get_db(dbs, db_id, table)
+        db = await get_user_scoped_db(request, dbs, db_id, table)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -574,7 +574,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
         table: Optional[str] = Query(default=None, description="Table to query statistics from"),
     ) -> PaginatedResponse[UserStatsSchema]:
-        db = await get_db(dbs, db_id, table)
+        db = await get_user_scoped_db(request, dbs, db_id, table)
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -683,7 +683,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         try:
             # Get database instance
-            db = await get_db(dbs, db_id, table)
+            db = await get_user_scoped_db(http_request, dbs, db_id, table)
 
             if isinstance(db, RemoteDb):
                 auth_token = get_auth_token_from_request(http_request)

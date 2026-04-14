@@ -27,8 +27,8 @@ from agno.os.schema import (
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
 )
+from agno.os.middleware.user_scope import get_user_scoped_db
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db
 from agno.remote.base import RemoteDb
 from agno.session import AgentSession, TeamSession, WorkflowSession
 
@@ -115,12 +115,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         table: Optional[str] = Query(default=None, description="The database table to use"),
     ) -> PaginatedResponse[SessionSchema]:
         try:
-            db = await get_db(dbs, db_id, table)
+            db = await get_user_scoped_db(request, dbs, db_id, table)
         except Exception as e:
             raise HTTPException(status_code=404, detail=f"{e}")
-
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -227,7 +224,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         ),
         db_id: Optional[str] = Query(default=None, description="Database ID to create session in"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
-        db = await get_db(dbs, db_id)
+        db = await get_user_scoped_db(request, dbs, db_id)
 
         # Get user_id from request state if available (from auth middleware)
         user_id = create_session_request.user_id
@@ -418,10 +415,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query session from"),
         table: Optional[str] = Query(default=None, description="Table to query session from"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
-        db = await get_db(dbs, db_id, table)
-
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
+        db = await get_user_scoped_db(request, dbs, db_id, table)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -437,9 +431,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            session = await db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
+            session = await db.get_session(session_id=session_id, session_type=session_type)
         else:
-            session = db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
+            session = db.get_session(session_id=session_id, session_type=session_type)
         if not session:
             raise HTTPException(
                 status_code=404, detail=f"{session_type.value.title()} Session with id '{session_id}' not found"
@@ -587,10 +581,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query runs from"),
         table: Optional[str] = Query(default=None, description="Table to query runs from"),
     ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
-        db = await get_db(dbs, db_id, table)
-
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
+        db = await get_user_scoped_db(request, dbs, db_id, table)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -613,11 +604,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             session = await db.get_session(
-                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
+                session_id=session_id, session_type=session_type, deserialize=False
             )
         else:
             session = db.get_session(
-                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
+                session_id=session_id, session_type=session_type, deserialize=False
             )
 
         if not session:
@@ -717,10 +708,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query run from"),
         table: Optional[str] = Query(default=None, description="Table to query run from"),
     ) -> Union[RunSchema, TeamRunSchema, WorkflowRunSchema]:
-        db = await get_db(dbs, db_id)
-
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
+        db = await get_user_scoped_db(request, dbs, db_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -738,11 +726,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             session = await db.get_session(
-                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
+                session_id=session_id, session_type=session_type, deserialize=False
             )
         else:
             session = db.get_session(
-                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=False
+                session_id=session_id, session_type=session_type, deserialize=False
             )
 
         if not session:
@@ -792,10 +780,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
-        db = await get_db(dbs, db_id, table)
-
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
+        db = await get_user_scoped_db(request, dbs, db_id, table)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -805,9 +790,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            await db.delete_session(session_id=session_id, user_id=user_id)
+            await db.delete_session(session_id=session_id)
         else:
-            db.delete_session(session_id=session_id, user_id=user_id)
+            db.delete_session(session_id=session_id)
 
     @router.delete(
         "/sessions",
@@ -837,10 +822,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if len(request.session_ids) != len(request.session_types):
             raise HTTPException(status_code=400, detail="Session IDs and session types must have the same length")
 
-        db = await get_db(dbs, db_id, table)
-
-        if hasattr(http_request.state, "user_id") and http_request.state.user_id is not None:
-            user_id = http_request.state.user_id
+        db = await get_user_scoped_db(http_request, dbs, db_id, table)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(http_request)
@@ -857,9 +839,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            await db.delete_sessions(session_ids=request.session_ids, user_id=user_id)
+            await db.delete_sessions(session_ids=request.session_ids)
         else:
-            db.delete_sessions(session_ids=request.session_ids, user_id=user_id)
+            db.delete_sessions(session_ids=request.session_ids)
 
     @router.post(
         "/sessions/{session_id}/rename",
@@ -960,10 +942,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to use for rename operation"),
         table: Optional[str] = Query(default=None, description="Table to use for rename operation"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
-        db = await get_db(dbs, db_id, table)
-
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
+        db = await get_user_scoped_db(request, dbs, db_id, table)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -981,11 +960,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             session = await db.rename_session(
-                session_id=session_id, session_type=session_type, session_name=session_name, user_id=user_id
+                session_id=session_id, session_type=session_type, session_name=session_name
             )
         else:
             session = db.rename_session(
-                session_id=session_id, session_type=session_type, session_name=session_name, user_id=user_id
+                session_id=session_id, session_type=session_type, session_name=session_name
             )
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
@@ -1065,10 +1044,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to use for update operation"),
         table: Optional[str] = Query(default=None, description="Table to use for update operation"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
-        db = await get_db(dbs, db_id)
-
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
+        db = await get_user_scoped_db(request, dbs, db_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -1090,11 +1066,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             existing_session = await db.get_session(
-                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=True
+                session_id=session_id, session_type=session_type, deserialize=True
             )
         else:
             existing_session = db.get_session(
-                session_id=session_id, session_type=session_type, user_id=user_id, deserialize=True
+                session_id=session_id, session_type=session_type, deserialize=True
             )
 
         if not existing_session:
