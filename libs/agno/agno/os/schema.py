@@ -423,6 +423,9 @@ class RunSchema(BaseModel):
     branched_from: Optional[str] = Field(
         None, description="Source session ID this run was originally created in (if copied from a branched session)"
     )
+    regenerated_from: Optional[str] = Field(
+        None, description="Immediate predecessor run ID when this run was generated via regeneration"
+    )
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
@@ -457,6 +460,7 @@ class RunSchema(BaseModel):
             followups=run_dict.get("followups", None),
             created_at=to_utc_datetime(run_dict.get("created_at")),
             branched_from=run_dict.get("branched_from"),
+            regenerated_from=run_dict.get("regenerated_from"),
         )
 
 
@@ -491,6 +495,9 @@ class TeamRunSchema(BaseModel):
     branched_from: Optional[str] = Field(
         None, description="Source session ID this run was originally created in (if copied from a branched session)"
     )
+    regenerated_from: Optional[str] = Field(
+        None, description="Immediate predecessor run ID when this run was generated via regeneration"
+    )
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -523,6 +530,7 @@ class TeamRunSchema(BaseModel):
             input_media=extract_input_media(run_dict),
             followups=run_dict.get("followups", None),
             branched_from=run_dict.get("branched_from"),
+            regenerated_from=run_dict.get("regenerated_from"),
         )
 
 
