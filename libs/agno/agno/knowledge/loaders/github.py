@@ -251,6 +251,7 @@ class GitHubLoader(BaseLoader):
     def _build_github_metadata(
         self,
         gh_config: GitHubConfig,
+        repo: str,
         branch: str,
         file_path: str,
         file_name: str,
@@ -260,11 +261,21 @@ class GitHubLoader(BaseLoader):
             "source_type": "github",
             "source_config_id": gh_config.id,
             "source_config_name": gh_config.name,
-            "github_repo": gh_config.repo,
+            "github_repo": repo,
             "github_branch": branch,
             "github_path": file_path,
             "github_filename": file_name,
         }
+
+    @staticmethod
+    def _resolve_github_repo(remote_content: GitHubContent, gh_config: GitHubConfig) -> Optional[str]:
+        """Resolve the effective repo for this request.
+
+        Prefers the per-request override on the content reference, falls back
+        to the config's ``repo``. Returns ``None`` if neither is set; callers
+        should treat this as a configuration error.
+        """
+        return remote_content.repo or gh_config.repo
 
     def _build_github_virtual_path(self, repo: str, branch: str, file_path: str) -> str:
         """Build virtual path for GitHub content."""
@@ -339,6 +350,14 @@ class GitHubLoader(BaseLoader):
         if gh_config is None:
             return
 
+        repo = self._resolve_github_repo(remote_content, gh_config)
+        if not repo:
+            log_error(
+                f"GitHub repo not specified. Set 'repo' on GitHubConfig '{gh_config.id}' "
+                f"or pass it at request time on GitHubContent."
+            )
+            return
+
         headers = await self._abuild_github_headers(gh_config)
         branch = self._get_github_branch(remote_content, gh_config)
         path_to_process = self._get_github_path_to_process(remote_content)
@@ -350,7 +369,7 @@ class GitHubLoader(BaseLoader):
             async def list_files_recursive(folder: str) -> List[Dict[str, str]]:
                 """Recursively list all files in a GitHub folder."""
                 files: List[Dict[str, str]] = []
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{folder}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{folder}"
                 if branch:
                     api_url += f"?ref={branch}"
 
@@ -374,7 +393,7 @@ class GitHubLoader(BaseLoader):
                 return files
 
             if path_to_process:
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{path_to_process}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{path_to_process}"
                 if branch:
                     api_url += f"?ref={branch}"
 
@@ -408,8 +427,8 @@ class GitHubLoader(BaseLoader):
                 file_name = file_info["name"]
 
                 # Build metadata and virtual path using helpers
-                virtual_path = self._build_github_virtual_path(gh_config.repo, branch, file_path)
-                github_metadata = self._build_github_metadata(gh_config, branch, file_path, file_name)
+                virtual_path = self._build_github_virtual_path(repo, branch, file_path)
+                github_metadata = self._build_github_metadata(gh_config, repo, branch, file_path, file_name)
                 merged_metadata = self._merge_metadata(github_metadata, content.metadata)
 
                 # Compute content name using base helper
@@ -430,7 +449,7 @@ class GitHubLoader(BaseLoader):
                     continue
 
                 # Fetch file content
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{file_path}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{file_path}"
                 if branch:
                     api_url += f"?ref={branch}"
                 try:
@@ -481,6 +500,14 @@ class GitHubLoader(BaseLoader):
         if gh_config is None:
             return
 
+        repo = self._resolve_github_repo(remote_content, gh_config)
+        if not repo:
+            log_error(
+                f"GitHub repo not specified. Set 'repo' on GitHubConfig '{gh_config.id}' "
+                f"or pass it at request time on GitHubContent."
+            )
+            return
+
         headers = self._build_github_headers(gh_config)
         branch = self._get_github_branch(remote_content, gh_config)
         path_to_process = self._get_github_path_to_process(remote_content)
@@ -492,7 +519,7 @@ class GitHubLoader(BaseLoader):
             def list_files_recursive(folder: str) -> List[Dict[str, str]]:
                 """Recursively list all files in a GitHub folder."""
                 files: List[Dict[str, str]] = []
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{folder}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{folder}"
                 if branch:
                     api_url += f"?ref={branch}"
 
@@ -516,7 +543,7 @@ class GitHubLoader(BaseLoader):
                 return files
 
             if path_to_process:
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{path_to_process}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{path_to_process}"
                 if branch:
                     api_url += f"?ref={branch}"
 
@@ -550,8 +577,8 @@ class GitHubLoader(BaseLoader):
                 file_name = file_info["name"]
 
                 # Build metadata and virtual path using helpers
-                virtual_path = self._build_github_virtual_path(gh_config.repo, branch, file_path)
-                github_metadata = self._build_github_metadata(gh_config, branch, file_path, file_name)
+                virtual_path = self._build_github_virtual_path(repo, branch, file_path)
+                github_metadata = self._build_github_metadata(gh_config, repo, branch, file_path, file_name)
                 merged_metadata = self._merge_metadata(github_metadata, content.metadata)
 
                 # Compute content name using base helper
@@ -572,7 +599,7 @@ class GitHubLoader(BaseLoader):
                     continue
 
                 # Fetch file content
-                api_url = f"https://api.github.com/repos/{gh_config.repo}/contents/{file_path}"
+                api_url = f"https://api.github.com/repos/{repo}/contents/{file_path}"
                 if branch:
                     api_url += f"?ref={branch}"
                 try:

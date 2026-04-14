@@ -168,6 +168,43 @@ def test_upload_github_folder_success(test_app):
         mock_process.assert_called_once()
 
 
+def test_upload_github_file_with_repo_override(test_app):
+    """The repo form field overrides the configured repo on a per-request basis."""
+    captured = {}
+
+    def fake_process(knowledge, content, *args, **kwargs):
+        captured["remote_content"] = content.remote_content
+
+    with patch("agno.os.routers.knowledge.knowledge.process_content", side_effect=fake_process):
+        response = test_app.post(
+            "/knowledge/remote-content",
+            data={
+                "config_id": "github-repo",
+                "path": "docs/README.md",
+                "repo": "other-org/other-repo",
+            },
+        )
+
+    assert response.status_code == 202
+    rc = captured["remote_content"]
+    assert rc.repo == "other-org/other-repo"
+    assert rc.file_path == "docs/README.md"
+
+
+def test_upload_github_repo_override_rejected_for_non_github(test_app):
+    """The repo override is GitHub-only and must be rejected for other sources."""
+    response = test_app.post(
+        "/knowledge/remote-content",
+        data={
+            "config_id": "s3-docs",
+            "path": "documents/report.pdf",
+            "repo": "owner/repo",
+        },
+    )
+    assert response.status_code == 400
+    assert "GitHub" in response.json()["detail"]
+
+
 def test_upload_gcs_file_success(test_app):
     """Test successful GCS file upload."""
     with patch("agno.os.routers.knowledge.knowledge.process_content") as mock_process:

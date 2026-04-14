@@ -248,6 +248,13 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         background_tasks: BackgroundTasks,
         config_id: str = Form(..., description="ID of the configured remote content source (from /knowledge/config)"),
         path: str = Form(..., description="Path to file or folder in the remote source"),
+        repo: Optional[str] = Form(
+            None,
+            description=(
+                "GitHub only: 'owner/repo' to fetch from. Overrides the repo set on the GitHubConfig, "
+                "letting one configured GitHub source serve multiple repositories the credentials can access."
+            ),
+        ),
         name: Optional[str] = Form(None, description="Content name (auto-generated if not provided)"),
         description: Optional[str] = Form(None, description="Content description"),
         metadata: Optional[str] = Form(None, description="JSON metadata object"),
@@ -280,17 +287,39 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             except json.JSONDecodeError:
                 parsed_metadata = {"value": metadata}
 
+        # GitHub configs accept an optional per-request repo override so a single
+        # configured source can serve multiple repositories sharing the same auth.
+        from agno.knowledge.remote_content.github import GitHubConfig
+
+        github_kwargs: dict = {}
+        if isinstance(config, GitHubConfig):
+            if not repo and config.repo is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"GitHub config '{config_id}' has no 'repo' set. "
+                        "Provide a 'repo' form field with the request, or configure a default on the source."
+                    ),
+                )
+            if repo:
+                github_kwargs["repo"] = repo
+        elif repo:
+            raise HTTPException(
+                status_code=400,
+                detail="The 'repo' parameter is only supported for GitHub content sources.",
+            )
+
         # Use the config's factory methods to create the remote content object
         # If path ends with '/', treat as folder, otherwise treat as file
         is_folder = path.endswith("/")
         if is_folder:
             if hasattr(config, "folder"):
-                remote_content = config.folder(path.rstrip("/"))
+                remote_content = config.folder(path.rstrip("/"), **github_kwargs)
             else:
                 raise HTTPException(status_code=400, detail=f"Config {config_id} does not support folder uploads")
         else:
             if hasattr(config, "file"):
-                remote_content = config.file(path)
+                remote_content = config.file(path, **github_kwargs)
             else:
                 raise HTTPException(status_code=400, detail=f"Config {config_id} does not support file uploads")
 
