@@ -59,6 +59,15 @@
 
 ---
 
+### mixed_external_and_regular_tools.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** Agent with both external_execution and regular tools. Regular tool (get_current_date) executes automatically, external tool (get_user_location) pauses for manual handling, then agent continues with combined results.
+**Result:** Completed successfully.
+
+---
+
 ### user_input_required.py
 
 **Status:** PASS (interactive)

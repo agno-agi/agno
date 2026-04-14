@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import time
 import warnings
@@ -110,7 +111,7 @@ class MultiMCPTools(Toolkit):
                 # Just verify we can inspect the signature - no parameter requirements
                 inspect.signature(header_provider)
             except Exception as e:
-                log_warning(f"Could not validate header_provider signature: {e}")
+                log_warning(f"Could not validate header_provider signature: {str(e)}")
 
         if server_params_list is None and commands is None and urls is None:
             raise ValueError("Either server_params_list or commands or urls must be provided")
@@ -164,6 +165,7 @@ class MultiMCPTools(Toolkit):
         self._run_sessions: Dict[Tuple[str, int], Tuple[ClientSession, float]] = {}
         self._run_session_contexts: Dict[Tuple[str, int], Any] = {}  # Maps (run_id, server_idx) to context managers
         self._session_ttl_seconds: float = 300.0  # 5 minutes default TTL
+        self._session_lock: Optional[asyncio.Lock] = None  # Lazily created lock for session creation
 
         self.allow_partial_failure = allow_partial_failure
 
@@ -178,6 +180,13 @@ class MultiMCPTools(Toolkit):
     @property
     def initialized(self) -> bool:
         return self._initialized
+
+    @property
+    def _session_creation_lock(self) -> asyncio.Lock:
+        """Lazily create an asyncio lock for serializing session creation."""
+        if self._session_lock is None:
+            self._session_lock = asyncio.Lock()
+        return self._session_lock
 
     async def is_alive(self) -> bool:
         try:
@@ -244,7 +253,7 @@ class MultiMCPTools(Toolkit):
                     # Function takes no parameters
                     return header_provider()
         except Exception as e:
-            log_warning(f"Error calling header_provider: {e}")
+            log_warning(f"Error calling header_provider: {str(e)}")
             return {}
 
     async def _cleanup_stale_sessions(self) -> None:
@@ -292,71 +301,98 @@ class MultiMCPTools(Toolkit):
                 return self._sessions[server_idx]
             raise ValueError(f"Server index {server_idx} out of range")
 
-        # Lazy cleanup of stale sessions
-        await self._cleanup_stale_sessions()
-
-        # Check if we already have a session for this (run_id, server_idx)
         run_id = run_context.run_id
         cache_key = (run_id, server_idx)
+
+        # Fast path: return existing session without acquiring the lock,
+        # but only if it is still within the TTL.
         if cache_key in self._run_sessions:
-            session, _ = self._run_sessions[cache_key]
+            session, last_used = self._run_sessions[cache_key]
+            if time.time() - last_used <= self._session_ttl_seconds:
+                return session
+            # If the cached session is stale, fall through to the slow path
+            # where stale sessions are cleaned up and a fresh session is created.
+
+        # Slow path: serialize session creation so parallel tool calls
+        # sharing the same run_id don't each create (and overwrite) sessions.
+        async with self._session_creation_lock:
+            # Re-check after acquiring lock (another coroutine may have created it)
+            if cache_key in self._run_sessions:
+                session, created_at = self._run_sessions[cache_key]
+                if time.time() - created_at <= self._session_ttl_seconds:
+                    return session
+                # Stale under lock — clean up before recreating
+                await self.cleanup_run_session(run_id, server_idx)
+
+            # Create a new session with dynamic headers for this run and server
+            log_debug(f"Creating new session for run_id={run_id}, server_idx={server_idx} with dynamic headers")
+
+            # Generate dynamic headers from the provider
+            dynamic_headers = self._call_header_provider(run_context=run_context, agent=agent, team=team)
+
+            # Get the server params for this server index
+            if server_idx >= len(self.server_params_list):
+                raise ValueError(f"Server index {server_idx} out of range")
+
+            server_params = self.server_params_list[server_idx]
+
+            # Create new session with merged headers based on transport type
+            if isinstance(server_params, SSEClientParams):
+                params_dict = asdict(server_params)
+                existing_headers = params_dict.get("headers") or {}
+                params_dict["headers"] = {**existing_headers, **dynamic_headers}
+
+                context = sse_client(**params_dict)  # type: ignore
+                client_timeout = min(self.timeout_seconds, params_dict.get("timeout", self.timeout_seconds))
+
+            elif isinstance(server_params, StreamableHTTPClientParams):
+                params_dict = asdict(server_params)
+                existing_headers = params_dict.get("headers") or {}
+                params_dict["headers"] = {**existing_headers, **dynamic_headers}
+
+                context = streamablehttp_client(**params_dict)  # type: ignore
+                params_timeout = params_dict.get("timeout", self.timeout_seconds)
+                if isinstance(params_timeout, timedelta):
+                    params_timeout = int(params_timeout.total_seconds())
+                client_timeout = min(self.timeout_seconds, params_timeout)
+            else:
+                # stdio doesn't support headers, fall back to default session
+                log_warning(
+                    f"Cannot use dynamic headers with stdio transport for server {server_idx}, using default session"
+                )
+                if server_idx < len(self._sessions):
+                    return self._sessions[server_idx]
+                raise ValueError(f"Server index {server_idx} out of range")
+
+            # Enter the context and create session — clean up on partial failure
+            session_context = None
+            try:
+                session_params = await context.__aenter__()  # type: ignore
+                read, write = session_params[0:2]
+
+                session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
+                session = await session_context.__aenter__()  # type: ignore
+
+                # Initialize the session
+                await session.initialize()
+            except Exception:
+                # Exit partially-entered context managers to avoid resource leaks
+                if session_context is not None:
+                    try:
+                        await session_context.__aexit__(None, None, None)
+                    except Exception:
+                        pass
+                try:
+                    await context.__aexit__(None, None, None)
+                except Exception:
+                    pass
+                raise
+
+            # Store the session with timestamp and context for cleanup
+            self._run_sessions[cache_key] = (session, time.time())
+            self._run_session_contexts[cache_key] = (context, session_context)
+
             return session
-
-        # Create a new session with dynamic headers for this run and server
-        log_debug(f"Creating new session for run_id={run_id}, server_idx={server_idx} with dynamic headers")
-
-        # Generate dynamic headers from the provider
-        dynamic_headers = self._call_header_provider(run_context=run_context, agent=agent, team=team)
-
-        # Get the server params for this server index
-        if server_idx >= len(self.server_params_list):
-            raise ValueError(f"Server index {server_idx} out of range")
-
-        server_params = self.server_params_list[server_idx]
-
-        # Create new session with merged headers based on transport type
-        if isinstance(server_params, SSEClientParams):
-            params_dict = asdict(server_params)
-            existing_headers = params_dict.get("headers") or {}
-            params_dict["headers"] = {**existing_headers, **dynamic_headers}
-
-            context = sse_client(**params_dict)  # type: ignore
-            client_timeout = min(self.timeout_seconds, params_dict.get("timeout", self.timeout_seconds))
-
-        elif isinstance(server_params, StreamableHTTPClientParams):
-            params_dict = asdict(server_params)
-            existing_headers = params_dict.get("headers") or {}
-            params_dict["headers"] = {**existing_headers, **dynamic_headers}
-
-            context = streamablehttp_client(**params_dict)  # type: ignore
-            params_timeout = params_dict.get("timeout", self.timeout_seconds)
-            if isinstance(params_timeout, timedelta):
-                params_timeout = int(params_timeout.total_seconds())
-            client_timeout = min(self.timeout_seconds, params_timeout)
-        else:
-            # stdio doesn't support headers, fall back to default session
-            log_warning(
-                f"Cannot use dynamic headers with stdio transport for server {server_idx}, using default session"
-            )
-            if server_idx < len(self._sessions):
-                return self._sessions[server_idx]
-            raise ValueError(f"Server index {server_idx} out of range")
-
-        # Enter the context and create session
-        session_params = await context.__aenter__()  # type: ignore
-        read, write = session_params[0:2]
-
-        session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
-        session = await session_context.__aenter__()  # type: ignore
-
-        # Initialize the session
-        await session.initialize()
-
-        # Store the session with timestamp and context for cleanup
-        self._run_sessions[cache_key] = (session, time.time())
-        self._run_session_contexts[cache_key] = (context, session_context)
-
-        return session
 
     async def cleanup_run_session(self, run_id: str, server_idx: int) -> None:
         """Clean up a per-run session."""
@@ -401,8 +437,8 @@ class MultiMCPTools(Toolkit):
 
         try:
             await self._connect()
-        except (RuntimeError, BaseException) as e:
-            log_error(f"Failed to connect to {str(self)}: {e}")
+        except (RuntimeError, BaseException):
+            log_error(f"Failed to connect to {str(self)}")
 
     @classmethod
     async def create_and_connect(
@@ -483,7 +519,7 @@ class MultiMCPTools(Toolkit):
                 if not self.allow_partial_failure:
                     raise ValueError(f"MCP connection failed: {e}")
 
-                log_error(f"Failed to initialize MCP server with params {server_params}: {e}")
+                log_error(f"Failed to initialize MCP server with params {server_params}: {str(e)}")
                 server_connection_errors.append(str(e))
                 continue
 
@@ -528,8 +564,8 @@ class MultiMCPTools(Toolkit):
         """Enter the async context manager."""
         try:
             await self._connect()
-        except (RuntimeError, BaseException) as e:
-            log_error(f"Failed to connect to {str(self)}: {e}")
+        except (RuntimeError, BaseException):
+            log_error(f"Failed to connect to {str(self)}")
         return self
 
     async def __aexit__(
@@ -581,7 +617,7 @@ class MultiMCPTools(Toolkit):
                     self.functions[f.name] = f
                     log_debug(f"Function: {f.name} registered with {self.name}")
                 except Exception as e:
-                    log_error(f"Failed to register tool {tool.name}: {e}")
+                    log_error(f"Failed to register tool {tool.name}: {str(e)}")
                     raise
 
     async def initialize(self, session: ClientSession, server_idx: int = 0) -> None:
@@ -598,5 +634,5 @@ class MultiMCPTools(Toolkit):
 
             self._initialized = True
         except Exception as e:
-            log_error(f"Failed to get MCP tools: {e}")
+            log_error(f"Failed to get MCP tools: {str(e)}")
             raise

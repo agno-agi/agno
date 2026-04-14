@@ -16,7 +16,6 @@ from agno.models.openai import OpenAIResponses
 from agno.team.team import Team
 from db import get_postgres_db
 
-
 # ---------------------------------------------------------------------------
 # Team
 # ---------------------------------------------------------------------------

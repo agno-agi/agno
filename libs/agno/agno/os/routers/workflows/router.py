@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union
 from uuid import uuid4
@@ -112,7 +113,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             )
         )
     except Exception as e:
-        logger.error(f"Error executing workflow via WebSocket: {e}")
+        logger.exception("Error executing workflow via WebSocket")
         error_payload = {
             "event": "error",
             "error": str(e),
@@ -276,7 +277,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
         log_debug(f"Client subscribed to workflow run {run_id} (last_event_index: {last_event_index})")
 
     except Exception as e:
-        logger.error(f"Error handling workflow subscription: {e}")
+        logger.exception("Error handling workflow subscription")
         await websocket.send_text(
             json.dumps(
                 {
@@ -331,6 +332,8 @@ async def workflow_response_streamer(
         )
         yield format_sse_event(error_response)
 
+    except asyncio.CancelledError:
+        return
     except Exception as e:
         import traceback
 
@@ -474,7 +477,7 @@ def get_websocket_router(
 
         except Exception as e:
             if "1012" not in str(e) and "1001" not in str(e):
-                logger.error(f"WebSocket error: {e}")
+                logger.exception("WebSocket error")
         finally:
             # Clean up the websocket connection
             await websocket_manager.disconnect_websocket(websocket)
@@ -556,9 +559,9 @@ def get_workflow_router(
             for db_workflow in get_workflows(db=os.db, registry=os.registry):
                 try:
                     workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True))
-                except Exception as e:
+                except Exception:
                     workflow_id = getattr(db_workflow, "id", "unknown")
-                    logger.error(f"Error converting workflow {workflow_id} to response: {e}")
+                    logger.exception(f"Error converting workflow {workflow_id} to response")
                     continue
 
         return workflows
@@ -589,9 +592,18 @@ def get_workflow_router(
         },
         dependencies=[Depends(require_resource_access("workflows", "read", "workflow_id"))],
     )
-    async def get_workflow(workflow_id: str, request: Request) -> WorkflowResponse:
+    async def get_workflow(
+        workflow_id: str,
+        request: Request,
+        version: Optional[int] = Query(None, description="Workflow version to retrieve"),
+    ) -> WorkflowResponse:
         workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+            workflow_id=workflow_id,
+            workflows=os.workflows,
+            db=os.db,
+            version=version,
+            registry=os.registry,
+            create_fresh=True,
         )
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
@@ -639,11 +651,13 @@ def get_workflow_router(
         workflow_id: str,
         request: Request,
         background_tasks: BackgroundTasks,
-        message: str = Form(...),
-        stream: bool = Form(True),
-        session_id: Optional[str] = Form(None),
-        user_id: Optional[str] = Form(None),
-        version: Optional[int] = Form(None),
+        message: str = Form(..., description="The input message or prompt to send to the workflow"),
+        stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
+        session_id: Optional[str] = Form(
+            None, description="Session ID for conversation continuity. If not provided, a new session is created"
+        ),
+        user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
+        version: Optional[int] = Form(None, description="Workflow version to use for this run"),
     ):
         kwargs = await get_request_kwargs(request, create_workflow_run)
 

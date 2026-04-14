@@ -12,16 +12,17 @@ NO MORE parsing tool call results! The frontend gets clean, structured events.
 """
 
 from typing import Dict
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.team.team import Team
-from agno.team.mode import TeamMode
 from agno.run.team import (
     TaskCreatedEvent,
-    TaskUpdatedEvent,
-    TaskStateUpdatedEvent,
     TaskIterationStartedEvent,
+    TaskStateUpdatedEvent,
+    TaskUpdatedEvent,
 )
+from agno.team.mode import TeamMode
+from agno.team.team import Team
 
 
 # Simulated frontend task list state
@@ -51,7 +52,9 @@ class TaskListUI:
             assignee_str = f" ({assignee})" if assignee else ""
             print(f"  {icon} {title}{assignee_str}")
 
-    def add_task(self, task_id: str, title: str, assignee: str = None, status: str = "pending"):
+    def add_task(
+        self, task_id: str, title: str, assignee: str = None, status: str = "pending"
+    ):
         """Add a new task to the list."""
         self.tasks[task_id] = {
             "title": title,

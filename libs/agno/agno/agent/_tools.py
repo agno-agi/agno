@@ -140,10 +140,20 @@ def get_tools(
         agent_tools.append(_default_tools.get_chat_history_function(agent, session=session))
     if agent.read_tool_call_history:
         agent_tools.append(_default_tools.get_tool_call_history_function(agent, session=session))
-    if agent.search_session_history:
+    if agent.search_past_sessions:
         agent_tools.append(
-            _default_tools.get_previous_sessions_messages_function(
-                agent, num_history_sessions=agent.num_history_sessions, user_id=user_id
+            _default_tools.get_search_past_sessions_function(
+                agent,
+                num_past_sessions_to_search=agent.num_past_sessions_to_search,
+                num_past_session_runs_in_search=agent.num_past_session_runs_in_search,
+                user_id=user_id,
+                current_session_id=session.session_id if session else None,
+            )
+        )
+        agent_tools.append(
+            _default_tools.get_read_past_session_function(
+                agent,
+                user_id=user_id,
             )
         )
 
@@ -241,13 +251,13 @@ async def aget_tools(
                         if not is_alive:
                             await tool.connect(force=True)  # type: ignore
                     except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to check if MCP tool is alive or to connect to it: {e}")
+                        log_warning(f"Failed to check if MCP tool is alive or to connect to it: {str(e)}")
                         continue
 
                     try:
                         await tool.build_tools()  # type: ignore
                     except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to build tools for {str(tool)}: {e}")
+                        log_warning(f"Failed to build tools for {str(tool)}: {str(e)}")
                         continue
 
                 # Only add the tool if it successfully connected and built its tools
@@ -262,10 +272,20 @@ async def aget_tools(
         agent_tools.append(_default_tools.get_chat_history_function(agent, session=session))
     if agent.read_tool_call_history:
         agent_tools.append(_default_tools.get_tool_call_history_function(agent, session=session))
-    if agent.search_session_history:
+    if agent.search_past_sessions:
         agent_tools.append(
-            await _default_tools.aget_previous_sessions_messages_function(
-                agent, num_history_sessions=agent.num_history_sessions, user_id=user_id
+            await _default_tools.aget_search_past_sessions_function(
+                agent,
+                num_past_sessions_to_search=agent.num_past_sessions_to_search,
+                num_past_session_runs_in_search=agent.num_past_session_runs_in_search,
+                user_id=user_id,
+                current_session_id=session.session_id if session else None,
+            )
+        )
+        agent_tools.append(
+            await _default_tools.aget_read_past_session_function(
+                agent,
+                user_id=user_id,
             )
         )
 
@@ -356,6 +376,8 @@ def parse_tools(
                 _function_names.append(name)
                 _func = _func.model_copy(deep=True)
                 _func._agent = agent
+                if agent._team is not None:
+                    _func._team = agent._team
                 # Respect the function's explicit strict setting if set
                 effective_strict = strict if _func.strict is None else _func.strict
                 _func.process_entrypoint(strict=effective_strict)
@@ -381,6 +403,8 @@ def parse_tools(
             tool.process_entrypoint(strict=effective_strict)
 
             tool._agent = agent
+            if agent._team is not None:
+                tool._team = agent._team
             if strict and tool.strict is None:
                 tool.strict = True
             if agent.tool_hooks is not None:
@@ -419,6 +443,8 @@ def parse_tools(
                         )
                 _func = _func.model_copy(deep=True)
                 _func._agent = agent
+                if agent._team is not None:
+                    _func._team = agent._team
                 if strict:
                     _func.strict = True
                 if agent.tool_hooks is not None:
@@ -426,7 +452,7 @@ def parse_tools(
                 _functions.append(_func)
                 log_debug(f"Added tool {_func.name}")
             except Exception as e:
-                log_warning(f"Could not add tool {tool}: {e}")
+                log_warning(f"Could not add tool {tool}: {str(e)}")
 
     return _functions
 

@@ -1,3 +1,4 @@
+import asyncio
 from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union
 from uuid import uuid4
 
@@ -98,7 +99,9 @@ async def team_response_streamer(
         )
         yield format_sse_event(error_response)
 
-    except BaseException as e:
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
         import traceback
 
         traceback.print_exc()
@@ -163,14 +166,20 @@ def get_team_router(
         team_id: str,
         request: Request,
         background_tasks: BackgroundTasks,
-        message: str = Form(...),
-        stream: bool = Form(True),
-        monitor: bool = Form(True),
-        session_id: Optional[str] = Form(None),
-        user_id: Optional[str] = Form(None),
-        files: Optional[List[UploadFile]] = File(None),
-        version: Optional[int] = Form(None),
-        background: bool = Form(False),
+        message: str = Form(..., description="The input message or prompt to send to the team"),
+        stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
+        monitor: bool = Form(True, description="Enable monitoring and logging for this run"),
+        session_id: Optional[str] = Form(
+            None, description="Session ID for conversation continuity. If not provided, a new session is created"
+        ),
+        user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
+        files: Optional[List[UploadFile]] = File(
+            None, description="Files to upload (images, audio, video, or documents)"
+        ),
+        version: Optional[int] = Form(None, description="Team version to use for this run"),
+        background: bool = Form(
+            False, description="Run in background and return immediately with run metadata (requires database)"
+        ),
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
 
@@ -230,15 +239,15 @@ def get_team_router(
                     try:
                         base64_image = process_image(file)
                         base64_images.append(base64_image)
-                    except Exception as e:
-                        logger.error(f"Error processing image {file.filename}: {e}")
+                    except Exception:
+                        logger.exception(f"Error processing image {file.filename}")
                         continue
                 elif file.content_type in ["audio/wav", "audio/mp3", "audio/mpeg"]:
                     try:
                         base64_audio = process_audio(file)
                         base64_audios.append(base64_audio)
-                    except Exception as e:
-                        logger.error(f"Error processing audio {file.filename}: {e}")
+                    except Exception:
+                        logger.exception(f"Error processing audio {file.filename}")
                         continue
                 elif file.content_type in [
                     "video/x-flv",
@@ -256,13 +265,14 @@ def get_team_router(
                     try:
                         base64_video = process_video(file)
                         base64_videos.append(base64_video)
-                    except Exception as e:
-                        logger.error(f"Error processing video {file.filename}: {e}")
+                    except Exception:
+                        logger.exception(f"Error processing video {file.filename}")
                         continue
                 elif file.content_type in [
                     "application/pdf",
                     "text/csv",
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "application/vnd.ms-outlook",
                     "text/plain",
                     "application/json",
                 ]:

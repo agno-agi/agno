@@ -100,7 +100,7 @@ class TestModelToDict:
 class TestGetProvider:
     def test_get_provider_returns_provider(self, model_with_provider):
         """get_provider returns explicit provider."""
-        assert model_with_provider.get_provider() == "TestProvider"
+        assert model_with_provider.get_provider() == "TestProvider Chat"
 
     def test_get_provider_returns_name_when_no_provider(self, model_with_name):
         """get_provider returns name from the provider field."""
@@ -110,7 +110,7 @@ class TestGetProvider:
 
     def test_get_provider_returns_openai_default(self, model):
         """OpenAIChat defaults provider to 'OpenAI'."""
-        assert model.get_provider() == "OpenAI"
+        assert model.get_provider() == "OpenAI Chat"
 
 
 # =============================================================================

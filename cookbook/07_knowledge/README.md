@@ -1,77 +1,123 @@
-# Agent Knowledge
+# Knowledge: RAG for Agents
 
-**Knowledge Base:** is information that the Agent can search to improve its responses. This directory contains a series of cookbooks that demonstrate how to build a knowledge base for the Agent.
+Give agents access to your documents, databases, and APIs through Retrieval-Augmented Generation.
 
-> Note: Fork and clone this repository if needed
+## Overview
 
-## Getting Started
+Knowledge is Agno's RAG framework. It handles the full pipeline: reading documents, chunking them, embedding chunks, storing them in a vector database, and retrieving relevant content when agents need it.
 
-### 1. Setup Environment
+| Component | What It Does | Options |
+|-----------|-------------|---------|
+| **Readers** | Extract text from files | PDF, DOCX, CSV, JSON, Web, YouTube, ArXiv |
+| **Chunking** | Split text into searchable pieces | Fixed, Recursive, Semantic, Code, Markdown, Agentic |
+| **Embedders** | Convert text to vectors | OpenAI, Cohere, Bedrock, Ollama, 14+ more |
+| **Vector DBs** | Store and search vectors | Qdrant, LanceDB, ChromaDB, Pinecone, 14+ more |
+| **Rerankers** | Re-score results for quality | Cohere, SentenceTransformer, Bedrock, Infinity |
 
-```bash
-python3 -m venv ~/.venvs/aienv
-source ~/.venvs/aienv/bin/activate
-uv pip install -U agno openai pgvector "psycopg[binary]" sqlalchemy
-```
-
-### 2. Start PgVector Database
-
-```bash
-docker run -d \
-  -e POSTGRES_DB=ai \
-  -e POSTGRES_USER=ai \
-  -e POSTGRES_PASSWORD=ai \
-  -e PGDATA=/var/lib/postgresql/data/pgdata \
-  -v pgvolume:/var/lib/postgresql/data \
-  -p 5532:5432 \
-  --name pgvector \
-  agnohq/pgvector:16
-```
-
-### 3. Basic Knowledge Base
+## Quick Start
 
 ```python
 from agno.agent import Agent
+from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.pgvector import PgVector
+from agno.models.openai import OpenAIResponses
+from agno.vectordb.qdrant import Qdrant, SearchType
 
 knowledge = Knowledge(
-    vector_db=PgVector(
-        table_name="vectors",
-        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
-    )
+    vector_db=Qdrant(
+        collection="my_docs",
+        url="http://localhost:6333",
+        search_type=SearchType.hybrid,
+        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+    ),
 )
 
-# Add content from URL
-knowledge.add_content(
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-)
+knowledge.insert(url="https://example.com/document.pdf")
 
-# Create agent with knowledge
 agent = Agent(
-    name="Knowledge Agent",
+    model=OpenAIResponses(id="gpt-5.2"),
     knowledge=knowledge,
     search_knowledge=True,
+    markdown=True,
 )
 
-agent.print_response("What can you tell me about Thai recipes?")
+agent.print_response("What does the document say about X?")
 ```
 
-## Examples
+## Cookbook Structure
 
-Add docs, manuals, and databases so agents can search and cite specific sources instead of guessing.
+```
+cookbook/07_knowledge/
+|-- 01_getting_started/        Start here
+|   |-- 01_basic_rag.py            Traditional RAG with context injection
+|   |-- 02_agentic_rag.py          Agent-driven search decisions
+|   |-- 03_loading_content.py      All source types: file, URL, text, topics
+|   +-- 04_choosing_components.md  Decision guide
+|
+|-- 02_building_blocks/        Core components
+|   |-- 01_chunking_strategies.py  Side-by-side comparison
+|   |-- 02_hybrid_search.py        Vector + keyword + hybrid
+|   |-- 03_reranking.py            Two-stage retrieval
+|   |-- 04_filtering.py            Dict + FilterExpr
+|   |-- 05_agentic_filtering.py    Agent-driven filters
+|   +-- 06_embedders.py            Embedder comparison
+|
+|-- 03_production/             Real-world patterns
+|   |-- 01_multi_source_rag.py     Multiple content types
+|   |-- 02_knowledge_lifecycle.py  Insert, update, remove, track
+|   |-- 03_multi_tenant.py         Per-tenant isolation
+|   +-- 04_error_handling.py       Robust ingestion
+|
+|-- 04_advanced/               Power user patterns
+|   |-- 01_custom_retriever.py     Custom retrieval function
+|   |-- 02_custom_chunking.py      Custom chunking strategy
+|   |-- 03_graph_rag.py            LightRAG integration
+|   |-- 04_knowledge_tools.py      Think/search/analyze tools
+|   +-- 05_knowledge_protocol.py   Custom KnowledgeProtocol
+|
+|-- 05_integrations/           Specific providers
+|   |-- readers/                   PDF, CSV, JSON, Web, etc.
+|   |-- cloud/                     S3, Azure, GCS
+|   +-- vector_dbs/                Qdrant, ChromaDB, Pinecone, etc.
+|
++-- reference/                 Decision guides
+    |-- vector_db_comparison.md
+    |-- embedder_comparison.md
+    +-- chunking_decision_guide.md
+```
 
-### Quickstart
-- **[01_from_path.py](./01_quickstart/01_from_path.py)** - Add content from local files
-- **[02_from_url.py](./01_quickstart/02_from_url.py)** - Add content from URLs
-- **[04_from_multiple.py](./01_quickstart/04_from_multiple.py)** - Add multiple sources
-- **[13_specify_reader.py](./01_quickstart/13_specify_reader.py)** - Use specific document readers
-- **[15_batching.py](./01_quickstart/15_batching.py)** - Batch embedding workflow
+## Running the Cookbooks
 
-### Other Topics
-- **[chunking/](./chunking/)** - Text chunking strategies
-- **[embedders/](./embedders/)** - Embedding model providers  
-- **[filters/](./filters/)** - Content filtering and access control
-- **[readers/](./readers/)** - Document format processors
-- **[search_type/](./search_type/)** - Search algorithm options
-- **[vector_db/](./vector_db/)** - Vector database implementations
+### 1. Start Qdrant
+
+```bash
+./cookbook/scripts/run_qdrant.sh
+```
+
+### 2. Set API Keys
+
+```bash
+export OPENAI_API_KEY=your-key
+```
+
+### 3. Run Examples
+
+```bash
+# Start with basic RAG
+.venvs/demo/bin/python cookbook/07_knowledge/01_getting_started/01_basic_rag.py
+
+# Try agentic RAG
+.venvs/demo/bin/python cookbook/07_knowledge/01_getting_started/02_agentic_rag.py
+
+# Explore building blocks
+.venvs/demo/bin/python cookbook/07_knowledge/02_building_blocks/01_chunking_strategies.py
+```
+
+## Two RAG Modes
+
+| Mode | Parameter | How It Works |
+|------|-----------|-------------|
+| **Basic RAG** | `add_knowledge_to_context=True` | Context auto-injected into prompt |
+| **Agentic RAG** | `search_knowledge=True` | Agent gets search tool, decides when to use it |
+
+Agentic RAG is the default and recommended for most use cases.
