@@ -763,6 +763,42 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         if not target_run:
             raise HTTPException(status_code=404, detail=f"Run with ID {run_id} not found in session {session_id}")
 
+        # If the run is paused and has tools with approval_type, merge any resolved
+        # approval data so the FE can display admin-filled values on the chat page.
+        # Only applies to approval-gated HITL, not regular HITL.
+        if target_run.get("status") == "PAUSED":
+            has_approval = any(
+                t.get("approval_type") == "required"
+                for t in (target_run.get("tools") or [])
+                + [
+                    req.get("tool_execution", {})
+                    for req in (target_run.get("requirements") or [])
+                ]
+                + [
+                    t
+                    for mr in (target_run.get("member_responses") or [])
+                    for t in (mr.get("tools") or [])
+                ]
+            )
+            if has_approval:
+                try:
+                    from agno.run.approval import amerge_approval_into_run
+
+                    if target_run.get("team_id") is not None:
+                        from agno.run.team import TeamRunOutput
+
+                        run_obj = TeamRunOutput.from_dict(target_run)
+                        await amerge_approval_into_run(db, run_id, run_obj)
+                        target_run = run_obj.to_dict()
+                    elif target_run.get("agent_id") is not None:
+                        from agno.run.agent import RunOutput
+
+                        run_obj = RunOutput.from_dict(target_run)
+                        await amerge_approval_into_run(db, run_id, run_obj)
+                        target_run = run_obj.to_dict()
+                except Exception:
+                    pass
+
         # Return the appropriate schema based on run type
         if target_run.get("workflow_id") is not None:
             return WorkflowRunSchema.from_dict(target_run)
