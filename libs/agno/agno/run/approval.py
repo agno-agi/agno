@@ -175,6 +175,11 @@ def create_approval_from_pause(
     if not _has_approval_requirement(tools, requirements):
         return None
 
+    # Skip if an approval_id is already stamped (avoids duplicates when pause hook fires twice)
+    for t in tools or []:
+        if getattr(t, "approval_type", None) == "required" and getattr(t, "approval_id", None) is not None:
+            return getattr(t, "approval_id", None)
+
     try:
         approval_data = _build_approval_dict(
             run_response,
@@ -225,6 +230,11 @@ async def acreate_approval_from_pause(
     requirements = getattr(run_response, "requirements", None)
     if not _has_approval_requirement(tools, requirements):
         return None
+
+    # Skip if an approval_id is already stamped (avoids duplicates when pause hook fires twice)
+    for t in tools or []:
+        if getattr(t, "approval_type", None) == "required" and getattr(t, "approval_id", None) is not None:
+            return getattr(t, "approval_id", None)
 
     try:
         approval_data = _build_approval_dict(
