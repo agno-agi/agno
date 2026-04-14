@@ -37,9 +37,11 @@ agent = Agent(
 )
 
 # Save OAuth token to DB instead of token.json
+# from agno.db.sqlite.sqlite import SqliteDb
+# from agno.models.openai import OpenAIResponses
 # db_agent = Agent(
 #     name="Calendar Agent (DB)",
-#     model=OpenAIChat(id="gpt-4o"),
+#     model=OpenAIResponses(id="gpt-5.4"),
 #     tools=[GoogleCalendarTools(store_token_in_db=True)],
 #     db=SqliteDb(db_file="tmp/calendar.db"),
 #     add_datetime_to_context=True,

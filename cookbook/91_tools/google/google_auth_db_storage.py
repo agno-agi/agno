@@ -14,7 +14,7 @@ Setup:
 
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.google.auth import GoogleAuth
 from agno.tools.google.gmail import GmailTools
 
@@ -26,7 +26,7 @@ google_auth = GoogleAuth()
 
 agent = Agent(
     name="Gmail Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=[
         google_auth,
         GmailTools(

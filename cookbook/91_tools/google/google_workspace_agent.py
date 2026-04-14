@@ -17,7 +17,7 @@ Setup:
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.drive import GoogleDriveTools
 from agno.tools.google.gmail import GmailTools
@@ -28,7 +28,7 @@ from agno.tools.google.gmail import GmailTools
 
 agent = Agent(
     name="Workspace Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=[
         GmailTools(
             include_tools=["get_latest_emails", "search_emails", "create_draft_email"],

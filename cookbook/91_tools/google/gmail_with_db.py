@@ -13,7 +13,7 @@ Setup:
 
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.google.gmail import GmailTools
 
 # ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ from agno.tools.google.gmail import GmailTools
 
 agent = Agent(
     name="Gmail Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=[
         GmailTools(
             store_token_in_db=True,
