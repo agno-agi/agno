@@ -110,17 +110,24 @@ def save_token(toolkit: Any, creds: Any, user_id: Optional[str] = None) -> bool:
     db = get_token_db(toolkit)
     if not db:
         return False
-
-    uid = user_id
     try:
         token_data = json.loads(creds.to_json())
+        # Coordinator mode: granted_scopes must reflect the consolidated consent union
+        # from registered services, not creds.scopes (which narrows to whatever scopes
+        # the current caller requested in load_token and would overwrite the stored union
+        # on every refresh path).
+        ga = getattr(toolkit, "google_auth", None)
+        if ga is not None and getattr(ga, "_services", None):
+            granted_scopes = sorted({s for scope_list in ga._services.values() for s in scope_list})
+        else:
+            granted_scopes = token_data.get("scopes", [])
         db.upsert_auth_token(
             {
                 "provider": "google",
-                "user_id": uid,
+                "user_id": user_id,
                 "service": "google",
                 "token_data": token_data,
-                "granted_scopes": token_data.get("scopes", []),
+                "granted_scopes": granted_scopes,
             }
         )
         return True
@@ -165,6 +172,9 @@ class GoogleAuth(Toolkit):
         # Set by auto-wiring from agent.db, or explicitly via db= param
         self._db: Optional[Any] = db
         self._services: Dict[str, List[str]] = {}
+        # True once get_oauth_router() has mounted a callback handler — toolkits read this
+        # to choose interface mode (raise, let LLM handle OAuth) vs cookbook mode (browser).
+        self._callback_configured: bool = False
         self.register(self.authenticate_google)
 
     def register_service(self, service: str, scopes: List[str]) -> None:
@@ -217,13 +227,19 @@ class GoogleAuth(Toolkit):
         effective_user_id = user_id or ""
         try:
             token_data = json.loads(creds.to_json())
+            # Use the consolidated _services union rather than creds.scopes, which
+            # narrows on refresh paths. See save_token for the same pattern.
+            if self._services:
+                granted_scopes = sorted({s for scope_list in self._services.values() for s in scope_list})
+            else:
+                granted_scopes = token_data.get("scopes", [])
             self._db.upsert_auth_token(
                 {
                     "provider": "google",
                     "user_id": effective_user_id,
                     "service": service,
                     "token_data": token_data,
-                    "granted_scopes": token_data.get("scopes", []),
+                    "granted_scopes": granted_scopes,
                 }
             )
             log_debug(f"Token stored for {effective_user_id}/{service}")
@@ -340,6 +356,10 @@ class GoogleAuth(Toolkit):
     def get_oauth_router(self) -> Any:
         """Create a FastAPI APIRouter with the /google/oauth/callback endpoint.
 
+        Calling this marks GoogleAuth as "interface mode" — toolkits will raise
+        PermissionError on token miss so the LLM can surface an OAuth URL, rather
+        than falling through to a local browser flow.
+
         The router closes over this GoogleAuth instance. _db must be wired
         (via AgentOS init-time binding or explicit db= param) before the
         callback fires, otherwise token storage silently skips.
@@ -348,6 +368,7 @@ class GoogleAuth(Toolkit):
             google_auth = GoogleAuth(client_id="...")
             app.include_router(google_auth.get_oauth_router())
         """
+        self._callback_configured = True
         from html import escape
 
         from fastapi import APIRouter, Request

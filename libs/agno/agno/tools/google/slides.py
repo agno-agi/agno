@@ -215,7 +215,7 @@ class GoogleSlidesTools(Toolkit):
 
         if load_token(self, self.scopes, user_id=user_id):
             return
-        if self.google_auth and self.google_auth._db:
+        if self.google_auth and self.google_auth._db and self.google_auth._callback_configured:
             raise PermissionError("Slides not authenticated — user must complete OAuth via authenticate_google")
 
         token_file = Path(self.token_path or "token.json")
@@ -236,6 +236,13 @@ class GoogleSlidesTools(Toolkit):
                 self.creds = None
 
         if not self.creds or not self.creds.valid:
+            # Coordinator mode: request the union of all registered scopes in one consent flow
+            if self.google_auth is not None and self.google_auth._services:
+                consent_scopes = sorted(
+                    {s for scope_list in self.google_auth._services.values() for s in scope_list}
+                )
+            else:
+                consent_scopes = self.scopes
             client_config = {
                 "installed": {
                     "client_id": getenv("GOOGLE_CLIENT_ID"),
@@ -248,9 +255,9 @@ class GoogleSlidesTools(Toolkit):
                 }
             }
             if creds_file.exists():
-                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
+                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), consent_scopes)
             else:
-                flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
+                flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
 
             # prompt=consent forces Google to return a refresh_token every time
             oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}

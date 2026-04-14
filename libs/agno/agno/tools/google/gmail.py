@@ -392,7 +392,7 @@ class GmailTools(Toolkit):
         # Try loading token from DB
         if load_token(self, self.scopes, user_id=user_id):
             return
-        if self.google_auth and self.google_auth._db:
+        if self.google_auth and self.google_auth._db and self.google_auth._callback_configured:
             raise PermissionError("Gmail not authenticated — user must complete OAuth via authenticate_google")
 
         # File-based OAuth flow
@@ -412,6 +412,14 @@ class GmailTools(Toolkit):
                 self.creds = None
 
         if not self.creds or not self.creds.valid:
+            # In coordinator mode, request the union of all registered scopes so one consent
+            # flow covers gmail + calendar + drive + ... and the stored token serves every toolkit.
+            if self.google_auth is not None and self.google_auth._services:
+                consent_scopes = sorted(
+                    {s for scope_list in self.google_auth._services.values() for s in scope_list}
+                )
+            else:
+                consent_scopes = self.scopes
             client_config = {
                 "installed": {
                     "client_id": getenv("GOOGLE_CLIENT_ID"),
@@ -424,9 +432,9 @@ class GmailTools(Toolkit):
                 }
             }
             if creds_file.exists():
-                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
+                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), consent_scopes)
             else:
-                flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
+                flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
             oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
             if self.login_hint:
                 oauth_kwargs["login_hint"] = self.login_hint

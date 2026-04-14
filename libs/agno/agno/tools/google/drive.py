@@ -264,7 +264,7 @@ class GoogleDriveTools(Toolkit):
 
         if load_token(self, self.scopes, user_id=user_id):
             return
-        if self.google_auth and self.google_auth._db:
+        if self.google_auth and self.google_auth._db and self.google_auth._callback_configured:
             raise PermissionError("Drive not authenticated — user must complete OAuth via authenticate_google")
 
         # OAuth flow
@@ -284,6 +284,13 @@ class GoogleDriveTools(Toolkit):
                 self.creds = None
 
         if not self.creds or not self.creds.valid:
+            # Coordinator mode: request the union of all registered scopes in one consent flow
+            if self.google_auth is not None and self.google_auth._services:
+                consent_scopes = sorted(
+                    {s for scope_list in self.google_auth._services.values() for s in scope_list}
+                )
+            else:
+                consent_scopes = self.scopes
             client_config = {
                 "installed": {
                     "client_id": getenv("GOOGLE_CLIENT_ID"),
@@ -296,9 +303,9 @@ class GoogleDriveTools(Toolkit):
                 }
             }
             if creds_file.exists():
-                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
+                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), consent_scopes)
             else:
-                flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
+                flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
             run_kwargs: dict = {"port": self.auth_port, "prompt": "consent"}
             if self.login_hint:
                 run_kwargs["login_hint"] = self.login_hint
