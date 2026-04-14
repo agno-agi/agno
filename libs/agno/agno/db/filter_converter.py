@@ -21,7 +21,6 @@ Usage:
     >>> stmt = select(table).where(where_clause)
 """
 
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Set
 
 # Maximum recursion depth for nested filter expressions (prevents stack overflow attacks)
@@ -51,21 +50,14 @@ TRACE_COLUMNS: Set[str] = {
 DATETIME_COLUMNS: Set[str] = {"start_time", "end_time", "created_at"}
 
 
-def _normalize_datetime_value(value: Any) -> str:
+def _normalize_datetime_value(value: Any) -> Any:
     """Parse an ISO 8601 string and return it in UTC for consistent comparison."""
-    if isinstance(value, datetime):
-        if value.tzinfo is not None:
-            return value.astimezone(timezone.utc).isoformat()
-        return value.replace(tzinfo=timezone.utc).isoformat()
-    if isinstance(value, str):
-        try:
-            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            if dt.tzinfo is not None:
-                return dt.astimezone(timezone.utc).isoformat()
-            return dt.replace(tzinfo=timezone.utc).isoformat()
-        except ValueError:
-            pass
-    return value
+    from agno.utils.dttm import parse_datetime_utc
+
+    try:
+        return parse_datetime_utc(value).isoformat()
+    except (TypeError, ValueError):
+        return value
 
 
 def filter_expr_to_sqlalchemy(
