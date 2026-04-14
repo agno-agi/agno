@@ -230,7 +230,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             )
 
         except Exception as e:
-            log_error(f"Error retrieving traces: {e}")
+            log_error(f"Error retrieving traces: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error retrieving traces: {str(e)}")
 
     @router.get(
@@ -408,7 +408,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         except HTTPException:
             raise
         except Exception as e:
-            log_error(f"Error retrieving trace {trace_id}: {e}")
+            log_error(f"Error retrieving trace {trace_id}: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error retrieving trace: {str(e)}")
 
     @router.get(
@@ -566,7 +566,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             )
 
         except Exception as e:
-            log_error(f"Error retrieving trace statistics: {e}")
+            log_error(f"Error retrieving trace statistics: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error retrieving statistics: {str(e)}")
 
     @router.post(
@@ -742,7 +742,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         except ValueError as e:
             raise HTTPException(status_code=400, detail=f"Invalid filter expression: {str(e)}")
         except Exception as e:
-            log_error(f"Error searching traces: {e}")
+            log_error(f"Error searching traces: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error searching traces: {str(e)}")
 
     return router

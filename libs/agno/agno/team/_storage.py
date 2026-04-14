@@ -169,7 +169,7 @@ def _read_session(
         session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
         return session  # type: ignore
     except Exception as e:
-        log_warning(f"Error getting session from db: {e}")
+        log_warning(f"Error getting session from db: {str(e)}")
         return None
 
 
@@ -189,7 +189,7 @@ async def _aread_session(
             session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore[assignment]
         return session  # type: ignore
     except Exception as e:
-        log_warning(f"Error getting session from db: {e}")
+        log_warning(f"Error getting session from db: {str(e)}")
         return None
 
 
@@ -201,7 +201,7 @@ def _upsert_session(team: "Team", session: TeamSession) -> Optional[TeamSession]
             raise ValueError("Db not initialized")
         return team.db.upsert_session(session=session)  # type: ignore
     except Exception as e:
-        log_warning(f"Error upserting session into db: {e}")
+        log_warning(f"Error upserting session into db: {str(e)}")
     return None
 
 
@@ -217,7 +217,7 @@ async def _aupsert_session(team: "Team", session: TeamSession) -> Optional[TeamS
         else:
             return team.db.upsert_session(session=session)  # type: ignore
     except Exception as e:
-        log_warning(f"Error upserting session into db: {e}")
+        log_warning(f"Error upserting session into db: {str(e)}")
     return None
 
 
@@ -466,10 +466,12 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["num_team_history_runs"] = team.num_team_history_runs
     if team.share_member_interactions:
         config["share_member_interactions"] = team.share_member_interactions
-    if team.search_session_history:
-        config["search_session_history"] = team.search_session_history
-    if team.num_history_sessions is not None:
-        config["num_history_sessions"] = team.num_history_sessions
+    if team.search_past_sessions:
+        config["search_past_sessions"] = team.search_past_sessions
+    if team.num_past_sessions_to_search is not None:
+        config["num_past_sessions_to_search"] = team.num_past_sessions_to_search
+    if team.num_past_session_runs_in_search is not None:
+        config["num_past_session_runs_in_search"] = team.num_past_session_runs_in_search
     if team.read_chat_history:
         config["read_chat_history"] = team.read_chat_history
 
@@ -494,6 +496,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["add_datetime_to_context"] = team.add_datetime_to_context
     if team.add_location_to_context:
         config["add_location_to_context"] = team.add_location_to_context
+    if team.datetime_format is not None:
+        config["datetime_format"] = team.datetime_format
     if team.timezone_identifier is not None:
         config["timezone_identifier"] = team.timezone_identifier
     if team.add_name_to_context:
@@ -546,7 +550,7 @@ def to_dict(team: "Team") -> Dict[str, Any]:
                     func = Function.from_callable(tool)
                     serialized_tools.append(func.to_dict())
             except Exception as e:
-                log_warning(f"Could not serialize tool {tool}: {e}")
+                log_warning(f"Could not serialize tool {tool}: {str(e)}")
         if serialized_tools:
             config["tools"] = serialized_tools
     if team.tool_choice is not None:
@@ -899,8 +903,11 @@ def from_dict(
             add_team_history_to_members=config.get("add_team_history_to_members", False),
             num_team_history_runs=config.get("num_team_history_runs", 3),
             share_member_interactions=config.get("share_member_interactions", False),
-            search_session_history=config.get("search_session_history", False),
-            num_history_sessions=config.get("num_history_sessions"),
+            search_past_sessions=config.get("search_past_sessions", config.get("search_session_history", False)),
+            num_past_sessions_to_search=config.get("num_past_sessions_to_search", config.get("num_history_sessions")),
+            num_past_session_runs_in_search=config.get(
+                "num_past_session_runs_in_search", config.get("num_past_session_runs")
+            ),
             read_chat_history=config.get("read_chat_history", False),
             # --- System message settings ---
             system_message=config.get("system_message"),
@@ -912,6 +919,7 @@ def from_dict(
             markdown=config.get("markdown", False),
             add_datetime_to_context=config.get("add_datetime_to_context", False),
             add_location_to_context=config.get("add_location_to_context", False),
+            datetime_format=config.get("datetime_format"),
             timezone_identifier=config.get("timezone_identifier"),
             add_name_to_context=config.get("add_name_to_context", False),
             add_member_tools_to_context=config.get("add_member_tools_to_context", False),
@@ -1072,7 +1080,7 @@ def save(
         return config["version"]
 
     except Exception as e:
-        log_error(f"Error saving Team to database: {e}")
+        log_error(f"Error saving Team to database: {str(e)}")
         raise
 
 

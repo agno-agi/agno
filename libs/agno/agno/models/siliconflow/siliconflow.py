@@ -23,7 +23,7 @@ class Siliconflow(OpenAILike):
     name: str = "Siliconflow"
     provider: str = "Siliconflow"
     api_key: Optional[str] = None
-    base_url: str = "https://api.siliconflow.com/v1"
+    base_url: str = "https://api.siliconflow.cn/v1"
 
     def _get_client_params(self) -> Dict[str, Any]:
         """

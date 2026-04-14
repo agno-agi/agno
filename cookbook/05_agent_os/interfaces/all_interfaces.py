@@ -2,7 +2,7 @@
 AgentOS Demo
 
 Prerequisites:
-uv pip install -U fastapi uvicorn sqlalchemy pgvector psycopg openai ddgs yfinance
+uv pip install -U fastapi uvicorn sqlalchemy pgvector psycopg openai ddgs
 """
 
 from agno import __version__ as agno_version
@@ -14,6 +14,7 @@ from agno.os import AgentOS
 from agno.os.interfaces.a2a import A2A
 from agno.os.interfaces.agui import AGUI
 from agno.os.interfaces.slack import Slack
+from agno.os.interfaces.telegram import Telegram
 from agno.os.interfaces.whatsapp import Whatsapp
 from agno.registry import Registry
 from agno.team import Team
@@ -87,6 +88,7 @@ simple_workflow = Workflow(
 
 # Create an interface
 slack_interface = Slack(agent=simple_team)
+telegram_interface = Telegram(agent=simple_agent)
 whatsapp_interface = Whatsapp(agent=simple_agent)
 agui_interface = AGUI(agent=simple_agent)
 a2a_interface = A2A(agents=[simple_agent])
@@ -101,7 +103,13 @@ agent_os = AgentOS(
     agents=[simple_agent],
     teams=[simple_team],
     workflows=[simple_workflow],
-    interfaces=[slack_interface, whatsapp_interface, agui_interface, a2a_interface],
+    interfaces=[
+        slack_interface,
+        telegram_interface,
+        whatsapp_interface,
+        agui_interface,
+        a2a_interface,
+    ],
     registry=registry,
     db=db,
 )

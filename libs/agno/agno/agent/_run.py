@@ -37,6 +37,7 @@ from agno.exceptions import (
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
+from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.metrics import RunMetrics, merge_background_metrics
 from agno.models.response import ModelResponse, ToolExecution
@@ -147,7 +148,7 @@ def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
                     run_context.dependencies[key] = result
 
             except Exception as e:
-                log_warning(f"Failed to resolve dependencies for '{key}': {e}")
+                log_warning(f"Failed to resolve dependencies for '{key}': {str(e)}")
         else:
             run_context.dependencies[key] = value
 
@@ -181,7 +182,7 @@ async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> No
 
             run_context.dependencies[key] = result
         except Exception as e:
-            log_warning(f"Failed to resolve context for '{key}': {e}")
+            log_warning(f"Failed to resolve context for '{key}': {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +361,7 @@ def _run(
     from agno.agent._messages import get_run_messages
     from agno.agent._response import (
         convert_response_to_structured_format,
+        generate_followups,
         generate_response_with_output_model,
         handle_reasoning,
         parse_response_with_parser_model,
@@ -505,7 +507,9 @@ def _run(
                 # 6. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
 
-                model_response: ModelResponse = agent.model.response(
+                model_response: ModelResponse = call_model_with_fallback(
+                    agent.model,
+                    agent.fallback_config,
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=agent.tool_choice,
@@ -556,12 +560,14 @@ def _run(
                         user_id=user_id,
                     )
 
-                # 8. Store media if enabled
-                if agent.store_media:
-                    store_media_util(run_response, model_response)
+                # 8. Store media in run output for the caller
+                store_media_util(run_response, model_response)
 
                 # 9. Convert the response to the structured format if needed
                 convert_response_to_structured_format(agent, run_response, run_context=run_context)
+
+                # 9b. Generate follow-up suggestions if enabled
+                generate_followups(agent, run_response=run_response)
 
                 # 10. Execute post-hooks after output is generated but before response is returned
                 if agent.post_hooks is not None:
@@ -665,7 +671,7 @@ def _run(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
 
@@ -744,6 +750,7 @@ def _run_stream(
     from agno.agent._init import disconnect_connectable_tools
     from agno.agent._messages import get_run_messages
     from agno.agent._response import (
+        generate_followups_stream,
         generate_response_with_output_model_stream,
         handle_model_response_stream,
         handle_reasoning_stream,
@@ -965,6 +972,13 @@ def _run_stream(
                     run_context=run_context,
                 )
 
+                # 7b. Generate follow-up suggestions if enabled
+                yield from generate_followups_stream(
+                    agent,  # type: ignore
+                    run_response=run_response,
+                    stream_events=stream_events,
+                )
+
                 # We should break out of the run function
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
                     yield from wait_for_thread_tasks_stream(
@@ -1162,7 +1176,7 @@ def _run_stream(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
 
@@ -1423,6 +1437,7 @@ async def _arun(
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import aget_run_messages
     from agno.agent._response import (
+        agenerate_followups,
         agenerate_response_with_output_model,
         ahandle_reasoning,
         aparse_response_with_parser_model,
@@ -1576,7 +1591,9 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 9. Generate a response from the Model (includes running function calls)
-                model_response: ModelResponse = await agent.model.aresponse(
+                model_response: ModelResponse = await acall_model_with_fallback(
+                    agent.model,
+                    agent.fallback_config,
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=agent.tool_choice,
@@ -1635,9 +1652,11 @@ async def _arun(
                 # 11. Convert the response to the structured format if needed
                 convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
-                # 12. Store media if enabled
-                if agent.store_media:
-                    store_media_util(run_response, model_response)
+                # 11b. Generate follow-up suggestions if enabled
+                await agenerate_followups(agent, run_response=run_response)
+
+                # 12. Store media in run output for the caller
+                store_media_util(run_response, model_response)
 
                 # 13. Execute post-hooks (after output is generated but before response is returned)
                 if agent.post_hooks is not None:
@@ -1748,7 +1767,7 @@ async def _arun(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -1865,15 +1884,15 @@ async def _arun_background(
                 background_tasks=background_tasks,
                 **kwargs,
             )
-        except Exception:
-            log_error(f"Background run {run_response.run_id} failed", exc_info=True)
+        except Exception as e:
+            log_error(f"Background run {run_response.run_id} failed: {str(e)}")
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
                 agent_session.upsert_run(run=run_response)
                 await asave_session(agent, session=agent_session)
-            except Exception:
-                log_error(f"Failed to persist error state for background run {run_response.run_id}", exc_info=True)
+            except Exception as e:
+                log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
             # Note: acleanup_run is already called by _arun's finally block
 
     task = asyncio.create_task(_background_task())
@@ -1922,6 +1941,7 @@ async def _arun_stream(
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import aget_run_messages
     from agno.agent._response import (
+        agenerate_followups_stream,
         agenerate_response_with_output_model_stream,
         ahandle_model_response_stream,
         ahandle_reasoning_stream,
@@ -2149,6 +2169,14 @@ async def _arun_stream(
                 ):
                     yield event  # type: ignore
 
+                # 10b. Generate follow-up suggestions if enabled
+                async for event in agenerate_followups_stream(
+                    agent,
+                    run_response=run_response,
+                    stream_events=stream_events,
+                ):
+                    yield event  # type: ignore
+
                 if stream_events:
                     yield handle_event(  # type: ignore
                         create_run_content_completed_event(from_run_response=run_response),
@@ -2365,7 +2393,7 @@ async def _arun_stream(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -2821,6 +2849,9 @@ def continue_run_dispatch(
     run_messages = get_continue_run_messages(
         agent,
         input=input,
+        session=agent_session,
+        add_history_to_context=agent.add_history_to_context,
+        run_context=run_context,
     )
 
     # Reset the run state
@@ -2890,6 +2921,7 @@ def _continue_run(
     from agno.agent._init import disconnect_connectable_tools
     from agno.agent._response import (
         convert_response_to_structured_format,
+        generate_followups,
         generate_response_with_output_model,
         parse_response_with_parser_model,
         update_run_response,
@@ -2913,7 +2945,9 @@ def _continue_run(
 
                 # 2. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
-                model_response: ModelResponse = agent.model.response(
+                model_response: ModelResponse = call_model_with_fallback(
+                    agent.model,
+                    agent.fallback_config,
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=tools,
@@ -2953,9 +2987,11 @@ def _continue_run(
                 # 4. Convert the response to the structured format if needed
                 convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
-                # 5. Store media if enabled
-                if agent.store_media:
-                    store_media_util(run_response, model_response)
+                # 4b. Generate follow-up suggestions if enabled
+                generate_followups(agent, run_response=run_response)
+
+                # 5. Store media in run output for the caller
+                store_media_util(run_response, model_response)
 
                 # 6. Execute post-hooks
                 if agent.post_hooks is not None:
@@ -3042,7 +3078,7 @@ def _continue_run(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
                 run_response.status = RunStatus.error
@@ -3095,7 +3131,11 @@ def _continue_run_stream(
 
     from agno.agent._hooks import execute_post_hooks
     from agno.agent._init import disconnect_connectable_tools
-    from agno.agent._response import handle_model_response_stream, parse_response_with_parser_model_stream
+    from agno.agent._response import (
+        generate_followups_stream,
+        handle_model_response_stream,
+        parse_response_with_parser_model_stream,
+    )
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates_stream
 
@@ -3149,6 +3189,13 @@ def _continue_run_stream(
                     run_response=run_response,
                     stream_events=stream_events,
                     run_context=run_context,
+                )
+
+                # Generate follow-up suggestions if enabled
+                yield from generate_followups_stream(
+                    agent,  # type: ignore
+                    run_response=run_response,
+                    stream_events=stream_events,
                 )
 
                 # Yield RunContentCompletedEvent
@@ -3317,7 +3364,7 @@ def _continue_run_stream(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
                 run_response.status = RunStatus.error
@@ -3530,6 +3577,7 @@ async def _acontinue_run(
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import get_continue_run_messages
     from agno.agent._response import (
+        agenerate_followups,
         agenerate_response_with_output_model,
         aparse_response_with_parser_model,
         convert_response_to_structured_format,
@@ -3625,8 +3673,6 @@ async def _acontinue_run(
 
                 run_response = cast(RunOutput, run_response)
 
-                run_response.status = RunStatus.running
-
                 # 5. Determine tools for model
                 agent.model = cast(Model, agent.model)
                 processed_tools = await agent.aget_tools(
@@ -3650,7 +3696,12 @@ async def _acontinue_run(
                 run_messages: RunMessages = get_continue_run_messages(
                     agent,
                     input=input,
+                    session=agent_session,
+                    add_history_to_context=agent.add_history_to_context,
                 )
+
+                # Reset the run state
+                run_response.status = RunStatus.running
 
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
@@ -3661,7 +3712,9 @@ async def _acontinue_run(
                 )
 
                 # 8. Get model response
-                model_response: ModelResponse = await agent.model.aresponse(
+                model_response: ModelResponse = await acall_model_with_fallback(
+                    agent.model,
+                    agent.fallback_config,
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=_tools,
@@ -3710,9 +3763,11 @@ async def _acontinue_run(
                 # 10. Convert the response to the structured format if needed
                 convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
-                # 11. Store media if enabled
-                if agent.store_media:
-                    store_media_util(run_response, model_response)
+                # 10b. Generate follow-up suggestions if enabled
+                await agenerate_followups(agent, run_response=run_response)
+
+                # 11. Store media in run output for the caller
+                store_media_util(run_response, model_response)
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -3821,7 +3876,7 @@ async def _acontinue_run(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -3897,6 +3952,7 @@ async def _acontinue_run_stream(
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import get_continue_run_messages
     from agno.agent._response import (
+        agenerate_followups_stream,
         agenerate_response_with_output_model_stream,
         ahandle_model_response_stream,
         aparse_response_with_parser_model_stream,
@@ -3990,8 +4046,6 @@ async def _acontinue_run_stream(
 
                 run_response = cast(RunOutput, run_response)
 
-                run_response.status = RunStatus.running
-
                 # 5. Determine tools for model
                 agent.model = cast(Model, agent.model)
                 processed_tools = await agent.aget_tools(
@@ -4015,7 +4069,12 @@ async def _acontinue_run_stream(
                 run_messages: RunMessages = get_continue_run_messages(
                     agent,
                     input=input,
+                    session=agent_session,
+                    add_history_to_context=agent.add_history_to_context,
                 )
+
+                # Reset the run state
+                run_response.status = RunStatus.running
 
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
@@ -4101,6 +4160,14 @@ async def _acontinue_run_stream(
                     run_response=run_response,
                     stream_events=stream_events,
                     run_context=run_context,
+                ):
+                    yield event  # type: ignore
+
+                # Generate follow-up suggestions if enabled
+                async for event in agenerate_followups_stream(
+                    agent,
+                    run_response=run_response,
+                    stream_events=stream_events,
                 ):
                     yield event  # type: ignore
 
@@ -4296,7 +4363,7 @@ async def _acontinue_run_stream(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -4380,7 +4447,7 @@ def save_run_response_to_file(
 
                 fn_path.write_text(json.dumps(run_response.content, indent=2))
         except Exception as e:
-            log_warning(f"Failed to save output to file: {e}")
+            log_warning(f"Failed to save output to file: {str(e)}")
 
 
 def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
@@ -4402,11 +4469,15 @@ def cleanup_and_store(
     run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
 ) -> None:
+    import copy
+
     from agno.agent import _session
     from agno.run.approval import update_approval_run_status
 
-    # Scrub the stored run based on storage flags
-    scrub_run_output_for_storage(agent, run_response)
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(agent, storage_copy)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -4416,18 +4487,19 @@ def cleanup_and_store(
     # This ensures RunOutput reflects all tool modifications
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
 
     # Optional: Save output to file if save_response_to_file is set
     save_run_response_to_file(
         agent,
-        run_response=run_response,
+        run_response=storage_copy,
         input=run_response.input.input_content_string() if run_response.input else "",
         session_id=session.session_id,
         user_id=user_id,
     )
 
-    # Add RunOutput to Agent Session
-    session.upsert_run(run=run_response)
+    # Add scrubbed RunOutput to Agent Session
+    session.upsert_run(run=storage_copy)
 
     # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)
@@ -4455,32 +4527,36 @@ async def acleanup_and_store(
     run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
 ) -> None:
+    import copy
+
     from agno.agent import _session
     from agno.run.approval import aupdate_approval_run_status
 
-    # Scrub the stored run based on storage flags
-    scrub_run_output_for_storage(agent, run_response)
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(agent, storage_copy)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
         run_response.metrics.stop_timer()
 
     # Update run_response.session_state before saving
-    # This ensures RunOutput reflects all tool modifications
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
 
     # Optional: Save output to file if save_response_to_file is set
     save_run_response_to_file(
         agent,
-        run_response=run_response,
+        run_response=storage_copy,
         input=run_response.input.input_content_string() if run_response.input else "",
         session_id=session.session_id,
         user_id=user_id,
     )
 
-    # Add RunOutput to Agent Session
-    session.upsert_run(run=run_response)
+    # Add scrubbed RunOutput to Agent Session
+    session.upsert_run(run=storage_copy)
 
     # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)

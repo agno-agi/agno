@@ -220,7 +220,7 @@ class RedshiftTools(Toolkit):
                 return f"{header}\n" + "\n".join(data_rows)
 
         except redshift_connector.Error as e:
-            log_error(f"Database error: {e}")
+            log_error(f"Database error: {str(e)}")
             if self._connection:
                 try:
                     self._connection.rollback()
@@ -228,7 +228,7 @@ class RedshiftTools(Toolkit):
                     pass  # Connection might be closed
             return f"Error executing query: {e}"
         except Exception as e:
-            log_error(f"An unexpected error occurred: {e}")
+            log_error(f"An unexpected error occurred: {str(e)}")
             return f"An unexpected error occurred: {e}"
 
     def show_tables(self) -> str:

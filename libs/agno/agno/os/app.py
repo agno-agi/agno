@@ -36,7 +36,7 @@ from agno.os.config import (
     TracesDomainConfig,
 )
 from agno.os.interfaces.base import BaseInterface
-from agno.os.router import get_base_router, get_websocket_router
+from agno.os.router import get_base_router, get_info_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
 from agno.os.routers.approvals import get_approval_router
 from agno.os.routers.components import get_components_router
@@ -168,11 +168,21 @@ def _get_disabled_feature_router(prefix: str, tag: str, requires: str) -> APIRou
     """Return a stub router that returns 503 for a feature that requires a missing dependency."""
     detail = f"{tag} not available: pass a `{requires}` to AgentOS to enable this feature."
     router = APIRouter(tags=[tag])
-    for path in [prefix, f"{prefix}/{{path:path}}"]:
+    feature = prefix.strip("/").replace("/", "_")
 
-        @router.api_route(path, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+    # Register each method separately with a unique operation_id to avoid duplicates
+    for method in ["GET", "POST", "PUT", "PATCH", "DELETE"]:
+
+        @router.api_route(prefix, methods=[method], operation_id=f"disabled_{feature}_{method.lower()}")
         async def _disabled() -> None:
             raise HTTPException(status_code=503, detail=detail)
+
+    # Catch-all sub-path route — hidden from schema
+    @router.api_route(
+        f"{prefix}/{{path:path}}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False
+    )
+    async def _disabled_subpath() -> None:
+        raise HTTPException(status_code=503, detail=detail)
 
     return router
 
@@ -399,7 +409,11 @@ class AgentOS:
             updated_routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
         else:
-            for prefix, tag in [("/components", "Components"), ("/schedules", "Schedules"), ("/approvals", "Approvals")]:
+            for prefix, tag in [
+                ("/components", "Components"),
+                ("/schedules", "Schedules"),
+                ("/approvals", "Approvals"),
+            ]:
                 updated_routers.append(_get_disabled_feature_router(prefix, tag, "db"))
         # Registry router
         if self.registry is not None:
@@ -434,6 +448,7 @@ class AgentOS:
             self._add_router(app, get_home_router(self))
 
         self._add_router(app, get_health_router(health_endpoint="/health"))
+        self._add_router(app, get_info_router(self))
         self._add_router(app, get_base_router(self, settings=self.settings))
         self._add_router(app, get_agent_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_team_router(self, settings=self.settings, registry=self.registry))
@@ -738,8 +753,14 @@ class AgentOS:
             routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
         else:
-            log_debug("Components, Scheduler, and Approval routers not enabled: requires a db to be provided to AgentOS")
-            for prefix, tag in [("/components", "Components"), ("/schedules", "Schedules"), ("/approvals", "Approvals")]:
+            log_debug(
+                "Components, Scheduler, and Approval routers not enabled: requires a db to be provided to AgentOS"
+            )
+            for prefix, tag in [
+                ("/components", "Components"),
+                ("/schedules", "Schedules"),
+                ("/approvals", "Approvals"),
+            ]:
                 routers.append(_get_disabled_feature_router(prefix, tag, "db"))
 
         # Registry router
@@ -854,6 +875,29 @@ class AgentOS:
         )
         fastapi_app.state.jwt_validator = jwt_validator
 
+        # Collect interface route prefixes to exclude from JWT auth.
+        # Interfaces use their own authentication mechanisms
+        # (e.g. Slack HMAC-SHA256 signing, Telegram webhook verification).
+        excluded_route_paths: Optional[List[str]] = None
+        if self.interfaces:
+            interface_prefixes = [
+                f"{interface.prefix}/*"
+                for interface in self.interfaces
+                if hasattr(interface, "prefix") and interface.prefix
+            ]
+            if interface_prefixes:
+                # Passing excluded_route_paths replaces the middleware defaults,
+                # so include the default excluded routes as well.
+                excluded_route_paths = [
+                    "/",
+                    "/health",
+                    "/info",
+                    "/docs",
+                    "/redoc",
+                    "/openapi.json",
+                    "/docs/oauth2-redirect",
+                ] + interface_prefixes
+
         # Add middleware to stack
         fastapi_app.add_middleware(
             JWTMiddleware,
@@ -862,6 +906,7 @@ class AgentOS:
             algorithm=algorithm,
             authorization=self.authorization,
             verify_audience=verify_audience,
+            excluded_route_paths=excluded_route_paths,
         )
 
     def get_routes(self) -> List[Any]:
@@ -1016,7 +1061,7 @@ class AgentOS:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     db._create_all_tables()
             except Exception as e:
-                log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db.id}): {e}")
+                log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
     async def _initialize_async_databases(self) -> None:
         """Initialize async databases."""
@@ -1040,7 +1085,7 @@ class AgentOS:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     await db._create_all_tables()
             except Exception as e:
-                log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {e}")
+                log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
     async def _close_databases(self) -> None:
         """Close all database connections and release connection pools."""
@@ -1066,7 +1111,7 @@ class AgentOS:
                     else:
                         db.close()
             except Exception as e:
-                log_warning(f"Failed to close {db.__class__.__name__} (id: {db.id}): {e}")
+                log_warning(f"Failed to close {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
     def _get_db_table_names(self, db: BaseDb) -> Dict[str, str]:
         """Get the table names for a database"""
@@ -1223,6 +1268,8 @@ class AgentOS:
 
         # Track seen knowledge IDs to deduplicate
         seen_knowledge_ids: set[str] = set()
+        # Collect db_id → table_names from knowledge instances for building dbs below
+        discovered_db_tables: Dict[str, set] = {}
 
         # Build flat list of knowledge instances
         for knowledge in self.knowledge_instances:
@@ -1237,6 +1284,11 @@ class AgentOS:
             table_name = getattr(contents_db, "knowledge_table_name", "unknown")
             knowledge_name = getattr(knowledge, "name", None) or f"knowledge_{db_id}"
             knowledge_id = _generate_knowledge_id(knowledge_name, db_id, table_name)
+
+            # Collect table names per db_id for building dbs list
+            if db_id not in discovered_db_tables:
+                discovered_db_tables[db_id] = set()
+            discovered_db_tables[db_id].add(table_name)
 
             # Skip if already processed (deduplicate by knowledge_id)
             if knowledge_id in seen_knowledge_ids:
@@ -1255,16 +1307,13 @@ class AgentOS:
         # Build KnowledgeDatabaseConfig for each db with its tables (as strings)
         dbs_with_specific_config = [db.db_id for db in knowledge_config.dbs]
 
-        for db_id, dbs in self.knowledge_dbs.items():
+        for db_id, table_names in discovered_db_tables.items():
             if db_id not in dbs_with_specific_config:
-                # Get all unique table names for this db
-                unique_tables = list(set(db.knowledge_table_name for db in dbs))
-
                 knowledge_config.dbs.append(
                     KnowledgeDatabaseConfig(
                         db_id=db_id,
                         domain_config=KnowledgeDomainConfig(display_name=db_id),
-                        tables=unique_tables,
+                        tables=list(table_names),
                     )
                 )
 
@@ -1358,6 +1407,11 @@ class AgentOS:
         **kwargs,
     ):
         import uvicorn
+
+        host = getenv("AGENT_OS_HOST", host)
+        env_port = getenv("AGENT_OS_PORT")
+        if env_port is not None:
+            port = int(env_port)
 
         if getenv("AGNO_API_RUNTIME", "").lower() == "stg":
             public_endpoint = "https://os-stg.agno.com/"
