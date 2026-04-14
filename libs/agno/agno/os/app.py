@@ -516,7 +516,11 @@ class AgentOS:
             return
         for agent in self.agents:
             if not isinstance(agent, Agent):
-                # Skip RemoteAgent and external framework agents
+                # Inject db into external framework agents for session persistence.
+                # Skip RemoteAgent — it has its own remote storage.
+                if not isinstance(agent, RemoteAgent) and hasattr(agent, "db"):
+                    if self.db is not None and getattr(agent, "db", None) is None:
+                        agent.db = self.db
                 continue
             # Set the default db to agents without their own
             if self.db is not None and agent.db is None:

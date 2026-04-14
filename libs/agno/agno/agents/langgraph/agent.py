@@ -60,6 +60,21 @@ class LangGraphAgent(BaseExternalAgent):
     config: Optional[Dict[str, Any]] = field(default=None)
     framework: str = "langgraph"
 
+    def _build_messages_with_history(self, input: Any, history: Optional[List[Dict[str, str]]] = None) -> List[Any]:
+        """Build LangChain message list with conversation history prepended."""
+        from langchain_core.messages import AIMessage, HumanMessage
+
+        messages: List[Any] = []
+        if history:
+            for msg in history:
+                if msg["role"] == "user":
+                    messages.append(HumanMessage(content=msg["content"]))
+                elif msg["role"] == "assistant":
+                    messages.append(AIMessage(content=msg["content"]))
+        if input is not None:
+            messages.append(HumanMessage(content=str(input)))
+        return messages
+
     async def _arun_impl(self, input: Any, **kwargs: Any) -> Any:
         """Non-streaming LangGraph invocation."""
         try:
@@ -70,8 +85,12 @@ class LangGraphAgent(BaseExternalAgent):
         if self.graph is None:
             raise ValueError("No graph provided to LangGraphAgent")
 
+        history = kwargs.pop("history", None)
         # None input means replay/fork from checkpoint
-        graph_input = None if input is None else {self.input_key: [HumanMessage(content=str(input))]}
+        if input is None:
+            graph_input = None
+        else:
+            graph_input = {self.input_key: self._build_messages_with_history(input, history)}
         config = self._build_config(kwargs)
 
         result = await self.graph.ainvoke(graph_input, config=config)
@@ -94,8 +113,12 @@ class LangGraphAgent(BaseExternalAgent):
             raise ValueError("No graph provided to LangGraphAgent")
 
         run_id = kwargs.get("run_id", str(uuid4()))
+        history = kwargs.pop("history", None)
         # None input means replay/fork from checkpoint
-        graph_input = None if input is None else {self.input_key: [HumanMessage(content=str(input))]}
+        if input is None:
+            graph_input = None
+        else:
+            graph_input = {self.input_key: self._build_messages_with_history(input, history)}
         config = self._build_config(kwargs)
 
         async for event in self.graph.astream_events(graph_input, config=config, version="v2"):

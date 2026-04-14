@@ -1,21 +1,27 @@
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from time import time
-from typing import Any, AsyncIterator, Iterator, List, Optional, Sequence, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union
 from uuid import uuid4
 
+from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.media import Audio, File, Image, Video
+from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     RunCompletedEvent,
     RunContentEvent,
     RunErrorEvent,
     RunEvent,
+    RunInput,
     RunOutput,
     RunOutputEvent,
     RunStartedEvent,
+    ToolCallCompletedEvent,
+    ToolCallStartedEvent,
 )
 from agno.run.base import RunStatus
+from agno.session.agent import AgentSession
 from agno.utils.log import logger
 
 
@@ -32,6 +38,7 @@ class BaseExternalAgent:
     - Run lifecycle event emission (RunStarted, RunCompleted, RunError)
     - Tool call event wrapping
     - Sync/async run and print_response methods
+    - Session persistence via Agno's DB (when db is configured)
 
     Subclasses must implement:
     - _arun_impl(input, **kwargs) -> str  (non-streaming)
@@ -43,6 +50,10 @@ class BaseExternalAgent:
     description: Optional[str] = None
     framework: str = "external"
     markdown: bool = True
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None
+
+    # Session cache to avoid repeated DB reads within a session
+    _session_cache: Optional[AgentSession] = field(default=None, init=False, repr=False)
 
     @property
     def id(self) -> str:
@@ -360,37 +371,173 @@ class BaseExternalAgent:
             console.print(Group(*panels))
 
     # ---------------------------------------------------------------------------
+    # Session persistence helpers
+    # ---------------------------------------------------------------------------
+
+    async def _load_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
+        """Load an existing session from the DB, or create a new one."""
+        if self._session_cache and self._session_cache.session_id == session_id:
+            return self._session_cache
+
+        session = None
+        if self.db is not None:
+            if isinstance(self.db, AsyncBaseDb):
+                session = await self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+            else:
+                session = self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+
+        if session is not None and isinstance(session, dict):
+            session = AgentSession.from_dict(session)
+
+        if session is None:
+            session = AgentSession(
+                session_id=session_id,
+                agent_id=self.id,
+                user_id=user_id,
+                session_data={},
+                agent_data={"agent_id": self.id, "agent_name": self.name, "framework": self.framework},
+                metadata={},
+                runs=[],
+                created_at=int(time()),
+            )
+
+        self._session_cache = session
+        return session
+
+    async def _save_session(self, session: AgentSession) -> None:
+        """Persist a session to the DB."""
+        if self.db is None:
+            return
+        session.updated_at = int(time())
+        if isinstance(self.db, AsyncBaseDb):
+            await self.db.upsert_session(session)
+        else:
+            self.db.upsert_session(session)
+
+    def _build_run_output(
+        self,
+        run_id: str,
+        session_id: Optional[str],
+        user_id: Optional[str],
+        input_text: Any,
+        content: Any,
+        status: RunStatus,
+        tools: Optional[List[ToolExecution]] = None,
+    ) -> RunOutput:
+        """Build a RunOutput with properly populated messages for chat history."""
+        now = int(time())
+        messages: List[Message] = [
+            Message(role="user", content=str(input_text), created_at=now),
+        ]
+
+        # Add tool call messages between user and assistant
+        if tools:
+            for tool in tools:
+                # Tool call request
+                tool_call_data = {
+                    "id": tool.tool_call_id or str(uuid4()),
+                    "type": "function",
+                    "function": {
+                        "name": tool.tool_name or "",
+                        "arguments": str(tool.tool_args or {}),
+                    },
+                }
+                messages.append(
+                    Message(
+                        role="assistant",
+                        tool_calls=[tool_call_data],
+                        created_at=now,
+                    )
+                )
+                # Tool result
+                messages.append(
+                    Message(
+                        role="tool",
+                        tool_call_id=tool_call_data["id"],
+                        content=str(tool.result or ""),
+                        created_at=now,
+                    )
+                )
+
+        messages.append(
+            Message(role="assistant", content=str(content), created_at=now),
+        )
+
+        return RunOutput(
+            run_id=run_id,
+            agent_id=self.id,
+            agent_name=self.name,
+            session_id=session_id,
+            user_id=user_id,
+            input=RunInput(input_content=str(input_text)),
+            content=content,
+            messages=messages,
+            tools=tools,
+            status=status,
+            created_at=now,
+        )
+
+    def _get_history_from_session(self, session: AgentSession) -> List[Dict[str, str]]:
+        """Extract conversation history from session runs for adapters to use.
+
+        Includes user, assistant, and tool messages so adapters have full
+        context of prior turns including tool call results.
+        """
+        history: List[Dict[str, str]] = []
+        if not session.runs:
+            return history
+        for run in session.runs:
+            if not isinstance(run, RunOutput) or not run.messages:
+                continue
+            for msg in run.messages:
+                if msg.role in ("user", "assistant", "tool") and msg.content:
+                    history.append({"role": msg.role, "content": str(msg.content)})
+        return history
+
+    # ---------------------------------------------------------------------------
     # Internal: non-streaming
     # ---------------------------------------------------------------------------
 
     async def _arun_non_stream(self, input: Any, **kwargs: Any) -> RunOutput:
         run_id = str(uuid4())
-        session_id = kwargs.get("session_id")
+        session_id = kwargs.get("session_id") or str(uuid4())
         user_id = kwargs.get("user_id")
+
+        # Load session and provide history to the adapter
+        session = None
+        if self.db is not None:
+            session = await self._load_or_create_session(session_id, user_id)
+            kwargs["history"] = self._get_history_from_session(session)
+
         try:
             content = await self._arun_impl(input, run_id=run_id, **kwargs)
-            return RunOutput(
+            run_output = self._build_run_output(
                 run_id=run_id,
-                agent_id=self.id,
-                agent_name=self.name,
                 session_id=session_id,
                 user_id=user_id,
+                input_text=input,
                 content=content,
                 status=RunStatus.completed,
-                created_at=int(time()),
             )
         except Exception as e:
             logger.error(f"Error in {self.framework} agent '{self.id}': {e}")
-            return RunOutput(
+            run_output = self._build_run_output(
                 run_id=run_id,
-                agent_id=self.id,
-                agent_name=self.name,
                 session_id=session_id,
                 user_id=user_id,
+                input_text=input,
                 content=str(e),
                 status=RunStatus.error,
-                created_at=int(time()),
             )
+
+        # Persist the run to the session
+        if session is not None:
+            if session.runs is None:
+                session.runs = []
+            session.runs.append(run_output)
+            await self._save_session(session)
+
+        return run_output
 
     # ---------------------------------------------------------------------------
     # Internal: streaming
@@ -398,7 +545,14 @@ class BaseExternalAgent:
 
     async def _arun_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
         run_id = str(uuid4())
-        session_id = kwargs.get("session_id")
+        session_id = kwargs.get("session_id") or str(uuid4())
+        user_id = kwargs.get("user_id")
+
+        # Load session and provide history to the adapter
+        session = None
+        if self.db is not None:
+            session = await self._load_or_create_session(session_id, user_id)
+            kwargs["history"] = self._get_history_from_session(session)
 
         yield RunStartedEvent(
             run_id=run_id,
@@ -409,10 +563,45 @@ class BaseExternalAgent:
 
         try:
             accumulated_content = ""
+            accumulated_tools: List[ToolExecution] = []
+            # Map tool_call_id -> ToolExecution for merging started+completed
+            tool_map: Dict[str, ToolExecution] = {}
+
             async for event in self._arun_stream_impl(input, run_id=run_id, **kwargs):
                 if isinstance(event, RunContentEvent):
                     accumulated_content += event.content or ""
+                elif isinstance(event, ToolCallStartedEvent) and event.tool:
+                    tool = ToolExecution(
+                        tool_call_id=event.tool.tool_call_id,
+                        tool_name=event.tool.tool_name,
+                        tool_args=event.tool.tool_args,
+                    )
+                    tool_map[event.tool.tool_call_id or ""] = tool
+                    accumulated_tools.append(tool)
+                elif isinstance(event, ToolCallCompletedEvent) and event.tool:
+                    # Merge result into the existing tool entry
+                    existing = tool_map.get(event.tool.tool_call_id or "")
+                    if existing:
+                        existing.result = event.tool.result
+                    else:
+                        accumulated_tools.append(event.tool)
                 yield event
+
+            # Persist the run to the session
+            if session is not None:
+                run_output = self._build_run_output(
+                    run_id=run_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    input_text=input,
+                    content=accumulated_content,
+                    status=RunStatus.completed,
+                    tools=accumulated_tools if accumulated_tools else None,
+                )
+                if session.runs is None:
+                    session.runs = []
+                session.runs.append(run_output)
+                await self._save_session(session)
 
             yield RunCompletedEvent(
                 run_id=run_id,
