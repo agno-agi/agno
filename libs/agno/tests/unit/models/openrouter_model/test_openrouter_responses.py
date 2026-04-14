@@ -91,3 +91,75 @@ def test_openrouter_responses_client_params():
     assert params["base_url"] == "https://openrouter.ai/api/v1"
     assert params["timeout"] == 30.0
     assert params["max_retries"] == 3
+
+
+def test_openrouter_responses_strict_output_false_skips_schema_sanitization():
+    """Test that strict_output=False prevents additionalProperties: false injection.
+
+    When routing to non-OpenAI providers (e.g. xAI/Grok) via OpenRouter,
+    additionalProperties: false in the schema causes 400 errors. Setting
+    strict_output=False should skip OpenAI-specific schema sanitization.
+    """
+    from pydantic import BaseModel, Field
+
+    class MyDecision(BaseModel):
+        action: str = Field(min_length=1)
+        reason: str = Field(min_length=1)
+
+    model = OpenRouterResponses(
+        id="x-ai/grok-4.20",
+        api_key="test-key",
+        strict_output=False,
+    )
+
+    request_params = model.get_request_params(response_format=MyDecision)
+
+    # The schema should not contain additionalProperties: false
+    schema = request_params["text"]["format"]["schema"]
+    assert schema.get("additionalProperties") is not False
+    assert request_params["text"]["format"]["strict"] is False
+
+
+def test_openrouter_responses_strict_output_true_sanitizes_schema():
+    """Test that strict_output=True (default) still applies OpenAI sanitization."""
+    from pydantic import BaseModel, Field
+
+    class MyDecision(BaseModel):
+        action: str = Field(min_length=1)
+        reason: str = Field(min_length=1)
+
+    model = OpenRouterResponses(
+        id="openai/gpt-4o",
+        api_key="test-key",
+        strict_output=True,
+    )
+
+    request_params = model.get_request_params(response_format=MyDecision)
+
+    # The schema should contain additionalProperties: false (OpenAI requirement)
+    schema = request_params["text"]["format"]["schema"]
+    assert schema.get("additionalProperties") is False
+    assert request_params["text"]["format"]["strict"] is True
+
+
+def test_openrouter_responses_strict_output_false_disables_native_structured_outputs():
+    """Test that strict_output=False sets supports_native_structured_outputs to False.
+
+    This prevents tool schemas from being sanitized with additionalProperties: false.
+    """
+    model = OpenRouterResponses(
+        id="x-ai/grok-4.20",
+        api_key="test-key",
+        strict_output=False,
+    )
+    assert model.supports_native_structured_outputs is False
+
+
+def test_openrouter_responses_strict_output_true_keeps_native_structured_outputs():
+    """Test that strict_output=True (default) keeps supports_native_structured_outputs as True."""
+    model = OpenRouterResponses(
+        id="openai/gpt-4o",
+        api_key="test-key",
+        strict_output=True,
+    )
+    assert model.supports_native_structured_outputs is True

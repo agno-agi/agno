@@ -60,6 +60,14 @@ class OpenRouterResponses(OpenResponses):
     # OpenRouter's Responses API is stateless
     store: Optional[bool] = False
 
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        # When strict_output is False, disable native structured output support
+        # to prevent tool schemas from being sanitized with OpenAI-specific constraints
+        # (e.g., additionalProperties: false) that non-OpenAI providers may reject.
+        if not self.strict_output:
+            self.supports_native_structured_outputs = False
+
     def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
         """
         OpenRouter models should not receive a `reasoning` block unless the caller

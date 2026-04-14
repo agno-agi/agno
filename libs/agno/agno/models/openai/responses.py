@@ -297,7 +297,12 @@ class OpenAIResponses(Model):
         # Set the response format
         if response_format is not None:
             if isinstance(response_format, type) and issubclass(response_format, BaseModel):
-                schema = get_response_schema_for_provider(response_format, "openai")
+                # When strict_output is True, use OpenAI-specific schema sanitization
+                # (adds additionalProperties: false, enforces required fields, etc.)
+                # When strict_output is False, use generic normalization to avoid
+                # injecting constraints that non-OpenAI providers may reject.
+                schema_provider = "openai" if self.strict_output else "generic"
+                schema = get_response_schema_for_provider(response_format, schema_provider)
                 text_params["format"] = {
                     "type": "json_schema",
                     "name": response_format.__name__,
