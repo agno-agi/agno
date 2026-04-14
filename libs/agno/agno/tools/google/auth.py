@@ -60,65 +60,24 @@ def google_authenticate(service_name: str):
     return decorator
 
 
-def get_token_db(toolkit: Any) -> Any:
-    """Resolve the DB to use for token storage. Returns None if no DB available."""
-    ga = getattr(toolkit, "google_auth", None)
-    if ga and ga._db:
-        return ga._db
-    if getattr(toolkit, "store_token_in_db", False):
-        return getattr(toolkit, "_db", None)
-    return None
+def _persist_google_token(
+    db: Any,
+    creds: Any,
+    user_id: Optional[str],
+    services_registry: Optional[Dict[str, List[str]]] = None,
+) -> bool:
+    """Upsert a Google credentials row.
 
-
-def load_token(toolkit: Any, scopes: list, user_id: Optional[str] = None) -> bool:
-    """Try loading credentials from DB. Sets toolkit.creds if found. Returns True on success."""
-    db = get_token_db(toolkit)
-    if not db:
-        return False
-
-    uid = user_id
-    try:
-        row = db.get_auth_token("google", uid, "google")
-    except (NotImplementedError, Exception):
-        return False
-    if not row:
-        return False
-
-    try:
-        from google.auth.transport.requests import Request
-        from google.oauth2.credentials import Credentials
-
-        creds = Credentials.from_authorized_user_info(row["token_data"], scopes)
-    except (ValueError, KeyError, ImportError):
-        return False
-
-    if creds.expired and creds.refresh_token:
-        try:
-            creds.refresh(Request())
-            save_token(toolkit, creds)
-        except Exception:
-            return False
-
-    if creds.valid:
-        toolkit.creds = creds
-        return True
-    return False
-
-
-def save_token(toolkit: Any, creds: Any, user_id: Optional[str] = None) -> bool:
-    """Persist credentials to DB. Returns True on success."""
-    db = get_token_db(toolkit)
-    if not db:
+    services_registry: if provided, granted_scopes is the union of its values
+    so multiple toolkits sharing one GoogleAuth consent agree on scope.
+    Otherwise falls back to whatever scopes creds.to_json() reports.
+    """
+    if db is None:
         return False
     try:
         token_data = json.loads(creds.to_json())
-        # Coordinator mode: granted_scopes must reflect the consolidated consent union
-        # from registered services, not creds.scopes (which narrows to whatever scopes
-        # the current caller requested in load_token and would overwrite the stored union
-        # on every refresh path).
-        ga = getattr(toolkit, "google_auth", None)
-        if ga is not None and getattr(ga, "_services", None):
-            granted_scopes = sorted({s for scope_list in ga._services.values() for s in scope_list})
+        if services_registry:
+            granted_scopes = sorted({s for scope_list in services_registry.values() for s in scope_list})
         else:
             granted_scopes = token_data.get("scopes", [])
         db.upsert_auth_token(
@@ -131,8 +90,75 @@ def save_token(toolkit: Any, creds: Any, user_id: Optional[str] = None) -> bool:
             }
         )
         return True
-    except (NotImplementedError, Exception):
+    except NotImplementedError:
+        log_debug("DB does not support auth token storage")
         return False
+    except Exception as e:
+        log_error(f"Failed to persist Google token: {e}")
+        return False
+
+
+def get_token_db(toolkit: Any) -> Any:
+    """Resolve the DB to use for token storage. Returns None if no DB available."""
+    ga = getattr(toolkit, "google_auth", None)
+    if ga and ga._db:
+        return ga._db
+    if getattr(toolkit, "store_token_in_db", False):
+        return getattr(toolkit, "_db", None)
+    return None
+
+
+def load_token(toolkit: Any, scopes: list, user_id: Optional[str] = None) -> bool:
+    """Fetch credentials from DB, refresh if expired, set toolkit.creds. Returns True on success."""
+    db = get_token_db(toolkit)
+    if db is None:
+        return False
+    try:
+        row = db.get_auth_token("google", user_id, "google")
+    except NotImplementedError:
+        return False
+    except Exception as e:
+        log_debug(f"DB load failed for google: {e}")
+        return False
+    if not row:
+        return False
+
+    try:
+        from google.auth.transport.requests import Request
+        from google.oauth2.credentials import Credentials
+
+        # Prefer stored granted_scopes (the full consent union) over the caller's
+        # required scopes — a single-service toolkit must not narrow a shared token.
+        effective_scopes = row.get("granted_scopes") or scopes
+        creds = Credentials.from_authorized_user_info(row["token_data"], effective_scopes)
+    except (ValueError, KeyError, ImportError) as e:
+        log_debug(f"Could not reconstruct google credentials: {e}")
+        return False
+
+    if creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            save_token(toolkit, creds, user_id=user_id)
+        except Exception as e:
+            log_debug(f"Token refresh failed: {e}")
+            return False
+
+    if not creds.valid:
+        return False
+
+    toolkit.creds = creds
+    return True
+
+
+def save_token(toolkit: Any, creds: Any, user_id: Optional[str] = None) -> bool:
+    """Persist credentials to DB. Returns True on success."""
+    ga = getattr(toolkit, "google_auth", None)
+    return _persist_google_token(
+        db=get_token_db(toolkit),
+        creds=creds,
+        user_id=user_id,
+        services_registry=ga._services if ga else None,
+    )
 
 
 class GoogleAuth(Toolkit):
@@ -179,77 +205,6 @@ class GoogleAuth(Toolkit):
 
     def register_service(self, service: str, scopes: List[str]) -> None:
         self._services[service] = scopes
-
-    def load_token(self, service: str, scopes: list, user_id: Optional[str] = None) -> Any:
-        """Load credentials from DB, refresh if expired, auto-persist on refresh.
-
-        Returns valid Credentials or None.
-        """
-        if not self._db:
-            return None
-
-        effective_user_id = user_id or ""
-        try:
-            row = self._db.get_auth_token("google", effective_user_id, service)
-        except NotImplementedError:
-            return None
-        except Exception as e:
-            log_error(f"DB load failed for {service}: {e}")
-            return None
-
-        if not row:
-            return None
-
-        try:
-            from google.auth.transport.requests import Request
-            from google.oauth2.credentials import Credentials
-
-            creds = Credentials.from_authorized_user_info(row["token_data"], scopes)
-        except (ValueError, KeyError, ImportError) as e:
-            log_error(f"Invalid stored token for {service}: {e}")
-            return None
-
-        if creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-                self.store_token(service, creds, user_id=user_id)
-            except Exception as e:
-                log_error(f"Token refresh failed for {service}: {e}")
-                return None
-
-        return creds if creds.valid else None
-
-    def store_token(self, service: str, creds: Any, user_id: Optional[str] = None) -> bool:
-        """Serialize and persist credentials to DB. Returns True on success."""
-        if not self._db:
-            return False
-
-        effective_user_id = user_id or ""
-        try:
-            token_data = json.loads(creds.to_json())
-            # Use the consolidated _services union rather than creds.scopes, which
-            # narrows on refresh paths. See save_token for the same pattern.
-            if self._services:
-                granted_scopes = sorted({s for scope_list in self._services.values() for s in scope_list})
-            else:
-                granted_scopes = token_data.get("scopes", [])
-            self._db.upsert_auth_token(
-                {
-                    "provider": "google",
-                    "user_id": effective_user_id,
-                    "service": service,
-                    "token_data": token_data,
-                    "granted_scopes": granted_scopes,
-                }
-            )
-            log_debug(f"Token stored for {effective_user_id}/{service}")
-            return True
-        except NotImplementedError:
-            log_debug("Backend does not support auth token storage")
-            return False
-        except Exception as e:
-            log_error(f"Failed to store token for {service}: {e}")
-            return False
 
     def authenticate_google(
         self,
@@ -345,7 +300,12 @@ class GoogleAuth(Toolkit):
             return {"error": f"Token exchange failed: {e}"}
 
         # Store one consolidated token row — all Google services share it
-        stored = self.store_token("google", creds, user_id=user_id)
+        stored = _persist_google_token(
+            db=self._db,
+            creds=creds,
+            user_id=user_id,
+            services_registry=self._services,
+        )
         if not stored:
             log_error(f"Token obtained but DB persistence failed for user={user_id}")
             return {"error": "Token obtained but could not be saved to database"}
