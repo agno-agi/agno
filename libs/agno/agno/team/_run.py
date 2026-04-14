@@ -5228,12 +5228,15 @@ def continue_run_dispatch(
 
         # Also apply any resolved approval
         if run_response.tools:
-            try:
-                from agno.run.approval import check_and_apply_approval_resolution
+            from agno.run.approval import check_and_apply_approval_resolution
 
+            try:
                 check_and_apply_approval_resolution(team.db, run_id_resolved, run_response)
-            except Exception:
-                pass
+            except RuntimeError:
+                raise ValueError(
+                    "To continue a run from a given run_id, the requirements parameter must be provided "
+                    "(or resolve an admin approval first)."
+                )
     elif run_response.tools:
         from agno.run.approval import check_and_apply_approval_resolution
 
@@ -6257,14 +6260,17 @@ async def _acontinue_run(
 
                     # Also apply any resolved approval
                     if run_response.tools:
-                        try:
-                            from agno.run.approval import acheck_and_apply_approval_resolution
+                        from agno.run.approval import acheck_and_apply_approval_resolution
 
+                        try:
                             await acheck_and_apply_approval_resolution(
                                 team.db, run_response.run_id or run_id or "", run_response
                             )
-                        except Exception:
-                            pass
+                        except RuntimeError:
+                            raise ValueError(
+                                "To continue a run from a given run_id, the requirements parameter must be provided "
+                                "(or resolve an admin approval first)."
+                            )
                 elif run_response.tools:
                     from agno.run.approval import acheck_and_apply_approval_resolution
 
@@ -6589,14 +6595,17 @@ async def _acontinue_run_stream(
 
                     # Also apply any resolved approval
                     if run_response.tools:
-                        try:
-                            from agno.run.approval import acheck_and_apply_approval_resolution
+                        from agno.run.approval import acheck_and_apply_approval_resolution
 
+                        try:
                             await acheck_and_apply_approval_resolution(
                                 team.db, run_response.run_id or run_id or "", run_response
                             )
-                        except Exception:
-                            pass
+                        except RuntimeError:
+                            raise ValueError(
+                                "To continue a run from a given run_id, the requirements parameter must be provided "
+                                "(or resolve an admin approval first)."
+                            )
                 elif run_response.tools:
                     from agno.run.approval import acheck_and_apply_approval_resolution
 

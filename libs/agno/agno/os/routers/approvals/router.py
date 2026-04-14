@@ -6,8 +6,6 @@ from typing import Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from agno.utils.log import log_warning
-
 from agno.os.routers.approvals.schema import (
     ApprovalCountResponse,
     ApprovalResolve,
@@ -15,6 +13,7 @@ from agno.os.routers.approvals.schema import (
     ApprovalStatusResponse,
 )
 from agno.os.schema import PaginatedResponse, PaginationInfo
+from agno.utils.log import log_warning, log_debug
 
 
 def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
@@ -197,6 +196,7 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
                             break
         except Exception as exc:
             log_warning(f"Failed to update session with approval resolution: {exc}")
+            log_debug("Session update error details", exc_info=True)
 
         return result
 
