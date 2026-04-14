@@ -439,6 +439,47 @@ async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_respons
     _apply_approval_to_tools(tools, status, approval.get("resolution_data"))
 
 
+async def amerge_approval_into_run(db: Any, run_id: str, run_response: Any) -> None:
+    """Merge resolved approval data into a paused run response for display purposes.
+
+    Unlike acheck_and_apply_approval_resolution (which raises on pending/missing),
+    this is a best-effort merge for GET /runs endpoints. It applies the approval
+    resolution to all levels: top-level tools, requirements, and member_responses.
+
+    No-op if db is None, approval not found, or still pending.
+    """
+    if db is None:
+        return
+
+    approval = await _aget_approval_for_run(db, run_id)
+    if not approval or approval.get("status") == "pending":
+        return
+
+    status = approval["status"]
+    res_data = approval.get("resolution_data")
+
+    # Top-level tools
+    tools = getattr(run_response, "tools", None)
+    if tools:
+        _apply_approval_to_tools(tools, status, res_data)
+
+    # Requirements' tool_executions
+    for req in getattr(run_response, "requirements", None) or []:
+        te = getattr(req, "tool_execution", None)
+        if te and getattr(te, "approval_type", None) == "required":
+            _apply_approval_to_tools([te], status, res_data)
+
+    # Member responses (teams only)
+    for mr in getattr(run_response, "member_responses", None) or []:
+        mr_tools = getattr(mr, "tools", None)
+        if mr_tools:
+            _apply_approval_to_tools(mr_tools, status, res_data)
+        for mr_req in getattr(mr, "requirements", None) or []:
+            mr_te = getattr(mr_req, "tool_execution", None)
+            if mr_te and getattr(mr_te, "approval_type", None) == "required":
+                _apply_approval_to_tools([mr_te], status, res_data)
+
+
 async def acreate_audit_approval(
     db: Any,
     tool_execution: Any,
