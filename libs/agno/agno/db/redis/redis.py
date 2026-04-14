@@ -184,7 +184,7 @@ class RedisDb(BaseDb):
             return True
 
         except Exception as e:
-            log_error(f"Error storing Redis record: {e}")
+            log_error(f"Error storing Redis record: {str(e)}")
             return False
 
     def _get_record(self, table_type: str, record_id: str) -> Optional[Dict[str, Any]]:
@@ -207,7 +207,7 @@ class RedisDb(BaseDb):
             return deserialize_data(data)  # type: ignore
 
         except Exception as e:
-            log_error(f"Error getting record {record_id}: {e}")
+            log_error(f"Error getting record {record_id}: {str(e)}")
             return None
 
     def _delete_record(self, table_type: str, record_id: str, index_fields: Optional[List[str]] = None) -> bool:
@@ -246,7 +246,7 @@ class RedisDb(BaseDb):
             return True
 
         except Exception as e:
-            log_error(f"Error deleting record {record_id}: {e}")
+            log_error(f"Error deleting record {record_id}: {str(e)}")
             return False
 
     def _get_all_records(self, table_type: str) -> List[Dict[str, Any]]:
@@ -273,7 +273,7 @@ class RedisDb(BaseDb):
             return records
 
         except Exception as e:
-            log_error(f"Error getting all records for {table_type}: {e}")
+            log_error(f"Error getting all records for {table_type}: {str(e)}")
             return []
 
     def get_latest_schema_version(self):
@@ -314,7 +314,7 @@ class RedisDb(BaseDb):
                 return False
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_error(f"Error deleting session: {str(e)}")
             raise e
 
     def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -343,7 +343,7 @@ class RedisDb(BaseDb):
             log_debug(f"Successfully deleted {deleted_count} sessions")
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_error(f"Error deleting sessions: {str(e)}")
             raise e
 
     def get_session(
@@ -388,7 +388,7 @@ class RedisDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception reading session: {e}")
+            log_error(f"Exception reading session: {str(e)}")
             raise e
 
     # TODO: optimizable
@@ -469,7 +469,7 @@ class RedisDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception reading sessions: {e}")
+            log_error(f"Exception reading sessions: {str(e)}")
             raise e
 
     def rename_session(
@@ -528,7 +528,7 @@ class RedisDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Error renaming session: {e}")
+            log_error(f"Error renaming session: {str(e)}")
             raise e
 
     def upsert_session(
@@ -656,7 +656,7 @@ class RedisDb(BaseDb):
                 return WorkflowSession.from_dict(data)
 
         except Exception as e:
-            log_error(f"Error upserting session: {e}")
+            log_error(f"Error upserting session: {str(e)}")
             raise e
 
     def upsert_sessions(
@@ -693,7 +693,7 @@ class RedisDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk session upsert: {e}")
+            log_error(f"Exception during bulk session upsert: {str(e)}")
             return []
 
     # -- Memory methods --
@@ -730,7 +730,7 @@ class RedisDb(BaseDb):
                 log_debug(f"No user memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting user memory: {e}")
+            log_error(f"Error deleting user memory: {str(e)}")
             raise e
 
     def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -759,7 +759,7 @@ class RedisDb(BaseDb):
                 )
 
         except Exception as e:
-            log_error(f"Error deleting user memories: {e}")
+            log_error(f"Error deleting user memories: {str(e)}")
             raise e
 
     def get_all_memory_topics(self) -> List[str]:
@@ -780,7 +780,7 @@ class RedisDb(BaseDb):
             return list(topics)
 
         except Exception as e:
-            log_error(f"Exception reading memory topics: {e}")
+            log_error(f"Exception reading memory topics: {str(e)}")
             raise e
 
     def get_user_memory(
@@ -811,7 +811,7 @@ class RedisDb(BaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Exception reading memory: {e}")
+            log_error(f"Exception reading memory: {str(e)}")
             raise e
 
     def get_user_memories(
@@ -884,7 +884,7 @@ class RedisDb(BaseDb):
             return [UserMemory.from_dict(record) for record in paginated_memories]
 
         except Exception as e:
-            log_error(f"Exception reading memories: {e}")
+            log_error(f"Exception reading memories: {str(e)}")
             raise e
 
     def get_user_memory_stats(
@@ -943,7 +943,7 @@ class RedisDb(BaseDb):
             return paginated_stats, total_count
 
         except Exception as e:
-            log_error(f"Exception getting user memory stats: {e}")
+            log_error(f"Exception getting user memory stats: {str(e)}")
             raise e
 
     def upsert_user_memory(
@@ -987,7 +987,7 @@ class RedisDb(BaseDb):
             return UserMemory.from_dict(data)
 
         except Exception as e:
-            log_error(f"Error upserting user memory: {e}")
+            log_error(f"Error upserting user memory: {str(e)}")
             raise e
 
     def upsert_memories(
@@ -1024,7 +1024,7 @@ class RedisDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk memory upsert: {e}")
+            log_error(f"Exception during bulk memory upsert: {str(e)}")
             return []
 
     def clear_memories(self) -> None:
@@ -1042,7 +1042,7 @@ class RedisDb(BaseDb):
                 self.redis_client.delete(*keys)
 
         except Exception as e:
-            log_error(f"Exception deleting all memories: {e}")
+            log_error(f"Exception deleting all memories: {str(e)}")
             raise e
 
     # -- Metrics methods --
@@ -1080,7 +1080,7 @@ class RedisDb(BaseDb):
             return all_sessions
 
         except Exception as e:
-            log_error(f"Error reading sessions for metrics: {e}")
+            log_error(f"Error reading sessions for metrics: {str(e)}")
             raise e
 
     def _get_metrics_calculation_starting_date(self) -> Optional[date]:
@@ -1117,7 +1117,7 @@ class RedisDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Error getting metrics starting date: {e}")
+            log_error(f"Error getting metrics starting date: {str(e)}")
             raise e
 
     def calculate_metrics(self) -> Optional[list[dict]]:
@@ -1181,7 +1181,7 @@ class RedisDb(BaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Error calculating metrics: {e}")
+            log_error(f"Error calculating metrics: {str(e)}")
             raise e
 
     def get_metrics(
@@ -1224,7 +1224,7 @@ class RedisDb(BaseDb):
             return all_metrics, latest_updated_at
 
         except Exception as e:
-            log_error(f"Error getting metrics: {e}")
+            log_error(f"Error getting metrics: {str(e)}")
             raise e
 
     # -- Knowledge methods --
@@ -1242,7 +1242,7 @@ class RedisDb(BaseDb):
             self._delete_record("knowledge", id)
 
         except Exception as e:
-            log_error(f"Error deleting knowledge content: {e}")
+            log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
@@ -1265,7 +1265,7 @@ class RedisDb(BaseDb):
             return KnowledgeRow.model_validate(document_raw)
 
         except Exception as e:
-            log_error(f"Error getting knowledge content: {e}")
+            log_error(f"Error getting knowledge content: {str(e)}")
             raise e
 
     def get_knowledge_contents(
@@ -1311,7 +1311,7 @@ class RedisDb(BaseDb):
             return [KnowledgeRow.model_validate(doc) for doc in paginated_documents], total_count
 
         except Exception as e:
-            log_error(f"Error getting knowledge contents: {e}")
+            log_error(f"Error getting knowledge contents: {str(e)}")
             raise e
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -1333,7 +1333,7 @@ class RedisDb(BaseDb):
             return knowledge_row if success else None
 
         except Exception as e:
-            log_error(f"Error upserting knowledge content: {e}")
+            log_error(f"Error upserting knowledge content: {str(e)}")
             raise e
 
     # -- Eval methods --
@@ -1366,7 +1366,7 @@ class RedisDb(BaseDb):
             return eval_run if success else None
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_error(f"Error creating eval run: {str(e)}")
             raise e
 
     def delete_eval_run(self, eval_run_id: str) -> None:
@@ -1387,7 +1387,7 @@ class RedisDb(BaseDb):
                 log_debug(f"No eval run found with ID: {eval_run_id}")
 
         except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+            log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
@@ -1413,7 +1413,7 @@ class RedisDb(BaseDb):
                 log_debug(f"Deleted {deleted_count} eval runs")
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_error(f"Error deleting eval runs {eval_run_ids}: {str(e)}")
             raise
 
     def get_eval_run(
@@ -1441,7 +1441,7 @@ class RedisDb(BaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}: {str(e)}")
             raise e
 
     def get_eval_runs(
@@ -1517,7 +1517,7 @@ class RedisDb(BaseDb):
             return [EvalRunRecord.model_validate(row) for row in paginated_runs]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_error(f"Exception getting eval runs: {str(e)}")
             raise e
 
     def rename_eval_run(
@@ -1555,7 +1555,7 @@ class RedisDb(BaseDb):
             return EvalRunRecord.model_validate(eval_run_data)
 
         except Exception as e:
-            log_error(f"Error updating eval run name {eval_run_id}: {e}")
+            log_error(f"Error updating eval run name {eval_run_id}: {str(e)}")
             raise
 
     # -- Cultural Knowledge methods --
@@ -1572,7 +1572,7 @@ class RedisDb(BaseDb):
                 self.redis_client.delete(*keys)
 
         except Exception as e:
-            log_error(f"Exception deleting all cultural knowledge: {e}")
+            log_error(f"Exception deleting all cultural knowledge: {str(e)}")
             raise e
 
     def delete_cultural_knowledge(self, id: str) -> None:
@@ -1591,7 +1591,7 @@ class RedisDb(BaseDb):
                 log_debug(f"No cultural knowledge found with id: {id}")
 
         except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {e}")
+            log_error(f"Error deleting cultural knowledge: {str(e)}")
             raise e
 
     def get_cultural_knowledge(
@@ -1621,7 +1621,7 @@ class RedisDb(BaseDb):
             return deserialize_cultural_knowledge_from_db(cultural_knowledge)
 
         except Exception as e:
-            log_error(f"Error getting cultural knowledge: {e}")
+            log_error(f"Error getting cultural knowledge: {str(e)}")
             raise e
 
     def get_all_cultural_knowledge(
@@ -1679,7 +1679,7 @@ class RedisDb(BaseDb):
             return [deserialize_cultural_knowledge_from_db(item) for item in paginated_items]
 
         except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {e}")
+            log_error(f"Error getting all cultural knowledge: {str(e)}")
             raise e
 
     def upsert_cultural_knowledge(
@@ -1727,7 +1727,7 @@ class RedisDb(BaseDb):
             return deserialize_cultural_knowledge_from_db(data)
 
         except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {e}")
+            log_error(f"Error upserting cultural knowledge: {str(e)}")
             raise e
 
     # --- Traces ---
@@ -1827,7 +1827,7 @@ class RedisDb(BaseDb):
                 )
 
         except Exception as e:
-            log_error(f"Error creating trace: {e}")
+            log_error(f"Error creating trace: {str(e)}")
             # Don't raise - tracing should not break the main application flow
 
     def get_trace(
@@ -1882,7 +1882,7 @@ class RedisDb(BaseDb):
                 return None
 
         except Exception as e:
-            log_error(f"Error getting trace: {e}")
+            log_error(f"Error getting trace: {str(e)}")
             return None
 
     def get_traces(
@@ -1975,7 +1975,7 @@ class RedisDb(BaseDb):
             return traces, total_count
 
         except Exception as e:
-            log_error(f"Error getting traces: {e}")
+            log_error(f"Error getting traces: {str(e)}")
             return [], 0
 
     def get_trace_stats(
@@ -2075,7 +2075,7 @@ class RedisDb(BaseDb):
             return paginated_stats, total_count
 
         except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+            log_error(f"Error getting trace stats: {str(e)}")
             return [], 0
 
     # --- Spans ---
@@ -2094,7 +2094,7 @@ class RedisDb(BaseDb):
             )
 
         except Exception as e:
-            log_error(f"Error creating span: {e}")
+            log_error(f"Error creating span: {str(e)}")
 
     def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2115,7 +2115,7 @@ class RedisDb(BaseDb):
                 )
 
         except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+            log_error(f"Error creating spans batch: {str(e)}")
 
     def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2135,7 +2135,7 @@ class RedisDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Error getting span: {e}")
+            log_error(f"Error getting span: {str(e)}")
             return None
 
     def get_spans(
@@ -2175,7 +2175,7 @@ class RedisDb(BaseDb):
             return [SpanSchema.from_dict(s) for s in filtered_spans]
 
         except Exception as e:
-            log_error(f"Error getting spans: {e}")
+            log_error(f"Error getting spans: {str(e)}")
             return []
 
     # -- Learning methods (stubs) --

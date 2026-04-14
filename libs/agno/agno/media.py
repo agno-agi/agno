@@ -418,7 +418,6 @@ class File(BaseModel):
             "application/pdf",
             "application/json",
             "application/x-javascript",
-            "application/json",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "text/javascript",
             "application/x-python",
@@ -426,7 +425,7 @@ class File(BaseModel):
             "text/plain",
             "text/html",
             "text/css",
-            "text/md",
+            "text/markdown",
             "text/csv",
             "text/xml",
             "text/rtf",
@@ -475,8 +474,8 @@ class File(BaseModel):
                 content = response.content
                 mime_type = response.headers.get("Content-Type", "").split(";")[0]
                 return content, mime_type
-            except Exception:
-                log_error(f"Failed to download file from {self.url}")
+            except Exception as e:
+                log_error(f"Failed to download file from {self.url}: {str(e)}")
                 return None
         else:
             return None

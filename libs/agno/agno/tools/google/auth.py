@@ -28,13 +28,13 @@ def google_authenticate(service_name: str):
                 try:
                     self._auth()
                 except Exception as e:
-                    log_error(f"{service_name.title()} authentication failed: {e}")
+                    log_error(f"{service_name.title()} authentication failed: {str(e)}")
                     return json.dumps({"error": f"{service_name.title()} authentication failed: {e}"})
             if not self.service:
                 try:
                     self.service = self._build_service()
                 except Exception as e:
-                    log_error(f"{service_name.title()} service initialization failed: {e}")
+                    log_error(f"{service_name.title()} service initialization failed: {str(e)}")
                     return json.dumps({"error": f"{service_name.title()} service initialization failed: {e}"})
             return func(self, *args, **kwargs)
 

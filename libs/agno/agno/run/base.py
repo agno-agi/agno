@@ -177,8 +177,8 @@ class BaseRunOutputEvent:
 
         try:
             _dict = self.to_dict()
-        except Exception:
-            log_error("Failed to convert response event to json", exc_info=True)
+        except Exception as e:
+            log_error(f"Failed to convert response event to json: {str(e)}")
             raise
 
         if indent is None:

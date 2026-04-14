@@ -265,7 +265,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         limit: Optional[int] = Query(default=20, description="Number of memories to return per page", ge=1),
         page: Optional[int] = Query(default=1, description="Page number for pagination", ge=0),
         sort_by: Optional[str] = Query(default="updated_at", description="Field to sort memories by"),
-        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
+        sort_order: Optional[SortOrder] = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query memories from"),
         table: Optional[str] = Query(default=None, description="The database table to use"),
     ) -> PaginatedResponse[UserMemorySchema]:
@@ -773,7 +773,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"Failed to optimize memories for user {request.user_id}: {str(e)}")
+            logger.exception(f"Failed to optimize memories for user {request.user_id}")
             raise HTTPException(status_code=500, detail=f"Failed to optimize memories: {str(e)}")
 
     return router
