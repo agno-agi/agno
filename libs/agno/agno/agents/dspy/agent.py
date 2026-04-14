@@ -1,0 +1,205 @@
+from dataclasses import dataclass, field
+from typing import Any, AsyncIterator, Dict, List
+from uuid import uuid4
+
+from agno.agents.base import BaseExternalAgent
+from agno.models.response import ToolExecution
+from agno.run.agent import (
+    RunContentEvent,
+    RunOutputEvent,
+    ToolCallCompletedEvent,
+    ToolCallStartedEvent,
+)
+
+
+@dataclass
+class DSPyAgent(BaseExternalAgent):
+    """Adapter for DSPy modules and programs.
+
+    Wraps any DSPy Module (Predict, ChainOfThought, ReAct, or custom) so it can
+    be used with AgentOS endpoints or standalone via .run() / .print_response().
+
+    Args:
+        agent_id: Unique identifier for this agent.
+        agent_name: Display name for this agent.
+        program: A DSPy Module instance (e.g. dspy.Predict, dspy.ChainOfThought, dspy.ReAct, or custom).
+        input_field: Name of the input field in the DSPy signature. Defaults to "question".
+        output_field: Name of the output field to extract from the Prediction. Defaults to "answer".
+        lm: Optional DSPy LM instance to configure before running. If not provided, uses dspy global config.
+        program_kwargs: Additional kwargs passed to the program on every call.
+
+    Example:
+        import dspy
+        from agno.agents.dspy import DSPyAgent
+
+        dspy.configure(lm=dspy.LM("openai/gpt-4o-mini"))
+
+        agent = DSPyAgent(
+            agent_id="dspy-qa",
+            agent_name="DSPy Q&A",
+            program=dspy.ChainOfThought("question -> answer"),
+        )
+
+        # Standalone usage
+        agent.print_response("What is quantum computing?")
+
+        # Or deploy with AgentOS
+        from agno.os.app import AgentOS
+        AgentOS(agents=[agent])
+    """
+
+    program: Any = None
+    input_field: str = "question"
+    output_field: str = "answer"
+    lm: Any = None
+    program_kwargs: Dict[str, Any] = field(default_factory=dict)
+    framework: str = "dspy"
+
+    def _configure_lm(self) -> None:
+        """Configure DSPy LM on the current thread if provided."""
+        if self.lm is not None:
+            import dspy
+
+            # Use dspy.configure only from the main thread (at init time).
+            # For cross-thread safety, callers should configure at module level
+            # or use dspy.context(lm=...) which is thread-safe.
+            try:
+                dspy.configure(lm=self.lm)
+            except Exception:
+                # Thread-safety error — LM was already configured on another thread.
+                # This is fine; the global config from the main thread will be used.
+                pass
+
+    async def _arun_impl(self, input: Any, **kwargs: Any) -> str:
+        """Non-streaming: run the DSPy program and return the output field."""
+        try:
+            import dspy
+        except ImportError:
+            raise ImportError("dspy is required: pip install dspy")
+
+        if self.program is None:
+            raise ValueError("No program provided to DSPyAgent")
+
+        # Build input kwargs
+        program_input = {self.input_field: str(input)}
+        program_input.update(self.program_kwargs)
+
+        # DSPy modules are sync by default — use asyncify
+        async_program = dspy.asyncify(self.program)
+
+        # Use dspy.context for thread-safe LM scoping
+        if self.lm is not None:
+            with dspy.context(lm=self.lm):
+                result = await async_program(**program_input)
+        else:
+            result = await async_program(**program_input)
+
+        # Extract the output field from the Prediction
+        output = getattr(result, self.output_field, None)
+        if output is None:
+            # Fall back to string representation of the whole prediction
+            return str(result)
+        return str(output)
+
+    async def _arun_stream_impl(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
+        """Streaming: use dspy.streamify() for token-level streaming.
+
+        dspy.streamify() yields three types:
+        - dspy.streaming.StreamResponse: token chunks (has .chunk, .predict_name, .signature_field_name)
+        - dspy.Prediction: final program output
+        - dspy.streaming.StatusMessage: execution status updates
+        """
+        try:
+            import dspy
+            import dspy.streaming
+        except ImportError:
+            raise ImportError("dspy is required: pip install dspy")
+
+        if self.program is None:
+            raise ValueError("No program provided to DSPyAgent")
+
+        run_id = kwargs.get("run_id", str(uuid4()))
+
+        # Build input kwargs
+        program_input = {self.input_field: str(input)}
+        program_input.update(self.program_kwargs)
+
+        # DSPy caches LLM responses by default. Cached results skip token-level
+        # streaming and yield only the final Prediction. To get real streaming,
+        # we temporarily scope a non-cached LM via dspy.context().
+        current_lm = self.lm or dspy.settings.lm
+        if current_lm and getattr(current_lm, "cache", True):
+            stream_lm = dspy.LM(current_lm.model, cache=False)
+        else:
+            stream_lm = current_lm
+
+        # Configure stream_listeners to stream the output field
+        streaming_program = dspy.streamify(
+            self.program,
+            stream_listeners=[dspy.streaming.StreamListener(signature_field_name=self.output_field)],
+        )
+
+        # Scope a cache-free LM so streaming always produces token chunks.
+        # Tool calls from ReAct are extracted from the final Prediction's
+        # trajectory dict (tool_name_N, tool_args_N, observation_N).
+        # We yield them before the streamed text content.
+        tool_events: List[RunOutputEvent] = []
+
+        with dspy.context(lm=stream_lm):
+            async for chunk in streaming_program(**program_input):
+                if isinstance(chunk, dspy.streaming.StreamResponse):
+                    # Before first text token, flush any accumulated tool events
+                    if tool_events:
+                        for evt in tool_events:
+                            yield evt
+                        tool_events = []
+                    # Token-level text streaming
+                    if chunk.chunk:
+                        yield RunContentEvent(
+                            run_id=run_id,
+                            agent_id=self.id,
+                            agent_name=self.name or "",
+                            content=chunk.chunk,
+                        )
+
+                elif isinstance(chunk, dspy.Prediction):
+                    # Extract tool calls from the trajectory dict (ReAct pattern)
+                    trajectory = getattr(chunk, "trajectory", {}) or {}
+                    i = 0
+                    while f"tool_name_{i}" in trajectory:
+                        t_name = trajectory[f"tool_name_{i}"]
+                        t_args = trajectory.get(f"tool_args_{i}", {})
+                        t_result = trajectory.get(f"observation_{i}", "")
+                        if t_name != "finish":
+                            t_id = str(uuid4())
+                            tool_events.append(
+                                ToolCallStartedEvent(
+                                    run_id=run_id,
+                                    agent_id=self.id,
+                                    agent_name=self.name or "",
+                                    tool=ToolExecution(
+                                        tool_call_id=t_id,
+                                        tool_name=str(t_name),
+                                        tool_args=t_args if isinstance(t_args, dict) else {"input": str(t_args)},
+                                    ),
+                                )
+                            )
+                            tool_events.append(
+                                ToolCallCompletedEvent(
+                                    run_id=run_id,
+                                    agent_id=self.id,
+                                    agent_name=self.name or "",
+                                    tool=ToolExecution(
+                                        tool_call_id=t_id,
+                                        tool_name=str(t_name),
+                                        result=str(t_result),
+                                    ),
+                                )
+                            )
+                        i += 1
+
+                # StatusMessage — skip (internal DSPy execution status)
+
+        # Flush any remaining tool events (e.g., if no text was streamed)
+        for evt in tool_events:
+            yield evt
