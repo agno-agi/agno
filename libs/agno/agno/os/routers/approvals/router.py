@@ -13,7 +13,7 @@ from agno.os.routers.approvals.schema import (
     ApprovalStatusResponse,
 )
 from agno.os.schema import PaginatedResponse, PaginationInfo
-from agno.utils.log import log_warning, logger
+from agno.utils.log import log_warning, log_debug
 
 
 def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
