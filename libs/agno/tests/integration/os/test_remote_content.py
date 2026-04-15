@@ -168,8 +168,8 @@ def test_upload_github_folder_success(test_app):
         mock_process.assert_called_once()
 
 
-def test_upload_github_file_with_repo_override(test_app):
-    """The repo form field overrides the configured repo on a per-request basis."""
+def test_upload_github_with_source_params_repo_override(test_app):
+    """source_params['repo'] overrides the configured repo on a per-request basis."""
     captured = {}
 
     def fake_process(knowledge, content, *args, **kwargs):
@@ -181,7 +181,7 @@ def test_upload_github_file_with_repo_override(test_app):
             data={
                 "config_id": "github-repo",
                 "path": "docs/README.md",
-                "repo": "other-org/other-repo",
+                "source_params": '{"repo": "other-org/other-repo"}',
             },
         )
 
@@ -191,18 +191,46 @@ def test_upload_github_file_with_repo_override(test_app):
     assert rc.file_path == "docs/README.md"
 
 
-def test_upload_github_repo_override_rejected_for_non_github(test_app):
-    """The repo override is GitHub-only and must be rejected for other sources."""
+def test_upload_source_params_rejected_for_non_github(test_app):
+    """source_params is only accepted for providers that declare allowed keys."""
     response = test_app.post(
         "/knowledge/remote-content",
         data={
             "config_id": "s3-docs",
             "path": "documents/report.pdf",
-            "repo": "owner/repo",
+            "source_params": '{"repo": "owner/repo"}',
         },
     )
     assert response.status_code == 400
-    assert "GitHub" in response.json()["detail"]
+    assert "does not accept source_params" in response.json()["detail"]
+
+
+def test_upload_github_rejects_unknown_source_params_key(test_app):
+    """Keys outside the per-provider allowlist are rejected with 400."""
+    response = test_app.post(
+        "/knowledge/remote-content",
+        data={
+            "config_id": "github-repo",
+            "path": "docs/README.md",
+            "source_params": '{"repo": "owner/x", "branch": "main"}',
+        },
+    )
+    assert response.status_code == 400
+    assert "Unknown source_params" in response.json()["detail"]
+    assert "branch" in response.json()["detail"]
+
+
+def test_upload_source_params_invalid_json(test_app):
+    response = test_app.post(
+        "/knowledge/remote-content",
+        data={
+            "config_id": "github-repo",
+            "path": "docs/README.md",
+            "source_params": "not-json",
+        },
+    )
+    assert response.status_code == 400
+    assert "valid JSON object" in response.json()["detail"]
 
 
 def test_upload_gcs_file_success(test_app):

@@ -248,11 +248,13 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         background_tasks: BackgroundTasks,
         config_id: str = Form(..., description="ID of the configured remote content source (from /knowledge/config)"),
         path: str = Form(..., description="Path to file or folder in the remote source"),
-        repo: Optional[str] = Form(
+        source_params: Optional[str] = Form(
             None,
             description=(
-                "GitHub only: 'owner/repo' to fetch from. Overrides the repo set on the GitHubConfig, "
-                "letting one configured GitHub source serve multiple repositories the credentials can access."
+                "JSON object of per-request parameters forwarded to the source's factory. "
+                "Used for provider-specific routing that shouldn't be baked into the config. "
+                "Currently supported keys: GitHub accepts 'repo' ('owner/repo'), letting one "
+                "configured GitHub source serve multiple repositories the credentials can access."
             ),
         ),
         name: Optional[str] = Form(None, description="Content name (auto-generated if not provided)"),
@@ -287,26 +289,50 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             except json.JSONDecodeError:
                 parsed_metadata = {"value": metadata}
 
-        # GitHub configs accept an optional per-request repo override so a single
-        # configured source can serve multiple repositories sharing the same auth.
+        # Parse and validate source_params. Keys are allowlisted per provider
+        # so we never spread raw user input into a config's factory method.
         from agno.knowledge.remote_content.github import GitHubConfig
 
-        github_kwargs: dict = {}
-        if isinstance(config, GitHubConfig):
-            if not repo and config.repo is None:
+        allowed_source_params: Dict[type, set] = {
+            GitHubConfig: {"repo"},
+        }
+
+        parsed_source_params: Dict[str, Any] = {}
+        if source_params:
+            try:
+                decoded = json.loads(source_params)
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="source_params must be a valid JSON object")
+            if not isinstance(decoded, dict):
+                raise HTTPException(status_code=400, detail="source_params must be a JSON object")
+            parsed_source_params = decoded
+
+        allowed = allowed_source_params.get(type(config), set())
+        if parsed_source_params:
+            if not allowed:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Source type '{type(config).__name__}' does not accept source_params.",
+                )
+            unknown = set(parsed_source_params) - allowed
+            if unknown:
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        f"GitHub config '{config_id}' has no 'repo' set. "
-                        "Provide a 'repo' form field with the request, or configure a default on the source."
+                        f"Unknown source_params for {type(config).__name__}: {sorted(unknown)}. "
+                        f"Allowed: {sorted(allowed)}."
                     ),
                 )
-            if repo:
-                github_kwargs["repo"] = repo
-        elif repo:
+
+        # GitHub requires an effective repo: either on the config or in source_params.
+        if isinstance(config, GitHubConfig) and config.repo is None and "repo" not in parsed_source_params:
             raise HTTPException(
                 status_code=400,
-                detail="The 'repo' parameter is only supported for GitHub content sources.",
+                detail=(
+                    f"GitHub config '{config_id}' has no 'repo' set. "
+                    'Provide source_params={"repo": "owner/repo"} with the request, '
+                    "or configure a default on the source."
+                ),
             )
 
         # Use the config's factory methods to create the remote content object
@@ -314,12 +340,12 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         is_folder = path.endswith("/")
         if is_folder:
             if hasattr(config, "folder"):
-                remote_content = config.folder(path.rstrip("/"), **github_kwargs)
+                remote_content = config.folder(path.rstrip("/"), **parsed_source_params)
             else:
                 raise HTTPException(status_code=400, detail=f"Config {config_id} does not support folder uploads")
         else:
             if hasattr(config, "file"):
-                remote_content = config.file(path, **github_kwargs)
+                remote_content = config.file(path, **parsed_source_params)
             else:
                 raise HTTPException(status_code=400, detail=f"Config {config_id} does not support file uploads")
 
