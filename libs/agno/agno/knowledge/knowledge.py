@@ -22,6 +22,7 @@ from agno.knowledge.remote_content.remote_content import (
     RemoteContent,
 )
 from agno.knowledge.remote_knowledge import RemoteKnowledge
+from agno.knowledge.types import ContentType
 from agno.knowledge.utils import merge_user_metadata, set_agno_metadata, strip_agno_metadata
 from agno.utils.http import async_fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -1564,7 +1565,14 @@ class Knowledge(RemoteKnowledge):
         file_extension = url_path.suffix.lower()
 
         bytes_content = None
-        if file_extension:
+        # Skip pre-download when a custom URL-based reader is provided —
+        # it handles the URL directly (e.g. LLMsTxtReader fetches linked pages)
+        skip_download = (
+            content.reader is not None
+            and hasattr(content.reader, "get_supported_content_types")
+            and ContentType.URL in content.reader.get_supported_content_types()
+        )
+        if file_extension and not skip_download:
             async with AsyncClient() as client:
                 response = await async_fetch_with_retry(content.url, client=client)
             bytes_content = BytesIO(response.content)
@@ -1716,7 +1724,14 @@ class Knowledge(RemoteKnowledge):
         file_extension = url_path.suffix.lower()
 
         bytes_content = None
-        if file_extension:
+        # Skip pre-download when a custom URL-based reader is provided —
+        # it handles the URL directly (e.g. LLMsTxtReader fetches linked pages)
+        skip_download = (
+            content.reader is not None
+            and hasattr(content.reader, "get_supported_content_types")
+            and ContentType.URL in content.reader.get_supported_content_types()
+        )
+        if file_extension and not skip_download:
             response = fetch_with_retry(content.url)
             bytes_content = BytesIO(response.content)
 
