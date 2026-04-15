@@ -6,7 +6,6 @@ import httpx
 from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
-from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_warning
 from agno.utils.models.claude import format_tools_for_model
 
@@ -72,12 +71,11 @@ class Claude(AnthropicClaude):
             if isinstance(self.http_client, httpx.Client):
                 _client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
-                # Use global sync client when user http_client is invalid
-                _client_params["http_client"] = get_default_sync_client()
-        else:
-            # Use global sync client when no custom http_client is provided
-            _client_params["http_client"] = get_default_sync_client()
+                log_warning("http_client is not an instance of httpx.Client. Ignoring and using SDK default.")
+        # When no custom http_client is provided, let the SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
         self.client = AnthropicVertex(**_client_params)
         return self.client
 
@@ -93,14 +91,11 @@ class Claude(AnthropicClaude):
             if isinstance(self.http_client, httpx.AsyncClient):
                 _client_params["http_client"] = self.http_client
             else:
-                log_warning(
-                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
-                )
-                # Use global async client when user http_client is invalid
-                _client_params["http_client"] = get_default_async_client()
-        else:
-            # Use global async client when no custom http_client is provided
-            _client_params["http_client"] = get_default_async_client()
+                log_warning("http_client is not an instance of httpx.AsyncClient. Ignoring and using SDK default.")
+        # When no custom http_client is provided, let the SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
         self.async_client = AsyncAnthropicVertex(**_client_params)
         return self.async_client
 

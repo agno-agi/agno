@@ -27,7 +27,6 @@ from ag_ui.core import (
 from ag_ui.core.types import Message as AGUIMessage
 from pydantic import BaseModel
 
-from agno.models.message import Message
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import ReasoningCompletedEvent as AgentReasoningCompletedEvent
 from agno.run.agent import ReasoningContentDeltaEvent as AgentReasoningContentDeltaEvent
@@ -40,7 +39,7 @@ from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
 from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
 
 
@@ -154,46 +153,27 @@ class EventBuffer:
         self.reasoning_step_count = 0
 
 
-def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[Message]:
-    """Convert AG-UI messages to Agno messages."""
-    # First pass: collect all tool_call_ids that have results
-    tool_call_ids_with_results: Set[str] = set()
-    for msg in messages:
-        if msg.role == "tool" and msg.tool_call_id:
-            tool_call_ids_with_results.add(msg.tool_call_id)
+def extract_agui_user_input(messages: List[AGUIMessage]) -> str:
+    """Extract the last user message content from AG-UI messages.
 
-    # Second pass: convert messages
-    result: List[Message] = []
-    seen_tool_call_ids: Set[str] = set()
-
-    for msg in messages:
-        if msg.role == "tool":
-            # Deduplicate tool results - keep only first occurrence
-            if msg.tool_call_id in seen_tool_call_ids:
-                log_debug(f"Skipping duplicate AGUI tool result: {msg.tool_call_id}")
-                continue
-            seen_tool_call_ids.add(msg.tool_call_id)
-            result.append(Message(role="tool", tool_call_id=msg.tool_call_id, content=msg.content))
-
-        elif msg.role == "assistant":
-            tool_calls = None
-            if msg.tool_calls:
-                # Filter tool_calls to only those with results in this message sequence
-                filtered_calls = [call for call in msg.tool_calls if call.id in tool_call_ids_with_results]
-                if filtered_calls:
-                    tool_calls = [call.model_dump() for call in filtered_calls]
-            result.append(Message(role="assistant", content=msg.content, tool_calls=tool_calls))
-
-        elif msg.role == "user":
-            result.append(Message(role="user", content=msg.content))
-
-        elif msg.role == "system":
-            pass  # Skip - agent builds its own system message from configuration
-
-        else:
-            log_warning(f"Unknown AGUI message role: {msg.role}")
-
-    return result
+    AG-UI frontends send the full conversation history on every request.
+    The agent manages its own history via session DB, so we only need the
+    latest user message as input — matching the REST API pattern.
+    """
+    for msg in reversed(messages):
+        if msg.role == "user" and msg.content is not None:
+            # UserMessage.content is Union[str, List[InputContent]]
+            if isinstance(msg.content, str):
+                return msg.content
+            # Multimodal: extract text parts
+            if isinstance(msg.content, list):
+                text_parts = []
+                for part in msg.content:
+                    if hasattr(part, "type") and part.type == "text" and hasattr(part, "text"):
+                        text_parts.append(part.text)
+                if text_parts:
+                    return "\n".join(text_parts)
+    return ""
 
 
 def extract_team_response_chunk_content(response: TeamRunContentEvent) -> str:
