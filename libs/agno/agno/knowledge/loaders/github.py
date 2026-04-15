@@ -342,8 +342,9 @@ class GitHubLoader(BaseLoader):
     ):
         """Load content from GitHub (async).
 
-        Requires the GitHub config to contain repo and optionally token for private repos.
-        Uses the GitHub API to fetch file contents.
+        Requires the effective repo (from GitHubContent or GitHubConfig) and
+        optionally a token for private repos. Uses the GitHub API to fetch file
+        contents.
         """
         remote_content: GitHubContent = cast(GitHubContent, content.remote_content)
         gh_config = self._validate_github_config(content, config)
@@ -352,11 +353,16 @@ class GitHubLoader(BaseLoader):
 
         repo = self._resolve_github_repo(remote_content, gh_config)
         if not repo:
-            log_error(
+            # Raise rather than log-and-return: the content entry hasn't been
+            # created yet, so returning here would silently no-op and callers
+            # (e.g. Knowledge.insert / ainsert) would treat the operation as
+            # successful. Surfacing this as a ValueError lets the caller handle
+            # the misconfiguration explicitly.
+            raise ValueError(
                 f"GitHub repo not specified. Set 'repo' on GitHubConfig '{gh_config.id}' "
-                f"or pass it at request time on GitHubContent."
+                f"or pass it at request time via GitHubConfig.file(..., repo=...) / "
+                f"GitHubConfig.folder(..., repo=...)."
             )
-            return
 
         headers = await self._abuild_github_headers(gh_config)
         branch = self._get_github_branch(remote_content, gh_config)
@@ -492,8 +498,9 @@ class GitHubLoader(BaseLoader):
     ):
         """Load content from GitHub (sync).
 
-        Requires the GitHub config to contain repo and optionally token for private repos.
-        Uses the GitHub API to fetch file contents.
+        Requires the effective repo (from GitHubContent or GitHubConfig) and
+        optionally a token for private repos. Uses the GitHub API to fetch file
+        contents.
         """
         remote_content: GitHubContent = cast(GitHubContent, content.remote_content)
         gh_config = self._validate_github_config(content, config)
@@ -502,11 +509,16 @@ class GitHubLoader(BaseLoader):
 
         repo = self._resolve_github_repo(remote_content, gh_config)
         if not repo:
-            log_error(
+            # Raise rather than log-and-return: the content entry hasn't been
+            # created yet, so returning here would silently no-op and callers
+            # (e.g. Knowledge.insert / ainsert) would treat the operation as
+            # successful. Surfacing this as a ValueError lets the caller handle
+            # the misconfiguration explicitly.
+            raise ValueError(
                 f"GitHub repo not specified. Set 'repo' on GitHubConfig '{gh_config.id}' "
-                f"or pass it at request time on GitHubContent."
+                f"or pass it at request time via GitHubConfig.file(..., repo=...) / "
+                f"GitHubConfig.folder(..., repo=...)."
             )
-            return
 
         headers = self._build_github_headers(gh_config)
         branch = self._get_github_branch(remote_content, gh_config)
