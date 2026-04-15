@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SSE Reconnection Tester</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: monospace; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+  h1 { color: #00d4ff; margin-bottom: 10px; font-size: 18px; }
+  .controls { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; align-items: center; }
+  input, select { background: #16213e; color: #e0e0e0; border: 1px solid #0f3460; padding: 8px 12px; border-radius: 4px; font-family: monospace; }
+  input[type="text"] { flex: 1; min-width: 200px; }
+  button { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-family: monospace; font-weight: bold; }
+  .btn-send { background: #00d4ff; color: #1a1a2e; }
+  .btn-disconnect { background: #e94560; color: white; }
+  .btn-resume { background: #0f3460; color: #00d4ff; border: 2px solid #00d4ff; }
+  .btn-clear { background: #333; color: #aaa; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .status-bar { display: flex; gap: 20px; margin-bottom: 15px; padding: 8px 12px; background: #16213e; border-radius: 4px; font-size: 13px; }
+  .status-bar span { color: #888; }
+  .status-bar .val { color: #00d4ff; }
+
+  .log { background: #0a0a1a; border: 1px solid #0f3460; border-radius: 4px; padding: 12px; height: 500px; overflow-y: auto; font-size: 12px; line-height: 1.6; }
+  .log-entry { padding: 2px 0; border-bottom: 1px solid #111; }
+  .log-entry.meta { color: #ffd700; }
+  .log-entry.error { color: #e94560; }
+  .log-entry.content { color: #a0e0a0; }
+  .log-entry.tool { color: #b0b0ff; }
+  .log-entry.catchup { color: #ff9800; background: #1a1200; }
+  .log-entry.live { color: #00e676; }
+  .log-entry.system { color: #888; font-style: italic; }
+  .idx { color: #00d4ff; font-weight: bold; min-width: 40px; display: inline-block; }
+  .evt { color: #888; min-width: 180px; display: inline-block; }
+
+  .split { display: flex; gap: 15px; }
+  .split > div { flex: 1; }
+  .stats { background: #16213e; border-radius: 4px; padding: 12px; font-size: 12px; }
+  .stats h3 { color: #00d4ff; margin-bottom: 8px; font-size: 14px; }
+  .stats .row { display: flex; justify-content: space-between; padding: 3px 0; }
+  .stats .label { color: #888; }
+</style>
+</head>
+<body>
+
+<h1>SSE Reconnection Tester - PR #6849</h1>
+
+<div class="controls">
+  <label>Server: <input type="text" id="baseUrl" value="http://localhost:8000" style="width:200px"></label>
+  <label>API Key: <input type="text" id="apiKey" value="OSK_hFDigf1JhBdM5dtupYM5" style="width:200px"></label>
+  <label>Agent:
+    <select id="agentSelect">
+      <option value="">Loading...</option>
+    </select>
+  </label>
+  <input type="text" id="message" placeholder="Ask the agent something..." value="Write a detailed essay about the history of computing. Make it very long and comprehensive.">
+</div>
+
+<div class="controls">
+  <button class="btn-send" id="btnSend" onclick="startRun()">Send (background+stream)</button>
+  <button class="btn-disconnect" id="btnDisconnect" onclick="disconnect()" disabled>Disconnect</button>
+  <button class="btn-resume" id="btnResume" onclick="resume()" disabled>Resume from last index</button>
+  <button class="btn-clear" onclick="clearLog()">Clear Log</button>
+</div>
+
+<div class="status-bar">
+  <span>Status: <span class="val" id="statusVal">idle</span></span>
+  <span>Run ID: <span class="val" id="runIdVal">-</span></span>
+  <span>Session: <span class="val" id="sessionVal">-</span></span>
+  <span>Last Index: <span class="val" id="lastIndexVal">-</span></span>
+  <span>Events: <span class="val" id="eventCountVal">0</span></span>
+</div>
+
+<div class="split">
+  <div>
+    <div class="log" id="log"></div>
+  </div>
+  <div>
+    <div class="stats">
+      <h3>Index Tracker</h3>
+      <div id="indexList" style="max-height:200px;overflow-y:auto;font-size:11px;"></div>
+      <h3 style="margin-top:12px;">Duplicate Index Detection</h3>
+      <div id="dupeList" style="color:#e94560;font-size:11px;"></div>
+      <h3 style="margin-top:12px;">Content Preview</h3>
+      <div id="contentPreview" style="max-height:200px;overflow-y:auto;font-size:11px;color:#a0e0a0;white-space:pre-wrap;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// State
+let runId = null;
+let sessionId = null;
+let lastEventIndex = -1;
+let eventCount = 0;
+let reader = null;
+let abortController = null;
+let allIndices = [];
+let contentAccum = '';
+let isResuming = false;
+
+// UI helpers
+const $ = id => document.getElementById(id);
+const log = (msg, cls = '') => {
+  const el = document.createElement('div');
+  el.className = 'log-entry ' + cls;
+  el.innerHTML = msg;
+  $('log').appendChild(el);
+  $('log').scrollTop = $('log').scrollHeight;
+};
+const setStatus = s => $('statusVal').textContent = s;
+const updateStats = () => {
+  $('runIdVal').textContent = runId || '-';
+  $('sessionVal').textContent = sessionId || '-';
+  $('lastIndexVal').textContent = lastEventIndex;
+  $('eventCountVal').textContent = eventCount;
+};
+
+// Load agents on page load
+async function loadAgents() {
+  try {
+    const res = await fetch($('baseUrl').value + '/agents', {
+      headers: { 'Authorization': 'Bearer ' + $('apiKey').value }
+    });
+    const agents = await res.json();
+    const sel = $('agentSelect');
+    sel.innerHTML = '';
+    agents.forEach(a => {
+      const opt = document.createElement('option');
+      opt.value = a.agent_id || a.id;
+      opt.textContent = a.name + ' (' + (a.agent_id || a.id) + ')';
+      sel.appendChild(opt);
+    });
+  } catch(e) {
+    $('agentSelect').innerHTML = '<option>Failed to load</option>';
+    log('Failed to load agents: ' + e.message, 'error');
+  }
+}
+
+// Parse SSE from raw text chunks
+function parseSSEChunks(text, callback) {
+  // Split on double newlines (SSE event boundary)
+  const parts = text.split('\n\n');
+  for (const part of parts) {
+    if (!part.trim()) continue;
+    let eventType = 'message';
+    let data = '';
+    for (const line of part.split('\n')) {
+      if (line.startsWith('event: ')) eventType = line.slice(7);
+      else if (line.startsWith('data: ')) data = line.slice(6);
+    }
+    if (data) {
+      try {
+        callback(eventType, JSON.parse(data));
+      } catch(e) {
+        callback(eventType, { raw: data });
+      }
+    }
+  }
+}
+
+// Start a background+stream run
+async function startRun() {
+  const agentId = $('agentSelect').value;
+  const message = $('message').value;
+  if (!agentId || !message) return;
+
+  // Reset state
+  runId = null; sessionId = null; lastEventIndex = -1; eventCount = 0;
+  allIndices = []; contentAccum = ''; isResuming = false;
+  $('indexList').innerHTML = '';
+  $('dupeList').innerHTML = '';
+  $('contentPreview').textContent = '';
+
+  setStatus('connecting...');
+  $('btnSend').disabled = true;
+  $('btnDisconnect').disabled = false;
+  $('btnResume').disabled = true;
+
+  const formData = new FormData();
+  formData.append('message', message);
+  formData.append('stream', 'true');
+  formData.append('background', 'true');
+
+  abortController = new AbortController();
+
+  try {
+    const res = await fetch(
+      $('baseUrl').value + '/agents/' + agentId + '/runs',
+      { method: 'POST', body: formData, signal: abortController.signal,
+        headers: { 'Authorization': 'Bearer ' + $('apiKey').value } }
+    );
+
+    if (!res.ok) {
+      const err = await res.text();
+      log('HTTP ' + res.status + ': ' + err, 'error');
+      setStatus('error');
+      return;
+    }
+
+    // Check if it's a 202 (background non-stream) or 200 (stream)
+    if (res.status === 202) {
+      const json = await res.json();
+      runId = json.run_id;
+      sessionId = json.session_id;
+      log('Background run started (non-streaming): ' + runId, 'system');
+      setStatus('background (poll)');
+      updateStats();
+      return;
+    }
+
+    setStatus('streaming');
+    log('--- Stream started ---', 'system');
+    readStream(res);
+  } catch(e) {
+    if (e.name === 'AbortError') {
+      log('--- Stream aborted by user ---', 'system');
+    } else {
+      log('Fetch error: ' + e.message, 'error');
+    }
+    setStatus('disconnected');
+    $('btnResume').disabled = false;
+  }
+}
+
+// Read SSE stream from a fetch response
+async function readStream(res) {
+  reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        log('--- Stream ended (server closed) ---', 'system');
+        setStatus('completed');
+        $('btnDisconnect').disabled = true;
+        $('btnSend').disabled = false;
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+      // Process complete events (separated by \n\n)
+      const lastDoubleNewline = buffer.lastIndexOf('\n\n');
+      if (lastDoubleNewline === -1) continue;
+
+      const complete = buffer.slice(0, lastDoubleNewline + 2);
+      buffer = buffer.slice(lastDoubleNewline + 2);
+
+      parseSSEChunks(complete, handleEvent);
+    }
+  } catch(e) {
+    if (e.name === 'AbortError' || e.message.includes('abort')) {
+      log('--- Disconnected ---', 'system');
+    } else {
+      log('Stream read error: ' + e.message, 'error');
+    }
+    setStatus('disconnected');
+    $('btnDisconnect').disabled = true;
+    $('btnResume').disabled = (runId === null);
+    $('btnSend').disabled = false;
+  }
+  updateStats();
+}
+
+// Handle a single SSE event
+function handleEvent(eventType, data) {
+  const idx = data.event_index;
+  const prefix = isResuming ? '[RESUME] ' : '';
+  const cls = isResuming ? (eventType === 'catch_up' || eventType === 'replay' || eventType === 'subscribed' ? 'meta' : 'catchup') : 'live';
+
+  // Track event_index
+  if (idx !== undefined && idx !== null) {
+    lastEventIndex = Math.max(lastEventIndex, idx);
+    eventCount++;
+
+    // Check for duplicate indices
+    if (allIndices.includes(idx)) {
+      $('dupeList').innerHTML += '<div>DUPLICATE index ' + idx + ' (event #' + eventCount + ')</div>';
+    }
+    allIndices.push(idx);
+    $('indexList').innerHTML += '<div>' + idx + '</div>';
+    $('indexList').scrollTop = $('indexList').scrollHeight;
+  }
+
+  // Extract run_id and session_id
+  if (data.run_id && !runId) {
+    runId = data.run_id;
+  }
+  if (data.session_id && !sessionId) {
+    sessionId = data.session_id;
+  }
+
+  // Log based on event type
+  switch(eventType) {
+    case 'RunStarted':
+    case 'TeamRunStarted':
+      log(prefix + '<span class="idx">#' + idx + '</span> <span class="evt">' + eventType + '</span> run_id=' + data.run_id, cls);
+      if (data.session_id) sessionId = data.session_id;
+      break;
+
+    case 'RunContent':
+    case 'TeamRunContent':
+      const snippet = (data.content || '').slice(0, 80);
+      contentAccum += (data.content || '');
+      $('contentPreview').textContent = contentAccum.slice(-500);
+      log(prefix + '<span class="idx">#' + idx + '</span> <span class="evt">' + eventType + '</span> ' + snippet.replace(/</g,'&lt;'), cls);
+      break;
+
+    case 'ToolCallStarted':
+      log(prefix + '<span class="idx">#' + idx + '</span> <span class="evt">' + eventType + '</span> ' + (data.tool_name || data.name || ''), 'tool');
+      break;
+
+    case 'ToolCallCompleted':
+      log(prefix + '<span class="idx">#' + idx + '</span> <span class="evt">' + eventType + '</span> done', 'tool');
+      break;
+
+    case 'RunCompleted':
+    case 'TeamRunCompleted':
+      log(prefix + '<span class="idx">#' + idx + '</span> <span class="evt">' + eventType + '</span> COMPLETED', 'meta');
+      setStatus('completed');
+      $('btnDisconnect').disabled = true;
+      $('btnSend').disabled = false;
+      break;
+
+    case 'RunError':
+    case 'TeamRunError':
+      log(prefix + '<span class="idx">#' + idx + '</span> <span class="evt">' + eventType + '</span> ' + (data.content || data.error || ''), 'error');
+      break;
+
+    case 'catch_up':
+    case 'replay':
+    case 'subscribed':
+      log(prefix + '<span class="evt">[META] ' + eventType + '</span> ' + (data.message || JSON.stringify(data)), 'meta');
+      break;
+
+    case 'error':
+      log(prefix + '<span class="evt">[ERROR]</span> ' + (data.error || JSON.stringify(data)), 'error');
+      break;
+
+    default:
+      log(prefix + '<span class="idx">#' + idx + '</span> <span class="evt">' + eventType + '</span>', cls);
+  }
+
+  updateStats();
+}
+
+// Disconnect (simulate page refresh)
+function disconnect() {
+  if (abortController) abortController.abort();
+  if (reader) {
+    try { reader.cancel(); } catch(e) {}
+  }
+  reader = null;
+  setStatus('disconnected');
+  $('btnDisconnect').disabled = true;
+  $('btnResume').disabled = (runId === null);
+  $('btnSend').disabled = false;
+  log('--- USER DISCONNECTED --- (last_event_index=' + lastEventIndex + ')', 'system');
+  updateStats();
+}
+
+// Resume from last event index
+async function resume() {
+  if (!runId) {
+    log('No run_id to resume', 'error');
+    return;
+  }
+
+  isResuming = true;
+  setStatus('resuming...');
+  $('btnResume').disabled = true;
+  $('btnDisconnect').disabled = false;
+  $('btnSend').disabled = true;
+
+  const agentId = $('agentSelect').value;
+  const formData = new FormData();
+  if (lastEventIndex >= 0) formData.append('last_event_index', lastEventIndex.toString());
+  if (sessionId) formData.append('session_id', sessionId);
+
+  abortController = new AbortController();
+
+  log('--- RESUMING --- run_id=' + runId + ' last_event_index=' + lastEventIndex, 'meta');
+
+  try {
+    const res = await fetch(
+      $('baseUrl').value + '/agents/' + agentId + '/runs/' + runId + '/resume',
+      { method: 'POST', body: formData, signal: abortController.signal,
+        headers: { 'Authorization': 'Bearer ' + $('apiKey').value } }
+    );
+
+    if (!res.ok) {
+      const err = await res.text();
+      log('Resume HTTP ' + res.status + ': ' + err, 'error');
+      setStatus('error');
+      $('btnSend').disabled = false;
+      return;
+    }
+
+    setStatus('resumed - streaming');
+    readStream(res);
+  } catch(e) {
+    log('Resume error: ' + e.message, 'error');
+    setStatus('error');
+    $('btnSend').disabled = false;
+    $('btnResume').disabled = false;
+  }
+}
+
+function clearLog() {
+  $('log').innerHTML = '';
+  $('indexList').innerHTML = '';
+  $('dupeList').innerHTML = '';
+  $('contentPreview').textContent = '';
+}
+
+// Init
+window.addEventListener('load', loadAgents);
+$('baseUrl').addEventListener('change', loadAgents);
+</script>
+</body>
+</html>
