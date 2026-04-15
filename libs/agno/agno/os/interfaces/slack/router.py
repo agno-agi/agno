@@ -7,6 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RemoteAgent
+from agno.os.interfaces.slack.blocks import approval_blocks
 from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import (
     build_run_metadata,
@@ -19,6 +20,7 @@ from agno.os.interfaces.slack.helpers import (
     strip_bot_mention,
     upload_response_media_async,
 )
+from agno.os.interfaces.slack.interactions import PausedRun, handle_block_action, store_paused_run
 from agno.os.interfaces.slack.security import verify_slack_signature
 from agno.os.interfaces.slack.state import StreamState
 from agno.team import RemoteTeam, Team
@@ -145,6 +147,52 @@ def attach_routes(
                 background_tasks.add_task(_stream_slack_response, data)
             else:
                 background_tasks.add_task(_process_slack_event, data)
+
+        return SlackEventResponse(status="ok")
+
+    @router.post(
+        "/interactions",
+        operation_id=f"slack_interactions_{op_suffix}",
+        name="slack_interactions",
+        description="Handle Slack interactive payloads (button clicks, modals)",
+        responses={200: {"description": "Interaction processed"}},
+    )
+    async def slack_interactions(request: Request, background_tasks: BackgroundTasks):
+        import json as _json
+        import urllib.parse
+
+        body_bytes = await request.body()
+        timestamp = request.headers.get("X-Slack-Request-Timestamp")
+        slack_signature = request.headers.get("X-Slack-Signature", "")
+
+        if not timestamp or not slack_signature:
+            raise HTTPException(status_code=400, detail="Missing Slack headers")
+
+        if not verify_slack_signature(body_bytes, timestamp, slack_signature, signing_secret=signing_secret):
+            raise HTTPException(status_code=403, detail="Invalid signature")
+
+        # Slack sends interactions as application/x-www-form-urlencoded with a "payload" field
+        body_str = body_bytes.decode("utf-8")
+        parsed = urllib.parse.parse_qs(body_str)
+        payload_str = parsed.get("payload", [""])[0]
+        if not payload_str:
+            raise HTTPException(status_code=400, detail="Missing payload")
+
+        payload = _json.loads(payload_str)
+        payload_type = payload.get("type", "")
+
+        if payload_type == "block_actions":
+            for action in payload.get("actions", []):
+                background_tasks.add_task(
+                    handle_block_action,
+                    action=action,
+                    body=payload,
+                    token=slack_tools.token,
+                    ssl=ssl,
+                    streaming=streaming,
+                    task_display_mode=task_display_mode,
+                    buffer_size=buffer_size,
+                )
 
         return SlackEventResponse(status="ok")
 
@@ -425,6 +473,75 @@ def attach_routes(
             if completion_chunks:
                 stop_kwargs["chunks"] = completion_chunks
             await stream.stop(**stop_kwargs)
+
+            # HITL: if the agent paused for confirmation, post a Block Kit
+            # approval card and store the paused state for later resumption
+            if state.paused_event is not None:
+                paused_chunk = state.paused_event
+                tools = getattr(paused_chunk, "tools", None) or []
+                # RunPausedEvent carries tools and the run_id from the agent
+                run_id = getattr(paused_chunk, "run_id", None)
+                approval_id = None
+                # Find the approval_id stamped by the agent's pause handler
+                for t in tools:
+                    if getattr(t, "approval_id", None):
+                        approval_id = t.approval_id
+                        break
+                if not approval_id:
+                    # Fallback: generate one
+                    from uuid import uuid4
+
+                    approval_id = str(uuid4())
+
+                blocks = approval_blocks(tools, approval_id, agent_name=entity_name)
+                try:
+                    resp = await async_client.chat_postMessage(
+                        channel=ctx["channel_id"],
+                        thread_ts=ctx["thread_id"],
+                        blocks=blocks,
+                        text="Approval needed",
+                    )
+                    approval_msg_ts = resp.get("ts")
+                except Exception as e:
+                    log_error(f"Failed to post approval card: {e}")
+                    approval_msg_ts = None
+
+                # We need the run_response to call acontinue_run later.
+                # The RunPausedEvent is yielded AFTER the agent stores session,
+                # so we can reconstruct from the last RunOutput in the stream.
+                # For prototype: grab run_response from the chunk's context
+                from agno.run.agent import RunOutput
+
+                # Build a minimal RunOutput from the paused event fields
+                paused_run_response = RunOutput(
+                    run_id=run_id or "",
+                    session_id=session_id,
+                    tools=tools,
+                    content=getattr(paused_chunk, "content", None),
+                )
+                paused_run_response.status = "paused"  # type: ignore[assignment]
+                # Copy requirements if present
+                reqs = getattr(paused_chunk, "requirements", None)
+                if reqs:
+                    paused_run_response.requirements = reqs
+
+                store_paused_run(
+                    approval_id,
+                    PausedRun(
+                        entity=entity,
+                        entity_type=entity_type,
+                        entity_name=entity_name,
+                        run_response=paused_run_response,
+                        user_id=resolved_user_id,
+                        session_id=session_id,
+                        channel_id=ctx["channel_id"],
+                        thread_ts=ctx["thread_id"],
+                        team_id=team_id,
+                        metadata=run_kwargs.get("metadata"),
+                        dependencies=run_kwargs.get("dependencies"),
+                        approval_message_ts=approval_msg_ts,
+                    ),
+                )
 
             await upload_response_media_async(async_client, state, ctx["channel_id"], ctx["thread_id"])
 

@@ -59,6 +59,10 @@ class StreamState:
     # Total chars sent to the current Slack stream; reset on rotation
     stream_chars_sent: int = 0
 
+    # Set by _on_run_paused when agent pauses for HITL confirmation.
+    # Router reads this after stream loop to post Block Kit approval card.
+    paused_event: Optional["BaseRunOutputEvent"] = None
+
     def track_task(self, key: str, title: str) -> None:
         self.task_cards[key] = TaskCard(title=title)
 

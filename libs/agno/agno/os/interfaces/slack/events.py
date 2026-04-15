@@ -251,6 +251,15 @@ async def _on_memory_update_completed(chunk: BaseRunOutputEvent, state: StreamSt
     return False
 
 
+async def _on_run_paused(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+    # HITL: agent paused for tool confirmation. Signal the stream loop to stop
+    # and render an approval card. The actual Block Kit message is posted by
+    # the router after stream.stop(), using chunk data stored on state.
+    state.paused_event = chunk
+    state.terminal_status = "complete"  # Close cards cleanly, not as error
+    return True  # Break the stream loop
+
+
 async def _on_run_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     return False  # Finalization handled by caller after stream ends
 
@@ -387,6 +396,7 @@ HANDLERS: Dict[str, _EventHandler] = {
     RunEvent.run_completed.value: _on_run_completed,
     RunEvent.run_error.value: _on_run_error,
     RunEvent.run_cancelled.value: _on_run_error,  # Treat cancellation as terminal error
+    RunEvent.run_paused.value: _on_run_paused,  # HITL: agent paused for confirmation
     # -------------------------------------------------------------------------
     # Workflow Lifecycle Events
     # -------------------------------------------------------------------------
