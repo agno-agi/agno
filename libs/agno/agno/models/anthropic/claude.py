@@ -14,7 +14,6 @@ from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
-from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import (
     MCPServerConfiguration,
@@ -125,6 +124,11 @@ class Claude(Model):
     skills: Optional[List[Dict[str, str]]] = (
         None  # e.g., [{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]
     )
+
+    # Whether to attach citations to document blocks.
+    # Defaults to True. Automatically suppressed when structured output is active
+    # because Anthropic rejects citations + output_format together.
+    citations: bool = True
 
     # Claude 4.6+ does not support assistant message prefill.
     # Set to True to append a trailing user turn when the conversation ends with an assistant message.
@@ -327,6 +331,20 @@ class Claude(Model):
 
         return None
 
+    def _output_format_enabled(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> bool:
+        """Return True when this request will send Anthropic's ``output_format`` param.
+
+        Anthropic rejects ``citations`` + ``output_format`` with a 400, so document
+        citations must be suppressed whenever this returns True. Delegates to
+        ``_build_output_format`` so the two can never disagree — in particular,
+        ``response_format={"type": "json_object"}`` builds nothing and therefore
+        does not trigger the conflict.
+        """
+        return self._build_output_format(response_format) is not None
+
     def _validate_structured_outputs_usage(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -360,7 +378,7 @@ class Claude(Model):
 
     def get_client(self) -> AnthropicClient:
         """
-        Returns an instance of the Anthropic client.
+        Returns an instance of the Anthropic client. Caches the client to avoid recreating it on every request.
         """
         if self.client and not self.client.is_closed():
             return self.client
@@ -370,18 +388,17 @@ class Claude(Model):
             if isinstance(self.http_client, httpx.Client):
                 _client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
-                # Use global sync client when user http_client is invalid
-                _client_params["http_client"] = get_default_sync_client()
-        else:
-            # Use global sync client when no custom http_client is provided
-            _client_params["http_client"] = get_default_sync_client()
+                log_warning("http_client is not an instance of httpx.Client. Ignoring and using Anthropic SDK default.")
+        # When no custom http_client is provided, let the Anthropic SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
         self.client = AnthropicClient(**_client_params)
         return self.client
 
     def get_async_client(self) -> AsyncAnthropicClient:
         """
-        Returns an instance of the async Anthropic client.
+        Returns an instance of the async Anthropic client. Caches the client to avoid recreating it on every request.
         """
         if self.async_client and not self.async_client.is_closed():
             return self.async_client
@@ -392,13 +409,12 @@ class Claude(Model):
                 _client_params["http_client"] = self.http_client
             else:
                 log_warning(
-                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
+                    "http_client is not an instance of httpx.AsyncClient. Ignoring and using Anthropic SDK default."
                 )
-                # Use global async client when user http_client is invalid
-                _client_params["http_client"] = get_default_async_client()
-        else:
-            # Use global async client when no custom http_client is provided
-            _client_params["http_client"] = get_default_async_client()
+        # When no custom http_client is provided, let the Anthropic SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
         self.async_client = AsyncAnthropicClient(**_client_params)
         return self.async_client
 
@@ -438,6 +454,7 @@ class Claude(Model):
             compress_tool_results=True,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
+            enable_citations=self.citations and not self._output_format_enabled(response_format),
         )
         anthropic_tools = None
         if tools:
@@ -464,6 +481,7 @@ class Claude(Model):
             compress_tool_results=True,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
+            enable_citations=self.citations and not self._output_format_enabled(response_format),
         )
         anthropic_tools = None
         if tools:
@@ -654,6 +672,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
+                enable_citations=self.citations and not self._output_format_enabled(response_format),
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
@@ -713,6 +732,7 @@ class Claude(Model):
             compress_tool_results=compress_tool_results,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
+            enable_citations=self.citations and not self._output_format_enabled(response_format),
         )
         request_kwargs = self._prepare_request_kwargs(
             system_message, tools=tools, response_format=response_format, messages=messages
@@ -763,6 +783,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
+                enable_citations=self.citations and not self._output_format_enabled(response_format),
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
@@ -821,6 +842,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
+                enable_citations=self.citations and not self._output_format_enabled(response_format),
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
