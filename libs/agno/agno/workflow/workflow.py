@@ -1613,7 +1613,9 @@ class Workflow:
                 if event.step_index is None:
                     event.step_index = step_index
         else:
-            if hasattr(event, "parent_step_id") and step_id:
+            # Only set parent_step_id if not already set — the innermost enclosing
+            # workflow is the true host step; outer layers must not overwrite it.
+            if hasattr(event, "parent_step_id") and step_id and event.parent_step_id is None:
                 event.parent_step_id = step_id
 
         return event
