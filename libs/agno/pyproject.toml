@@ -121,6 +121,7 @@ github = ["PyGithub"]
 gitlab = ["python-gitlab", "httpx"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
 google_bigquery = ["google-cloud-bigquery"]
+google_meet = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
 google_slides = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
 googlemaps = ["googlemaps", "google-maps-places"]
 matplotlib = ["matplotlib"]
@@ -250,6 +251,7 @@ tools = [
   "agno[github]",
   "agno[gitlab]",
   "agno[gmail]",
+  "agno[google_meet]",
   "agno[google_slides]",
   "agno[googlemaps]",
   "agno[todoist]",
