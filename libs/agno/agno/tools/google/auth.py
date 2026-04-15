@@ -341,22 +341,17 @@ class GoogleAuth(Toolkit):
         log_info(f"OAuth complete for user={user_id}, services={services}")
         return {"status": "ok", "user_id": user_id, "services": services}
 
-    def get_oauth_router(self, db: Optional[Any] = None) -> Any:
+    def get_oauth_router(self) -> Any:
         """Create a FastAPI APIRouter with the /google/oauth/callback endpoint.
 
-        The router closes over this GoogleAuth instance.
-
-        Args:
-            db: Optional database to use for token storage. Sets ``_db``
-                on this instance so the callback can persist tokens.
+        The router closes over this GoogleAuth instance.  ``_db`` must be set
+        before the callback fires — either via ``GoogleAuth(db=...)`` at
+        construction or auto-wired from ``agent.db`` at run time.
 
         Usage:
-            google_auth = GoogleAuth(client_id="...")
-            app.include_router(google_auth.get_oauth_router(db=my_db))
+            google_auth = GoogleAuth(client_id="...", db=my_db)
+            app.include_router(google_auth.get_oauth_router())
         """
-        if db is not None and self._db is None:
-            self._db = db
-
         from html import escape
 
         from fastapi import APIRouter, Request
