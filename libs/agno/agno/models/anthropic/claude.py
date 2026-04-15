@@ -125,6 +125,11 @@ class Claude(Model):
         None  # e.g., [{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]
     )
 
+    # Whether to attach citations to document blocks.
+    # Defaults to True. Automatically suppressed when structured output is active
+    # because Anthropic rejects citations + output_format together.
+    citations: bool = True
+
     # Claude 4.6+ does not support assistant message prefill.
     # Set to True to append a trailing user turn when the conversation ends with an assistant message.
     # Defaults to True for Claude 4.6+ models.
@@ -435,7 +440,7 @@ class Claude(Model):
             compress_tool_results=True,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
-            enable_citations=self._build_output_format(response_format) is None,
+            enable_citations=self.citations and self._build_output_format(response_format) is None,
         )
         anthropic_tools = None
         if tools:
@@ -462,7 +467,7 @@ class Claude(Model):
             compress_tool_results=True,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
-            enable_citations=self._build_output_format(response_format) is None,
+            enable_citations=self.citations and self._build_output_format(response_format) is None,
         )
         anthropic_tools = None
         if tools:
@@ -653,7 +658,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
-                enable_citations=self._build_output_format(response_format) is None,
+                enable_citations=self.citations and self._build_output_format(response_format) is None,
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
@@ -713,7 +718,7 @@ class Claude(Model):
             compress_tool_results=compress_tool_results,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
-            enable_citations=self._build_output_format(response_format) is None,
+            enable_citations=self.citations and self._build_output_format(response_format) is None,
         )
         request_kwargs = self._prepare_request_kwargs(
             system_message, tools=tools, response_format=response_format, messages=messages
@@ -764,7 +769,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
-                enable_citations=self._build_output_format(response_format) is None,
+                enable_citations=self.citations and self._build_output_format(response_format) is None,
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
@@ -823,7 +828,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
-                enable_citations=self._build_output_format(response_format) is None,
+                enable_citations=self.citations and self._build_output_format(response_format) is None,
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
