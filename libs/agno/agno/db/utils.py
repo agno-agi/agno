@@ -232,8 +232,13 @@ def _clone_db_with_table_overrides(
     backend connection limits. This helper is used when the stored
     config references a known db (same id) but customizes table names.
 
+    Connection metadata (``db_url`` / ``db_file`` / ``db_schema``) is
+    carried over from ``source_db`` so the clone's ``to_dict`` still
+    round-trips to a usable config if it is re-saved and later loaded
+    without a registry.
+
     Returns ``None`` if the source db type is not recognized, so the
-    caller can fall back to a fresh ``db_from_dict`` construction.
+    caller can decide how to fall back.
     """
     overrides: Dict[str, Any] = {key: db_data[key] for key in DB_TABLE_NAME_KEYS if key in db_data}
 
@@ -242,6 +247,7 @@ def _clone_db_with_table_overrides(
 
         if isinstance(source_db, PostgresDb):
             return PostgresDb(
+                db_url=source_db.db_url,
                 db_engine=source_db.db_engine,
                 db_schema=source_db.db_schema,
                 id=source_db.id,
@@ -256,6 +262,8 @@ def _clone_db_with_table_overrides(
 
         if isinstance(source_db, SqliteDb):
             return SqliteDb(
+                db_file=source_db.db_file,
+                db_url=source_db.db_url,
                 db_engine=source_db.db_engine,
                 id=source_db.id,
                 **overrides,
@@ -308,6 +316,18 @@ def resolve_db_from_config(
             clone = _clone_db_with_table_overrides(registry_db, db_data)
             if clone is not None:
                 return clone
-            # Unknown db type: fall through to a fresh instance.
+            # The registered db type isn't one the cloner knows how to
+            # rebuild (e.g. JsonDb, RedisDb, FirestoreDb, DynamoDb, ...).
+            # Fall back to the registered instance rather than building
+            # a fresh one via db_from_dict, which only handles postgres
+            # and sqlite and would return None for these backends. This
+            # means table overrides are silently ignored for unsupported
+            # types, but the component still gets a working db — same as
+            # the pre-override behavior for those backends.
+            log_warning(
+                f"Cannot apply table-name overrides to db of type {type(registry_db).__name__}; "
+                "reusing the registered instance with its configured table names."
+            )
+            return registry_db
 
     return db_from_dict(db_data)
