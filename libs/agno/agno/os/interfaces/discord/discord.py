@@ -32,6 +32,7 @@ class Discord(BaseInterface):
         command_name: str = "ask",
         command_description: str = "Ask the AI a question",
         auto_register_command: bool = True,
+        reply_in_thread: bool = False,
     ):
         self.agent = agent
         self.team = team
@@ -44,6 +45,7 @@ class Discord(BaseInterface):
         self.command_name = command_name
         self.command_description = command_description
         self.auto_register_command = auto_register_command
+        self.reply_in_thread = reply_in_thread
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Discord requires an agent, team, or workflow")
@@ -51,10 +53,11 @@ class Discord(BaseInterface):
             raise ValueError("DISCORD_PUBLIC_KEY is not set. Set the env var or pass public_key.")
         if not self.application_id:
             raise ValueError("DISCORD_APP_ID is not set. Set the env var or pass application_id.")
-        if self.auto_register_command and not self.bot_token:
+        needs_bot_token = self.auto_register_command or self.reply_in_thread
+        if needs_bot_token and not self.bot_token:
             raise ValueError(
-                "DISCORD_BOT_TOKEN is required when auto_register_command=True. "
-                "Set the env var, pass bot_token, or disable auto_register_command."
+                "DISCORD_BOT_TOKEN is required when auto_register_command=True or reply_in_thread=True. "
+                "Set the env var, pass bot_token, or disable both flags."
             )
 
     def _register_command(self) -> None:
@@ -102,5 +105,7 @@ class Discord(BaseInterface):
             workflow=self.workflow,
             public_key=self.public_key,
             application_id=self.application_id,
+            bot_token=self.bot_token,
+            reply_in_thread=self.reply_in_thread,
         )
         return self.router

@@ -12,7 +12,9 @@ the `Discord` interface in AgentOS. Uses Discord's HTTP Interactions API
 2. Under **Bot**, click **Reset Token** and copy the token.
 3. Under **General Information**, copy the **Application ID** and **Public Key**.
 4. Under **Installation** (or **OAuth2 -> URL Generator**), add the `bot` and
-   `applications.commands` scopes and invite the bot to a server.
+   `applications.commands` scopes and invite the bot to a server. Grant at
+   minimum **Send Messages**. If you enable `reply_in_thread=True`, also
+   grant **Create Public Threads** and **Send Messages in Threads**.
 
 ### 2. Set Environment Variables
 
@@ -85,7 +87,15 @@ In any server where the bot is installed:
 - `/ask` slash command with a required `question` string and optional file attachment
 - Inbound media: image, audio, video, or document attachments routed to the
   agent as `Image`, `Audio`, `Video`, or `File` based on MIME type
-- Per-channel session in guilds, per-user session in DMs
+- Default: replies in-channel by editing the deferred interaction response.
+- Opt-in thread replies via `reply_in_thread=True` on the `Discord(...)`
+  constructor. When enabled, the bot opens a thread on its own response
+  message (with the question as thread title) and posts the reply inside, and
+  shows a "typing..." indicator in the thread while the agent runs. Running
+  `/ask` inside an existing thread continues that thread's conversation.
+- Session scope: with `reply_in_thread=True`, one session per thread
+  (`discord-thread-{thread_id}`); otherwise one per channel in guilds
+  (`discord-{channel_id}`). DMs always scope by user (`discord-dm-{user_id}`).
 - Ed25519 signature verification on every request
 - Deferred response pattern (`type: 5`) so the agent has more than 3 seconds
   to run before Discord times out
