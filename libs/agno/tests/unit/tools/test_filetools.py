@@ -212,3 +212,35 @@ def test_search_content_limit():
         data = json.loads(result)
 
         assert data["matches_found"] == 2
+
+
+def test_paths_use_forward_slashes():
+    """Test that all path-returning methods use POSIX forward slashes, not OS-native separators.
+
+    Regression test for https://github.com/phidatahq/phidata/issues/7524
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        # Create nested structure
+        subdir = base_dir / "subdir"
+        subdir.mkdir()
+        (subdir / "file.txt").write_text("nested content")
+
+        # list_files
+        result = json.loads(file_tools.list_files(directory="subdir"))
+        for p in result:
+            assert "\\" not in p, f"list_files returned backslash path: {p}"
+
+        # search_files
+        result = json.loads(file_tools.search_files(pattern="**/*.txt"))
+        for p in result["files"]:
+            assert "\\" not in p, f"search_files returned backslash path: {p}"
+        assert "subdir/file.txt" in result["files"]
+
+        # search_content
+        result = json.loads(file_tools.search_content(query="nested"))
+        for m in result["files"]:
+            assert "\\" not in m["file"], f"search_content returned backslash path: {m['file']}"
+        assert result["files"][0]["file"] == "subdir/file.txt"

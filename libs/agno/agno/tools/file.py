@@ -247,7 +247,9 @@ class FileTools(Toolkit):
             log_debug(f"Reading files in : {self.base_dir}/{directory}")
             safe, d = self.check_escape(directory)
             if safe:
-                return json.dumps([str(file_path.relative_to(self.base_dir)) for file_path in d.iterdir()], indent=4)
+                return json.dumps(
+                    [file_path.relative_to(self.base_dir).as_posix() for file_path in d.iterdir()], indent=4
+                )
             else:
                 return "{}"
         except Exception as e:
@@ -276,7 +278,7 @@ class FileTools(Toolkit):
                     "files": file_paths,
                 }
             else:
-                file_paths = [str(file_path.relative_to(self.base_dir)) for file_path in matching_files]
+                file_paths = [file_path.relative_to(self.base_dir).as_posix() for file_path in matching_files]
 
                 result = {
                     "pattern": pattern,
@@ -336,7 +338,7 @@ class FileTools(Toolkit):
                     continue
 
                 if lower_query in content.lower():
-                    rel_path = str(file_path.relative_to(self.base_dir))
+                    rel_path = file_path.relative_to(self.base_dir).as_posix()
                     snippet = _extract_snippet(content, query)
                     matches.append(
                         {
