@@ -16,7 +16,7 @@ from agno.os.interfaces.telegram.helpers import (
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_info, log_warning
+from agno.utils.log import log_debug, log_info, log_warning
 
 if TYPE_CHECKING:
     from telebot.async_telebot import AsyncTeleBot
@@ -26,8 +26,6 @@ if TYPE_CHECKING:
 
 # Matches any HTML tag (opening, closing, self-closing)
 _TAG_RE = re.compile(r"<[^>]+>")
-# Matches "retry after <seconds>" in Telegram 429 error messages
-_RETRY_AFTER_RE = re.compile(r"retry after (\d+)", re.IGNORECASE)
 
 TG_STREAM_EDIT_INTERVAL = 1.0
 
@@ -171,37 +169,15 @@ class StreamState:
         self.videos: list[Video] = []
         self.audio: list[Audio] = []
         self.files: list[File] = []
-        # Monotonic timestamp until which we should not attempt to edit messages (Telegram 429)
         self._rate_limited_until: float = 0.0
 
-    def _is_rate_limited(self) -> bool:
-        # Short-circuit on 0.0 (initial state) to avoid the monotonic() syscall
-        return self._rate_limited_until > 0.0 and time.monotonic() < self._rate_limited_until
-
     def _set_rate_limit(self, exc: Exception) -> bool:
-        """Parse a Telegram 429 error and set the rate-limit hold. Returns True if 429 was detected."""
-        match = _RETRY_AFTER_RE.search(str(exc))
-        if match:
-            retry_seconds = int(match.group(1))
-            new_deadline = time.monotonic() + retry_seconds
-            # Never shorten an active hold — a previous 429 may enforce a longer window
-            self._rate_limited_until = max(self._rate_limited_until, new_deadline)
-            log_warning(f"Rate limited by Telegram, pausing edits for {retry_seconds}s")
-            return True
-        return False
-
-    async def _wait_for_rate_limit(self) -> None:
-        """Sleep until the rate-limit hold expires. Used by finalize to guarantee delivery."""
-        deadline = self._rate_limited_until
-        if deadline <= 0.0:
-            return
-        remaining = deadline - time.monotonic()
-        if remaining > 0:
-            log_info(f"Waiting {remaining:.0f}s for Telegram rate limit to expire before finalizing")
-            await asyncio.sleep(remaining)
-        # Only clear if no new hold was set while we slept (compare-and-swap)
-        if self._rate_limited_until == deadline:
-            self._rate_limited_until = 0.0
+        if getattr(exc, "error_code", None) != 429:
+            return False
+        retry_after = getattr(exc, "result_json")["parameters"]["retry_after"]
+        self._rate_limited_until = time.monotonic() + retry_after
+        log_debug(f"Rate limited by Telegram, pausing edits for {retry_after}s")
+        return True
 
     def add_status(self, line: str) -> None:
         self.status_lines.append(line)
@@ -290,7 +266,7 @@ class StreamState:
     async def send_or_edit(self, html: str) -> None:
         if not html or not html.strip():
             return
-        if self._is_rate_limited():
+        if time.monotonic() < self._rate_limited_until:
             return
         display = self._truncate_html(html)
         if self.sent_message_id is None:
@@ -298,8 +274,6 @@ class StreamState:
                 msg = await self._send_new(display)
                 self.sent_message_id = msg.message_id
             except Exception:
-                # _send_new already called _set_rate_limit if applicable;
-                # during streaming, failing to send the first message is not fatal
                 return
         else:
             await self._edit(display)
@@ -317,14 +291,16 @@ class StreamState:
         if not final_html:
             return
 
-        # Wait out any active rate-limit hold — finalize is the last chance
-        # to deliver the response, so we must not skip it
-        await self._wait_for_rate_limit()
+        # Wait out any active rate-limit hold — finalize is the last chance to deliver
+        delay = self._rate_limited_until - time.monotonic()
+        if delay > 0:
+            log_debug(f"Waiting {delay:.0f}s for Telegram rate limit to expire before finalizing")
+            await asyncio.sleep(delay)
 
         try:
             await self._finalize_inner(final_html)
         except Exception as e:
-            log_warning(f"Finalize failed (), falling back to plain text: {str(e)}")
+            log_warning(f"Finalize failed, falling back to plain text: {str(e)}")
             await self._finalize_plaintext()
 
     async def _finalize_inner(self, final_html: str) -> None:

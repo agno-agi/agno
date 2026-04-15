@@ -1,6 +1,5 @@
-"""Tests for Telegram 429 rate-limit handling (retry_after parsing and hold behavior)."""
+"""Tests for Telegram 429 rate-limit handling during streaming edits."""
 
-import asyncio
 import sys
 import time
 import types
@@ -29,13 +28,12 @@ def _install_fake_telebot():
 
 _install_fake_telebot()
 
-from agno.os.interfaces.telegram.state import _RETRY_AFTER_RE, StreamState  # noqa: E402
+from agno.os.interfaces.telegram.state import StreamState  # noqa: E402
 
 
 def _make_state() -> StreamState:
-    bot = MagicMock()
     return StreamState(
-        bot=bot,
+        bot=MagicMock(),
         chat_id=123,
         reply_to=None,
         message_thread_id=None,
@@ -44,371 +42,108 @@ def _make_state() -> StreamState:
     )
 
 
-# ---------------------------------------------------------------------------
-# Regex parsing
-# ---------------------------------------------------------------------------
-
-
-class TestRetryAfterRegex:
-    """Tests for the _RETRY_AFTER_RE regex that extracts retry_after from error messages."""
-
-    def test_parses_standard_429_message(self):
-        msg = "Error code: 429. Description: Too Many Requests: retry after 33"
-        match = _RETRY_AFTER_RE.search(msg)
-        assert match is not None
-        assert match.group(1) == "33"
-
-    def test_parses_case_insensitive(self):
-        msg = "Too Many Requests: Retry After 15"
-        match = _RETRY_AFTER_RE.search(msg)
-        assert match is not None
-        assert match.group(1) == "15"
-
-    def test_parses_lowercase(self):
-        msg = "retry after 5"
-        match = _RETRY_AFTER_RE.search(msg)
-        assert match is not None
-        assert match.group(1) == "5"
-
-    def test_no_match_on_unrelated_error(self):
-        msg = "Error code: 400. Description: Bad Request: TOPIC_CLOSED"
-        match = _RETRY_AFTER_RE.search(msg)
-        assert match is None
-
-    def test_no_match_on_message_not_modified(self):
-        msg = "Bad Request: message is not modified"
-        match = _RETRY_AFTER_RE.search(msg)
-        assert match is None
-
-
-# ---------------------------------------------------------------------------
-# Helper methods: _is_rate_limited, _set_rate_limit
-# ---------------------------------------------------------------------------
-
-
-class TestRateLimitHelpers:
-    """Tests for _is_rate_limited() and _set_rate_limit() helpers."""
-
-    def test_initial_state_not_rate_limited(self):
-        state = _make_state()
-        assert state._rate_limited_until == 0.0
-        assert not state._is_rate_limited()
-
-    def test_is_rate_limited_when_hold_active(self):
-        state = _make_state()
-        state._rate_limited_until = time.monotonic() + 60
-        assert state._is_rate_limited()
-
-    def test_is_rate_limited_false_after_expiry(self):
-        state = _make_state()
-        state._rate_limited_until = time.monotonic() - 1
-        assert not state._is_rate_limited()
-
-    def test_set_rate_limit_parses_429(self):
-        state = _make_state()
-        exc = Exception("Error code: 429. Description: Too Many Requests: retry after 25")
-        result = state._set_rate_limit(exc)
-        assert result is True
-        assert state._rate_limited_until > time.monotonic() + 20
-        assert state._rate_limited_until < time.monotonic() + 30
-
-    def test_set_rate_limit_returns_false_for_non_429(self):
-        state = _make_state()
-        exc = Exception("Error code: 400. Description: Bad Request")
-        result = state._set_rate_limit(exc)
-        assert result is False
-        assert state._rate_limited_until == 0.0
-
-    def test_set_rate_limit_never_shortens_existing_hold(self):
-        """A second 429 with a shorter retry_after must not shorten the hold."""
-        state = _make_state()
-        # First 429: retry after 30
-        exc1 = Exception("retry after 30")
-        state._set_rate_limit(exc1)
-        first_hold = state._rate_limited_until
-
-        # Second 429: retry after 5 — should NOT shorten the existing hold
-        exc2 = Exception("retry after 5")
-        state._set_rate_limit(exc2)
-        assert state._rate_limited_until == first_hold
-
-    def test_set_rate_limit_extends_hold_if_longer(self):
-        """A second 429 with a longer retry_after should extend the hold."""
-        state = _make_state()
-        exc1 = Exception("retry after 5")
-        state._set_rate_limit(exc1)
-        first_hold = state._rate_limited_until
+def _make_429(retry_after: int) -> Exception:
+    """Build a fake ApiTelegramException matching pyTelegramBotAPI's attribute shape."""
+    exc = Exception(f"Too Many Requests: retry after {retry_after}")
+    exc.error_code = 429  # type: ignore[attr-defined]
+    exc.result_json = {"ok": False, "error_code": 429, "parameters": {"retry_after": retry_after}}  # type: ignore[attr-defined]
+    return exc
 
-        exc2 = Exception("retry after 60")
-        state._set_rate_limit(exc2)
-        assert state._rate_limited_until > first_hold
 
+def _make_non_429(error_code: int, description: str) -> Exception:
+    exc = Exception(f"Error code: {error_code}. Description: {description}")
+    exc.error_code = error_code  # type: ignore[attr-defined]
+    exc.result_json = {"ok": False, "error_code": error_code, "description": description}  # type: ignore[attr-defined]
+    return exc
 
-# ---------------------------------------------------------------------------
-# StreamState rate-limit hold behavior
-# ---------------------------------------------------------------------------
 
+@pytest.mark.asyncio
+async def test_edit_sets_deadline_on_429():
+    state = _make_state()
+    state.sent_message_id = 42
+    state.bot.edit_message_text = AsyncMock(side_effect=_make_429(25))
 
-class TestStreamStateRateLimit:
-    """Tests for StreamState send_or_edit / _edit under rate-limit."""
+    await state._edit("<p>hello</p>")
 
-    @pytest.mark.asyncio
-    async def test_send_or_edit_skips_when_rate_limited(self):
-        """send_or_edit should return immediately without calling _send_new or _edit."""
-        state = _make_state()
-        state._rate_limited_until = time.monotonic() + 60
-        state.sent_message_id = 42
+    assert state._rate_limited_until > time.monotonic() + 20
+    assert state._rate_limited_until < time.monotonic() + 30
 
-        await state.send_or_edit("<p>hello</p>")
 
-        state.bot.edit_message_text.assert_not_called()
-        state.bot.send_message.assert_not_called()
+@pytest.mark.asyncio
+async def test_edit_ignores_non_429_error():
+    state = _make_state()
+    state.sent_message_id = 42
+    state.bot.edit_message_text = AsyncMock(side_effect=_make_non_429(400, "Bad Request: message is too long"))
 
-    @pytest.mark.asyncio
-    async def test_edit_parses_429_and_sets_hold(self):
-        """_edit should parse retry_after from a 429 and set the hold."""
-        state = _make_state()
-        state.sent_message_id = 42
+    await state._edit("<p>hello</p>")
 
-        exc = Exception("Error code: 429. Description: Too Many Requests: retry after 25")
-        state.bot.edit_message_text = AsyncMock(side_effect=exc)
+    assert state._rate_limited_until == 0.0
 
-        assert state._rate_limited_until == 0.0
-        await state._edit("<p>hello</p>")
 
-        assert state._rate_limited_until > time.monotonic() + 20
-        assert state._rate_limited_until < time.monotonic() + 30
+@pytest.mark.asyncio
+async def test_edit_ignores_message_not_modified():
+    state = _make_state()
+    state.sent_message_id = 42
+    state.bot.edit_message_text = AsyncMock(side_effect=_make_non_429(400, "Bad Request: message is not modified"))
 
-    @pytest.mark.asyncio
-    async def test_edit_ignores_non_429_error(self):
-        """_edit should not set a hold for non-429 errors."""
-        state = _make_state()
-        state.sent_message_id = 42
+    await state._edit("<p>hello</p>")
 
-        exc = Exception("Error code: 400. Description: Bad Request: message is too long")
-        state.bot.edit_message_text = AsyncMock(side_effect=exc)
+    assert state._rate_limited_until == 0.0
 
-        await state._edit("<p>hello</p>")
-        assert state._rate_limited_until == 0.0
 
-    @pytest.mark.asyncio
-    async def test_edit_ignores_message_not_modified(self):
-        """_edit should silently return for 'message is not modified' errors."""
-        state = _make_state()
-        state.sent_message_id = 42
+@pytest.mark.asyncio
+async def test_send_or_edit_skips_when_deadline_active():
+    state = _make_state()
+    state.sent_message_id = 42
+    state._rate_limited_until = time.monotonic() + 60
 
-        exc = Exception("Bad Request: message is not modified")
-        state.bot.edit_message_text = AsyncMock(side_effect=exc)
+    await state.send_or_edit("<p>hello</p>")
 
-        await state._edit("<p>hello</p>")
-        assert state._rate_limited_until == 0.0
+    state.bot.edit_message_text.assert_not_called()
+    state.bot.send_message.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_send_or_edit_works_after_hold_expires(self):
-        """After the hold expires, send_or_edit should function normally."""
-        state = _make_state()
-        state._rate_limited_until = time.monotonic() - 1
 
-        msg_mock = MagicMock()
-        msg_mock.message_id = 99
-        state.bot.send_message = AsyncMock(return_value=msg_mock)
+@pytest.mark.asyncio
+async def test_send_or_edit_resumes_after_deadline_expires():
+    state = _make_state()
+    state._rate_limited_until = time.monotonic() - 1
 
-        await state.send_or_edit("<p>hello</p>")
+    msg_mock = MagicMock()
+    msg_mock.message_id = 99
+    state.bot.send_message = AsyncMock(return_value=msg_mock)
 
-        state.bot.send_message.assert_called_once()
-        assert state.sent_message_id == 99
+    await state.send_or_edit("<p>hello</p>")
 
+    state.bot.send_message.assert_called_once()
+    assert state.sent_message_id == 99
 
-# ---------------------------------------------------------------------------
-# _send_new 429 handling
-# ---------------------------------------------------------------------------
 
+@pytest.mark.asyncio
+async def test_finalize_waits_for_deadline():
+    state = _make_state()
+    state.accumulated_content = "Hello world"
+    state.sent_message_id = 42
+    state._rate_limited_until = time.monotonic() + 0.1
+    state.bot.edit_message_text = AsyncMock()
 
-class TestSendNew429:
-    """Tests for _send_new rate-limit handling."""
+    start = time.monotonic()
+    await state.finalize()
+    elapsed = time.monotonic() - start
 
-    @pytest.mark.asyncio
-    async def test_send_new_sets_hold_and_raises_on_429(self):
-        """_send_new should set the hold AND re-raise when a 429 is received."""
-        state = _make_state()
+    assert elapsed >= 0.05
+    state.bot.edit_message_text.assert_called_once()
 
-        exc = Exception("Error code: 429. Description: Too Many Requests: retry after 10")
-        state.bot.send_message = AsyncMock(side_effect=exc)
 
-        with pytest.raises(Exception, match="retry after 10"):
-            await state._send_new("<p>test</p>")
+@pytest.mark.asyncio
+async def test_finalize_proceeds_immediately_without_deadline():
+    state = _make_state()
+    state.accumulated_content = "Hello world"
+    state.sent_message_id = 42
+    state.bot.edit_message_text = AsyncMock()
 
-        assert state._rate_limited_until > time.monotonic() + 5
-
-    @pytest.mark.asyncio
-    async def test_send_new_reraises_non_429(self):
-        """_send_new should re-raise non-429 exceptions without setting hold."""
-        state = _make_state()
-
-        exc = Exception("Error code: 400. Description: Bad Request")
-        state.bot.send_message = AsyncMock(side_effect=exc)
-
-        with pytest.raises(Exception, match="Bad Request"):
-            await state._send_new("<p>test</p>")
-
-        assert state._rate_limited_until == 0.0
-
-    @pytest.mark.asyncio
-    async def test_send_or_edit_handles_send_new_429_gracefully(self):
-        """send_or_edit should not crash when _send_new raises due to 429."""
-        state = _make_state()
-        assert state.sent_message_id is None
-
-        exc = Exception("Error code: 429. Description: Too Many Requests: retry after 10")
-        state.bot.send_message = AsyncMock(side_effect=exc)
-
-        # Should not raise — send_or_edit catches the exception
-        await state.send_or_edit("<p>test</p>")
-        assert state.sent_message_id is None
-        assert state._is_rate_limited()
-
-
-# ---------------------------------------------------------------------------
-# finalize waits for rate-limit hold
-# ---------------------------------------------------------------------------
-
-
-class TestFinalizeRateLimit:
-    """Tests for finalize() waiting out an active rate-limit hold."""
-
-    @pytest.mark.asyncio
-    async def test_finalize_waits_for_rate_limit(self):
-        """finalize should sleep until rate-limit hold expires."""
-        state = _make_state()
-        state.accumulated_content = "Hello world"
-        state.sent_message_id = 42
-        # Set a hold that expires in 0.1s (short for test speed)
-        state._rate_limited_until = time.monotonic() + 0.1
-
-        state.bot.edit_message_text = AsyncMock()
-
-        start = time.monotonic()
-        await state.finalize()
-        elapsed = time.monotonic() - start
-
-        # Should have waited at least ~0.1s
-        assert elapsed >= 0.05
-        # Should have called edit after waiting
-        state.bot.edit_message_text.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_finalize_proceeds_immediately_when_not_rate_limited(self):
-        """finalize should not wait when there is no active rate-limit hold."""
-        state = _make_state()
-        state.accumulated_content = "Hello world"
-        state.sent_message_id = 42
-
-        state.bot.edit_message_text = AsyncMock()
-
-        start = time.monotonic()
-        await state.finalize()
-        elapsed = time.monotonic() - start
-
-        assert elapsed < 0.1
-        state.bot.edit_message_text.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_finalize_proceeds_when_hold_already_expired(self):
-        """finalize should proceed immediately if the hold has already expired."""
-        state = _make_state()
-        state.accumulated_content = "Hello world"
-        state.sent_message_id = 42
-        state._rate_limited_until = time.monotonic() - 10  # expired 10s ago
-
-        state.bot.edit_message_text = AsyncMock()
-
-        start = time.monotonic()
-        await state.finalize()
-        elapsed = time.monotonic() - start
-
-        assert elapsed < 0.1
-        state.bot.edit_message_text.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_finalize_falls_back_to_plaintext_on_429_during_finalize(self):
-        """If finalize hits a 429, it should fall back to plaintext delivery."""
-        state = _make_state()
-        state.accumulated_content = "Hello world"
-        state.sent_message_id = 42
-
-        # _edit raises a 429 during finalize
-        exc = Exception("Error code: 429. Description: Too Many Requests: retry after 5")
-        state.bot.edit_message_text = AsyncMock(side_effect=exc)
-        # delete_message for plaintext fallback
-        state.bot.delete_message = AsyncMock()
-        # send_message for plaintext fallback (via send_message helper)
-        state.bot.send_message = AsyncMock()
-
-        # _edit swallows the error and sets hold, so finalize won't fall back
-        # But the content should still be delivered via _edit's best-effort path
-        await state.finalize()
-        # Verify _edit was called (it swallows the error internally)
-        state.bot.edit_message_text.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# _wait_for_rate_limit
-# ---------------------------------------------------------------------------
-
-
-class TestWaitForRateLimit:
-    """Tests for the _wait_for_rate_limit helper."""
-
-    @pytest.mark.asyncio
-    async def test_noop_when_no_hold(self):
-        state = _make_state()
-        start = time.monotonic()
-        await state._wait_for_rate_limit()
-        assert time.monotonic() - start < 0.05
-
-    @pytest.mark.asyncio
-    async def test_sleeps_for_remaining_hold(self):
-        state = _make_state()
-        state._rate_limited_until = time.monotonic() + 0.15
-
-        start = time.monotonic()
-        await state._wait_for_rate_limit()
-        elapsed = time.monotonic() - start
-
-        assert elapsed >= 0.1
-        assert state._rate_limited_until == 0.0
-
-    @pytest.mark.asyncio
-    async def test_clears_hold_after_wait(self):
-        state = _make_state()
-        state._rate_limited_until = time.monotonic() + 0.05
-
-        await state._wait_for_rate_limit()
-        assert state._rate_limited_until == 0.0
-        assert not state._is_rate_limited()
-
-    @pytest.mark.asyncio
-    async def test_does_not_clear_if_new_hold_set_during_sleep(self):
-        """Compare-and-swap: if hold was updated during sleep, don't clear it."""
-        state = _make_state()
-        original_deadline = time.monotonic() + 0.05
-        state._rate_limited_until = original_deadline
-
-        # Simulate a new hold being set during the sleep
-        new_deadline = time.monotonic() + 60
-
-        original_sleep = asyncio.sleep
-
-        async def mock_sleep(duration):
-            # During the sleep, simulate another coroutine setting a new hold
-            state._rate_limited_until = new_deadline
-            await original_sleep(duration)
-
-        asyncio.sleep = mock_sleep  # type: ignore[assignment]
-        try:
-            await state._wait_for_rate_limit()
-        finally:
-            asyncio.sleep = original_sleep  # type: ignore[assignment]
-
-        # The new hold should NOT have been cleared
-        assert state._rate_limited_until == new_deadline
+    start = time.monotonic()
+    await state.finalize()
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 0.05
+    state.bot.edit_message_text.assert_called_once()
