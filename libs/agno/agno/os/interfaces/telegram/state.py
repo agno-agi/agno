@@ -260,6 +260,8 @@ class StreamState:
         try:
             await self.bot.edit_message_text(html, self.chat_id, self.sent_message_id, parse_mode="HTML")
         except Exception as e:
+            if self._set_rate_limit(e):
+                return
             if "message is not modified" not in str(e):
                 log_warning(f"Failed to edit message: {str(e)}")
 
