@@ -125,6 +125,11 @@ class Claude(Model):
         None  # e.g., [{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]
     )
 
+    # Whether to attach citations to document blocks.
+    # Defaults to True. Automatically suppressed when structured output is active
+    # because Anthropic rejects citations + output_format together.
+    citations: bool = True
+
     # Claude 4.6+ does not support assistant message prefill.
     # Set to True to append a trailing user turn when the conversation ends with an assistant message.
     # Defaults to True for Claude 4.6+ models.
@@ -326,6 +331,20 @@ class Claude(Model):
 
         return None
 
+    def _output_format_enabled(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> bool:
+        """Return True when this request will send Anthropic's ``output_format`` param.
+
+        Anthropic rejects ``citations`` + ``output_format`` with a 400, so document
+        citations must be suppressed whenever this returns True. Delegates to
+        ``_build_output_format`` so the two can never disagree — in particular,
+        ``response_format={"type": "json_object"}`` builds nothing and therefore
+        does not trigger the conflict.
+        """
+        return self._build_output_format(response_format) is not None
+
     def _validate_structured_outputs_usage(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -435,6 +454,7 @@ class Claude(Model):
             compress_tool_results=True,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
+            enable_citations=self.citations and not self._output_format_enabled(response_format),
         )
         anthropic_tools = None
         if tools:
@@ -461,6 +481,7 @@ class Claude(Model):
             compress_tool_results=True,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
+            enable_citations=self.citations and not self._output_format_enabled(response_format),
         )
         anthropic_tools = None
         if tools:
@@ -651,6 +672,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
+                enable_citations=self.citations and not self._output_format_enabled(response_format),
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
@@ -710,6 +732,7 @@ class Claude(Model):
             compress_tool_results=compress_tool_results,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
+            enable_citations=self.citations and not self._output_format_enabled(response_format),
         )
         request_kwargs = self._prepare_request_kwargs(
             system_message, tools=tools, response_format=response_format, messages=messages
@@ -760,6 +783,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
+                enable_citations=self.citations and not self._output_format_enabled(response_format),
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
@@ -818,6 +842,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
+                enable_citations=self.citations and not self._output_format_enabled(response_format),
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
