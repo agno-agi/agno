@@ -201,9 +201,15 @@ def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
         return None
 
 
-def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
+def _format_file_for_message(file: File, enable_citations: bool = True) -> Optional[Dict[str, Any]]:
     """
     Add a document url or base64 encoded content to a message.
+
+    Args:
+        file: The file to format.
+        enable_citations: When False, citations are omitted from document blocks.
+            Anthropic rejects citations + output_format together, so callers must
+            disable citations when structured output is active.
     """
 
     mime_mapping: dict[str, str] = {
@@ -233,15 +239,16 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
             },
         }
 
+    document: Optional[Dict[str, Any]] = None
+
     # Case 1: Document is a URL
     if file.url is not None:
-        return {
+        document = {
             "type": "document",
             "source": {
                 "type": "url",
                 "url": file.url,
             },
-            "citations": {"enabled": True},
         }
     # Case 2: Document is a local file path
     elif file.filepath is not None:
@@ -263,24 +270,22 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
             source_type = mime_mapping.get(media_type, "base64")
 
             if source_type == "text":
-                return {
+                document = {
                     "type": "document",
                     "source": {
                         "type": "text",
                         "media_type": media_type,
                         "data": raw_bytes.decode("utf-8", errors="replace"),
                     },
-                    "citations": {"enabled": True},
                 }
             else:
-                return {
+                document = {
                     "type": "document",
                     "source": {
                         "type": "base64",
                         "media_type": media_type,
                         "data": base64.standard_b64encode(raw_bytes).decode("utf-8"),
                     },
-                    "citations": {"enabled": True},
                 }
         else:
             log_error(f"Document file not found: {file}")
@@ -292,28 +297,29 @@ def _format_file_for_message(file: File) -> Optional[Dict[str, Any]]:
         source_type = mime_mapping.get(media_type, "base64")
 
         if source_type == "text":
-            return {
+            document = {
                 "type": "document",
                 "source": {
                     "type": "text",
                     "media_type": media_type,
                     "data": file.content.decode("utf-8", errors="replace"),
                 },
-                "citations": {"enabled": True},
             }
         else:
             import base64
 
-            return {
+            document = {
                 "type": "document",
                 "source": {
                     "type": "base64",
                     "media_type": media_type,
                     "data": base64.standard_b64encode(file.content).decode("utf-8"),
                 },
-                "citations": {"enabled": True},
             }
-    return None
+
+    if document is not None and enable_citations:
+        document["citations"] = {"enabled": True}
+    return document
 
 
 def format_messages(
@@ -321,6 +327,7 @@ def format_messages(
     compress_tool_results: bool = False,
     append_trailing_user_message: Optional[bool] = False,
     trailing_user_message_content: str = "continue",
+    enable_citations: bool = True,
 ) -> Tuple[List[Dict[str, Union[str, list]]], str]:
     """
     Process the list of messages and separate them into API messages and system messages.
@@ -331,6 +338,8 @@ def format_messages(
         append_trailing_user_message: If True, append a dummy user message when the conversation
             ends with an assistant turn. Required for models that do not support assistant prefill.
         trailing_user_message_content: The text content of the injected trailing user message.
+        enable_citations: When True (default), document blocks include citations.
+            Set to False when structured output is active to avoid Anthropic API errors.
 
     Returns:
         Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
@@ -362,7 +371,7 @@ def format_messages(
 
             if message.files is not None:
                 for file in message.files:
-                    file_content = _format_file_for_message(file)
+                    file_content = _format_file_for_message(file, enable_citations=enable_citations)
                     if file_content:
                         content.append(file_content)
 

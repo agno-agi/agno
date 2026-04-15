@@ -435,6 +435,7 @@ class Claude(Model):
             compress_tool_results=True,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
+            enable_citations=self._build_output_format(response_format) is None,
         )
         anthropic_tools = None
         if tools:
@@ -461,6 +462,7 @@ class Claude(Model):
             compress_tool_results=True,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
+            enable_citations=self._build_output_format(response_format) is None,
         )
         anthropic_tools = None
         if tools:
@@ -651,6 +653,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
+                enable_citations=self._build_output_format(response_format) is None,
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
@@ -710,6 +713,7 @@ class Claude(Model):
             compress_tool_results=compress_tool_results,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
+            enable_citations=self._build_output_format(response_format) is None,
         )
         request_kwargs = self._prepare_request_kwargs(
             system_message, tools=tools, response_format=response_format, messages=messages
@@ -760,6 +764,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
+                enable_citations=self._build_output_format(response_format) is None,
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
@@ -818,6 +823,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
+                enable_citations=self._build_output_format(response_format) is None,
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
