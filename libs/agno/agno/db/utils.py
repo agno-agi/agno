@@ -11,7 +11,7 @@ from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
     from agno.db.base import BaseDb
-    from agno.os.registry import Registry
+    from agno.registry.registry import Registry
 
 
 # Keys in a serialized db dict that correspond to table-name overrides.
