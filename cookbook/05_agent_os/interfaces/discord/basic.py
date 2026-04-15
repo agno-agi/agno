@@ -20,13 +20,13 @@ Set the Interactions Endpoint URL in the Discord Developer Portal to:
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.os.app import AgentOS
 from agno.os.interfaces.discord import Discord
 
 agent = Agent(
     name="Discord Bot",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-4o-mini"),
     add_history_to_context=True,
     num_history_runs=3,
     add_datetime_to_context=True,
