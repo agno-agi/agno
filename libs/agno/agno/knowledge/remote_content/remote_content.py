@@ -122,11 +122,13 @@ class GitHubContent:
         file_path: Optional[str] = None,
         folder_path: Optional[str] = None,
         branch: Optional[str] = None,
+        repo: Optional[str] = None,
     ):
         self.config_id = config_id
         self.file_path = file_path
         self.folder_path = folder_path
         self.branch = branch
+        self.repo = repo
 
         if self.file_path is None and self.folder_path is None:
             raise ValueError("Either file_path or folder_path must be provided")
@@ -139,6 +141,7 @@ class GitHubContent:
             "file_path": self.file_path,
             "folder_path": self.folder_path,
             "branch": self.branch,
+            "repo": self.repo,
         }
 
 

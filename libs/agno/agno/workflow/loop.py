@@ -16,10 +16,10 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_loop_end_condition, is_cel_expression
 from agno.workflow.step import Step
-from agno.workflow.types import OnReject, StepInput, StepOutput, StepRequirement, StepType
+from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput, StepRequirement, StepType
 
 WorkflowSteps = List[
     Union[
@@ -32,6 +32,7 @@ WorkflowSteps = List[
         "Parallel",  # type: ignore # noqa: F821
         "Condition",  # type: ignore # noqa: F821
         "Router",  # type: ignore # noqa: F821
+        "Workflow",  # type: ignore # noqa: F821 - Nested workflow support
     ]
 ]
 
@@ -83,6 +84,11 @@ class Loop:
     confirmation_message: Optional[str] = None
     on_reject: Union[OnReject, str] = OnReject.skip
 
+    # HITL configuration - per-iteration review
+    # If True, the loop will pause after each iteration for human review
+    requires_iteration_review: bool = False
+    iteration_review_message: Optional[str] = None
+
     def __init__(
         self,
         steps: WorkflowSteps,
@@ -94,6 +100,9 @@ class Loop:
         requires_confirmation: bool = False,
         confirmation_message: Optional[str] = None,
         on_reject: Union[OnReject, str] = OnReject.skip,
+        requires_iteration_review: bool = False,
+        iteration_review_message: Optional[str] = None,
+        human_review: Optional[HumanReview] = None,
     ):
         self.steps = steps
         self.name = name
@@ -101,9 +110,30 @@ class Loop:
         self.max_iterations = max_iterations
         self.end_condition = end_condition
         self.forward_iteration_output = forward_iteration_output
-        self.requires_confirmation = requires_confirmation
-        self.confirmation_message = confirmation_message
-        self.on_reject = on_reject
+
+        # Build HITL config - explicit hitl= takes priority over flat params
+        if human_review is not None:
+            self.human_review = human_review
+        else:
+            self.human_review = HumanReview(
+                requires_confirmation=requires_confirmation,
+                confirmation_message=confirmation_message,
+                on_reject=on_reject,
+                requires_iteration_review=requires_iteration_review,
+                iteration_review_message=iteration_review_message,
+            )
+
+        # Validate HumanReview config for Loop
+        from agno.workflow.types import validate_human_review_for_loop
+
+        validate_human_review_for_loop(self.human_review)
+
+        # Store HITL fields as attributes for backward compatibility
+        self.requires_confirmation = self.human_review.requires_confirmation
+        self.confirmation_message = self.human_review.confirmation_message
+        self.on_reject = self.human_review.on_reject
+        self.requires_iteration_review = self.human_review.requires_iteration_review
+        self.iteration_review_message = self.human_review.iteration_review_message
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -128,10 +158,8 @@ class Loop:
 
         result["forward_iteration_output"] = self.forward_iteration_output
 
-        # Add HITL fields
-        result["requires_confirmation"] = self.requires_confirmation
-        result["confirmation_message"] = self.confirmation_message
-        result["on_reject"] = str(self.on_reject)
+        # Add HITL config
+        result["human_review"] = self.human_review.to_dict()
 
         return result
 
@@ -161,6 +189,43 @@ class Loop:
             on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
             requires_user_input=False,
             step_input=step_input,
+        )
+
+    def create_iteration_review_requirement(
+        self,
+        step_index: int,
+        iteration: int,
+        step_input: StepInput,
+        iteration_output: StepOutput,
+    ) -> StepRequirement:
+        """Create a StepRequirement for per-iteration review.
+
+        Args:
+            step_index: Index of the loop in the workflow.
+            iteration: The iteration number that just completed (0-based).
+            step_input: The input used for the iteration.
+            iteration_output: The output from the completed iteration.
+
+        Returns:
+            StepRequirement configured for iteration review.
+        """
+        message = self.iteration_review_message or (
+            f"Loop '{self.name or 'loop'}' completed iteration {iteration + 1}/{self.max_iterations}. Continue?"
+        )
+
+        return StepRequirement(
+            step_id=str(uuid4()),
+            step_name=self.name or f"loop_{step_index + 1}",
+            step_index=step_index,
+            step_type="Loop",
+            requires_output_review=True,
+            output_review_message=message,
+            requires_confirmation=True,
+            confirmation_message=message,
+            on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
+            step_input=step_input,
+            step_output=iteration_output,
+            is_post_execution=True,
         )
 
     @classmethod
@@ -209,6 +274,19 @@ class Loop:
                 else:
                     raise ValueError(f"Registry required to deserialize end_condition function '{end_condition_data}'")
 
+        # HITL config
+        if data.get("human_review"):
+            human_review = HumanReview.from_dict(data["human_review"])
+        else:
+            # Backward compat: build HITL from flat keys
+            human_review = HumanReview(
+                requires_confirmation=data.get("requires_confirmation", False),
+                confirmation_message=data.get("confirmation_message"),
+                on_reject=data.get("on_reject", "skip"),
+                requires_iteration_review=data.get("requires_iteration_review", False),
+                iteration_review_message=data.get("iteration_review_message"),
+            )
+
         return cls(
             name=data.get("name"),
             description=data.get("description"),
@@ -216,9 +294,7 @@ class Loop:
             max_iterations=data.get("max_iterations", 3),
             end_condition=end_condition,
             forward_iteration_output=data.get("forward_iteration_output", False),
-            requires_confirmation=data.get("requires_confirmation", False),
-            confirmation_message=data.get("confirmation_message"),
-            on_reject=data.get("on_reject", OnReject.skip),
+            human_review=human_review,
         )
 
     def _evaluate_end_condition(self, iteration_results: List[StepOutput], current_iteration: int = 0) -> bool:
@@ -228,23 +304,21 @@ class Loop:
 
         if isinstance(self.end_condition, str):
             if not CEL_AVAILABLE:
-                logger.error(
-                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
-                )
+                log_error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return False
             try:
                 return evaluate_cel_loop_end_condition(
                     self.end_condition, iteration_results, current_iteration, self.max_iterations
                 )
             except Exception as e:
-                logger.warning(f"CEL end condition evaluation failed: {e}")
+                log_warning(f"CEL end condition evaluation failed: {str(e)}")
                 return False
 
         if callable(self.end_condition):
             try:
                 return self.end_condition(iteration_results)
             except Exception as e:
-                logger.warning(f"End condition evaluation failed: {e}")
+                log_warning(f"End condition evaluation failed: {str(e)}")
                 return False
 
         return False
@@ -256,16 +330,14 @@ class Loop:
 
         if isinstance(self.end_condition, str):
             if not CEL_AVAILABLE:
-                logger.error(
-                    "CEL expression used but cel-python is not installed. Install with: pip install cel-python"
-                )
+                log_error("CEL expression used but cel-python is not installed. Install with: pip install cel-python")
                 return False
             try:
                 return evaluate_cel_loop_end_condition(
                     self.end_condition, iteration_results, current_iteration, self.max_iterations
                 )
             except Exception as e:
-                logger.warning(f"CEL end condition evaluation failed: {e}")
+                log_warning(f"CEL end condition evaluation failed: {str(e)}")
                 return False
 
         if callable(self.end_condition):
@@ -275,7 +347,7 @@ class Loop:
                 else:
                     return self.end_condition(iteration_results)
             except Exception as e:
-                logger.warning(f"End condition evaluation failed: {e}")
+                log_warning(f"End condition evaluation failed: {str(e)}")
                 return False
 
         return False
@@ -289,6 +361,7 @@ class Loop:
         from agno.workflow.router import Router
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
+        from agno.workflow.workflow import Workflow
 
         prepared_steps: WorkflowSteps = []
         for step in self.steps:
@@ -298,6 +371,8 @@ class Loop:
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
             elif isinstance(step, Team):
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
+            elif isinstance(step, Workflow):
+                prepared_steps.append(Step(name=step.name, description=step.description, workflow=step))
             elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
                 prepared_steps.append(step)
             else:
@@ -361,16 +436,25 @@ class Loop:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        resume_from_iteration: int = 0,
+        previous_iteration_results: Optional[List[List[StepOutput]]] = None,
     ) -> StepOutput:
-        """Execute loop steps with iteration control - mirrors workflow execution logic"""
+        """Execute loop steps with iteration control - mirrors workflow execution logic
+
+        Args:
+            resume_from_iteration: Skip iterations before this number (used when
+                resuming after a per-iteration review pause).
+            previous_iteration_results: Results from already-completed iterations
+                (used when resuming to preserve previous work).
+        """
         # Use workflow logger for loop orchestration
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
 
         # Prepare steps first
         self._prepare_steps()
 
-        all_results = []
-        iteration = 0
+        all_results: List[List[StepOutput]] = list(previous_iteration_results) if previous_iteration_results else []
+        iteration = resume_from_iteration
         early_termination = False
 
         while iteration < self.max_iterations:
@@ -435,6 +519,25 @@ class Loop:
             if early_termination:
                 log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
                 break
+
+            # Per-iteration review: pause for human review before continuing
+            if self.requires_iteration_review and iteration < self.max_iterations:
+                # Build the last iteration output for review
+                last_iter_output = iteration_results[-1] if iteration_results else None
+                if last_iter_output:
+                    flattened_so_far = []
+                    for iter_results in all_results:
+                        flattened_so_far.extend(iter_results)
+
+                    return StepOutput(
+                        step_name=self.name,
+                        step_id=str(uuid4()),
+                        step_type=StepType.LOOP,
+                        content=f"Loop {self.name} completed iteration {iteration}/{self.max_iterations}",
+                        success=True,
+                        steps=flattened_so_far,
+                        requires_iteration_review_pause=True,
+                    )
 
             # Carry forward output to next iteration
             if self.forward_iteration_output:
@@ -625,6 +728,26 @@ class Loop:
                 log_debug(f"Loop ending early at iteration {iteration}")
                 break
 
+            # Per-iteration review: pause for human review before continuing
+            if self.requires_iteration_review and iteration < self.max_iterations:
+                last_iter_output = iteration_results[-1] if iteration_results else None
+                if last_iter_output:
+                    flattened_so_far = []
+                    for iter_results in all_results:
+                        flattened_so_far.extend(iter_results)
+
+                    review_output = StepOutput(
+                        step_name=self.name,
+                        step_id=str(uuid4()),
+                        step_type=StepType.LOOP,
+                        content=f"Loop {self.name} completed iteration {iteration}/{self.max_iterations}",
+                        success=True,
+                        steps=flattened_so_far,
+                        requires_iteration_review_pause=True,
+                    )
+                    yield review_output
+                    return
+
             # Carry forward output to next iteration
             if self.forward_iteration_output:
                 step_input = current_step_input
@@ -676,6 +799,8 @@ class Loop:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        resume_from_iteration: int = 0,
+        previous_iteration_results: Optional[List[List[StepOutput]]] = None,
     ) -> StepOutput:
         """Execute loop steps asynchronously with iteration control - mirrors workflow execution logic"""
         # Use workflow logger for async loop orchestration
@@ -686,8 +811,8 @@ class Loop:
         # Prepare steps first
         self._prepare_steps()
 
-        all_results = []
-        iteration = 0
+        all_results: List[List[StepOutput]] = list(previous_iteration_results) if previous_iteration_results else []
+        iteration = resume_from_iteration
         early_termination = False
 
         while iteration < self.max_iterations:
@@ -752,6 +877,24 @@ class Loop:
             if early_termination:
                 log_debug(f"Loop ending early due to step termination request at iteration {iteration}")
                 break
+
+            # Per-iteration review: pause for human review before continuing (async)
+            if self.requires_iteration_review and iteration < self.max_iterations:
+                last_iter_output = iteration_results[-1] if iteration_results else None
+                if last_iter_output:
+                    flattened_so_far = []
+                    for iter_results in all_results:
+                        flattened_so_far.extend(iter_results)
+
+                    return StepOutput(
+                        step_name=self.name,
+                        step_id=str(uuid4()),
+                        step_type=StepType.LOOP,
+                        content=f"Loop {self.name} completed iteration {iteration}/{self.max_iterations}",
+                        success=True,
+                        steps=flattened_so_far,
+                        requires_iteration_review_pause=True,
+                    )
 
             # Carry forward output to next iteration
             if self.forward_iteration_output:
@@ -941,6 +1084,26 @@ class Loop:
             if not should_continue:
                 log_debug(f"Loop ending early at iteration {iteration}")
                 break
+
+            # Per-iteration review: pause for human review before continuing
+            if self.requires_iteration_review and iteration < self.max_iterations:
+                last_iter_output = iteration_results[-1] if iteration_results else None
+                if last_iter_output:
+                    flattened_so_far = []
+                    for iter_results in all_results:
+                        flattened_so_far.extend(iter_results)
+
+                    review_output = StepOutput(
+                        step_name=self.name,
+                        step_id=str(uuid4()),
+                        step_type=StepType.LOOP,
+                        content=f"Loop {self.name} completed iteration {iteration}/{self.max_iterations}",
+                        success=True,
+                        steps=flattened_so_far,
+                        requires_iteration_review_pause=True,
+                    )
+                    yield review_output
+                    return
 
             # Carry forward output to next iteration
             if self.forward_iteration_output:
