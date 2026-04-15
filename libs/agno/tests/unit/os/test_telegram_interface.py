@@ -304,7 +304,7 @@ def _build_telegram_client(
     show_reasoning=False,
     streaming=False,
     token=None,
-    always_reply_to_message=False,
+    quoted_responses=False,
 ):
     from fastapi import APIRouter
 
@@ -320,7 +320,7 @@ def _build_telegram_client(
         reply_to_bot_messages=reply_to_bot_messages,
         show_reasoning=show_reasoning,
         streaming=streaming,
-        always_reply_to_message=always_reply_to_message,
+        quoted_responses=quoted_responses,
     )
     if token is not None:
         kwargs["token"] = token
@@ -1801,7 +1801,7 @@ class TestReplyThreading:
         mock_bot = AsyncMock()
 
         with patch(f"{ROUTER_MODULE}.AsyncTeleBot", return_value=mock_bot):
-            client = _build_telegram_client(agent=agent, always_reply_to_message=True)
+            client = _build_telegram_client(agent=agent, quoted_responses=True)
             resp = client.post(
                 "/telegram/webhook",
                 json={

@@ -78,7 +78,7 @@ def attach_routes(
     commands: Optional[List[dict]] = None,
     register_commands: bool = True,
     new_message: str = DEFAULT_NEW_MESSAGE,
-    always_reply_to_message: bool = False,
+    quoted_responses: bool = False,
 ) -> APIRouter:
     if agent is None and team is None and workflow is None:
         raise ValueError("Either agent, team, or workflow must be provided.")
@@ -371,7 +371,7 @@ def attach_routes(
             log_info(f"Processing message from user {user_id}")
             log_debug(f"Message content: {message_text}")
 
-            reply_to = incoming_message_id if (is_group or always_reply_to_message) else None
+            reply_to = incoming_message_id if (is_group or quoted_responses) else None
             run_kwargs = dict(user_id=user_id, session_id=session_id, **extracted)
 
             if streaming:
