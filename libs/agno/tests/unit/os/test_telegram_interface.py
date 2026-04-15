@@ -159,6 +159,18 @@ class TestTelegramClass:
         tg = Telegram(agent=agent, reply_to_mentions_only=False)
         assert tg.reply_to_mentions_only is False
 
+    def test_quoted_responses_default(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        agent = MagicMock()
+        tg = Telegram(agent=agent)
+        assert tg.quoted_responses is False
+
+    def test_quoted_responses_true(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
+        agent = MagicMock()
+        tg = Telegram(agent=agent, quoted_responses=True)
+        assert tg.quoted_responses is True
+
     def test_get_router_returns_api_router(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
         agent = MagicMock()
@@ -1792,7 +1804,7 @@ class TestReplyThreading:
 
         mock_response = MagicMock()
         mock_response.status = "COMPLETED"
-        mock_response.content = "DM reply with reply_to"
+        mock_response.content = "DM reply"
         mock_response.reasoning_content = None
         mock_response.images = None
 
