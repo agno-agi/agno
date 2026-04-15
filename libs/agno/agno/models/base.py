@@ -587,6 +587,14 @@ class Model(ABC):
         """
         pass
 
+    @staticmethod
+    def _tool_name(t: Dict[str, Any]) -> str:
+        """Extract a tool's name for deterministic sorting."""
+        fn = t.get("function")
+        if isinstance(fn, dict):
+            return str(fn.get("name", ""))
+        return str(t.get("name", ""))
+
     def _format_tools(self, tools: Optional[List[Union[Function, dict]]]) -> List[Dict[str, Any]]:
         _tool_dicts = []
         for tool in tools or []:
@@ -596,7 +604,7 @@ class Model(ABC):
                 # If a dict is passed, it is a builtin tool
                 _tool_dicts.append(tool)
         # Deterministic ordering so prompt caching gets consistent cache hits.
-        _tool_dicts.sort(key=lambda t: str(t.get("function", {}).get("name", "") or t.get("name", "")))
+        _tool_dicts.sort(key=self._tool_name)
         return _tool_dicts
 
     def _ensure_message_metrics_initialized(self, assistant_message: Message) -> None:
