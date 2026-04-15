@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
-from agno.db.utils import db_from_dict
+from agno.db.utils import resolve_db_from_config
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
@@ -815,21 +815,11 @@ def from_dict(
 
     # --- Handle DB reconstruction ---
     if "db" in config and isinstance(config["db"], dict):
-        db_data = config["db"]
-        db_id = db_data.get("id")
-
-        # First try to get the db from the registry (preferred - reuses existing connection)
-        if registry and db_id:
-            registry_db = registry.get_db(db_id)
-            if registry_db is not None:
-                config["db"] = registry_db
-            else:
-                del config["db"]
+        resolved = resolve_db_from_config(config["db"], registry=registry)
+        if resolved is not None:
+            config["db"] = resolved
         else:
-            # No registry or no db_id, fall back to creating from dict
-            config["db"] = db_from_dict(db_data)
-            if config["db"] is None:
-                del config["db"]
+            del config["db"]
 
     # --- Handle Schema reconstruction ---
     if "input_schema" in config and isinstance(config["input_schema"], str):
@@ -1104,7 +1094,11 @@ def _hydrate_from_graph(
 
     team = cls.from_dict(config, db=db, registry=registry)
     team.id = graph["component"]["component_id"]
-    team.db = db
+    # Only fall back to the caller-provided db if the config didn't
+    # reconstruct one. Otherwise we'd clobber any custom table names
+    # (session_table, memory_table, ...) that were serialized with the team.
+    if team.db is None:
+        team.db = db
 
     # Hydrate members from graph children
     team.members = []
@@ -1123,7 +1117,8 @@ def _hydrate_from_graph(
         if member_type == "agent":
             agent = Agent.from_dict(child_config)
             agent.id = child_graph["component"]["component_id"]
-            agent.db = db
+            if agent.db is None:
+                agent.db = db
             team.members.append(agent)
         elif member_type == "team":
             # Recursively hydrate nested teams from the already-loaded child graph

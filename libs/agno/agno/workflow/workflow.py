@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
-from agno.db.utils import db_from_dict
+from agno.db.utils import resolve_db_from_config
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
@@ -774,21 +774,11 @@ class Workflow:
 
         # --- Handle DB reconstruction ---
         if "db" in config and isinstance(config["db"], dict):
-            db_data = config["db"]
-            db_id = db_data.get("id")
-
-            # Try to get the db from the registry
-            if registry and db_id:
-                registry_db = registry.get_db(db_id)
-                if registry_db is not None:
-                    config["db"] = registry_db
-                else:
-                    del config["db"]
+            resolved = resolve_db_from_config(config["db"], registry=registry)
+            if resolved is not None:
+                config["db"] = resolved
             else:
-                # No registry or no db_id, fall back to creating from dict
-                config["db"] = db_from_dict(db_data)
-                if config["db"] is None:
-                    del config["db"]
+                del config["db"]
 
         # --- Handle Schema reconstruction ---
         if "input_schema" in config and isinstance(config["input_schema"], str):
@@ -976,7 +966,12 @@ class Workflow:
         workflow = cls.from_dict(config, db=db, registry=registry)
 
         workflow.id = id
-        workflow.db = db
+        # Only fall back to the caller-provided db if the config didn't
+        # reconstruct one. Otherwise we'd clobber any custom table names
+        # (session_table, memory_table, ...) that were serialized with the
+        # workflow.
+        if workflow.db is None:
+            workflow.db = db
 
         return workflow
 
