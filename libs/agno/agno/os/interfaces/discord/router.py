@@ -66,7 +66,6 @@ INTERACTION_MESSAGE_COMPONENT = 3
 
 # Discord Interaction Response Types
 RESPONSE_PONG = 1
-RESPONSE_CHANNEL_MESSAGE_WITH_SOURCE = 4
 RESPONSE_DEFERRED_CHANNEL_MESSAGE = 5
 RESPONSE_DEFERRED_UPDATE_MESSAGE = 6
 
@@ -149,6 +148,9 @@ def attach_routes(
                 ev = getattr(event, "event", "")
                 if ev and await process_event(ev, event, state):
                     break
+        except Exception:
+            state.error_status = "error"
+            state.accumulated_content = state.error_message
         finally:
             await state.finalize()
 

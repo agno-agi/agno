@@ -87,8 +87,8 @@ class InstanceState:
     entity_id: Optional[str] = None
     processed_interactions: Dict[str, float] = field(default_factory=dict)
 
-    # Covers Discord's retry window (~3s per attempt, several retries)
-    DEDUP_TTL_SECONDS: ClassVar[float] = 60.0
+    # Matches the signature replay window in security.py
+    DEDUP_TTL_SECONDS: ClassVar[float] = 300.0
 
     def is_duplicate_interaction(self, interaction_id: str) -> bool:
         now = time.monotonic()

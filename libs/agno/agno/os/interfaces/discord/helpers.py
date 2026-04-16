@@ -11,7 +11,6 @@ from agno.utils.log import log_error, log_warning
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
 _MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
-_MAX_MESSAGE_CONTENT = 2000
 _MAX_EMBED_DESCRIPTION = 4096
 # Webhook follow-up messages have a 2000-char content limit; 1900 leaves room for overflow markers
 _FOLLOWUP_CHUNK_SIZE = 1900

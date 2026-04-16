@@ -147,6 +147,7 @@ oxylabs = ["oxylabs"]
 trafilatura = ["trafilatura"]
 neo4j = ["neo4j"]
 telegram = ["pyTelegramBotAPI>=4.32.0", "aiohttp"]
+discord = ["aiohttp", "PyNaCl"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
