@@ -19,12 +19,22 @@ _FOLLOWUP_CHUNK_SIZE = 1900  # ~100 chars under Discord's 2000-char message cap 
 _DOWNLOAD_TIMEOUT = 30
 _DOWNLOAD_CHUNK_SIZE = 64 * 1024
 
-# Parse-nothing prevents @everyone/@here/role pings from model-generated text
+# Discord's "parse nothing" allowed_mentions — renders @everyone / @role / @user
+# as plain text without notifying anyone. Applied to every outbound message as
+# defense against model-generated or prompt-injected mentions reaching users.
 _SAFE_MENTIONS: Dict[str, Any] = {"parse": []}
 
 
 def bot_api_headers(bot_token: str) -> Dict[str, str]:
     return {"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"}
+
+
+def _message_payload(**fields: Any) -> Dict[str, Any]:
+    # Centralises the "allowed_mentions is always set" guarantee — every
+    # outbound Discord payload passes through here, so the safety default
+    # is invariant-by-construction rather than a convention each call has
+    # to remember
+    return {"allowed_mentions": _SAFE_MENTIONS, **{k: v for k, v in fields.items() if v is not None}}
 
 
 def _webhook_url(application_id: str, interaction_token: str, *, original: bool = False) -> str:
@@ -106,13 +116,7 @@ async def edit_original_response(
     embeds: Optional[List[Dict[str, Any]]] = None,
     components: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
-    payload: Dict[str, Any] = {"allowed_mentions": _SAFE_MENTIONS}
-    if content is not None:
-        payload["content"] = content
-    if embeds is not None:
-        payload["embeds"] = embeds
-    if components is not None:
-        payload["components"] = components
+    payload = _message_payload(content=content, embeds=embeds, components=components)
     async with session.patch(_webhook_url(application_id, interaction_token, original=True), json=payload) as resp:
         await _raise_for_status(resp, "edit original response")
 
@@ -125,11 +129,7 @@ async def send_followup_message(
     content: Optional[str] = None,
     embeds: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[str]:
-    payload: Dict[str, Any] = {"allowed_mentions": _SAFE_MENTIONS}
-    if content is not None:
-        payload["content"] = content
-    if embeds is not None:
-        payload["embeds"] = embeds
+    payload = _message_payload(content=content, embeds=embeds)
     async with session.post(_webhook_url(application_id, interaction_token), json=payload) as resp:
         await _raise_for_status(resp, "send followup")
         return (await resp.json()).get("id")
@@ -145,7 +145,7 @@ async def upload_webhook_file(
     form = aiohttp.FormData()
     form.add_field(
         "payload_json",
-        json.dumps({"content": "", "allowed_mentions": _SAFE_MENTIONS}),
+        json.dumps(_message_payload(content="")),
         content_type="application/json",
     )
     form.add_field("files[0]", content_bytes, filename=filename)
