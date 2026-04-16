@@ -274,3 +274,25 @@ async def test_async_read_video_unicode_content():
 
         assert len(documents) == 1
         assert "Unicode content 值" in documents[0].content
+
+
+def test_youtube_reader_chunk_size_propagation():
+    """Test that chunk_size is propagated to default chunking strategy"""
+    from agno.knowledge.chunking.recursive import RecursiveChunking
+    from agno.knowledge.reader.youtube_reader import YouTubeReader
+
+    reader = YouTubeReader(chunk_size=500)
+    assert reader.chunk_size == 500
+    assert reader.chunking_strategy.chunk_size == 500
+    assert isinstance(reader.chunking_strategy, RecursiveChunking)
+
+
+def test_youtube_reader_default_chunk_size():
+    """Test default chunk_size is 5000"""
+    from agno.knowledge.chunking.recursive import RecursiveChunking
+    from agno.knowledge.reader.youtube_reader import YouTubeReader
+
+    reader = YouTubeReader()
+    assert reader.chunk_size == 5000
+    assert reader.chunking_strategy.chunk_size == 5000
+    assert isinstance(reader.chunking_strategy, RecursiveChunking)

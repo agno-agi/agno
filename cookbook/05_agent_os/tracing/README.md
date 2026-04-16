@@ -10,6 +10,7 @@ Examples for `tracing` in AgentOS.
 - `05_basic_workflow_tracing.py` — Traces with AgentOS.
 - `06_tracing_with_multi_db_scenario.py` — Traces with AgentOS.
 - `07_tracing_with_multi_db_and_tracing_flag.py` — Traces with AgentOS.
+- `08_advanced_trace_filtering.py` — Advanced trace filtering with FilterExpr DSL (AND/OR/NOT, CONTAINS, ranges).
 
 ## Prerequisites
 - Load environment variables with `direnv allow` (requires `.envrc`).

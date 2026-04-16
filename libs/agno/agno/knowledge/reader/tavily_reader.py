@@ -32,7 +32,7 @@ class TavilyReader(Reader):
         extract_depth: Literal["basic", "advanced"] = "basic",
         chunk: bool = True,
         chunk_size: int = 5000,
-        chunking_strategy: Optional[ChunkingStrategy] = SemanticChunking(),
+        chunking_strategy: Optional[ChunkingStrategy] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
     ) -> None:
@@ -50,6 +50,9 @@ class TavilyReader(Reader):
             name: Name of the reader
             description: Description of the reader
         """
+        if chunking_strategy is None:
+            chunking_strategy = SemanticChunking(chunk_size=chunk_size)
+
         # Initialize base Reader (handles chunk_size / strategy)
         super().__init__(
             chunk=chunk, chunk_size=chunk_size, chunking_strategy=chunking_strategy, name=name, description=description
@@ -143,8 +146,8 @@ class TavilyReader(Reader):
                 documents.append(Document(name=name or url, id=url, content=content))
             return documents
 
-        except Exception as e:
-            logger.error(f"Error extracting content from {url}: {e}")
+        except Exception:
+            logger.exception(f"Error extracting content from {url}")
             return [Document(name=name or url, id=url, content="")]
 
     async def _async_extract(self, url: str, name: Optional[str] = None) -> List[Document]:

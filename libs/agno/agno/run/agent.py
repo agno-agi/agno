@@ -3,7 +3,7 @@ from enum import Enum
 from time import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Citations, Message
@@ -12,7 +12,7 @@ from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.run.requirement import RunRequirement
-from agno.utils.log import logger
+from agno.utils.log import log_error
 from agno.utils.media import (
     reconstruct_audio_list,
     reconstruct_files,
@@ -23,6 +23,15 @@ from agno.utils.media import (
 
 if TYPE_CHECKING:
     from agno.session.summary import SessionSummary
+
+
+class Followups(BaseModel):
+    """Followup prompts generated after the main response."""
+
+    suggestions: List[str] = Field(
+        ...,
+        description="Short action-oriented followup prompts (5-10 words each)",
+    )
 
 
 @dataclass
@@ -179,6 +188,9 @@ class RunEvent(str, Enum):
     compression_started = "CompressionStarted"
     compression_completed = "CompressionCompleted"
 
+    followups_started = "FollowupsStarted"
+    followups_completed = "FollowupsCompleted"
+
     custom_event = "CustomEvent"
 
 
@@ -198,6 +210,8 @@ class BaseAgentRunEvent(BaseRunOutputEvent):
     step_id: Optional[str] = None
     step_name: Optional[str] = None
     step_index: Optional[int] = None
+    # Nesting depth: 0 = top-level workflow, 1 = first nested, 2 = nested-in-nested, etc.
+    nested_depth: int = 0
     tools: Optional[List[ToolExecution]] = None
 
     # For backwards compatibility
@@ -493,6 +507,17 @@ class CompressionCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class FollowupsStartedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.followups_started.value
+
+
+@dataclass
+class FollowupsCompletedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.followups_completed.value
+    followups: Optional[List[str]] = None
+
+
+@dataclass
 class CustomEvent(BaseAgentRunEvent):
     event: str = RunEvent.custom_event.value
     # tool_call_id for ToolExecution
@@ -538,6 +563,8 @@ RunOutputEvent = Union[
     ModelRequestCompletedEvent,
     CompressionStartedEvent,
     CompressionCompletedEvent,
+    FollowupsStartedEvent,
+    FollowupsCompletedEvent,
     CustomEvent,
 ]
 
@@ -577,6 +604,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.model_request_completed.value: ModelRequestCompletedEvent,
     RunEvent.compression_started.value: CompressionStartedEvent,
     RunEvent.compression_completed.value: CompressionCompletedEvent,
+    RunEvent.followups_started.value: FollowupsStartedEvent,
+    RunEvent.followups_completed.value: FollowupsCompletedEvent,
     RunEvent.custom_event.value: CustomEvent,
 }
 
@@ -629,6 +658,8 @@ class RunOutput:
 
     citations: Optional[Citations] = None
     references: Optional[List[MessageReferences]] = None
+
+    followups: Optional[List[str]] = None
 
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
@@ -697,6 +728,7 @@ class RunOutput:
                 "reasoning_messages",
                 "references",
                 "requirements",
+                "followups",
             ]
         }
 
@@ -726,6 +758,9 @@ class RunOutput:
 
         if self.references is not None:
             _dict["references"] = [r.model_dump() for r in self.references]
+
+        if self.followups is not None:
+            _dict["followups"] = self.followups
 
         if self.images is not None:
             _dict["images"] = []
@@ -795,8 +830,8 @@ class RunOutput:
 
         try:
             _dict = self.to_dict()
-        except Exception:
-            logger.error("Failed to convert response to json", exc_info=True)
+        except Exception as e:
+            log_error(f"Failed to convert response to json: {str(e)}")
             raise
 
         if indent is None:

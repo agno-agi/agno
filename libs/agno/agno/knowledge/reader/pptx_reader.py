@@ -19,7 +19,10 @@ except ImportError:
 class PPTXReader(Reader):
     """Reader for PPTX files"""
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = DocumentChunking(), **kwargs):
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+        if chunking_strategy is None:
+            chunk_size = kwargs.get("chunk_size", 5000)
+            chunking_strategy = DocumentChunking(chunk_size=chunk_size)
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
     @classmethod
@@ -88,7 +91,7 @@ class PPTXReader(Reader):
             return documents
 
         except Exception as e:
-            log_error(f"Error reading file: {e}")
+            log_error(f"Error reading file: {str(e)}")
             return []
 
     async def async_read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
@@ -96,5 +99,5 @@ class PPTXReader(Reader):
         try:
             return await asyncio.to_thread(self.read, file, name)
         except Exception as e:
-            log_error(f"Error reading file asynchronously: {e}")
+            log_error(f"Error reading file asynchronously: {str(e)}")
             return []

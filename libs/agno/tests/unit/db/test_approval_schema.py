@@ -106,6 +106,7 @@ class TestApprovalToDict:
             "resolved_at",
             "created_at",
             "updated_at",
+            "run_status",
         }
         assert set(d.keys()) == expected_keys
 

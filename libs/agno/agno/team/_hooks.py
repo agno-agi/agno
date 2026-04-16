@@ -42,7 +42,6 @@ from agno.utils.hooks import (
 )
 from agno.utils.log import (
     log_debug,
-    log_error,
     log_exception,
 )
 
@@ -88,6 +87,11 @@ def handle_team_run_paused(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
+    # Stamp approval_id on tools before building event and storing so the DB has the complete data.
+    create_approval_from_pause(
+        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+    )
+
     handle_event(
         create_team_run_paused_event(
             from_run_response=run_response,
@@ -100,9 +104,6 @@ def handle_team_run_paused(
     )
 
     _cleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
-    create_approval_from_pause(
-        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
-    )
 
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
     return run_response
@@ -121,6 +122,11 @@ def handle_team_run_paused_stream(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
+    # Stamp approval_id on tools before building event and storing so the DB has the complete data.
+    create_approval_from_pause(
+        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+    )
+
     pause_event = handle_event(
         create_team_run_paused_event(
             from_run_response=run_response,
@@ -133,9 +139,6 @@ def handle_team_run_paused_stream(
     )
 
     _cleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
-    create_approval_from_pause(
-        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
-    )
 
     if pause_event is not None:
         yield pause_event
@@ -156,6 +159,11 @@ async def ahandle_team_run_paused(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
+    # Stamp approval_id on tools before building event and storing so the DB has the complete data.
+    await acreate_approval_from_pause(
+        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+    )
+
     handle_event(
         create_team_run_paused_event(
             from_run_response=run_response,
@@ -168,9 +176,6 @@ async def ahandle_team_run_paused(
     )
 
     await _acleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
-    await acreate_approval_from_pause(
-        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
-    )
 
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
     return run_response
@@ -189,6 +194,11 @@ async def ahandle_team_run_paused_stream(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
+    # Stamp approval_id on tools before building event and storing so the DB has the complete data.
+    await acreate_approval_from_pause(
+        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+    )
+
     pause_event = handle_event(
         create_team_run_paused_event(
             from_run_response=run_response,
@@ -201,9 +211,6 @@ async def ahandle_team_run_paused_stream(
     )
 
     await _acleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
-    await acreate_approval_from_pause(
-        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
-    )
 
     if pause_event is not None:
         yield pause_event
@@ -255,9 +262,8 @@ def _execute_pre_hooks(
                     hook(**filtered_args)
                 except (InputCheckError, OutputCheckError):
                     raise
-                except Exception as e:
-                    log_error(f"Background guardrail '{hook.__name__}' execution failed: {str(e)}")
-                    log_exception(e)
+                except Exception:
+                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -300,9 +306,8 @@ def _execute_pre_hooks(
 
         except (InputCheckError, OutputCheckError) as e:
             raise e
-        except Exception as e:
-            log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
-            log_exception(e)
+        except Exception:
+            log_exception(f"Pre-hook #{i + 1} execution failed")
         finally:
             # Reset global log mode in case an agent in the pre-hook changed it
             _set_debug(team, debug_mode=debug_mode)
@@ -357,9 +362,8 @@ async def _aexecute_pre_hooks(
                         hook(**filtered_args)
                 except (InputCheckError, OutputCheckError):
                     raise
-                except Exception as e:
-                    log_error(f"Background guardrail '{hook.__name__}' execution failed: {str(e)}")
-                    log_exception(e)
+                except Exception:
+                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -405,9 +409,8 @@ async def _aexecute_pre_hooks(
 
         except (InputCheckError, OutputCheckError) as e:
             raise e
-        except Exception as e:
-            log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
-            log_exception(e)
+        except Exception:
+            log_exception(f"Pre-hook #{i + 1} execution failed")
         finally:
             # Reset global log mode in case an agent in the pre-hook changed it
             _set_debug(team, debug_mode=debug_mode)
@@ -458,9 +461,8 @@ def _execute_post_hooks(
                     hook(**filtered_args)
                 except (InputCheckError, OutputCheckError):
                     raise
-                except Exception as e:
-                    log_error(f"Background guardrail '{hook.__name__}' execution failed: {str(e)}")
-                    log_exception(e)
+                except Exception:
+                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -505,9 +507,8 @@ def _execute_post_hooks(
 
         except (InputCheckError, OutputCheckError) as e:
             raise e
-        except Exception as e:
-            log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
-            log_exception(e)
+        except Exception:
+            log_exception(f"Post-hook #{i + 1} execution failed")
         finally:
             # Reset global log mode in case an agent in the post-hook changed it
             _set_debug(team, debug_mode=debug_mode)
@@ -558,9 +559,8 @@ async def _aexecute_post_hooks(
                         hook(**filtered_args)
                 except (InputCheckError, OutputCheckError):
                     raise
-                except Exception as e:
-                    log_error(f"Background guardrail '{hook.__name__}' execution failed: {str(e)}")
-                    log_exception(e)
+                except Exception:
+                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -607,9 +607,8 @@ async def _aexecute_post_hooks(
                 )
         except (InputCheckError, OutputCheckError) as e:
             raise e
-        except Exception as e:
-            log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
-            log_exception(e)
+        except Exception:
+            log_exception(f"Post-hook #{i + 1} execution failed")
         finally:
             # Reset global log mode in case an agent in the post-hook changed it
             _set_debug(team, debug_mode=debug_mode)

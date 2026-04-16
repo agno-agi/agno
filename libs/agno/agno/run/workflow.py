@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 from time import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
@@ -9,6 +9,7 @@ from agno.media import Audio, File, Image, Video
 from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, RunStatus
 from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
+from agno.utils.log import log_warning
 from agno.utils.media import (
     reconstruct_audio_list,
     reconstruct_files,
@@ -45,6 +46,7 @@ class WorkflowRunEvent(str, Enum):
     step_started = "StepStarted"
     step_completed = "StepCompleted"
     step_paused = "StepPaused"
+    step_output_review = "StepOutputReview"
     step_error = "StepError"
 
     loop_execution_started = "LoopExecutionStarted"
@@ -86,8 +88,21 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
     step_id: Optional[str] = None
     parent_step_id: Optional[str] = None
 
+    # Nesting depth: 0 = top-level workflow, 1 = first nested, 2 = nested-in-nested, etc.
+    nested_depth: int = 0
+
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {k: v for k, v in asdict(self).items() if v is not None}
+        # Temporarily clear run_output before asdict() to avoid infinite recursion:
+        # WorkflowCompletedEvent.run_output -> WorkflowRunOutput.events -> WorkflowCompletedEvent.run_output -> ...
+        # asdict() recursively traverses all fields before we can filter, so we must clear it first.
+        saved_run_output = getattr(self, "run_output", None)
+        if saved_run_output is not None:
+            object.__setattr__(self, "run_output", None)
+        try:
+            _dict = {k: v for k, v in asdict(self).items() if v is not None and k != "run_output"}
+        finally:
+            if saved_run_output is not None:
+                object.__setattr__(self, "run_output", saved_run_output)
 
         if hasattr(self, "content") and self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
@@ -167,6 +182,9 @@ class WorkflowCompletedEvent(BaseWorkflowRunOutputEvent):
     step_results: List[StepOutput] = field(default_factory=list)
     metadata: Optional[Dict[str, Any]] = None
 
+    # Full workflow run output for nested workflows
+    run_output: Optional["WorkflowRunOutput"] = None
+
 
 @dataclass
 class WorkflowErrorEvent(BaseWorkflowRunOutputEvent):
@@ -239,6 +257,20 @@ class StepPausedEvent(BaseWorkflowRunOutputEvent):
     # User input fields
     requires_user_input: bool = False
     user_input_message: Optional[str] = None
+
+
+@dataclass
+class StepOutputReviewEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when step output requires human review before continuing."""
+
+    event: str = WorkflowRunEvent.step_output_review.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    step_id: Optional[str] = None
+
+    # Output review fields
+    output_review_message: Optional[str] = None
+    requires_output_review: bool = True
 
 
 @dataclass
@@ -476,6 +508,7 @@ WorkflowRunOutputEvent = Union[
     StepStartedEvent,
     StepCompletedEvent,
     StepPausedEvent,
+    StepOutputReviewEvent,
     StepErrorEvent,
     LoopExecutionStartedEvent,
     LoopIterationStartedEvent,
@@ -505,6 +538,7 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.step_started.value: StepStartedEvent,
     WorkflowRunEvent.step_completed.value: StepCompletedEvent,
     WorkflowRunEvent.step_paused.value: StepPausedEvent,
+    WorkflowRunEvent.step_output_review.value: StepOutputReviewEvent,
     WorkflowRunEvent.step_error.value: StepErrorEvent,
     WorkflowRunEvent.loop_execution_started.value: LoopExecutionStartedEvent,
     WorkflowRunEvent.loop_iteration_started.value: LoopIterationStartedEvent,
@@ -553,6 +587,10 @@ class WorkflowRunOutput:
     session_id: Optional[str] = None
     user_id: Optional[str] = None
 
+    # For nested workflows: parent workflow run ID and step ID
+    parent_run_id: Optional[str] = None
+    workflow_step_id: Optional[str] = None
+
     # Media content fields
     images: Optional[List[Image]] = None
     videos: Optional[List[Video]] = None
@@ -563,8 +601,9 @@ class WorkflowRunOutput:
     # Store actual step execution results as StepOutput objects
     step_results: List[Union[StepOutput, List[StepOutput]]] = field(default_factory=list)
 
-    # Store agent/team responses separately with parent_run_id references
-    step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput]]] = None
+    # Store agent/team/workflow responses separately with parent_run_id references
+    # Includes nested WorkflowRunOutput for workflow-as-step execution
+    step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput, "WorkflowRunOutput"]]] = None
 
     # Workflow agent run - stores the full agent RunOutput when workflow agent is used
     # The agent's parent_run_id will point to this workflow run's run_id to establish the relationship
@@ -616,6 +655,13 @@ class WorkflowRunOutput:
         return [req for req in self.step_requirements if req.needs_confirmation]
 
     @property
+    def steps_requiring_output_review(self) -> List["StepRequirement"]:
+        """Get step requirements that need output review"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if req.needs_output_review]
+
+    @property
     def steps_requiring_user_input(self) -> List["StepRequirement"]:
         """Get step requirements that need user input (custom fields, not route selection)"""
         if not self.step_requirements:
@@ -644,27 +690,32 @@ class WorkflowRunOutput:
         return [req for req in self.error_requirements if req.needs_decision]
 
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {
-            k: v
-            for k, v in asdict(self).items()
-            if v is not None
-            and k
-            not in [
-                "metadata",
-                "images",
-                "videos",
-                "audio",
-                "files",
-                "response_audio",
-                "step_results",
-                "step_executor_runs",
-                "events",
-                "metrics",
-                "workflow_agent_run",
-                "step_requirements",
-                "error_requirements",
-            ]
+        # Note: we avoid asdict(self) here because it recursively walks ALL dataclass
+        # fields including step_requirements/step_results which may contain deep or
+        # circular references (e.g., StepRequirement.step_output with nested StepOutputs).
+        # Instead, we manually build the dict from field values.
+        _skip_fields = {
+            "metadata",
+            "images",
+            "videos",
+            "audio",
+            "files",
+            "response_audio",
+            "step_results",
+            "step_executor_runs",
+            "events",
+            "metrics",
+            "workflow_agent_run",
+            "step_requirements",
+            "error_requirements",
         }
+        _dict = {}
+        for f in fields(self):
+            if f.name in _skip_fields:
+                continue
+            v = getattr(self, f.name)
+            if v is not None:
+                _dict[f.name] = v
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
@@ -673,39 +724,50 @@ class WorkflowRunOutput:
             _dict["metadata"] = self.metadata
 
         if self.images is not None:
-            _dict["images"] = [img.to_dict() for img in self.images]
+            _dict["images"] = [img.to_dict() if hasattr(img, "to_dict") else img for img in self.images]
 
         if self.videos is not None:
-            _dict["videos"] = [vid.to_dict() for vid in self.videos]
+            _dict["videos"] = [vid.to_dict() if hasattr(vid, "to_dict") else vid for vid in self.videos]
 
         if self.audio is not None:
-            _dict["audio"] = [aud.to_dict() for aud in self.audio]
+            _dict["audio"] = [aud.to_dict() if hasattr(aud, "to_dict") else aud for aud in self.audio]
 
         if self.files is not None:
-            _dict["files"] = [f.to_dict() for f in self.files]
+            _dict["files"] = [f.to_dict() if hasattr(f, "to_dict") else f for f in self.files]
 
         if self.response_audio is not None:
-            _dict["response_audio"] = self.response_audio.to_dict()
+            _dict["response_audio"] = (
+                self.response_audio.to_dict() if hasattr(self.response_audio, "to_dict") else self.response_audio
+            )
 
         if self.step_results:
             flattened_responses = []
             for step_response in self.step_results:
                 if isinstance(step_response, list):
                     # Handle List[StepOutput] from workflow components like Steps
-                    flattened_responses.extend([s.to_dict() for s in step_response])
-                else:
+                    flattened_responses.extend([s.to_dict() if hasattr(s, "to_dict") else s for s in step_response])
+                elif hasattr(step_response, "to_dict"):
                     # Handle single StepOutput
                     flattened_responses.append(step_response.to_dict())
+                else:
+                    # Already a dict
+                    flattened_responses.append(step_response)
             _dict["step_results"] = flattened_responses
 
         if self.step_executor_runs:
-            _dict["step_executor_runs"] = [run.to_dict() for run in self.step_executor_runs]
+            _dict["step_executor_runs"] = [
+                run.to_dict() if hasattr(run, "to_dict") else run for run in self.step_executor_runs
+            ]
 
         if self.workflow_agent_run is not None:
-            _dict["workflow_agent_run"] = self.workflow_agent_run.to_dict()
+            _dict["workflow_agent_run"] = (
+                self.workflow_agent_run.to_dict()
+                if hasattr(self.workflow_agent_run, "to_dict")
+                else self.workflow_agent_run
+            )
 
         if self.metrics is not None:
-            _dict["metrics"] = self.metrics.to_dict()
+            _dict["metrics"] = self.metrics.to_dict() if hasattr(self.metrics, "to_dict") else self.metrics
 
         if self.input is not None:
             if isinstance(self.input, BaseModel):
@@ -717,18 +779,24 @@ class WorkflowRunOutput:
             _dict["content"] = self.content.model_dump(exclude_none=True, mode="json")
 
         if self.events is not None:
-            _dict["events"] = [e.to_dict() for e in self.events]
+            _dict["events"] = [e.to_dict() if hasattr(e, "to_dict") else e for e in self.events]
 
         if self.step_requirements is not None:
-            _dict["step_requirements"] = [req.to_dict() for req in self.step_requirements]
+            _dict["step_requirements"] = [
+                req.to_dict() if hasattr(req, "to_dict") else req for req in self.step_requirements
+            ]
 
         if self.error_requirements is not None:
-            _dict["error_requirements"] = [req.to_dict() for req in self.error_requirements]
+            _dict["error_requirements"] = [
+                req.to_dict() if hasattr(req, "to_dict") else req for req in self.error_requirements
+            ]
 
         return _dict
 
+    _MAX_NESTED_DEPTH = 10
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "WorkflowRunOutput":
+    def from_dict(cls, data: Dict[str, Any], _depth: int = 0) -> "WorkflowRunOutput":
         # Import here to avoid circular import
         from agno.workflow.step import StepOutput
 
@@ -748,13 +816,27 @@ class WorkflowRunOutput:
 
         # Parse step_executor_runs
         step_executor_runs_data = data.pop("step_executor_runs", [])
-        step_executor_runs: List[Union[RunOutput, TeamRunOutput]] = []
+        step_executor_runs: List[Union[RunOutput, TeamRunOutput, "WorkflowRunOutput"]] = []
         if step_executor_runs_data:
-            step_executor_runs = []
             for run_data in step_executor_runs_data:
+                # Check for team first (team_id is unique to TeamRunOutput)
                 if "team_id" in run_data or "team_name" in run_data:
                     step_executor_runs.append(TeamRunOutput.from_dict(run_data))
+                # Check for agent (agent_id is unique to RunOutput; RunOutput also has workflow_id
+                # when used as a workflow agent, so we must check agent_id before workflow_name)
+                elif "agent_id" in run_data or "agent_name" in run_data:
+                    step_executor_runs.append(RunOutput.from_dict(run_data))
+                # Nested workflow run (workflow_name is unique to WorkflowRunOutput)
+                elif "workflow_name" in run_data and "parent_run_id" in run_data:
+                    if _depth >= cls._MAX_NESTED_DEPTH:
+                        log_warning(
+                            f"Max nested workflow deserialization depth ({cls._MAX_NESTED_DEPTH}) reached, "
+                            f"skipping nested workflow '{run_data.get('workflow_name')}'"
+                        )
+                    else:
+                        step_executor_runs.append(cls.from_dict(run_data, _depth=_depth + 1))
                 else:
+                    # Default to RunOutput for backwards compatibility
                     step_executor_runs.append(RunOutput.from_dict(run_data))
 
         workflow_agent_run_data = data.pop("workflow_agent_run", None)

@@ -83,13 +83,13 @@ async def _check_and_refresh_mcp_tools(team: "Team") -> None:
                         if not is_alive:
                             await tool.connect(force=True)  # type: ignore
                     except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to check if MCP tool is alive: {e}")
+                        log_warning(f"Failed to check if MCP tool is alive: {str(e)}")
                         continue
 
                     try:
                         await tool.build_tools()  # type: ignore
                     except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to build tools for {str(tool)}: {e}")
+                        log_warning(f"Failed to build tools for {tool}: {str(e)}")
                         continue
 
 
@@ -121,8 +121,9 @@ def _determine_tools_for_model(
     from agno.team._default_tools import (
         _get_chat_history_function,
         _get_delegate_task_function,
-        _get_previous_sessions_messages_function,
         _get_update_user_memory_function,
+        _read_past_session_function,
+        _search_past_sessions_function,
         _update_session_state_tool,
         create_knowledge_search_tool,
     )
@@ -184,10 +185,22 @@ def _determine_tools_for_model(
     if team.enable_agentic_state:
         _tools.append(Function(name="update_session_state", entrypoint=partial(_update_session_state_tool, team)))
 
-    if team.search_session_history:
+    if team.search_past_sessions:
         _tools.append(
-            _get_previous_sessions_messages_function(
-                team, num_history_sessions=team.num_history_sessions, user_id=user_id, async_mode=async_mode
+            _search_past_sessions_function(
+                team,
+                num_past_sessions_to_search=team.num_past_sessions_to_search,
+                num_past_session_runs_in_search=team.num_past_session_runs_in_search,
+                user_id=user_id,
+                current_session_id=session.session_id if session else None,
+                async_mode=async_mode,
+            )
+        )
+        _tools.append(
+            _read_past_session_function(
+                team,
+                user_id=user_id,
+                async_mode=async_mode,
             )
         )
 
@@ -208,6 +221,10 @@ def _determine_tools_for_model(
 
     if resolved_knowledge is not None and team.update_knowledge:
         _tools.append(team.add_to_knowledge)
+
+    # Add tools for accessing skills
+    if team.skills is not None:
+        _tools.extend(team.skills.get_tools())
 
     from agno.team.mode import TeamMode
 
@@ -369,7 +386,7 @@ def _determine_tools_for_model(
                 _functions.append(_func)
                 log_debug(f"Added tool {_func.name}")
             except Exception as e:
-                log_warning(f"Could not add tool {tool}: {e}")
+                log_warning(f"Could not add tool {tool}: {str(e)}")
 
     if _functions:
         from inspect import signature

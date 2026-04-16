@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
-from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.vectordb.base import VectorDb
 
 
@@ -99,7 +99,7 @@ class LangChainVectorDb(VectorDb):
             self.knowledge_retriever = self.vectorstore.as_retriever(search_kwargs=self.search_kwargs)
 
         if self.knowledge_retriever is None:
-            logger.error("No knowledge retriever provided")
+            log_error("No knowledge retriever provided")
             return []
 
         if not isinstance(self.knowledge_retriever, BaseRetriever):

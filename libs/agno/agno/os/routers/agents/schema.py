@@ -64,7 +64,7 @@ class AgentResponse(BaseModel):
             "add_history_to_context": False,
             "num_history_runs": 3,
             "enable_session_summaries": False,
-            "search_session_history": False,
+            "search_past_sessions": False,
             "cache_session": False,
             # Knowledge defaults
             "add_references": False,
@@ -140,7 +140,12 @@ class AgentResponse(BaseModel):
             _agent_model_data["provider"] = model_provider
 
         session_table = agent.db.session_table_name if agent.db else None
-        knowledge_table = agent.db.knowledge_table_name if agent.db and agent.knowledge else None
+        contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
+        knowledge_table = (
+            contents_db.knowledge_table_name
+            if contents_db
+            else (agent.db.knowledge_table_name if agent.db and agent.knowledge else None)
+        )
 
         tools_info = {
             "tools": formatted_tools,
@@ -153,12 +158,11 @@ class AgentResponse(BaseModel):
             "add_history_to_context": agent.add_history_to_context,
             "enable_session_summaries": agent.enable_session_summaries,
             "num_history_runs": agent.num_history_runs,
-            "search_session_history": agent.search_session_history,
-            "num_history_sessions": agent.num_history_sessions,
+            "search_past_sessions": agent.search_past_sessions,
+            "num_past_sessions_to_search": agent.num_past_sessions_to_search,
+            "num_past_session_runs_in_search": agent.num_past_session_runs_in_search,
             "cache_session": agent.cache_session,
         }
-
-        contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
         knowledge_info = {
             "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
