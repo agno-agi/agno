@@ -6,7 +6,7 @@ from fastapi.routing import APIRouter
 
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.base import BaseInterface
-from agno.os.interfaces.discord.helpers import FALLBACK_ERROR_MESSAGE
+from agno.os.interfaces.discord.helpers import DISCORD_API_BASE, FALLBACK_ERROR_MESSAGE, bot_api_headers
 from agno.os.interfaces.discord.router import attach_routes
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_error, log_info, log_warning
@@ -51,6 +51,8 @@ class Discord(BaseInterface):
         show_reasoning: bool = False,
         error_message: str = FALLBACK_ERROR_MESSAGE,
         commands: Optional[List[Dict[str, Any]]] = None,
+        command_name: str = "ask",
+        command_description: str = "Ask the AI a question",
         register_commands: bool = True,
         reply_in_thread: bool = True,
     ):
@@ -68,10 +70,26 @@ class Discord(BaseInterface):
         self.register_commands = register_commands
         self.reply_in_thread = reply_in_thread
 
-        # User-provided list or the default single /ask command.
-        # /new is reserved — always injected by _build_commands; any user entry
-        # named "new" is discarded to preserve the session-reset semantics.
-        self.commands = commands if commands is not None else [_DEFAULT_ASK_COMMAND]
+        # commands= takes precedence. command_name / command_description are
+        # single-command shortcuts used when commands is None — convenient for
+        # bots that only want to rename /ask. Mixing the two is ambiguous.
+        _has_single_overrides = command_name != "ask" or command_description != "Ask the AI a question"
+        if commands is not None and _has_single_overrides:
+            raise ValueError(
+                "Pass either commands= OR command_name=/command_description=, not both. "
+                "The commands= list can already set any name and description per entry."
+            )
+        if commands is not None:
+            self.commands = commands
+        else:
+            self.commands = [
+                {
+                    "name": command_name,
+                    "description": command_description,
+                    "type": 1,
+                    "options": _DEFAULT_ASK_COMMAND["options"],
+                }
+            ]
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Discord requires an agent, team, or workflow")
@@ -85,20 +103,18 @@ class Discord(BaseInterface):
                 "Set the env var, pass bot_token, or disable both flags."
             )
 
-    def _build_commands(self) -> List[Dict[str, Any]]:
-        user_commands = [c for c in self.commands if c.get("name") != "new"]
-        return user_commands + [_NEW_COMMAND]
-
     def _register_commands(self) -> None:
         if not self.application_id or not self.bot_token:
             log_warning("Skipping command registration: application_id or bot_token not set")
             return
 
-        url = f"https://discord.com/api/v10/applications/{self.application_id}/commands"
-        headers = {"Authorization": f"Bot {self.bot_token}", "Content-Type": "application/json"}
+        # /new is reserved — any user entry named "new" is dropped so the
+        # interface's session-reset definition always wins
+        payload = [c for c in self.commands if c.get("name") != "new"] + [_NEW_COMMAND]
+        url = f"{DISCORD_API_BASE}/applications/{self.application_id}/commands"
 
         try:
-            resp = httpx.put(url, json=self._build_commands(), headers=headers, timeout=15)
+            resp = httpx.put(url, json=payload, headers=bot_api_headers(self.bot_token), timeout=15)
             if resp.is_success:
                 names = [c.get("name", "?") for c in resp.json()]
                 log_info(f"Registered Discord commands: {names}")

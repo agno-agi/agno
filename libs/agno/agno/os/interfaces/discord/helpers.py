@@ -10,6 +10,14 @@ from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_error, log_warning
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
+
+
+def bot_api_headers(bot_token: str) -> Dict[str, str]:
+    # Bot-token auth is used for channel/thread API calls; webhook calls use
+    # the interaction token embedded in the URL instead and need no headers
+    return {"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"}
+
+
 _MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 _MAX_EMBED_DESCRIPTION = 4096
 # Webhook follow-up messages have a 2000-char content limit; 1900 leaves room for overflow markers
@@ -294,7 +302,7 @@ async def create_message_thread(
     bot_token: str,
 ) -> Optional[str]:
     url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}/threads"
-    headers = {"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"}
+    headers = bot_api_headers(bot_token)
     async with session.post(url, json={"name": name[:100], "auto_archive_duration": 60}, headers=headers) as resp:
         if resp.ok:
             data = await resp.json()
@@ -309,7 +317,7 @@ async def post_channel_message(
     bot_token: str,
 ) -> Optional[str]:
     url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages"
-    headers = {"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"}
+    headers = bot_api_headers(bot_token)
     payload = {"content": content[:2000], "allowed_mentions": _SAFE_MENTIONS}
     async with session.post(url, json=payload, headers=headers) as resp:
         if resp.ok:
@@ -326,6 +334,6 @@ async def edit_channel_message(
     bot_token: str,
 ) -> None:
     url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}"
-    headers = {"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"}
+    headers = bot_api_headers(bot_token)
     async with session.patch(url, json={"content": content[:2000]}, headers=headers):
         pass
