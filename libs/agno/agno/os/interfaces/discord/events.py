@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Dict, Optional
 
 from agno.agent import RunEvent
 from agno.os.interfaces.discord.state import StreamState
-from agno.os.interfaces.common import SUPPRESSED_IN_WORKFLOW, member_name, normalize_event, task_id
+from agno.os.interfaces.streaming import SUPPRESSED_IN_WORKFLOW, member_name, normalize_event, task_id
 from agno.run.agent import BaseAgentRunEvent
 from agno.run.workflow import WorkflowRunEvent
 

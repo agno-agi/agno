@@ -13,11 +13,8 @@ from agno.os.interfaces.discord.helpers import (
     DiscordWebhook,
     build_status_embed,
 )
-from agno.os.interfaces.common import (
-    SessionStoreConfig,
-    chunk_text,
-    collect_media_from_chunk,
-)
+from agno.os.interfaces.sessions import SessionStoreConfig
+from agno.os.interfaces.streaming import chunk_text, collect_media_from_chunk
 from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
