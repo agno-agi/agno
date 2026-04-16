@@ -3,6 +3,7 @@
 import uuid
 from datetime import datetime
 from time import time
+from types import MappingProxyType
 
 from agno.db.base import SessionType
 from agno.models.message import Message
@@ -790,6 +791,37 @@ def test_from_dict_with_summary(shared_db):
     team_session = TeamSession.from_dict(session_data)
 
     assert team_session is not None
+    assert team_session.summary is not None
+    assert team_session.summary.summary == "Test summary"
+    assert team_session.summary.topics == ["topic1"]
+
+
+def test_from_dict_with_immutable_mapping_and_summary():
+    """Test creating TeamSession from an immutable mapping with summary data"""
+    session_id = f"test_session_{uuid.uuid4()}"
+
+    session_data = MappingProxyType(
+        {
+            "session_id": session_id,
+            "team_id": "test_team",
+            "team_data": {"name": "team"},
+            "session_data": {"key": "value"},
+            "metadata": {"meta_key": "meta_value"},
+            "summary": {
+                "summary": "Test summary",
+                "topics": ["topic1"],
+                "updated_at": datetime.now().isoformat(),
+            },
+        }
+    )
+
+    team_session = TeamSession.from_dict(session_data)
+
+    assert team_session is not None
+    assert team_session.team_id == "test_team"
+    assert team_session.team_data == {"name": "team"}
+    assert team_session.session_data == {"key": "value"}
+    assert team_session.metadata == {"meta_key": "meta_value"}
     assert team_session.summary is not None
     assert team_session.summary.summary == "Test summary"
     assert team_session.summary.topics == ["topic1"]

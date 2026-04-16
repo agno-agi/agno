@@ -148,6 +148,14 @@ class WorkflowSummaryResponse(BaseModel):
         )
 
 
+class InfoResponse(BaseModel):
+    """Response schema for the /info endpoint returning lightweight OS metadata."""
+
+    agent_count: int = Field(0, description="Number of agents registered in the OS")
+    team_count: int = Field(0, description="Number of teams registered in the OS")
+    workflow_count: int = Field(0, description="Number of workflows registered in the OS")
+
+
 class ConfigResponse(BaseModel):
     """Response schema for the general config endpoint"""
 
@@ -195,6 +203,15 @@ class SessionSchema(BaseModel):
     session_state: Optional[dict] = Field(None, description="Current state data of the session")
     created_at: Optional[datetime] = Field(None, description="Timestamp when session was created")
     updated_at: Optional[datetime] = Field(None, description="Timestamp when session was last updated")
+    # Enhanced fields for richer list responses
+    user_id: Optional[str] = Field(None, description="User ID associated with the session")
+    agent_id: Optional[str] = Field(None, description="Agent ID if this is an agent session")
+    team_id: Optional[str] = Field(None, description="Team ID if this is a team session")
+    workflow_id: Optional[str] = Field(None, description="Workflow ID if this is a workflow session")
+    session_summary: Optional[dict] = Field(None, description="Summary of session interactions")
+    metrics: Optional[dict] = Field(None, description="Session metrics")
+    total_tokens: Optional[int] = Field(None, description="Total tokens used in this session")
+    metadata: Optional[dict] = Field(None, description="Additional metadata")
 
     @classmethod
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
@@ -205,12 +222,30 @@ class SessionSchema(BaseModel):
 
         created_at = to_utc_datetime(session.get("created_at", 0))
         updated_at = to_utc_datetime(session.get("updated_at", created_at))
+
+        # Extract metrics from session_data
+        metrics = session_data.get("session_metrics", None)
+        total_tokens = metrics.get("total_tokens") if metrics else None
+
+        # Extract summary
+        summary = session.get("summary")
+        if summary and hasattr(summary, "to_dict"):
+            summary = summary.to_dict()
+
         return cls(
             session_id=session.get("session_id", ""),
             session_name=session_name,
             session_state=session_data.get("session_state", None),
             created_at=created_at,
             updated_at=updated_at,
+            user_id=session.get("user_id"),
+            agent_id=session.get("agent_id"),
+            team_id=session.get("team_id"),
+            workflow_id=session.get("workflow_id"),
+            session_summary=summary,
+            metrics=metrics,
+            total_tokens=total_tokens,
+            metadata=session.get("metadata"),
         )
 
 

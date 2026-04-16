@@ -57,8 +57,9 @@ class TeamSession:
             return None
 
         summary = data.get("summary")
+        summary_obj = summary
         if summary is not None and isinstance(summary, dict):
-            data["summary"] = SessionSummary.from_dict(data["summary"])  # type: ignore
+            summary_obj = SessionSummary.from_dict(summary)
 
         runs = data.get("runs")
         serialized_runs: List[Union[TeamRunOutput, RunOutput]] = []
@@ -80,7 +81,7 @@ class TeamSession:
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
             runs=serialized_runs,
-            summary=data.get("summary"),
+            summary=summary_obj,
         )
 
     def get_run(self, run_id: str) -> Optional[Union[TeamRunOutput, RunOutput]]:
@@ -167,13 +168,23 @@ class TeamSession:
             session_runs = [run for run in session_runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
         if member_ids:
             filtered_runs = []
+            seen_run_ids: set[str] = set()
+
+            def _add_if_unseen(run: Union[TeamRunOutput, RunOutput]) -> None:
+                run_id = getattr(run, "run_id", None)
+                if run_id and run_id in seen_run_ids:
+                    return
+                if run_id:
+                    seen_run_ids.add(run_id)
+                filtered_runs.append(run)
+
             for run in session_runs:
                 if hasattr(run, "agent_id") and run.agent_id in member_ids:  # type: ignore
-                    filtered_runs.append(run)
+                    _add_if_unseen(run)
                 elif hasattr(run, "member_responses"):
                     for member_run in run.member_responses:
                         if hasattr(member_run, "agent_id") and member_run.agent_id in member_ids:  # type: ignore
-                            filtered_runs.append(member_run)
+                            _add_if_unseen(member_run)
             session_runs = filtered_runs
 
         if skip_member_messages:
@@ -182,6 +193,12 @@ class TeamSession:
 
         # Filter by status
         session_runs = [run for run in session_runs if hasattr(run, "status") and run.status not in skip_statuses]  # type: ignore
+
+        # Filter by last_n_runs before applying message limit
+        if last_n_runs is not None:
+            if last_n_runs <= 0:
+                return []
+            session_runs = session_runs[-last_n_runs:]
 
         messages_from_history = []
         system_message = None
@@ -204,20 +221,23 @@ class TeamSession:
                         messages_from_history.append(message)
 
             if system_message:
-                messages_from_history = [system_message] + messages_from_history[
-                    -(limit - 1) :
-                ]  # Grab one less message then add the system message
+                if limit <= 1:
+                    messages_from_history = [system_message]
+                else:
+                    messages_from_history = [system_message] + messages_from_history[
+                        -(limit - 1) :
+                    ]  # Grab one less message then add the system message
             else:
-                messages_from_history = messages_from_history[-limit:]
+                if limit <= 0:
+                    messages_from_history = []
+                else:
+                    messages_from_history = messages_from_history[-limit:]
 
             # Remove tool result messages that don't have an associated assistant message with tool calls
             while len(messages_from_history) > 0 and messages_from_history[0].role == "tool":
                 messages_from_history.pop(0)
         else:
-            # Filter by last_n runs
-            runs_to_process = session_runs[-last_n_runs:] if last_n_runs is not None else session_runs
-
-            for run_response in runs_to_process:
+            for run_response in session_runs:
                 if not (run_response and run_response.messages):
                     continue
 
