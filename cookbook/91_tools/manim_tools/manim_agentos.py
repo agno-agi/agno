@@ -12,7 +12,7 @@ Run:
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
+from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.tools.manim import ManimTools
 
@@ -22,7 +22,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 manim_agent = Agent(
     name="Manim Animator",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=Claude(id="claude-opus-4-7"),
     tools=[
         ManimTools(
             output_dir=OUTPUT_DIR,
