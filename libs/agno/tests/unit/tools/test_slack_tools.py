@@ -353,7 +353,10 @@ def test_create_canvas_no_args(canvas_tools):
     canvas_tools.client.canvases_create.return_value = {"ok": True, "canvas_id": "F456"}
     result = json.loads(canvas_tools.create_canvas())
     assert result["canvas_id"] == "F456"
-    canvas_tools.client.canvases_create.assert_called_once_with()
+    # SDK requires document_content even without user-provided markdown
+    canvas_tools.client.canvases_create.assert_called_once_with(
+        document_content={"type": "markdown", "markdown": ""},
+    )
 
 
 def test_create_canvas_error(canvas_tools):
@@ -369,6 +372,7 @@ def test_create_channel_canvas(canvas_tools):
     canvas_tools.client.conversations_canvases_create.assert_called_once_with(
         channel_id="C1",
         title="Channel Doc",
+        document_content={"type": "markdown", "markdown": ""},
     )
 
 
@@ -676,9 +680,9 @@ def test_create_canvas_title_only(canvas_tools):
     canvas_tools.client.canvases_create.return_value = _make_slack_response({"ok": True, "canvas_id": "F_EMPTY"})
     result = json.loads(canvas_tools.create_canvas(title="Placeholder"))
     assert result["canvas_id"] == "F_EMPTY"
-    # Should NOT send document_content
+    # SDK requires document_content; empty markdown sent when user provides none
     call_kwargs = canvas_tools.client.canvases_create.call_args[1]
-    assert "document_content" not in call_kwargs
+    assert call_kwargs["document_content"] == {"type": "markdown", "markdown": ""}
     assert call_kwargs["title"] == "Placeholder"
 
 

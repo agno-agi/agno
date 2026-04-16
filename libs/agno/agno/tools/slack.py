@@ -833,11 +833,11 @@ class SlackTools(Toolkit):
             str: A JSON string containing the canvas_id of the newly created canvas.
         """
         try:
-            kwargs: Dict[str, Any] = {}
+            # SDK requires document_content even though the API considers it optional
+            doc = {"type": "markdown", "markdown": markdown or ""}
+            kwargs: Dict[str, Any] = {"document_content": doc}
             if title:
                 kwargs["title"] = title
-            if markdown:
-                kwargs["document_content"] = {"type": "markdown", "markdown": markdown}
             response = self.client.canvases_create(**kwargs)
             return json.dumps({"ok": True, "canvas_id": response.get("canvas_id", "")})
         except SlackApiError as e:
@@ -858,11 +858,11 @@ class SlackTools(Toolkit):
             str: A JSON string containing the canvas_id of the newly created canvas.
         """
         try:
-            kwargs: Dict[str, Any] = {"channel_id": channel_id}
+            # SDK requires document_content even though the API considers it optional
+            doc = {"type": "markdown", "markdown": markdown or ""}
+            kwargs: Dict[str, Any] = {"channel_id": channel_id, "document_content": doc}
             if title:
                 kwargs["title"] = title
-            if markdown:
-                kwargs["document_content"] = {"type": "markdown", "markdown": markdown}
             response = self.client.conversations_canvases_create(**kwargs)
             return json.dumps({"ok": True, "canvas_id": response.get("canvas_id", "")})
         except SlackApiError as e:
