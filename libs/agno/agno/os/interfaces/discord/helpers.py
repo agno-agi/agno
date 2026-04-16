@@ -255,6 +255,24 @@ def extract_user_name(data: dict) -> str:
     return str((sources[0] if sources else {}).get("id", "")) or "user"
 
 
+def format_attribution(user_name: str, message: str, max_len: int = 2000) -> str:
+    # Ellipsis-trim so attribution reads as a quote, not a mid-word cliff
+    prefix = f"{user_name}: "
+    remaining = max_len - len(prefix)
+    if remaining <= 0:
+        # Pathological: user name alone overflows the cap
+        return f"{prefix}{message}"[:max_len]
+    if len(message) > remaining:
+        message = message[: remaining - 1].rstrip() + "…"
+    return f"{prefix}{message}"
+
+
+def format_thread_name(text: str, max_len: int = 100) -> str:
+    # Collapse whitespace so thread names display cleanly; empty → "Conversation"
+    name = " ".join(text.split()).strip() or "Conversation"
+    return name[:max_len]
+
+
 async def get_original_message_id(
     session: aiohttp.ClientSession,
     application_id: str,

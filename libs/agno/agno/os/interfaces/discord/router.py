@@ -39,6 +39,8 @@ from agno.os.interfaces.discord.helpers import (
     extract_interaction_options,
     extract_user_id,
     extract_user_name,
+    format_attribution,
+    format_thread_name,
     get_original_message_id,
     send_followup_message,
     send_response_media,
@@ -247,12 +249,12 @@ def attach_routes(
             thread_id: Optional[str] = None
             if reply_in_thread and bot_token and not in_thread:
                 # Show user attribution on the original message
-                attribution = f"{user_name}: {message_text}"[:2000]
+                attribution = format_attribution(user_name, message_text)
                 await edit_original_response(session, application_id, interaction_token, content=attribution)
                 original_msg_id = await get_original_message_id(session, application_id, interaction_token)
                 if original_msg_id:
                     thread_id = await create_message_thread(
-                        session, channel_id, original_msg_id, message_text, bot_token
+                        session, channel_id, original_msg_id, format_thread_name(message_text), bot_token
                     )
 
             # --- Resolve session ---
@@ -277,18 +279,22 @@ def attach_routes(
             media_kwargs = await download_resolved_attachments(session, data)
 
             # --- Build run config ---
+            # Remote entities proxy to a server and don't accept dependency kwargs;
+            # only pass them to local agents/teams/workflows
+            is_remote = isinstance(entity, (RemoteAgent, RemoteTeam, RemoteWorkflow))
             run_kwargs: Dict[str, Any] = {
                 "user_id": user_id,
                 "session_id": session_id,
                 "metadata": {"user_id": user_id},
-                "dependencies": {
+                **media_kwargs,
+            }
+            if not is_remote:
+                run_kwargs["dependencies"] = {
                     "discord_channel_id": channel_id,
                     "discord_guild_id": guild_id,
                     "discord_thread_id": thread_id,
-                },
-                "add_dependencies_to_context": True,
-                **media_kwargs,
-            }
+                }
+                run_kwargs["add_dependencies_to_context"] = True
 
             # --- Execute ---
             if streaming:

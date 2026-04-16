@@ -5,6 +5,18 @@ from typing import Any, Optional
 from agno.os.interfaces.shared import is_dev_mode
 from agno.utils.log import log_warning
 
+# PyNaCl is optional — resolve BadSignatureError at import time so except
+# clauses don't hit UnboundLocalError when the symbol is referenced but
+# never bound (Python treats `from X import Y` inside a function as a
+# local; a late import inside a try block breaks the except tuple lookup)
+try:
+    from nacl.exceptions import BadSignatureError as _NaclBadSignatureError
+except ImportError:
+
+    class _NaclBadSignatureError(Exception):  # type: ignore[no-redef]
+        pass
+
+
 # Discord recommends a 5-minute window to tolerate clock skew
 _REPLAY_WINDOW_SECONDS = 300
 
@@ -54,7 +66,6 @@ def verify_discord_signature(
         verify_key = _get_verify_key(key)
         verify_key.verify(timestamp.encode() + body, bytes.fromhex(signature))
         return True
-    except Exception:
-        # nacl raises BadSignatureError on mismatch, ValueError on malformed hex;
-        # treat any failure as invalid to avoid leaking exception details
+    except (_NaclBadSignatureError, ValueError):
+        # BadSignatureError on mismatch, ValueError on malformed hex / wrong sig length
         return False

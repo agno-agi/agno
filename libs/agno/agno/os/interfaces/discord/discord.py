@@ -42,7 +42,7 @@ class Discord(BaseInterface):
         self.workflow = workflow
         self.prefix = prefix
         self.tags = tags or ["Discord"]
-        self.public_key = public_key
+        self.public_key = public_key or getenv("DISCORD_PUBLIC_KEY") or ""
         self.application_id = application_id or getenv("DISCORD_APP_ID") or getenv("DISCORD_APPLICATION_ID") or ""
         self.bot_token = bot_token or getenv("DISCORD_BOT_TOKEN") or ""
         self.streaming = streaming
@@ -55,6 +55,16 @@ class Discord(BaseInterface):
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Discord requires an agent, team, or workflow")
+        if not self.public_key:
+            raise ValueError("DISCORD_PUBLIC_KEY is not set. Set the env var or pass public_key.")
+        if not self.application_id:
+            raise ValueError("DISCORD_APP_ID is not set. Set the env var or pass application_id.")
+        # bot_token only matters when we'd actually use it
+        if (self.auto_register_command or self.reply_in_thread) and not self.bot_token:
+            raise ValueError(
+                "DISCORD_BOT_TOKEN is required when auto_register_command=True or reply_in_thread=True. "
+                "Set the env var, pass bot_token, or disable both flags."
+            )
 
     def _build_commands(self) -> List[Dict[str, Any]]:
         return [

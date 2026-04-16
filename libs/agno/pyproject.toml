@@ -508,6 +508,7 @@ module = [
   "memory_profiler.*",
   "mistralai.*",
   "mlx_whisper.*",
+  "nacl.*",
   "neo4j.*",
   "nest_asyncio.*",
   "newspaper.*",
