@@ -1,21 +1,3 @@
-"""
-Discord Interactions Router
-
-Streaming architecture:
-  Discord uses HTTP Interactions (webhook-based, not Gateway WebSocket).
-  1. Discord POSTs to /interactions with Ed25519-signed body
-  2. We verify signature and return a deferred ACK (type 5) within 3 seconds
-  3. A background task runs entity.arun() with streaming enabled
-  4. Every ~1.5s, PATCH the original response with an updated embed:
-     - Embed description: accumulated response text (up to 4,096 chars)
-     - Embed fields: task cards (tool calls, reasoning) with status icons
-  5. On completion: final embed + overflow follow-up messages for long content
-  6. Media uploaded as separate follow-up attachments
-
-Key difference from Slack: no first-class streaming API. Updates are
-rate-limited periodic snapshots via webhook PATCH, not character-by-character.
-"""
-
 from __future__ import annotations
 
 import uuid

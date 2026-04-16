@@ -77,8 +77,7 @@ class TaskCard:
 
 @dataclass
 class InstanceState:
-    """Per-interface-instance state, shared across all concurrent interactions."""
-
+    # Per-interface-instance state, shared across all concurrent interactions
     session_config: SessionStoreConfig
     entity_id: Optional[str] = None
     processed_interactions: Dict[str, float] = field(default_factory=dict)
@@ -107,8 +106,7 @@ class InstanceState:
 
 
 class StreamState:
-    """Per-interaction streaming lifecycle. One instance per background task."""
-
+    # Per-interaction streaming lifecycle — one instance per background task
     def __init__(
         self,
         webhook: DiscordWebhook,
