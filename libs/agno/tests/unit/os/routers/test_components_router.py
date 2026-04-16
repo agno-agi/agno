@@ -560,3 +560,123 @@ class TestSetCurrentConfig:
         response = client.post("/components/agent-1/configs/1/set-current")
 
         assert response.status_code == 400
+
+
+# =============================================================================
+# _resolve_db_in_config Tests
+# =============================================================================
+#
+# These cover the components-router-specific merge behavior when a payload
+# references a db by id: only whitelisted table-name fields are accepted from
+# the caller; connection-defining fields (type / db_url / db_file / db_schema /
+# id) always come from the resolved db so a caller cannot redirect a
+# referenced db to a different backend through this path.
+
+
+class TestResolveDbInConfig:
+    """Tests for the _resolve_db_in_config helper in the components router."""
+
+    def _make_os_db(self, tmp_path):
+        from agno.db.sqlite.sqlite import SqliteDb
+
+        return SqliteDb(db_file=str(tmp_path / "os.db"))
+
+    def test_no_db_in_config_is_noop(self, tmp_path):
+        from agno.os.routers.components.components import _resolve_db_in_config
+
+        os_db = self._make_os_db(tmp_path)
+        config = {"name": "agent"}
+
+        out = _resolve_db_in_config(dict(config), os_db, None)
+
+        assert out == config
+
+    def test_db_none_is_removed(self, tmp_path):
+        from agno.os.routers.components.components import _resolve_db_in_config
+
+        os_db = self._make_os_db(tmp_path)
+
+        out = _resolve_db_in_config({"name": "agent", "db": None}, os_db, None)
+
+        assert "db" not in out
+
+    def test_db_without_id_is_passed_through(self, tmp_path):
+        from agno.os.routers.components.components import _resolve_db_in_config
+
+        os_db = self._make_os_db(tmp_path)
+        payload = {"db": {"type": "sqlite", "session_table": "custom"}}
+
+        out = _resolve_db_in_config(dict(payload), os_db, None)
+
+        assert out["db"] == payload["db"]
+
+    def test_matching_id_merges_table_overrides_onto_resolved_db(self, tmp_path):
+        """The reported bug: table-name overrides in the payload were being
+        replaced with the resolved db's defaults."""
+        from agno.os.routers.components.components import _resolve_db_in_config
+
+        os_db = self._make_os_db(tmp_path)
+        payload = {
+            "db": {
+                "id": os_db.id,
+                "session_table": "custom_sessions",
+                "memory_table": "custom_memories",
+            },
+        }
+
+        out = _resolve_db_in_config(dict(payload), os_db, None)
+
+        assert out["db"]["session_table"] == "custom_sessions"
+        assert out["db"]["memory_table"] == "custom_memories"
+        # Connection metadata is filled in from the resolved db.
+        assert out["db"]["type"] == "sqlite"
+        assert out["db"]["db_file"] == os_db.db_file
+        # Fields the caller didn't override inherit os_db's values.
+        assert out["db"]["knowledge_table"] == os_db.knowledge_table_name
+
+    def test_matching_id_rejects_caller_override_of_connection_fields(self, tmp_path):
+        """Whitelist: a caller cannot redirect a referenced db by
+        supplying type / db_url / db_file / db_schema."""
+        from agno.os.routers.components.components import _resolve_db_in_config
+
+        os_db = self._make_os_db(tmp_path)
+        payload = {
+            "db": {
+                "id": os_db.id,
+                "type": "postgres",
+                "db_url": "postgresql://attacker/evil",
+                "db_file": "/evil.db",
+                "db_schema": "public",
+                "session_table": "custom_sessions",
+            },
+        }
+
+        out = _resolve_db_in_config(dict(payload), os_db, None)
+
+        resolved_db_dict = out["db"]
+        # Connection fields MUST come from os_db, never from the caller.
+        assert resolved_db_dict["type"] == "sqlite"
+        assert resolved_db_dict["db_file"] == os_db.db_file
+        assert resolved_db_dict.get("db_url") == os_db.db_url
+        assert resolved_db_dict["id"] == os_db.id
+        # The only caller-provided field that is allowed through is the
+        # whitelisted table-name override.
+        assert resolved_db_dict["session_table"] == "custom_sessions"
+
+    def test_matching_id_ignores_non_whitelisted_keys(self, tmp_path):
+        """Unknown keys in the payload must not leak into the stored config."""
+        from agno.os.routers.components.components import _resolve_db_in_config
+
+        os_db = self._make_os_db(tmp_path)
+        payload = {
+            "db": {
+                "id": os_db.id,
+                "session_table": "custom_sessions",
+                "arbitrary_extension": "something",
+            },
+        }
+
+        out = _resolve_db_in_config(dict(payload), os_db, None)
+
+        assert "arbitrary_extension" not in out["db"]
+        assert out["db"]["session_table"] == "custom_sessions"

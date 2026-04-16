@@ -393,6 +393,13 @@ class File(BaseModel):
     external: Optional[Any] = None
     format: Optional[str] = None  # E.g. `pdf`, `txt`, `csv`, `xml`, etc.
     name: Optional[str] = None  # Name of the file, mandatory for AWS Bedrock document input
+    # Anthropic-only: per-file citation preference. Ignored by other providers.
+    #   None  = follow the caller default (Claude enables citations unless the request
+    #           would also send output_format, in which case they are suppressed).
+    #   False = do not attach citations to this file.
+    #   True  = attach citations when the caller allows it; ignored (with a warning)
+    #           when the caller has disabled citations for the request.
+    citations: Optional[bool] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -474,8 +481,8 @@ class File(BaseModel):
                 content = response.content
                 mime_type = response.headers.get("Content-Type", "").split(";")[0]
                 return content, mime_type
-            except Exception:
-                log_error(f"Failed to download file from {self.url}")
+            except Exception as e:
+                log_error(f"Failed to download file from {self.url}: {str(e)}")
                 return None
         else:
             return None

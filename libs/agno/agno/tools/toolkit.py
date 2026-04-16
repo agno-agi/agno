@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_error, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_warning
 
 
 class Toolkit:
@@ -202,7 +202,7 @@ class Toolkit:
                 log_debug(f"Function: {f.name} registered with {self.name}")
         except Exception as e:
             func_name = self._get_tool_name(function)
-            logger.warning(f"Failed to create Function for: {func_name}")
+            log_warning(f"Failed to create Function for: {func_name}: {str(e)}")
             raise e
 
     def _register_decorated_tool(self, function: Function, name: Optional[str] = None, is_async: bool = False) -> None:
@@ -369,8 +369,8 @@ class Toolkit:
 
         try:
             file_path.relative_to(base_dir)
-        except ValueError:
-            log_error(f"Path escapes base directory: {file_name}")
+        except ValueError as e:
+            log_error(f"Path escapes base directory: {file_name}: {str(e)}")
             return False, base_dir
 
         return True, file_path
