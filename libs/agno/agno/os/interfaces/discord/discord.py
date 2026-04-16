@@ -42,7 +42,7 @@ class Discord(BaseInterface):
         self.prefix = prefix
         self.tags = tags or ["Discord"]
         self.public_key = public_key
-        self.application_id = application_id or getenv("DISCORD_APPLICATION_ID") or ""
+        self.application_id = application_id or getenv("DISCORD_APP_ID") or getenv("DISCORD_APPLICATION_ID") or ""
         self.bot_token = bot_token or getenv("DISCORD_BOT_TOKEN") or ""
         self.streaming = streaming
         self.show_reasoning = show_reasoning
