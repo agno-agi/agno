@@ -1,6 +1,7 @@
 from os import getenv
 from typing import Any, Dict, List, Optional, Union
 
+import httpx
 from fastapi.routing import APIRouter
 
 from agno.agent import Agent, RemoteAgent
@@ -8,7 +9,7 @@ from agno.os.interfaces.base import BaseInterface
 from agno.os.interfaces.discord.helpers import FALLBACK_ERROR_MESSAGE
 from agno.os.interfaces.discord.router import attach_routes
 from agno.team import RemoteTeam, Team
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
 
@@ -55,35 +56,15 @@ class Discord(BaseInterface):
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Discord requires an agent, team, or workflow")
 
-    def _register_commands(self) -> None:
-        if not self.application_id or not self.bot_token:
-            log_warning("Skipping command registration: application_id or bot_token not set")
-            return
-
-        try:
-            import httpx
-        except ImportError:
-            log_warning("httpx not installed, skipping command registration")
-            return
-
-        commands: List[Dict[str, Any]] = [
+    def _build_commands(self) -> List[Dict[str, Any]]:
+        return [
             {
                 "name": self.command_name,
                 "description": self.command_description,
                 "type": 1,
                 "options": [
-                    {
-                        "name": "message",
-                        "description": "Your message",
-                        "type": 3,
-                        "required": True,
-                    },
-                    {
-                        "name": "attachment",
-                        "description": "Upload an image or file",
-                        "type": 11,
-                        "required": False,
-                    },
+                    {"name": "message", "description": "Your message", "type": 3, "required": True},
+                    {"name": "attachment", "description": "Upload an image or file", "type": 11, "required": False},
                 ],
             },
             {
@@ -93,15 +74,19 @@ class Discord(BaseInterface):
             },
         ]
 
+    def _register_commands(self) -> None:
+        if not self.application_id or not self.bot_token:
+            log_warning("Skipping command registration: application_id or bot_token not set")
+            return
+
         url = f"https://discord.com/api/v10/applications/{self.application_id}/commands"
         headers = {"Authorization": f"Bot {self.bot_token}", "Content-Type": "application/json"}
 
         try:
-            resp = httpx.put(url, json=commands, headers=headers, timeout=15)
+            resp = httpx.put(url, json=self._build_commands(), headers=headers, timeout=15)
             if resp.is_success:
-                registered = resp.json()
-                names = [c.get("name", "?") for c in registered]
-                log_warning(f"Registered Discord commands: {names}")
+                names = [c.get("name", "?") for c in resp.json()]
+                log_info(f"Registered Discord commands: {names}")
             else:
                 log_error(f"Failed to register commands ({resp.status_code}): {resp.text}")
         except Exception as e:
