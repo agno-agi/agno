@@ -8,15 +8,32 @@ Renders Manim Community Edition animations with an Agno agent and attaches the m
 - `ffmpeg` on PATH
 - LaTeX is optional (only if your scenes use `MathTex` or `Tex`)
 
+### Voiceover (only if `enable_voiceover=True`)
+
+- `manim-voiceover` with a speech service extra:
+  ```bash
+  pip install "manim-voiceover[gtts]"     # free, Google TTS
+  # or [openai], [azure], [elevenlabs], [coqui], [recorder]
+  ```
+- **SoX** on PATH (used by `manim_voiceover` to trim silence and normalize audio). The toolkit prints a warning at startup if it's missing; voiceover renders still work without it but audio quality is degraded.
+  ```bash
+  winget install ChrisBagwell.SoX    # Windows
+  brew install sox                   # macOS
+  sudo apt install sox               # Debian / Ubuntu
+  ```
+  After installing on Windows, reload the VSCode window (`Ctrl+Shift+P` -> `Developer: Reload Window`) so the integrated terminal picks up the new PATH.
+
 ## Files
 
-- `manim_tools.py` - CLI demo. Runs a single prompt and prints attached video metadata. Good for smoke testing.
-- `manim_agentos.py` - Same agent wrapped in AgentOS for end-to-end UI testing.
+- `manim_tools.py` - CLI demo without voice. Runs a single prompt, saves the decoded mp4 to `tmp/saved/<id>.mp4`. Good for smoke testing.
+- `manim_tools_with_voice.py` - CLI demo with `enable_voiceover=True`. Renders a short narrated animation and saves it to `tmp/saved/<id>.mp4`. Requires `manim-voiceover` and SoX (see below).
+- `manim_agentos.py` - Same voice-enabled agent plus web research tools, wrapped in AgentOS for end-to-end UI testing.
 
 ## Run
 
 ```bash
 .venvs/demo/bin/python cookbook/91_tools/manim_tools/manim_tools.py
+.venvs/demo/bin/python cookbook/91_tools/manim_tools/manim_tools_with_voice.py
 .venvs/demo/bin/python cookbook/91_tools/manim_tools/manim_agentos.py
 ```
 
@@ -28,6 +45,8 @@ Every render is returned as `Video(content=bytes)`. Agno base64-encodes `content
 
 ## Notes
 
-- All on-disk artifacts land under `tmp/` (covered by the repo's global `tmp` gitignore rule): manim's intermediate output in `tmp/render/`, and the CLI demo's decoded copies in `tmp/saved/<video-id>.mp4`.
+- `ManimTools` writes each render's scene `.py` and `media_{run_id}/` subtree under its `output_dir`, reads the mp4 bytes, then deletes those artifacts (`delete_after_render=True` by default). Pass `delete_after_render=False` if you want to inspect them on disk.
+- The CLI demo's decoded mp4s (`tmp/saved/<video-id>.mp4`) are written by the cookbook itself, not the toolkit - they persist on purpose so you can play the result after the run.
+- `tmp/` is covered by the repo's global `tmp` gitignore rule.
 - Quality presets follow Manim CE: `l` = 480p15, `m` = 720p30, `h` = 1080p60, `k` = 2160p60.
 - The LLM composes the Scene; it occasionally uses an API that doesn't exist in your installed Manim version. On failure, the tool returns the stderr tail so the agent can self-correct.

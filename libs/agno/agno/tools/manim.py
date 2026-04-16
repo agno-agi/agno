@@ -7,12 +7,17 @@ The rendered mp4 is read into memory and attached as `Video(content=bytes)`.
 At serialization time Agno base64-encodes `content`, so any consumer of
 `RunOutput.videos` (AgentOS UI, Slack/WhatsApp interfaces, etc.) receives a
 self-contained, inlined video - no static file route required.
+
+By default each render's scene `.py` and its `media_{run_id}/` subtree are
+deleted once the mp4 bytes have been read. Pass `delete_after_render=False`
+if you want to inspect the render artifacts on disk.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import subprocess
 import sys
 import uuid
@@ -24,12 +29,26 @@ from agno.tools import Toolkit
 from agno.tools.function import ToolResult
 from agno.utils.log import log_info, log_warning
 
+try:
+    import manim  # type: ignore  # noqa: F401
+except ImportError:
+    raise ImportError("`manim` not installed. Please install using `pip install manim`")
+
 QUALITY_MAP = {
     "l": ("ql", "480p15"),
     "m": ("qm", "720p30"),
     "h": ("qh", "1080p60"),
     "k": ("qk", "2160p60"),
 }
+
+_VOICEOVER_INSTRUCTIONS = (
+    "Voiceovers are available via `manim_voiceover`. "
+    "Subclass `VoiceoverScene` instead of `Scene`, import a service from "
+    "`manim_voiceover.services` (e.g., `GTTSService`, `OpenAIService`), call "
+    "`self.set_speech_service(...)` at the top of `construct`, and wrap each "
+    "animation in `with self.voiceover(text=...) as tracker:` using "
+    "`run_time=tracker.duration` so animations sync to the narration."
+)
 
 
 class ManimTools(Toolkit):
@@ -39,6 +58,8 @@ class ManimTools(Toolkit):
         timeout_seconds: int = 180,
         quality: str = "m",
         python_executable: Optional[str] = None,
+        delete_after_render: bool = True,
+        enable_voiceover: bool = False,
         enable_render_scene: bool = True,
         enable_list_rendered_videos: bool = True,
         all: bool = False,
@@ -47,11 +68,32 @@ class ManimTools(Toolkit):
         if quality not in QUALITY_MAP:
             raise ValueError(f"quality must be one of {list(QUALITY_MAP.keys())}, got {quality!r}")
 
+        if enable_voiceover:
+            try:
+                import manim_voiceover  # type: ignore  # noqa: F401
+            except ImportError:
+                raise ImportError(
+                    "`manim_voiceover` is required when enable_voiceover=True. "
+                    'Install with `pip install "manim-voiceover[gtts]"` '
+                    "(swap the extra for your service: openai, azure, elevenlabs, coqui, recorder)."
+                )
+            if shutil.which("sox") is None:
+                log_warning(
+                    "SoX is not on PATH. manim_voiceover uses SoX to trim silence and "
+                    "normalize audio - voiceover renders will still run but audio quality "
+                    "will be degraded. Install SoX: "
+                    "`winget install ChrisBagwell.SoX` (Windows), "
+                    "`brew install sox` (macOS), or "
+                    "`sudo apt install sox` (Debian/Ubuntu)."
+                )
+
         self.output_dir = Path(output_dir).resolve()
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.timeout_seconds = timeout_seconds
         self.default_quality = quality
         self.python_executable = python_executable or sys.executable
+        self.delete_after_render = delete_after_render
+        self.voiceover_enabled = enable_voiceover
         self._rendered: List[dict] = []
 
         tools: List = []
@@ -66,6 +108,8 @@ class ManimTools(Toolkit):
             name="manim_tools",
             tools=tools,
             async_tools=async_tools,
+            instructions=_VOICEOVER_INSTRUCTIONS if enable_voiceover else None,
+            add_instructions=enable_voiceover,
             **kwargs,
         )
 
@@ -92,12 +136,14 @@ class ManimTools(Toolkit):
         matches = list(media_dir.glob(f"**/{scene_name}.mp4"))
         return matches[0] if matches else None
 
-    def _build_video(self, mp4_path: Path) -> Video:
-        return Video(
-            content=mp4_path.read_bytes(),
-            format="mp4",
-            mime_type="video/mp4",
-        )
+    def _cleanup(self, scene_file: Path, media_dir: Path) -> None:
+        if not self.delete_after_render:
+            return
+        try:
+            scene_file.unlink(missing_ok=True)
+        except OSError:
+            pass
+        shutil.rmtree(media_dir, ignore_errors=True)
 
     def render_scene(
         self,
@@ -110,7 +156,8 @@ class ManimTools(Toolkit):
         Args:
             scene_code (str): Full Python source for the scene. Must include
                 `from manim import *` (or equivalent imports) and a class named
-                exactly `scene_name` that subclasses `Scene` / `ThreeDScene` / etc.
+                exactly `scene_name` that subclasses `Scene` / `ThreeDScene` /
+                `VoiceoverScene`.
             scene_name (str): Class name of the scene to render. Must match the
                 class defined in `scene_code` and be importable as-is.
             quality (str, optional): Render quality: 'l' (480p15), 'm' (720p30),
@@ -146,15 +193,18 @@ class ManimTools(Toolkit):
                 timeout=self.timeout_seconds,
             )
         except subprocess.TimeoutExpired:
+            self._cleanup(scene_file, media_dir)
             return ToolResult(
                 content=f"Error: render timed out after {self.timeout_seconds}s for scene '{scene_name}'."
             )
         except FileNotFoundError as e:
+            self._cleanup(scene_file, media_dir)
             return ToolResult(content=f"Error: Python executable or manim not found: {e}")
 
         if result.returncode != 0:
             tail = "\n".join(result.stderr.splitlines()[-30:])
             log_warning(f"Manim render failed for {scene_name}: {tail}")
+            self._cleanup(scene_file, media_dir)
             return ToolResult(
                 content=(
                     f"Render failed for scene '{scene_name}' (returncode={result.returncode}).\n\nstderr tail:\n{tail}"
@@ -163,22 +213,27 @@ class ManimTools(Toolkit):
 
         mp4_path = self._locate_mp4(scene_file, scene_name, q, media_dir)
         if mp4_path is None:
+            self._cleanup(scene_file, media_dir)
             return ToolResult(
                 content=f"Render reported success for '{scene_name}' but no mp4 was found under {media_dir}."
             )
 
-        video = self._build_video(mp4_path)
-        size_mb = mp4_path.stat().st_size / (1024 * 1024)
+        mp4_bytes = mp4_path.read_bytes()
+        size_mb = len(mp4_bytes) / (1024 * 1024)
 
-        self._rendered.append(
-            {
-                "scene_name": scene_name,
-                "quality": q,
-                "filepath": str(mp4_path),
-                "size_mb": round(size_mb, 2),
-            }
-        )
+        record: dict = {
+            "scene_name": scene_name,
+            "quality": q,
+            "size_mb": round(size_mb, 2),
+        }
+        if not self.delete_after_render:
+            record["filepath"] = str(mp4_path)
 
+        self._rendered.append(record)
+
+        self._cleanup(scene_file, media_dir)
+
+        video = Video(content=mp4_bytes, format="mp4", mime_type="video/mp4")
         return ToolResult(
             content=(
                 f"Rendered '{scene_name}' at quality '{q}' ({size_mb:.2f} MB). "
@@ -201,8 +256,8 @@ class ManimTools(Toolkit):
 
         Returns:
             str: JSON-encoded list of render records (scene_name, quality,
-                filepath, size_mb, delivery), or a plain-text note if no
-                renders have happened yet.
+                size_mb, and filepath when `delete_after_render=False`), or
+                a plain-text note if no renders have happened yet.
         """
         if not self._rendered:
             return "No videos have been rendered in this session yet."

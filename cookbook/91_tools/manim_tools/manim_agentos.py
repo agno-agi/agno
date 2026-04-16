@@ -15,6 +15,8 @@ from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.tools.manim import ManimTools
+from agno.tools.website import WebsiteTools
+from agno.tools.websearch import WebSearchTools
 
 HERE = Path(__file__).parent
 OUTPUT_DIR = HERE / "tmp" / "render"
@@ -28,12 +30,17 @@ manim_agent = Agent(
             output_dir=OUTPUT_DIR,
             timeout_seconds=180,
             quality="h",
-        )
+            enable_voiceover=True,
+        ),
+        WebSearchTools(enable_search=True, enable_news=True),
+        WebsiteTools(),
     ],
-    description="You are an expert in Manim Community Edition. You write Scene subclasses in Python and render them into short animation videos.",
+    description="You are an expert in Manim Community Edition. You research a topic, then write Scene subclasses that explain it with synchronized narration.",
     instructions=[
-        "When the user asks for an animation, compose a single Python string containing `from manim import *` and a Scene subclass.",
-        "Keep scenes short (under ~10 seconds) unless asked for more.",
+        "For any animation topic, first research it: use WebSearchTools to find authoritative sources, then use WebsiteTools.read_url to read specific pages in depth.",
+        "Synthesize the key facts, then compose a single Python string containing `from manim import *` and a VoiceoverScene subclass.",
+        "Use voiceover: subclass `VoiceoverScene`, import a service from `manim_voiceover.services` (default to `GTTSService`), call `self.set_speech_service(...)` at the top of `construct`, and wrap each animation in `with self.voiceover(text=...) as tracker:` using `run_time=tracker.duration`.",
+        "Keep scenes short (under ~30 seconds) unless asked for more. The narration text should be factually grounded in what you researched.",
         "Always call `render_scene` with the full scene code and the class name.",
         "If a render fails, read the stderr tail and fix the scene code before retrying.",
     ],
