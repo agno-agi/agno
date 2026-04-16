@@ -18,10 +18,12 @@ def bot_api_headers(bot_token: str) -> Dict[str, str]:
     return {"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"}
 
 
-_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
-_MAX_EMBED_DESCRIPTION = 4096
-# Webhook follow-up messages have a 2000-char content limit; 1900 leaves room for overflow markers
-_FOLLOWUP_CHUNK_SIZE = 1900
+# Discord message/embed/thread limits — values come from the Discord API reference
+_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024  # 25 MB — Discord rejects uploads over this
+_MAX_EMBED_DESCRIPTION = 4096  # chars — longer descriptions get truncated + followups
+_FOLLOWUP_CHUNK_SIZE = 1900  # leaves ~100-char headroom under the 2000-char message limit for overflow markers
+_THREAD_NAME_MAX = 100  # chars — Discord rejects longer thread names
+_THREAD_AUTO_ARCHIVE_MINUTES = 60  # 60 = 1h, shortest auto-archive window Discord allows
 
 EMBED_COLOR_PROCESSING = 0x5865F2  # Discord blurple
 EMBED_COLOR_COMPLETE = 0x57F287  # Green
@@ -55,6 +57,21 @@ def build_status_embed(
     return embed
 
 
+async def _raise_for_status(resp: aiohttp.ClientResponse, operation: str) -> None:
+    # Converts non-2xx responses into aiohttp.ClientResponseError with the
+    # response body in the message — aiohttp's raise_for_status drops the body
+    if resp.ok:
+        return
+    body = await resp.text()
+    log_error(f"Failed to {operation} ({resp.status}): {body}")
+    raise aiohttp.ClientResponseError(resp.request_info, resp.history, status=resp.status, message=body)
+
+
+def _webhook_url(application_id: str, interaction_token: str, *, original: bool = False) -> str:
+    base = f"{DISCORD_API_BASE}/webhooks/{application_id}/{interaction_token}"
+    return f"{base}/messages/@original" if original else base
+
+
 async def edit_original_response(
     session: aiohttp.ClientSession,
     application_id: str,
@@ -64,7 +81,6 @@ async def edit_original_response(
     embeds: Optional[List[Dict[str, Any]]] = None,
     components: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
-    url = f"{DISCORD_API_BASE}/webhooks/{application_id}/{interaction_token}/messages/@original"
     payload: Dict[str, Any] = {"allowed_mentions": _SAFE_MENTIONS}
     if content is not None:
         payload["content"] = content
@@ -72,11 +88,8 @@ async def edit_original_response(
         payload["embeds"] = embeds
     if components is not None:
         payload["components"] = components
-    async with session.patch(url, json=payload) as resp:
-        if not resp.ok:
-            body = await resp.text()
-            log_error(f"Failed to edit original response ({resp.status}): {body}")
-            raise aiohttp.ClientResponseError(resp.request_info, resp.history, status=resp.status, message=body)
+    async with session.patch(_webhook_url(application_id, interaction_token, original=True), json=payload) as resp:
+        await _raise_for_status(resp, "edit original response")
 
 
 async def send_followup_message(
@@ -87,17 +100,13 @@ async def send_followup_message(
     content: Optional[str] = None,
     embeds: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[str]:
-    url = f"{DISCORD_API_BASE}/webhooks/{application_id}/{interaction_token}"
     payload: Dict[str, Any] = {"allowed_mentions": _SAFE_MENTIONS}
     if content is not None:
         payload["content"] = content
     if embeds is not None:
         payload["embeds"] = embeds
-    async with session.post(url, json=payload) as resp:
-        if not resp.ok:
-            body = await resp.text()
-            log_error(f"Failed to send followup ({resp.status}): {body}")
-            raise aiohttp.ClientResponseError(resp.request_info, resp.history, status=resp.status, message=body)
+    async with session.post(_webhook_url(application_id, interaction_token), json=payload) as resp:
+        await _raise_for_status(resp, "send followup")
         data = await resp.json()
         return data.get("id")
 
@@ -109,7 +118,6 @@ async def upload_webhook_file(
     content_bytes: bytes,
     filename: str,
 ) -> None:
-    url = f"{DISCORD_API_BASE}/webhooks/{application_id}/{interaction_token}"
     form = aiohttp.FormData()
     form.add_field(
         "payload_json",
@@ -117,11 +125,8 @@ async def upload_webhook_file(
         content_type="application/json",
     )
     form.add_field("files[0]", content_bytes, filename=filename)
-    async with session.post(url, data=form) as resp:
-        if not resp.ok:
-            body = await resp.text()
-            log_error(f"Failed to upload file ({resp.status}): {body}")
-            raise aiohttp.ClientResponseError(resp.request_info, resp.history, status=resp.status, message=body)
+    async with session.post(_webhook_url(application_id, interaction_token), data=form) as resp:
+        await _raise_for_status(resp, "upload file")
 
 
 async def download_attachment(
@@ -235,11 +240,10 @@ async def send_response_media(
     response: Any,
 ) -> None:
     for attr, label, default_name in _MEDIA_UPLOAD_CONFIG:
-        items = getattr(response, attr, None)
-        if not items:
-            continue
-        for item in items:
-            content_bytes = item.get_content_bytes()
+        for item in getattr(response, attr, None) or []:
+            # aget_content_bytes is async so URL/file-backed media don't block
+            # the event loop during the load (items with inline bytes return fast)
+            content_bytes = await item.aget_content_bytes()
             if not content_bytes:
                 continue
             filename = getattr(item, "filename", None) or default_name
@@ -249,18 +253,21 @@ async def send_response_media(
                 log_error(f"Failed to upload {label}: {e}")
 
 
-def extract_user_name(data: dict) -> str:
+def extract_user_name(data: Dict[str, Any]) -> str:
+    # Guild interactions nest the user under member.user; DMs put it at the top
+    # level. Prefer the display name (global_name), fall back to username then id.
     member = data.get("member")
-    sources = []
-    if isinstance(member, dict) and isinstance(member.get("user"), dict):
-        sources.append(member["user"])
-    if isinstance(data.get("user"), dict):
-        sources.append(data["user"])
-    for src in sources:
-        name = src.get("global_name") or src.get("username")
+    candidates: List[Optional[Dict[str, Any]]] = [
+        member.get("user") if isinstance(member, dict) else None,
+        data.get("user"),
+    ]
+    for user in candidates:
+        if not isinstance(user, dict):
+            continue
+        name = user.get("global_name") or user.get("username") or user.get("id")
         if name:
             return str(name)
-    return str((sources[0] if sources else {}).get("id", "")) or "user"
+    return "user"
 
 
 def format_attribution(user_name: str, message: str, max_len: int = 2000) -> str:
@@ -301,39 +308,13 @@ async def create_message_thread(
     name: str,
     bot_token: str,
 ) -> Optional[str]:
+    # 60 = Discord's shortest auto-archive window (1h); threads created for
+    # single-turn Q&A don't need longer retention since the conversation
+    # completes within seconds
     url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}/threads"
-    headers = bot_api_headers(bot_token)
-    async with session.post(url, json={"name": name[:100], "auto_archive_duration": 60}, headers=headers) as resp:
+    payload = {"name": name[:_THREAD_NAME_MAX], "auto_archive_duration": _THREAD_AUTO_ARCHIVE_MINUTES}
+    async with session.post(url, json=payload, headers=bot_api_headers(bot_token)) as resp:
         if resp.ok:
             data = await resp.json()
             return data.get("id")
         return None
-
-
-async def post_channel_message(
-    session: aiohttp.ClientSession,
-    channel_id: str,
-    content: str,
-    bot_token: str,
-) -> Optional[str]:
-    url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages"
-    headers = bot_api_headers(bot_token)
-    payload = {"content": content[:2000], "allowed_mentions": _SAFE_MENTIONS}
-    async with session.post(url, json=payload, headers=headers) as resp:
-        if resp.ok:
-            data = await resp.json()
-            return data.get("id")
-        return None
-
-
-async def edit_channel_message(
-    session: aiohttp.ClientSession,
-    channel_id: str,
-    message_id: str,
-    content: str,
-    bot_token: str,
-) -> None:
-    url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}"
-    headers = bot_api_headers(bot_token)
-    async with session.patch(url, json={"content": content[:2000]}, headers=headers):
-        pass
