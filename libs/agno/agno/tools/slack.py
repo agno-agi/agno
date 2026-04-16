@@ -87,6 +87,26 @@ class SlackTools(Toolkit):
                 "When you have a `Slack thread_ts` in your context/dependencies, use it."
             )
 
+        # Canvas tools — collaborative documents within Slack
+        canvas_tools = {
+            "create_canvas",
+            "create_channel_canvas",
+            "edit_canvas",
+            "delete_canvas",
+            "lookup_canvas_sections",
+            "set_canvas_access",
+        }
+        if canvas_tools & enabled:
+            text = (
+                "**Canvas tools** — create and manage collaborative documents in Slack.\n"
+                "- `create_canvas` creates a standalone canvas; `create_channel_canvas` creates one attached to a channel.\n"
+                "- To edit a canvas, first use `lookup_canvas_sections` to find section IDs, then `edit_canvas`.\n"
+                "- Content uses markdown format (headings, bold, lists, code blocks, tables up to 300 cells).\n"
+                "- `delete_canvas` is permanent and cannot be undone.\n"
+                "- Requires `canvases:read` and `canvases:write` bot scopes."
+            )
+            sections.append(text)
+
         # Only inject guidance when there are multiple tools to choose between
         if len(sections) < 2:
             return ""
@@ -131,6 +151,7 @@ class SlackTools(Toolkit):
         enable_list_users: bool = False,
         enable_get_user_info: bool = False,
         enable_get_channel_info: bool = False,
+        enable_canvas: bool = False,
         all: bool = False,
         ssl: Optional[SSLContext] = None,
         max_file_size: int = 1_073_741_824,  # 1GB
@@ -158,6 +179,8 @@ class SlackTools(Toolkit):
             enable_list_users (bool): Whether to enable the list_users tool. Defaults to False.
             enable_get_user_info (bool): Whether to enable the get_user_info tool. Defaults to False.
             enable_get_channel_info (bool): Whether to enable the get_channel_info tool. Defaults to False.
+            enable_canvas (bool): Whether to enable all Canvas tools (create, edit, delete, lookup sections,
+                manage access). Requires canvases:read and canvases:write bot scopes. Defaults to False.
             all (bool): Whether to enable all tools. Defaults to False.
             ssl (SSLContext): Optional SSL context for the Slack WebClient. Defaults to None.
             max_file_size (int): Maximum file size in bytes for uploads and downloads. Defaults to 1GB.
@@ -202,6 +225,13 @@ class SlackTools(Toolkit):
             tools.append(self.get_user_info)
         if enable_get_channel_info or all:
             tools.append(self.get_channel_info)
+        if enable_canvas or all:
+            tools.append(self.create_canvas)
+            tools.append(self.create_channel_canvas)
+            tools.append(self.edit_canvas)
+            tools.append(self.delete_canvas)
+            tools.append(self.lookup_canvas_sections)
+            tools.append(self.set_canvas_access)
 
         # Build tool instructions dynamically based on enabled tools
         if kwargs.get("instructions") is None:
@@ -787,4 +817,182 @@ class SlackTools(Toolkit):
             )
         except SlackApiError as e:
             logger.exception("Error getting channel info")
+            return json.dumps({"error": str(e)})
+
+    # ── Canvas tools ────────────────────────────────────────────────
+
+    def create_canvas(self, title: Optional[str] = None, markdown: Optional[str] = None) -> str:
+        """Create a standalone Slack canvas.
+
+        Args:
+            title (str): Optional title for the canvas.
+            markdown (str): Optional initial content in markdown format. Supports headings, bold, italic,
+                lists, code blocks, and tables (max 300 cells).
+
+        Returns:
+            str: A JSON string containing the canvas_id of the newly created canvas.
+        """
+        try:
+            kwargs: Dict[str, Any] = {}
+            if title:
+                kwargs["title"] = title
+            if markdown:
+                kwargs["document_content"] = {"type": "markdown", "markdown": markdown}
+            response = self.client.canvases_create(**kwargs)
+            return json.dumps({"ok": True, "canvas_id": response.get("canvas_id", "")})
+        except SlackApiError as e:
+            logger.exception("Error creating canvas")
+            return json.dumps({"error": str(e)})
+
+    def create_channel_canvas(
+        self, channel_id: str, title: Optional[str] = None, markdown: Optional[str] = None
+    ) -> str:
+        """Create a canvas attached to a Slack channel.
+
+        Args:
+            channel_id (str): The channel ID to attach the canvas to.
+            title (str): Optional title for the canvas.
+            markdown (str): Optional initial content in markdown format.
+
+        Returns:
+            str: A JSON string containing the canvas_id of the newly created canvas.
+        """
+        try:
+            kwargs: Dict[str, Any] = {"channel_id": channel_id}
+            if title:
+                kwargs["title"] = title
+            if markdown:
+                kwargs["document_content"] = {"type": "markdown", "markdown": markdown}
+            response = self.client.conversations_canvases_create(**kwargs)
+            return json.dumps({"ok": True, "canvas_id": response.get("canvas_id", "")})
+        except SlackApiError as e:
+            logger.exception("Error creating channel canvas")
+            return json.dumps({"error": str(e)})
+
+    def edit_canvas(
+        self,
+        canvas_id: str,
+        operation: Literal["insert_at_start", "insert_at_end", "insert_before", "insert_after", "replace", "delete"],
+        markdown: Optional[str] = None,
+        section_id: Optional[str] = None,
+    ) -> str:
+        """Edit an existing Slack canvas. Only one operation per call.
+
+        Args:
+            canvas_id (str): The ID of the canvas to edit.
+            operation (str): The edit operation. One of: insert_at_start, insert_at_end,
+                insert_before, insert_after, replace, delete.
+                Operations insert_before, insert_after, replace, and delete require a section_id.
+                Use lookup_canvas_sections to find section IDs first.
+            markdown (str): The content in markdown format. Required for all operations except delete.
+            section_id (str): The target section ID. Required for insert_before, insert_after,
+                replace, and delete. Get section IDs from lookup_canvas_sections.
+
+        Returns:
+            str: A JSON string indicating success or error.
+        """
+        section_ops = {"insert_before", "insert_after", "replace", "delete"}
+        if operation in section_ops and not section_id:
+            return json.dumps({"error": f"section_id is required for '{operation}' operation"})
+        if operation != "delete" and not markdown:
+            return json.dumps({"error": f"markdown content is required for '{operation}' operation"})
+
+        try:
+            change: Dict[str, Any] = {"operation": operation}
+            if section_id:
+                change["section_id"] = section_id
+            if markdown:
+                change["document_content"] = {"type": "markdown", "markdown": markdown}
+            response = self.client.canvases_edit(canvas_id=canvas_id, changes=[change])
+            return json.dumps({"ok": response.get("ok", False)})
+        except SlackApiError as e:
+            logger.exception("Error editing canvas")
+            return json.dumps({"error": str(e)})
+
+    def delete_canvas(self, canvas_id: str) -> str:
+        """Permanently delete a Slack canvas. This action cannot be undone.
+
+        Args:
+            canvas_id (str): The ID of the canvas to delete.
+
+        Returns:
+            str: A JSON string indicating success or error.
+        """
+        try:
+            response = self.client.canvases_delete(canvas_id=canvas_id)
+            return json.dumps({"ok": response.get("ok", False)})
+        except SlackApiError as e:
+            logger.exception("Error deleting canvas")
+            return json.dumps({"error": str(e)})
+
+    def lookup_canvas_sections(
+        self,
+        canvas_id: str,
+        section_types: Optional[List[Literal["h1", "h2", "h3", "any_header"]]] = None,
+        contains_text: Optional[str] = None,
+    ) -> str:
+        """Find sections in a canvas by heading type or text content.
+
+        Use this to get section IDs needed for edit_canvas operations
+        (insert_before, insert_after, replace, delete).
+
+        Args:
+            canvas_id (str): The ID of the canvas to search.
+            section_types (list): Filter by heading level: h1, h2, h3, or any_header.
+            contains_text (str): Filter sections containing this text.
+
+        Returns:
+            str: A JSON string containing a list of matching section objects with their IDs.
+        """
+        try:
+            criteria: Dict[str, Any] = {}
+            if section_types:
+                criteria["section_types"] = section_types
+            if contains_text:
+                criteria["contains_text"] = contains_text
+            response = self.client.canvases_sections_lookup(canvas_id=canvas_id, criteria=criteria)
+            return json.dumps({"ok": True, "sections": response.get("sections", [])})
+        except SlackApiError as e:
+            logger.exception("Error looking up canvas sections")
+            return json.dumps({"error": str(e)})
+
+    def set_canvas_access(
+        self,
+        canvas_id: str,
+        access_level: Literal["read", "write", "owner"],
+        user_ids: Optional[List[str]] = None,
+        channel_ids: Optional[List[str]] = None,
+    ) -> str:
+        """Set access permissions on a Slack canvas.
+
+        Grant read, write, or owner access to specific users or channels.
+        Cannot pass both user_ids and channel_ids in a single call.
+        Owner access can only be granted to users, not channels.
+
+        Args:
+            canvas_id (str): The ID of the canvas.
+            access_level (str): The access level to grant: read, write, or owner.
+            user_ids (list): User IDs to grant access to. Cannot be used with channel_ids.
+            channel_ids (list): Channel IDs to grant access to. Cannot be used with user_ids.
+
+        Returns:
+            str: A JSON string indicating success or error.
+        """
+        if not user_ids and not channel_ids:
+            return json.dumps({"error": "Either user_ids or channel_ids is required"})
+        if user_ids and channel_ids:
+            return json.dumps({"error": "Cannot pass both user_ids and channel_ids in a single call"})
+        if access_level == "owner" and channel_ids:
+            return json.dumps({"error": "Owner access can only be granted to users, not channels"})
+
+        try:
+            kwargs: Dict[str, Any] = {"canvas_id": canvas_id, "access_level": access_level}
+            if user_ids:
+                kwargs["user_ids"] = user_ids
+            if channel_ids:
+                kwargs["channel_ids"] = channel_ids
+            response = self.client.canvases_access_set(**kwargs)
+            return json.dumps({"ok": response.get("ok", False)})
+        except SlackApiError as e:
+            logger.exception("Error setting canvas access")
             return json.dumps({"error": str(e)})
