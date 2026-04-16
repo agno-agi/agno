@@ -619,6 +619,12 @@ def get_team_router(
         dependencies=[Depends(require_resource_access("teams", "read", "team_id"))],
     )
     async def get_team(team_id: str, request: Request) -> TeamResponse:
+        # Check if it's a factory first — return factory info without requiring a RequestContext
+        if os.teams:
+            for t in os.teams:
+                if isinstance(t, TeamFactory) and t.id == team_id:
+                    return TeamResponse.from_factory(t)
+
         try:
             team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
         except FactoryContextRequired:

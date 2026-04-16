@@ -9,7 +9,10 @@ from fastmcp.server.http import (
     StarletteWithLifespan,
 )
 
+from agno.agent.factory import AgentFactory
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.team.factory import TeamFactory
+from agno.workflow.factory import WorkflowFactory
 from agno.db.schemas import UserMemory
 from agno.os.routers.memory.schemas import (
     UserMemorySchema,
@@ -73,9 +76,30 @@ def get_mcp_server(
             evals=os._get_evals_config(),
             metrics=os._get_metrics_config(),
             traces=os._get_traces_config(),
-            agents=[AgentSummaryResponse.from_agent(agent) for agent in os.agents] if os.agents else [],
-            teams=[TeamSummaryResponse.from_team(team) for team in os.teams] if os.teams else [],
-            workflows=[WorkflowSummaryResponse.from_workflow(w) for w in os.workflows] if os.workflows else [],
+            agents=[
+                AgentSummaryResponse(id=a.id, name=a.name, description=a.description)
+                if isinstance(a, AgentFactory)
+                else AgentSummaryResponse.from_agent(a)
+                for a in os.agents
+            ]
+            if os.agents
+            else [],
+            teams=[
+                TeamSummaryResponse(id=t.id, name=t.name, description=t.description)
+                if isinstance(t, TeamFactory)
+                else TeamSummaryResponse.from_team(t)
+                for t in os.teams
+            ]
+            if os.teams
+            else [],
+            workflows=[
+                WorkflowSummaryResponse(id=w.id, name=w.name, description=w.description)
+                if isinstance(w, WorkflowFactory)
+                else WorkflowSummaryResponse.from_workflow(w)
+                for w in os.workflows
+            ]
+            if os.workflows
+            else [],
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.prefix)
                 for interface in os.interfaces

@@ -394,7 +394,11 @@ class AgentOS:
             get_home_router(self),
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
-            get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
+            get_eval_router(
+                dbs=self.dbs,
+                agents=[a for a in self.agents if not isinstance(a, AgentFactory)] if self.agents else None,
+                teams=[t for t in self.teams if not isinstance(t, TeamFactory)] if self.teams else None,
+            ),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),
@@ -465,7 +469,11 @@ class AgentOS:
         if self.a2a_interface and not has_a2a_interface:
             from agno.os.interfaces.a2a import A2A
 
-            a2a_interface = A2A(agents=self.agents, teams=self.teams, workflows=self.workflows)
+            a2a_interface = A2A(
+                agents=[a for a in self.agents if not isinstance(a, AgentFactory)] if self.agents else None,
+                teams=[t for t in self.teams if not isinstance(t, TeamFactory)] if self.teams else None,
+                workflows=[w for w in self.workflows if not isinstance(w, WorkflowFactory)] if self.workflows else None,
+            )
             self.interfaces.append(a2a_interface)
             self._add_router(app, a2a_interface.get_router())
 
@@ -752,7 +760,11 @@ class AgentOS:
         routers = [
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
-            get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
+            get_eval_router(
+                dbs=self.dbs,
+                agents=[a for a in self.agents if not isinstance(a, AgentFactory)] if self.agents else None,
+                teams=[t for t in self.teams if not isinstance(t, TeamFactory)] if self.teams else None,
+            ),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
             get_traces_router(dbs=self.dbs),

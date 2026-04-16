@@ -785,6 +785,12 @@ def get_agent_router(
         dependencies=[Depends(require_resource_access("agents", "read", "agent_id"))],
     )
     async def get_agent(agent_id: str, request: Request) -> AgentResponse:
+        # Check if it's a factory first — return factory info without requiring a RequestContext
+        if os.agents:
+            for a in os.agents:
+                if isinstance(a, AgentFactory) and a.id == agent_id:
+                    return AgentResponse.from_factory(a)
+
         try:
             agent = get_agent_by_id(
                 agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True

@@ -623,6 +623,14 @@ def get_workflow_router(
         request: Request,
         version: Optional[int] = Query(None, description="Workflow version to retrieve"),
     ) -> WorkflowResponse:
+        # Check if it's a factory first — return factory info without requiring a RequestContext
+        if os.workflows:
+            for w in os.workflows:
+                if isinstance(w, WorkflowFactory) and w.id == workflow_id:
+                    return WorkflowResponse(
+                        id=w.id, name=w.name, description=w.description
+                    )
+
         try:
             workflow = get_workflow_by_id(
                 workflow_id=workflow_id,

@@ -236,6 +236,8 @@ def get_base_router(
         # Collect models from local agents
         if os.agents:
             for agent in os.agents:
+                if isinstance(agent, AgentFactory):
+                    continue
                 model = cast(Model, agent.model)
                 if model and model.id is not None and model.provider is not None:
                     key = (model.id, model.provider)
@@ -245,6 +247,8 @@ def get_base_router(
         # Collect models from local teams
         if os.teams:
             for team in os.teams:
+                if isinstance(team, TeamFactory):
+                    continue
                 model = cast(Model, team.model)
                 if model and model.id is not None and model.provider is not None:
                     key = (model.id, model.provider)
