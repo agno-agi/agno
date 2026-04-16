@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 import aiohttp
 
 from agno.media import Audio, File, Image, Video
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
 FALLBACK_ERROR_MESSAGE = "Sorry, there was an error processing your message."
@@ -31,10 +31,6 @@ _MEDIA_SPECS = (
     ("videos", "video", "video.mp4"),
     ("audio", "audio", "audio.mp3"),
 )
-
-
-def bot_api_headers(bot_token: str) -> Dict[str, str]:
-    return {"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"}
 
 
 def _message_payload(**fields: Any) -> Dict[str, Any]:
@@ -165,21 +161,47 @@ class DiscordWebhook:
                     log_error(f"Failed to upload {label}: {e}")
 
 
-async def create_message_thread(
-    session: aiohttp.ClientSession,
-    channel_id: str,
-    message_id: str,
-    name: str,
-    bot_token: str,
-) -> Optional[str]:
-    # 100-char name and 60-min archive are Discord API limits for thread creation
-    url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}/threads"
-    payload = {"name": name[:100], "auto_archive_duration": 60}
-    async with session.post(url, json=payload, headers=bot_api_headers(bot_token)) as resp:
-        if not resp.ok:
-            log_warning(f"Thread creation failed ({resp.status})")
+@dataclass
+class DiscordBotClient:
+    # Bot-token authenticated client for operations outside the interaction scope:
+    # command registration (app-scoped), thread creation (channel-scoped). Pairs
+    # with DiscordWebhook, which handles interaction-scoped webhook token calls.
+    session: aiohttp.ClientSession
+    bot_token: str
+
+    async def _api_call(self, method: str, endpoint: str, operation: str, **kwargs: Any) -> Optional[Any]:
+        url = f"{DISCORD_API_BASE}{endpoint}"
+        headers = {"Authorization": f"Bot {self.bot_token}", "Content-Type": "application/json"}
+        try:
+            async with self.session.request(method, url, headers=headers, **kwargs) as resp:
+                if not resp.ok:
+                    log_warning(f"Failed to {operation} ({resp.status}): {await resp.text()}")
+                    return None
+                return await resp.json() if resp.content_length else None
+        except Exception as e:
+            log_error(f"Failed to {operation}: {e}")
             return None
-        return (await resp.json()).get("id")
+
+    async def create_message_thread(self, channel_id: str, message_id: str, name: str) -> Optional[str]:
+        # 100-char name and 60-min archive are Discord API limits for thread creation
+        payload = {"name": name[:100], "auto_archive_duration": 60}
+        data = await self._api_call(
+            "POST",
+            f"/channels/{channel_id}/messages/{message_id}/threads",
+            "create thread",
+            json=payload,
+        )
+        return data.get("id") if data else None
+
+    async def register_commands(self, application_id: str, commands: List[Dict[str, Any]]) -> None:
+        data = await self._api_call(
+            "PUT",
+            f"/applications/{application_id}/commands",
+            "register commands",
+            json=commands,
+        )
+        if data:
+            log_info(f"Registered Discord commands: {[c.get('name', '?') for c in data]}")
 
 
 async def download_attachment(

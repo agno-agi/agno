@@ -32,9 +32,9 @@ from agno.os.interfaces.discord.helpers import (
     _FOLLOWUP_CHUNK_SIZE,
     _MAX_EMBED_DESCRIPTION,
     FALLBACK_ERROR_MESSAGE,
+    DiscordBotClient,
     DiscordWebhook,
     build_status_embed,
-    create_message_thread,
     download_resolved_attachments,
     extract_interaction_options,
     extract_user,
@@ -239,8 +239,9 @@ def attach_routes(
                 await webhook.edit_original(content=attribution)
                 original_msg_id = await webhook.get_original_message_id()
                 if original_msg_id:
-                    thread_id = await create_message_thread(
-                        session, channel_id, original_msg_id, format_thread_name(message_text), bot_token
+                    bot_client = DiscordBotClient(session=session, bot_token=bot_token)
+                    thread_id = await bot_client.create_message_thread(
+                        channel_id, original_msg_id, format_thread_name(message_text)
                     )
 
             # Resolve session — use thread channel for scoping when we created one
