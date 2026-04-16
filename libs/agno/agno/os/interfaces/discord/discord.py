@@ -1,16 +1,15 @@
-import asyncio
 from os import getenv
 from typing import Any, Dict, List, Optional, Union
 
-import aiohttp
+import httpx
 from fastapi.routing import APIRouter
 
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.base import BaseInterface
-from agno.os.interfaces.discord.helpers import DiscordBotClient, FALLBACK_ERROR_MESSAGE
+from agno.os.interfaces.discord.helpers import DISCORD_API_BASE, FALLBACK_ERROR_MESSAGE
 from agno.os.interfaces.discord.router import attach_routes
 from agno.team import RemoteTeam, Team
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_error, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
 # Discord slash-command option types: 3 = STRING, 11 = ATTACHMENT
@@ -105,23 +104,26 @@ class Discord(BaseInterface):
             )
 
     def _register_commands(self) -> None:
+        # Sync at startup — get_router() runs inside AgentOS's lifecycle where
+        # an event loop may already be running, so asyncio.run() can't be used.
+        # httpx sync is simple and this is a one-off call, unlike the runtime
+        # thread-creation path which uses DiscordBotClient over aiohttp.
         if not self.application_id or not self.bot_token:
             log_warning("Skipping command registration: application_id or bot_token not set")
             return
-        # /new is reserved — any user entry named "new" is dropped so the
-        # interface's session-reset definition always wins
+        # /new is reserved — drop any user entry named "new" so the interface's
+        # session-reset definition always wins
         commands = [c for c in self.commands if c.get("name") != "new"] + [_NEW_COMMAND]
+        url = f"{DISCORD_API_BASE}/applications/{self.application_id}/commands"
+        headers = {"Authorization": f"Bot {self.bot_token}", "Content-Type": "application/json"}
         try:
-            asyncio.run(self._register_commands_async(commands))
+            resp = httpx.put(url, json=commands, headers=headers, timeout=15)
+            if resp.is_success:
+                log_info(f"Registered Discord commands: {[c.get('name', '?') for c in resp.json()]}")
+            else:
+                log_error(f"Failed to register commands ({resp.status_code}): {resp.text}")
         except Exception as e:
             log_error(f"Command registration error: {e}")
-
-    async def _register_commands_async(self, commands: List[Dict[str, Any]]) -> None:
-        # One-off session — this runs once at startup, before the router's
-        # long-lived aiohttp session exists
-        async with aiohttp.ClientSession() as session:
-            client = DiscordBotClient(session=session, bot_token=self.bot_token)
-            await client.register_commands(self.application_id, commands)
 
     def get_router(self) -> APIRouter:
         if self.register_commands:
