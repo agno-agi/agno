@@ -4563,6 +4563,76 @@ def _normalize_requirements_payload(
     return result
 
 
+def _merge_tools_preserving_approval(
+    original_tools: List[Any],
+    updated_tools_map: Dict[str, Any],
+) -> List[Any]:
+    """Merge updated tool executions from the continue payload with the original session tools.
+
+    When a client sends tool updates during continue_run, the payload typically
+    only includes HITL-relevant fields (confirmed, answered, user_input_schema, etc.)
+    and omits approval metadata (approval_type, approval_id). A naive replacement
+    would lose these fields, preventing the approval resolution gate from finding
+    and applying the admin's decision to the correct tools.
+
+    This function preserves approval_type and approval_id from the session originals
+    whenever the incoming tool does not carry them.
+    """
+    merged: List[Any] = []
+    for orig in original_tools:
+        updated = updated_tools_map.get(orig.tool_call_id)
+        if updated is not None:
+            for attr in ("approval_type", "approval_id"):
+                if getattr(updated, attr, None) is None and getattr(orig, attr, None) is not None:
+                    setattr(updated, attr, getattr(orig, attr))
+            merged.append(updated)
+        else:
+            merged.append(orig)
+    return merged
+
+
+def _backfill_approval_to_requirements(
+    run_response: Any,
+    old_requirements: Optional[List[Any]] = None,
+) -> None:
+    """Restore approval metadata on requirements' tool_execution objects after a continue payload merge.
+
+    During continue_run the client's requirements replace the session originals,
+    but approval_type/approval_id are typically absent from the client payload.
+    This function copies those fields back from two sources (checked in priority order):
+
+    1. run_response.tools — covers team-level approval tools whose metadata was
+       already preserved by _merge_tools_preserving_approval.
+    2. old_requirements (the pre-overwrite session requirements) — covers member-level
+       approval tools where run_response.tools only contains delegate_task_to_member
+       entries that have no approval_type. The original session requirements carry it.
+    """
+    reqs = getattr(run_response, "requirements", None)
+    if not reqs:
+        return
+
+    # Build lookup from both sources
+    by_id: Dict[str, Any] = {}
+    # Old requirements first (lower priority)
+    if old_requirements:
+        for old_req in old_requirements:
+            old_te = getattr(old_req, "tool_execution", None)
+            if old_te and old_te.tool_call_id:
+                by_id[old_te.tool_call_id] = old_te
+    # run_response.tools second (higher priority, overwrites)
+    for t in getattr(run_response, "tools", None) or []:
+        if t.tool_call_id and getattr(t, "approval_type", None) is not None:
+            by_id[t.tool_call_id] = t
+
+    for req in reqs:
+        te = getattr(req, "tool_execution", None)
+        if te and te.tool_call_id and te.tool_call_id in by_id:
+            src = by_id[te.tool_call_id]
+            for attr in ("approval_type", "approval_id"):
+                if getattr(te, attr, None) is None and getattr(src, attr, None) is not None:
+                    setattr(te, attr, getattr(src, attr))
+
+
 def _has_member_requirements(requirements: List[Any]) -> bool:
     """Check if any requirements are for member agents (have member_agent_id set)."""
     return any(getattr(req, "member_agent_id", None) is not None for req in requirements)
@@ -5214,17 +5284,21 @@ def continue_run_dispatch(
 
     run_response = cast(TeamRunOutput, run_response)
 
+    # Save old requirements before overwriting — needed to preserve approval fields for member-level tools
+    old_requirements = run_response.requirements
+
     # Normalize and apply requirements
     if requirements is not None:
         requirements = _normalize_requirements_payload(requirements)
         run_response.requirements = requirements
-        # Update tools from requirements
+        # Update tools from requirements, preserving approval fields the FE omits
         updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
         if updated_tools and run_response.tools:
             updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-            run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
+            run_response.tools = _merge_tools_preserving_approval(run_response.tools, updated_tools_map)
         elif updated_tools:
             run_response.tools = updated_tools
+        _backfill_approval_to_requirements(run_response, old_requirements=old_requirements)
 
         # Also apply any resolved approval
         if run_response.tools:
@@ -6245,6 +6319,9 @@ async def _acontinue_run(
 
                 run_response = cast(TeamRunOutput, run_response)
 
+                # Save old requirements before overwriting — needed for member-level approval fields
+                old_requirements = run_response.requirements
+
                 # Normalize and apply requirements
                 if requirements is not None:
                     requirements = _normalize_requirements_payload(requirements)
@@ -6252,11 +6329,10 @@ async def _acontinue_run(
                     updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
                     if updated_tools and run_response.tools:
                         updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                        run_response.tools = [
-                            updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools
-                        ]
+                        run_response.tools = _merge_tools_preserving_approval(run_response.tools, updated_tools_map)
                     elif updated_tools:
                         run_response.tools = updated_tools
+                    _backfill_approval_to_requirements(run_response, old_requirements=old_requirements)
 
                     # Also apply any resolved approval
                     if run_response.tools:
@@ -6580,6 +6656,9 @@ async def _acontinue_run_stream(
 
                 run_response = cast(TeamRunOutput, run_response)
 
+                # Save old requirements before overwriting — needed for member-level approval fields
+                old_requirements = run_response.requirements
+
                 # Normalize and apply requirements
                 if requirements is not None:
                     requirements = _normalize_requirements_payload(requirements)
@@ -6587,11 +6666,10 @@ async def _acontinue_run_stream(
                     updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
                     if updated_tools and run_response.tools:
                         updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                        run_response.tools = [
-                            updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools
-                        ]
+                        run_response.tools = _merge_tools_preserving_approval(run_response.tools, updated_tools_map)
                     elif updated_tools:
                         run_response.tools = updated_tools
+                    _backfill_approval_to_requirements(run_response, old_requirements=old_requirements)
 
                     # Also apply any resolved approval
                     if run_response.tools:

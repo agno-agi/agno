@@ -75,14 +75,12 @@ def _get_team_paused_content(run_response: TeamRunOutput) -> str:
 
 
 def _member_approval_already_exists(run_response: TeamRunOutput) -> bool:
-    """Return True if all requirements are member-propagated AND already have an approval_id.
-    """
+    """Return True if all requirements are member-propagated AND already have an approval_id."""
     reqs = run_response.requirements or []
     if not reqs:
         return False
     return all(
-        getattr(r, "member_agent_id", None) is not None
-        and getattr(r.tool_execution, "approval_id", None) is not None
+        getattr(r, "member_agent_id", None) is not None and getattr(r.tool_execution, "approval_id", None) is not None
         for r in reqs
     )
 

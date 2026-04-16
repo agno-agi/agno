@@ -124,7 +124,7 @@ async def team_response_streamer(
 async def team_continue_response_streamer(
     team: Union[Team, RemoteTeam],
     run_id: str,
-    requirements: List,
+    requirements: Optional[List] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
@@ -562,7 +562,7 @@ def get_team_router(
                 team_continue_response_streamer(
                     team,
                     run_id=run_id,
-                    requirements=updated_requirements or [],
+                    requirements=updated_requirements,
                     session_id=session_id,
                     user_id=user_id,
                     background_tasks=background_tasks,

@@ -11,6 +11,7 @@ via session.upsert_run(). This is critical for:
 import os
 
 import pytest
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.run.team import RunPausedEvent as TeamRunPausedEvent
