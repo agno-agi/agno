@@ -31,7 +31,6 @@ from agno.os.interfaces.discord.formatting import normalize_discord_markdown
 from agno.os.interfaces.discord.helpers import (
     _FOLLOWUP_CHUNK_SIZE,
     _MAX_EMBED_DESCRIPTION,
-    EMBED_COLOR_COMPLETE,
     FALLBACK_ERROR_MESSAGE,
     build_status_embed,
     create_message_thread,
@@ -210,7 +209,6 @@ def attach_routes(
             title="Complete",
             description=full_description[:_MAX_EMBED_DESCRIPTION],
             fields=[],
-            color=EMBED_COLOR_COMPLETE,
         )
         await edit_original_response(session, application_id, interaction_token, embeds=[embed])
 

@@ -19,10 +19,6 @@ _FOLLOWUP_CHUNK_SIZE = 1900  # ~100 chars under Discord's 2000-char message cap 
 _DOWNLOAD_TIMEOUT = 30
 _DOWNLOAD_CHUNK_SIZE = 64 * 1024
 
-EMBED_COLOR_PROCESSING = 0x5865F2  # Discord blurple
-EMBED_COLOR_COMPLETE = 0x57F287
-EMBED_COLOR_ERROR = 0xED4245
-
 # Parse-nothing prevents @everyone/@here/role pings from model-generated text
 _SAFE_MENTIONS: Dict[str, Any] = {"parse": []}
 
@@ -49,9 +45,8 @@ def build_status_embed(
     title: str,
     description: str,
     fields: List[Dict[str, Any]],
-    color: int = EMBED_COLOR_PROCESSING,
 ) -> Dict[str, Any]:
-    embed: Dict[str, Any] = {"title": title, "color": color}
+    embed: Dict[str, Any] = {"title": title}
     if description:
         embed["description"] = description
     if fields:

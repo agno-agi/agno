@@ -10,9 +10,6 @@ from agno.os.interfaces.discord.formatting import normalize_discord_markdown, no
 from agno.os.interfaces.discord.helpers import (
     _FOLLOWUP_CHUNK_SIZE,
     _MAX_EMBED_DESCRIPTION,
-    EMBED_COLOR_COMPLETE,
-    EMBED_COLOR_ERROR,
-    EMBED_COLOR_PROCESSING,
     build_status_embed,
     edit_original_response,
     send_followup_message,
@@ -197,14 +194,14 @@ class StreamState:
         cards = list(self.task_cards.values())[:_MAX_EMBED_FIELDS]
         return [card.to_embed_field() for card in cards]
 
-    def _build_embed(self, *, title: str, color: int, is_final: bool = False) -> Dict[str, Any]:
+    def _build_embed(self, *, title: str, is_final: bool = False) -> Dict[str, Any]:
         description = ""
         if self._content_parts:
             content = self.accumulated_content
             # Full normalization only at finalize; streaming uses lightweight version
             normalized = normalize_discord_markdown(content) if is_final else normalize_for_streaming(content)
             description = normalized[:_MAX_EMBED_DESCRIPTION]
-        return build_status_embed(title=title, description=description, fields=self._build_fields(), color=color)
+        return build_status_embed(title=title, description=description, fields=self._build_fields())
 
     # Display updates — rate-limited to avoid 429s
 
@@ -212,7 +209,7 @@ class StreamState:
         now = time.monotonic()
         if now - self.last_edit_time < _STREAM_EDIT_INTERVAL_SECONDS:
             return
-        embed = self._build_embed(title="Processing...", color=EMBED_COLOR_PROCESSING)
+        embed = self._build_embed(title="Processing...")
         try:
             await edit_original_response(self.http_session, self.application_id, self.interaction_token, embeds=[embed])
             self.last_edit_time = time.monotonic()
@@ -226,7 +223,6 @@ class StreamState:
         # error_status is authoritative; task card scan is fallback
         is_error = self.error_status == "error" or any(c.status == "error" for c in self.task_cards.values())
         title = "Error" if is_error else "Complete"
-        color = EMBED_COLOR_ERROR if is_error else EMBED_COLOR_COMPLETE
 
         content = self.accumulated_content
         if not content and not self.task_cards:
@@ -241,21 +237,19 @@ class StreamState:
 
         normalized = normalize_discord_markdown(content) if content else ""
         try:
-            await self._finalize_inner(normalized, title, color)
+            await self._finalize_inner(normalized, title)
         except Exception as e:
             log_warning(f"Finalize failed, falling back to plain text: {str(e)}")
             await self._finalize_plaintext(normalized)
 
-    async def _finalize_inner(self, normalized: str, title: str, color: int) -> None:
+    async def _finalize_inner(self, normalized: str, title: str) -> None:
         fields = self._build_fields()
         if len(normalized) <= _MAX_EMBED_DESCRIPTION:
-            embed = build_status_embed(title=title, description=normalized, fields=fields, color=color)
+            embed = build_status_embed(title=title, description=normalized, fields=fields)
             await edit_original_response(self.http_session, self.application_id, self.interaction_token, embeds=[embed])
             return
         # Content exceeds embed limit — truncated embed + overflow as follow-ups
-        embed = build_status_embed(
-            title=title, description=normalized[:_MAX_EMBED_DESCRIPTION], fields=fields, color=color
-        )
+        embed = build_status_embed(title=title, description=normalized[:_MAX_EMBED_DESCRIPTION], fields=fields)
         await edit_original_response(self.http_session, self.application_id, self.interaction_token, embeds=[embed])
         for part in chunk_text(normalized[_MAX_EMBED_DESCRIPTION:], _FOLLOWUP_CHUNK_SIZE):
             await send_followup_message(self.http_session, self.application_id, self.interaction_token, content=part)
