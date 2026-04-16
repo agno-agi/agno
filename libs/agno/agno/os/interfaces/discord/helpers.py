@@ -239,3 +239,75 @@ async def send_response_media(
                 await upload_webhook_file(session, application_id, interaction_token, content_bytes, filename)
             except Exception as e:
                 log_error(f"Failed to upload {label}: {e}")
+
+
+def extract_user_name(data: dict) -> str:
+    member = data.get("member")
+    sources = []
+    if isinstance(member, dict) and isinstance(member.get("user"), dict):
+        sources.append(member["user"])
+    if isinstance(data.get("user"), dict):
+        sources.append(data["user"])
+    for src in sources:
+        name = src.get("global_name") or src.get("username")
+        if name:
+            return str(name)
+    return str((sources[0] if sources else {}).get("id", "")) or "user"
+
+
+async def get_original_message_id(
+    session: aiohttp.ClientSession,
+    application_id: str,
+    interaction_token: str,
+) -> Optional[str]:
+    url = f"{DISCORD_API_BASE}/webhooks/{application_id}/{interaction_token}/messages/@original"
+    async with session.get(url) as resp:
+        if resp.ok:
+            data = await resp.json()
+            return data.get("id")
+        return None
+
+
+async def create_message_thread(
+    session: aiohttp.ClientSession,
+    channel_id: str,
+    message_id: str,
+    name: str,
+    bot_token: str,
+) -> Optional[str]:
+    url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}/threads"
+    headers = {"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"}
+    async with session.post(url, json={"name": name[:100], "auto_archive_duration": 60}, headers=headers) as resp:
+        if resp.ok:
+            data = await resp.json()
+            return data.get("id")
+        return None
+
+
+async def post_channel_message(
+    session: aiohttp.ClientSession,
+    channel_id: str,
+    content: str,
+    bot_token: str,
+) -> Optional[str]:
+    url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages"
+    headers = {"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"}
+    payload = {"content": content[:2000], "allowed_mentions": _SAFE_MENTIONS}
+    async with session.post(url, json=payload, headers=headers) as resp:
+        if resp.ok:
+            data = await resp.json()
+            return data.get("id")
+        return None
+
+
+async def edit_channel_message(
+    session: aiohttp.ClientSession,
+    channel_id: str,
+    message_id: str,
+    content: str,
+    bot_token: str,
+) -> None:
+    url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}"
+    headers = {"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"}
+    async with session.patch(url, json={"content": content[:2000]}, headers=headers):
+        pass

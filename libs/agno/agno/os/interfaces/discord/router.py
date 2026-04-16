@@ -33,18 +33,23 @@ from agno.os.interfaces.discord.helpers import (
     EMBED_COLOR_COMPLETE,
     FALLBACK_ERROR_MESSAGE,
     build_status_embed,
+    create_message_thread,
     download_resolved_attachments,
     edit_original_response,
     extract_interaction_options,
     extract_user_id,
+    extract_user_name,
+    get_original_message_id,
     send_followup_message,
     send_response_media,
 )
 from agno.os.interfaces.discord.security import verify_discord_signature
 from agno.os.interfaces.discord.state import (
+    _THREAD_CHANNEL_TYPES,
     InstanceState,
     StreamState,
     _build_session_scope,
+    insert_sentinel_session,
 )
 from agno.os.interfaces.shared import build_session_store_config, chunk_text, find_latest_session_id
 from agno.run.agent import RunOutput
@@ -66,8 +71,11 @@ INTERACTION_MESSAGE_COMPONENT = 3
 
 # Discord Interaction Response Types
 RESPONSE_PONG = 1
+RESPONSE_CHANNEL_MESSAGE_WITH_SOURCE = 4
 RESPONSE_DEFERRED_CHANNEL_MESSAGE = 5
 RESPONSE_DEFERRED_UPDATE_MESSAGE = 6
+
+EPHEMERAL_FLAG = 64
 
 
 class DiscordStatusResponse(BaseModel):
@@ -81,6 +89,8 @@ def attach_routes(
     workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
     public_key: Optional[str] = None,
     application_id: Optional[str] = None,
+    bot_token: Optional[str] = None,
+    reply_in_thread: bool = True,
     streaming: bool = True,
     # Sync path only — streaming always shows reasoning via task card events
     show_reasoning: bool = False,
@@ -224,14 +234,33 @@ def attach_routes(
                 return
 
             user_id = extract_user_id(data)
+            user_name = extract_user_name(data)
             channel_id = data.get("channel_id", "")
             guild_id = data.get("guild_id")
             channel_obj = data.get("channel", {})
             channel_type = channel_obj.get("type") if channel_obj else None
+            in_thread = channel_type in _THREAD_CHANNEL_TYPES
+
+            # --- Thread creation ---
+            # When reply_in_thread is enabled and not already in a thread,
+            # create a thread from the deferred response message
+            thread_id: Optional[str] = None
+            if reply_in_thread and bot_token and not in_thread:
+                # Show user attribution on the original message
+                attribution = f"{user_name}: {message_text}"[:2000]
+                await edit_original_response(session, application_id, interaction_token, content=attribution)
+                original_msg_id = await get_original_message_id(session, application_id, interaction_token)
+                if original_msg_id:
+                    thread_id = await create_message_thread(
+                        session, channel_id, original_msg_id, message_text, bot_token
+                    )
 
             # --- Resolve session ---
+            # Use thread channel for scoping when we created one
+            scope_channel = thread_id or channel_id
+            scope_channel_type = 11 if thread_id else channel_type  # PUBLIC_THREAD
             session_scope = _build_session_scope(
-                entity_id, channel_id, user_id, guild_id=guild_id, channel_type=channel_type
+                entity_id, scope_channel, user_id, guild_id=guild_id, channel_type=scope_channel_type
             )
             # Default to scope key; DB lookup may override with a persisted session
             session_id = session_scope
@@ -253,7 +282,9 @@ def attach_routes(
                 "session_id": session_id,
                 "metadata": {"user_id": user_id},
                 "dependencies": {
-                    "Discord channel_id": channel_id,
+                    "discord_channel_id": channel_id,
+                    "discord_guild_id": guild_id,
+                    "discord_thread_id": thread_id,
                 },
                 "add_dependencies_to_context": True,
                 **media_kwargs,
@@ -271,6 +302,49 @@ def attach_routes(
                 await edit_original_response(session, application_id, interaction_token, content=error_message)
             except Exception:
                 pass  # Last resort — original error already logged; avoid masking it
+
+    async def _handle_new_command(data: dict) -> Dict[str, Any]:
+        user_id = extract_user_id(data)
+        channel_id = data.get("channel_id", "")
+        channel_obj = data.get("channel", {})
+        channel_type = channel_obj.get("type") if channel_obj else None
+        guild_id = data.get("guild_id")
+
+        if channel_type in _THREAD_CHANNEL_TYPES:
+            return {
+                "type": RESPONSE_CHANNEL_MESSAGE_WITH_SOURCE,
+                "data": {"content": "Use /new in a main channel, not inside a thread.", "flags": EPHEMERAL_FLAG},
+            }
+
+        cfg = instance_state.session_config
+        if not cfg.has_db:
+            return {
+                "type": RESPONSE_CHANNEL_MESSAGE_WITH_SOURCE,
+                "data": {"content": "Session memory is not configured for this bot.", "flags": EPHEMERAL_FLAG},
+            }
+
+        import uuid
+
+        session_scope = _build_session_scope(
+            entity_id, channel_id, user_id, guild_id=guild_id, channel_type=channel_type
+        )
+        new_session_id = f"{session_scope}:{uuid.uuid4().hex[:8]}"
+        try:
+            await insert_sentinel_session(cfg, new_session_id, user_id, entity_id)
+        except Exception as e:
+            log_error(f"Failed to insert sentinel session: {e}")
+            return {
+                "type": RESPONSE_CHANNEL_MESSAGE_WITH_SOURCE,
+                "data": {"content": "Failed to reset conversation.", "flags": EPHEMERAL_FLAG},
+            }
+
+        return {
+            "type": RESPONSE_CHANNEL_MESSAGE_WITH_SOURCE,
+            "data": {
+                "content": "Fresh conversation started. Your next message begins a new session.",
+                "flags": EPHEMERAL_FLAG,
+            },
+        }
 
     # --- Route handlers ---
 
@@ -312,6 +386,11 @@ def attach_routes(
             return JSONResponse(content={"type": RESPONSE_PONG})
 
         if interaction_type == INTERACTION_APPLICATION_COMMAND:
+            command_name_val = (data.get("data") or {}).get("name", "")
+            # /new resets conversation — handled synchronously with ephemeral reply
+            if command_name_val == "new":
+                return JSONResponse(content=await _handle_new_command(data))
+
             interaction_id = data.get("id", "")
             # Discord retries if our ACK doesn't arrive in ~3s; returning a valid
             # deferred ACK for duplicates stops the retry cycle without reprocessing

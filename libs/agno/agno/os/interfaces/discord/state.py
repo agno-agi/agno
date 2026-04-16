@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Literal, Optional, Union
@@ -263,3 +264,25 @@ class StreamState:
                 )
         except Exception as e:
             log_warning(f"Plain text fallback also failed: {str(e)}")
+
+
+async def insert_sentinel_session(
+    cfg: SessionStoreConfig,
+    session_id: str,
+    user_id: Optional[str],
+    entity_id: Optional[str],
+) -> None:
+    now = int(time.time())
+    kwargs: Dict[str, Any] = {
+        "session_id": session_id,
+        "user_id": user_id,
+        "created_at": now,
+        "updated_at": now,
+    }
+    if entity_id:
+        kwargs[cfg.id_field] = entity_id
+    session = cfg.session_cls(**kwargs)
+    if cfg.is_async_db:
+        await cfg.db.upsert_session(session, deserialize=False)
+    else:
+        await asyncio.to_thread(cfg.db.upsert_session, session, deserialize=False)
