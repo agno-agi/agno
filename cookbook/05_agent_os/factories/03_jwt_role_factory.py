@@ -24,7 +24,7 @@ Test:
     # As admin (full tool access)
     curl -X POST http://localhost:7777/v1/agents/workspace-agent/runs \
         -H "Authorization: Bearer <ADMIN_TOKEN>" \
-        -F 'message=Add a new member to the workspace' \
+        -F 'message=Add member jane@acme.com as editor' \
         -F 'factory_input={"theme": "light"}' \
         -F 'stream=false'
 """
@@ -34,14 +34,13 @@ from typing import Literal, Optional
 
 import jwt as pyjwt
 from pydantic import BaseModel
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 
 from agno.agent import Agent, AgentFactory
 from agno.agent.factory import FactoryPermissionError, RequestContext
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
+from agno.os.middleware import JWTMiddleware
 
 # ---------------------------------------------------------------------------
 # Config
@@ -53,30 +52,6 @@ db = PostgresDb(
     id="factory-jwt-db",
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
 )
-
-
-# ---------------------------------------------------------------------------
-# Custom JWT middleware that populates request.state.claims
-# ---------------------------------------------------------------------------
-# The factory system reads ctx.trusted.claims from request.state.claims.
-# This simple middleware decodes the JWT and stores the full payload there.
-# In production, add proper signature verification and expiry checks.
-
-
-class FactoryJWTMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        auth_header = request.headers.get("authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
-            try:
-                payload = pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-                # Populate the fields that build_request_context reads:
-                request.state.claims = payload  # -> ctx.trusted.claims
-                request.state.user_id = payload.get("sub")
-            except pyjwt.PyJWTError:
-                pass  # Unauthenticated -- factory can decide what to do
-
-        return await call_next(request)
 
 
 # ---------------------------------------------------------------------------
@@ -171,8 +146,14 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
-# Add middleware AFTER get_app() -- populates request.state.claims
-app.add_middleware(FactoryJWTMiddleware)
+# Standard JWTMiddleware -- now sets request.state.claims automatically
+app.add_middleware(
+    JWTMiddleware,
+    verification_keys=[JWT_SECRET],
+    algorithm="HS256",
+    user_id_claim="sub",
+    validate=False,  # Set True in production
+)
 
 # ---------------------------------------------------------------------------
 # Run

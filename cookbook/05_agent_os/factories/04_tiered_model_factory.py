@@ -24,13 +24,12 @@ Test:
 from datetime import UTC, datetime, timedelta
 
 import jwt as pyjwt
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 
 from agno.agent import Agent, AgentFactory
 from agno.agent.factory import RequestContext
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
+from agno.os.middleware import JWTMiddleware
 
 # ---------------------------------------------------------------------------
 # Config
@@ -52,25 +51,6 @@ TIER_INSTRUCTIONS = {
         "Use examples, cite reasoning, and anticipate follow-up questions."
     ),
 }
-
-
-# ---------------------------------------------------------------------------
-# JWT middleware (same pattern as 03_jwt_role_factory.py)
-# ---------------------------------------------------------------------------
-
-
-class TierJWTMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        auth_header = request.headers.get("authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
-            try:
-                payload = pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-                request.state.claims = payload
-                request.state.user_id = payload.get("sub")
-            except pyjwt.PyJWTError:
-                pass
-        return await call_next(request)
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +95,15 @@ agent_os = AgentOS(
     agents=[tiered_factory],
 )
 app = agent_os.get_app()
-app.add_middleware(TierJWTMiddleware)
+
+# Standard JWTMiddleware -- request.state.claims is set automatically
+app.add_middleware(
+    JWTMiddleware,
+    verification_keys=[JWT_SECRET],
+    algorithm="HS256",
+    user_id_claim="sub",
+    validate=False,  # Set True in production
+)
 
 # ---------------------------------------------------------------------------
 # Run
