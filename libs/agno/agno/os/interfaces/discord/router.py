@@ -37,8 +37,7 @@ from agno.os.interfaces.discord.helpers import (
     create_message_thread,
     download_resolved_attachments,
     extract_interaction_options,
-    extract_user_id,
-    extract_user_name,
+    extract_user,
     format_attribution,
     format_thread_name,
 )
@@ -224,8 +223,7 @@ def attach_routes(
                 await webhook.edit_original(content="Please provide a message.")
                 return
 
-            user_id = extract_user_id(data)
-            user_name = extract_user_name(data)
+            user_id, user_name = extract_user(data)
             channel_id = data.get("channel_id", "")
             guild_id = data.get("guild_id")
             channel_obj = data.get("channel", {})
@@ -295,7 +293,7 @@ def attach_routes(
                 pass  # Last resort — original error already logged; avoid masking it
 
     async def _handle_new_command(data: dict) -> Dict[str, Any]:
-        user_id = extract_user_id(data)
+        user_id, _ = extract_user(data)
         channel_id = data.get("channel_id", "")
         channel_obj = data.get("channel", {})
         channel_type = channel_obj.get("type") if channel_obj else None

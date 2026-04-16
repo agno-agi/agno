@@ -13,10 +13,9 @@ from agno.utils.log import log_error, log_warning
 DISCORD_API_BASE = "https://discord.com/api/v10"
 FALLBACK_ERROR_MESSAGE = "Sorry, there was an error processing your message."
 
-# Discord API limits
 _MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 _MAX_EMBED_DESCRIPTION = 4096
-_FOLLOWUP_CHUNK_SIZE = 1900  # ~100 chars under Discord's 2000-char message cap for overflow markers
+_FOLLOWUP_CHUNK_SIZE = 1900  # 100 under Discord's 2000-char cap for "(1/N)" markers
 _DOWNLOAD_TIMEOUT = 30
 _DOWNLOAD_CHUNK_SIZE = 64 * 1024
 
@@ -25,16 +24,21 @@ _DOWNLOAD_CHUNK_SIZE = 64 * 1024
 # defense against model-generated or prompt-injected mentions reaching users.
 _SAFE_MENTIONS: Dict[str, Any] = {"parse": []}
 
+# (response_attr, log_label, default_filename) for each media type
+_MEDIA_SPECS = (
+    ("images", "image", "image.png"),
+    ("files", "file", "file.bin"),
+    ("videos", "video", "video.mp4"),
+    ("audio", "audio", "audio.mp3"),
+)
+
 
 def bot_api_headers(bot_token: str) -> Dict[str, str]:
     return {"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"}
 
 
 def _message_payload(**fields: Any) -> Dict[str, Any]:
-    # Centralises the "allowed_mentions is always set" guarantee — every
-    # outbound Discord payload passes through here, so the safety default
-    # is invariant-by-construction rather than a convention each call has
-    # to remember
+    # Every outbound payload passes here so allowed_mentions is never forgotten
     return {"allowed_mentions": _SAFE_MENTIONS, **{k: v for k, v in fields.items() if v is not None}}
 
 
@@ -61,7 +65,6 @@ def build_status_embed(
 
 
 def format_attribution(user_name: str, message: str, max_len: int = 2000) -> str:
-    # Ellipsis-trim so attribution reads as a quote rather than a mid-word cut
     prefix = f"{user_name}: "
     budget = max_len - len(prefix)
     if budget <= 0:
@@ -72,7 +75,6 @@ def format_attribution(user_name: str, message: str, max_len: int = 2000) -> str
 
 
 def format_thread_name(text: str, max_len: int = 100) -> str:
-    # Collapse whitespace so multi-line questions produce a clean one-line title
     name = " ".join(text.split()).strip() or "Conversation"
     return name[:max_len]
 
@@ -84,40 +86,23 @@ def extract_interaction_options(data: Dict[str, Any]) -> str:
     return ""
 
 
-def extract_user_id(data: Dict[str, Any]) -> str:
-    # Guild interactions nest the user under member.user; DMs use top-level user
-    member = data.get("member") or {}
-    return member.get("user", {}).get("id") or data.get("user", {}).get("id", "")
-
-
-def extract_user_name(data: Dict[str, Any]) -> str:
-    # Prefer display name (global_name) over username; fall back to user id.
+def extract_user(data: Dict[str, Any]) -> tuple[str, str]:
     # Guild interactions nest the user under member.user; DMs use top-level user.
+    # Prefer display name (global_name) over username for the returned name.
     member = data.get("member") or {}
     for user in (member.get("user"), data.get("user")):
         if not user:
             continue
-        name = user.get("global_name") or user.get("username") or user.get("id")
-        if name:
-            return str(name)
-    return "user"
-
-
-_MEDIA_SPECS = (
-    # (response_attr, log_label, default_filename)
-    ("images", "image", "image.png"),
-    ("files", "file", "file.bin"),
-    ("videos", "video", "video.mp4"),
-    ("audio", "audio", "audio.mp3"),
-)
+        user_id = user.get("id", "")
+        name = user.get("global_name") or user.get("username") or user_id or "user"
+        return user_id, name
+    return "", "user"
 
 
 @dataclass
 class DiscordWebhook:
-    # Bound to a single Discord interaction — every method hits an endpoint
-    # under /webhooks/{application_id}/{interaction_token}. Interaction tokens
-    # are valid for 15 minutes after ACK, so one instance spans a full /ask
-    # lifecycle.
+    # Bound to one Discord interaction. Interaction tokens expire 15 minutes
+    # after ACK — one instance spans one /ask lifecycle.
     session: aiohttp.ClientSession
     application_id: str
     interaction_token: str
@@ -170,7 +155,6 @@ class DiscordWebhook:
     async def send_response_media(self, response: Any) -> None:
         for attr, label, default_name in _MEDIA_SPECS:
             for item in getattr(response, attr, None) or []:
-                # aget_content_bytes is async so URL/file-backed media load off the event loop
                 content_bytes = await item.aget_content_bytes()
                 if not content_bytes:
                     continue
@@ -188,8 +172,7 @@ async def create_message_thread(
     name: str,
     bot_token: str,
 ) -> Optional[str]:
-    # 100-char name + 60-minute auto-archive are Discord's accepted edges;
-    # short archive is fine since single-turn Q&A threads complete fast
+    # 100-char name and 60-min archive are Discord API limits for thread creation
     url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}/threads"
     payload = {"name": name[:100], "auto_archive_duration": 60}
     async with session.post(url, json=payload, headers=bot_api_headers(bot_token)) as resp:
@@ -235,6 +218,8 @@ async def download_resolved_attachments(
 
     async def fetch(att: Dict[str, Any]) -> Optional[tuple]:
         url = att.get("url")
+        # Manifest size is user-controlled and may lie; download_attachment
+        # re-checks Content-Length + streams with a byte cap as defense-in-depth
         if not url or att.get("size", 0) > _MAX_ATTACHMENT_BYTES:
             if url:
                 log_warning(f"Attachment exceeds size cap, skipping: {att.get('filename')}")
