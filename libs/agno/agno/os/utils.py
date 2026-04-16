@@ -595,6 +595,9 @@ def get_agent_by_id(
                         raise FactoryError(
                             f"AgentFactory '{agent_id}' returned {type(result).__name__}, expected Agent."
                         )
+                    # Override the produced agent's ID with the factory's registration ID
+                    # so that SSE events (which use agent.id) match the FE's selected agent ID.
+                    result.id = agent_id
                     return result
                 # Prototype path — unchanged
                 if create_fresh and isinstance(agent, Agent):
@@ -650,6 +653,9 @@ async def get_agent_by_id_async(
                         raise FactoryError(
                             f"AgentFactory '{agent_id}' returned {type(result).__name__}, expected Agent."
                         )
+                    # Override the produced agent's ID with the factory's registration ID
+                    # so that SSE events (which use agent.id) match the FE's selected agent ID.
+                    result.id = agent_id
                     return result
                 if create_fresh and isinstance(agent, Agent):
                     fresh_agent = agent.deep_copy()
@@ -713,6 +719,7 @@ def get_team_by_id(
                     result = team.invoke(ctx_with_input)
                     if not isinstance(result, Team):
                         raise FactoryError(f"TeamFactory '{team_id}' returned {type(result).__name__}, expected Team.")
+                    result.id = team_id
                     return result
                 if create_fresh and isinstance(team, Team):
                     return team.deep_copy()
@@ -757,6 +764,7 @@ async def get_team_by_id_async(
                     result = await team.invoke_async(ctx_with_input)
                     if not isinstance(result, Team):
                         raise FactoryError(f"TeamFactory '{team_id}' returned {type(result).__name__}, expected Team.")
+                    result.id = team_id
                     return result
                 if create_fresh and isinstance(team, Team):
                     return team.deep_copy()
@@ -824,6 +832,7 @@ def get_workflow_by_id(
                         raise FactoryError(
                             f"WorkflowFactory '{workflow_id}' returned {type(result).__name__}, expected Workflow."
                         )
+                    result.id = workflow_id
                     return result
                 if create_fresh and isinstance(workflow, Workflow):
                     return workflow.deep_copy()
@@ -872,6 +881,7 @@ async def get_workflow_by_id_async(
                         raise FactoryError(
                             f"WorkflowFactory '{workflow_id}' returned {type(result).__name__}, expected Workflow."
                         )
+                    result.id = workflow_id
                     return result
                 if create_fresh and isinstance(workflow, Workflow):
                     return workflow.deep_copy()

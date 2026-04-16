@@ -221,7 +221,9 @@ class TestGetAgentByIdWithFactories:
         ctx = _make_ctx(user_id="user-1")
         result = get_agent_by_id("my-factory", agents=[factory], ctx=ctx)
         assert result is not None
-        assert result.id == "agent-user-1"
+        # The produced agent's ID is overridden to the factory's registration ID
+        # so that SSE events match the FE's selected agent ID.
+        assert result.id == "my-factory"
 
     def test_factory_without_context_raises(self):
         from agno.os.utils import get_agent_by_id

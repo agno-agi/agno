@@ -8,7 +8,10 @@ from fastapi import (
     WebSocket,
 )
 
+from agno.agent.factory import AgentFactory
 from agno.exceptions import RemoteServerUnavailableError
+from agno.team.factory import TeamFactory
+from agno.workflow.factory import WorkflowFactory
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.managers import websocket_manager
 from agno.os.routers.workflows.router import handle_workflow_subscription, handle_workflow_via_websocket
@@ -145,17 +148,34 @@ def get_base_router(
             agent_summaries = []
             if os.agents:
                 for agent in os.agents:
-                    agent_summaries.append(AgentSummaryResponse.from_agent(agent))
+                    if isinstance(agent, AgentFactory):
+                        agent_summaries.append(
+                            AgentSummaryResponse(id=agent.id, name=agent.name, description=agent.description)
+                        )
+                    else:
+                        agent_summaries.append(AgentSummaryResponse.from_agent(agent))
 
             team_summaries = []
             if os.teams:
                 for team in os.teams:
-                    team_summaries.append(TeamSummaryResponse.from_team(team))
+                    if isinstance(team, TeamFactory):
+                        team_summaries.append(
+                            TeamSummaryResponse(id=team.id, name=team.name, description=team.description)
+                        )
+                    else:
+                        team_summaries.append(TeamSummaryResponse.from_team(team))
 
             workflow_summaries = []
             if os.workflows:
                 for workflow in os.workflows:
-                    workflow_summaries.append(WorkflowSummaryResponse.from_workflow(workflow))
+                    if isinstance(workflow, WorkflowFactory):
+                        workflow_summaries.append(
+                            WorkflowSummaryResponse(
+                                id=workflow.id, name=workflow.name, description=workflow.description
+                            )
+                        )
+                    else:
+                        workflow_summaries.append(WorkflowSummaryResponse.from_workflow(workflow))
         except RemoteServerUnavailableError as e:
             raise HTTPException(
                 status_code=502,
