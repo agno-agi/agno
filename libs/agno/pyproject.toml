@@ -503,6 +503,7 @@ module = [
   "mem0.*",
   "memori.*",
   "mcp.*",
+  "nacl.*",
   "notion_client.*",
   "memory_profiler.*",
   "mistralai.*",

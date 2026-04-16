@@ -283,17 +283,22 @@ def attach_routes(
 
         await status_edit(STATUS_THINKING)
 
-        async for event in entity.arun(  # type: ignore[union-attr]
-            message,
-            user_id=user_id,
-            session_id=session_id,
-            stream=True,
-            stream_events=True,
-            yield_run_output=True,
-            dependencies=dependencies,
-            add_dependencies_to_context=True,
+        # Remote entities proxy to a server and don't accept dependency kwargs;
+        # only pass them to local agents/teams/workflows
+        is_remote = isinstance(entity, (RemoteAgent, RemoteTeam, RemoteWorkflow))
+        run_kwargs: Dict[str, Any] = {
+            "user_id": user_id,
+            "session_id": session_id,
+            "stream": True,
+            "stream_events": True,
+            "yield_run_output": True,
             **media,
-        ):
+        }
+        if not is_remote:
+            run_kwargs["dependencies"] = dependencies
+            run_kwargs["add_dependencies_to_context"] = True
+
+        async for event in entity.arun(message, **run_kwargs):  # type: ignore[union-attr, call-overload]
             if isinstance(event, (RunOutput, TeamRunOutput)):
                 if event.content:
                     final_content = event.content if isinstance(event.content, str) else str(event.content)
