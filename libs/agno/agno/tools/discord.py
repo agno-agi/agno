@@ -26,15 +26,28 @@ Required permissions vary by tool:
 - list_members, get_member_info: Server Members Intent (privileged, enable in Developer Portal)
 """
 
+import asyncio
 import json
+import time
 from os import getenv
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote as url_quote
 
-import requests
-
 from agno.tools import Toolkit
 from agno.utils.log import log_error
+
+try:
+    import httpx
+except ImportError:
+    raise ImportError("`httpx` not installed. Please install using `pip install httpx`")
+
+DISCORD_API_BASE = "https://discord.com/api/v10"
+
+# Suppress @everyone/@here from agent output
+_SAFE_MENTIONS: Dict[str, List[str]] = {"parse": []}
+
+_MAX_RETRIES = 3
+_REQUEST_TIMEOUT = 30
 
 
 class DiscordTools(Toolkit):
@@ -172,45 +185,62 @@ class DiscordTools(Toolkit):
         if not _token:
             raise ValueError("DISCORD_BOT_TOKEN is not set")
 
-        self.bot_token: str = _token
+        self._token: str = _token
         self.guild_id: Optional[str] = guild_id or getenv("DISCORD_GUILD_ID")
-        self.base_url = "https://discord.com/api/v10"
-        self.headers = {
-            "Authorization": f"Bot {self.bot_token}",
+        self._headers = {
+            "Authorization": f"Bot {self._token}",
             "Content-Type": "application/json",
         }
+        self._async_client: Optional[httpx.AsyncClient] = None
 
         tools: List[Any] = []
+        async_tools: List[tuple[Any, str]] = []
+
         if enable_send_message or all:
             tools.append(self.send_message)
+            async_tools.append((self.asend_message, "send_message"))
         if enable_send_message_in_thread or all:
             tools.append(self.send_message_in_thread)
+            async_tools.append((self.asend_message_in_thread, "send_message_in_thread"))
         if enable_get_channel_messages or all:
             tools.append(self.get_channel_messages)
+            async_tools.append((self.aget_channel_messages, "get_channel_messages"))
         if enable_list_channels or all:
             tools.append(self.list_channels)
+            async_tools.append((self.alist_channels, "list_channels"))
         if enable_create_thread or all:
             tools.append(self.create_thread)
+            async_tools.append((self.acreate_thread, "create_thread"))
         if enable_create_forum_thread or all:
             tools.append(self.create_forum_thread)
+            async_tools.append((self.acreate_forum_thread, "create_forum_thread"))
         if enable_get_thread_messages or all:
             tools.append(self.get_thread_messages)
+            async_tools.append((self.aget_thread_messages, "get_thread_messages"))
         if enable_get_channel_info or all:
             tools.append(self.get_channel_info)
+            async_tools.append((self.aget_channel_info, "get_channel_info"))
         if enable_add_reaction or all:
             tools.append(self.add_reaction)
+            async_tools.append((self.aadd_reaction, "add_reaction"))
         if enable_remove_reaction or all:
             tools.append(self.remove_reaction)
+            async_tools.append((self.aremove_reaction, "remove_reaction"))
         if enable_list_members or all:
             tools.append(self.list_members)
+            async_tools.append((self.alist_members, "list_members"))
         if enable_get_member_info or all:
             tools.append(self.get_member_info)
+            async_tools.append((self.aget_member_info, "get_member_info"))
         if enable_pin_message or all:
             tools.append(self.pin_message)
+            async_tools.append((self.apin_message, "pin_message"))
         if enable_send_embed or all:
             tools.append(self.send_embed)
+            async_tools.append((self.asend_embed, "send_embed"))
         if enable_delete_message or all:
             tools.append(self.delete_message)
+            async_tools.append((self.adelete_message, "delete_message"))
 
         if kwargs.get("instructions") is None:
             tool_names = [t.__name__ for t in tools]
@@ -219,41 +249,93 @@ class DiscordTools(Toolkit):
                 kwargs["instructions"] = built
                 kwargs.setdefault("add_instructions", True)
 
-        super().__init__(name="discord", tools=tools, **kwargs)
+        super().__init__(name="discord", tools=tools, async_tools=async_tools, **kwargs)
 
-    def _make_request(self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
         """Make a request to the Discord API that returns a JSON object.
 
-        Args:
-            method: HTTP method (GET, POST, PUT, DELETE, PATCH).
-            endpoint: API endpoint path (e.g., /channels/{id}/messages).
-            data: Optional JSON body for the request.
-
-        Returns:
-            Parsed JSON response, or empty dict for 204 No Content responses.
+        Handles 429 rate limits with retry_after backoff.
         """
-        url = f"{self.base_url}{endpoint}"
-        response = requests.request(method, url, headers=self.headers, json=data)
-        response.raise_for_status()
-        if response.status_code == 204:
-            return {}
-        return response.json() if response.text else {}
+        url = f"{DISCORD_API_BASE}{endpoint}"
+        for attempt in range(_MAX_RETRIES):
+            response = httpx.request(method, url, headers=self._headers, timeout=_REQUEST_TIMEOUT, **kwargs)
+            if response.status_code == 429:
+                retry_after = response.json().get("retry_after", 1.0)
+                if attempt < _MAX_RETRIES - 1:
+                    time.sleep(retry_after)
+                    continue
+                response.raise_for_status()
+            response.raise_for_status()
+            if response.status_code == 204:
+                return {}
+            return response.json()
+        return {}
 
-    def _make_list_request(self, method: str, endpoint: str) -> List[Dict[str, Any]]:
+    def _request_list(self, method: str, endpoint: str, **kwargs) -> List[Dict[str, Any]]:
         """Make a request to the Discord API that returns a JSON array.
 
-        Args:
-            method: HTTP method (typically GET).
-            endpoint: API endpoint path that returns a list.
-
-        Returns:
-            Parsed JSON array response, or empty list on failure.
+        Same retry logic as _request but casts result to list.
         """
-        url = f"{self.base_url}{endpoint}"
-        response = requests.request(method, url, headers=self.headers)
-        response.raise_for_status()
-        result = response.json() if response.text else []
-        return result if isinstance(result, list) else []
+        url = f"{DISCORD_API_BASE}{endpoint}"
+        for attempt in range(_MAX_RETRIES):
+            response = httpx.request(method, url, headers=self._headers, timeout=_REQUEST_TIMEOUT, **kwargs)
+            if response.status_code == 429:
+                retry_after = response.json().get("retry_after", 1.0)
+                if attempt < _MAX_RETRIES - 1:
+                    time.sleep(retry_after)
+                    continue
+                response.raise_for_status()
+            response.raise_for_status()
+            result = response.json()
+            return result if isinstance(result, list) else []
+        return []
+
+    def _get_async_client(self) -> httpx.AsyncClient:
+        """Lazy-init the shared async client."""
+        if self._async_client is None:
+            self._async_client = httpx.AsyncClient(timeout=_REQUEST_TIMEOUT)
+        return self._async_client
+
+    async def _arequest(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
+        """Async version of _request."""
+        client = self._get_async_client()
+        url = f"{DISCORD_API_BASE}{endpoint}"
+        for attempt in range(_MAX_RETRIES):
+            response = await client.request(method, url, headers=self._headers, **kwargs)
+            if response.status_code == 429:
+                retry_after = response.json().get("retry_after", 1.0)
+                if attempt < _MAX_RETRIES - 1:
+                    await asyncio.sleep(retry_after)
+                    continue
+                response.raise_for_status()
+            response.raise_for_status()
+            if response.status_code == 204:
+                return {}
+            return response.json()
+        return {}
+
+    async def _arequest_list(self, method: str, endpoint: str, **kwargs) -> List[Dict[str, Any]]:
+        """Async version of _request_list."""
+        client = self._get_async_client()
+        url = f"{DISCORD_API_BASE}{endpoint}"
+        for attempt in range(_MAX_RETRIES):
+            response = await client.request(method, url, headers=self._headers, **kwargs)
+            if response.status_code == 429:
+                retry_after = response.json().get("retry_after", 1.0)
+                if attempt < _MAX_RETRIES - 1:
+                    await asyncio.sleep(retry_after)
+                    continue
+                response.raise_for_status()
+            response.raise_for_status()
+            result = response.json()
+            return result if isinstance(result, list) else []
+        return []
+
+    async def aclose(self) -> None:
+        """Close the async HTTP client and release resources."""
+        if self._async_client is not None:
+            await self._async_client.aclose()
+            self._async_client = None
 
     def send_message(self, channel_id: str, message: str) -> str:
         """Send a message to a Discord channel.
@@ -266,7 +348,11 @@ class DiscordTools(Toolkit):
             A JSON string containing the created message object with id, content, author, and timestamp.
         """
         try:
-            result = self._make_request("POST", f"/channels/{channel_id}/messages", {"content": message})
+            result = self._request(
+                "POST",
+                f"/channels/{channel_id}/messages",
+                json={"content": message, "allowed_mentions": _SAFE_MENTIONS},
+            )
             return json.dumps(
                 {
                     "id": result.get("id", ""),
@@ -276,7 +362,28 @@ class DiscordTools(Toolkit):
                     "timestamp": result.get("timestamp", ""),
                 }
             )
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
+            log_error(f"Failed to send message to channel {channel_id}: {e}")
+            return json.dumps({"error": str(e)})
+
+    async def asend_message(self, channel_id: str, message: str) -> str:
+        """Async version of send_message."""
+        try:
+            result = await self._arequest(
+                "POST",
+                f"/channels/{channel_id}/messages",
+                json={"content": message, "allowed_mentions": _SAFE_MENTIONS},
+            )
+            return json.dumps(
+                {
+                    "id": result.get("id", ""),
+                    "channel_id": result.get("channel_id", ""),
+                    "content": result.get("content", ""),
+                    "author": result.get("author", {}).get("username", ""),
+                    "timestamp": result.get("timestamp", ""),
+                }
+            )
+        except httpx.HTTPStatusError as e:
             log_error(f"Failed to send message to channel {channel_id}: {e}")
             return json.dumps({"error": str(e)})
 
@@ -293,8 +400,11 @@ class DiscordTools(Toolkit):
             A JSON string containing the created message object with id, content, author, and timestamp.
         """
         try:
-            # Threads are channels in Discord
-            result = self._make_request("POST", f"/channels/{thread_id}/messages", {"content": message})
+            result = self._request(
+                "POST",
+                f"/channels/{thread_id}/messages",
+                json={"content": message, "allowed_mentions": _SAFE_MENTIONS},
+            )
             return json.dumps(
                 {
                     "id": result.get("id", ""),
@@ -304,7 +414,28 @@ class DiscordTools(Toolkit):
                     "timestamp": result.get("timestamp", ""),
                 }
             )
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
+            log_error(f"Failed to send message in thread {thread_id}: {e}")
+            return json.dumps({"error": str(e)})
+
+    async def asend_message_in_thread(self, thread_id: str, message: str) -> str:
+        """Async version of send_message_in_thread."""
+        try:
+            result = await self._arequest(
+                "POST",
+                f"/channels/{thread_id}/messages",
+                json={"content": message, "allowed_mentions": _SAFE_MENTIONS},
+            )
+            return json.dumps(
+                {
+                    "id": result.get("id", ""),
+                    "thread_id": result.get("channel_id", ""),
+                    "content": result.get("content", ""),
+                    "author": result.get("author", {}).get("username", ""),
+                    "timestamp": result.get("timestamp", ""),
+                }
+            )
+        except httpx.HTTPStatusError as e:
             log_error(f"Failed to send message in thread {thread_id}: {e}")
             return json.dumps({"error": str(e)})
 
@@ -321,7 +452,7 @@ class DiscordTools(Toolkit):
         """
         try:
             clamped = min(max(limit, 1), 100)
-            raw = self._make_list_request("GET", f"/channels/{channel_id}/messages?limit={clamped}")
+            raw = self._request_list("GET", f"/channels/{channel_id}/messages", params={"limit": clamped})
             messages = []
             for msg in raw:
                 entry: Dict[str, Any] = {
@@ -331,7 +462,6 @@ class DiscordTools(Toolkit):
                     "author_id": msg.get("author", {}).get("id", ""),
                     "timestamp": msg.get("timestamp", ""),
                 }
-                # Surface thread metadata so the LLM can discover threads
                 thread = msg.get("thread")
                 if thread:
                     entry["thread_id"] = thread.get("id", "")
@@ -339,7 +469,32 @@ class DiscordTools(Toolkit):
                     entry["thread_message_count"] = thread.get("message_count", 0)
                 messages.append(entry)
             return json.dumps({"count": len(messages), "messages": messages})
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
+            log_error(f"Failed to get messages from channel {channel_id}: {e}")
+            return json.dumps({"error": str(e)})
+
+    async def aget_channel_messages(self, channel_id: str, limit: int = 50) -> str:
+        """Async version of get_channel_messages."""
+        try:
+            clamped = min(max(limit, 1), 100)
+            raw = await self._arequest_list("GET", f"/channels/{channel_id}/messages", params={"limit": clamped})
+            messages = []
+            for msg in raw:
+                entry: Dict[str, Any] = {
+                    "id": msg.get("id", ""),
+                    "content": msg.get("content", ""),
+                    "author": msg.get("author", {}).get("username", ""),
+                    "author_id": msg.get("author", {}).get("id", ""),
+                    "timestamp": msg.get("timestamp", ""),
+                }
+                thread = msg.get("thread")
+                if thread:
+                    entry["thread_id"] = thread.get("id", "")
+                    entry["thread_name"] = thread.get("name", "")
+                    entry["thread_message_count"] = thread.get("message_count", 0)
+                messages.append(entry)
+            return json.dumps({"count": len(messages), "messages": messages})
+        except httpx.HTTPStatusError as e:
             log_error(f"Failed to get messages from channel {channel_id}: {e}")
             return json.dumps({"error": str(e)})
 
@@ -354,7 +509,7 @@ class DiscordTools(Toolkit):
             and position in the channel list.
         """
         try:
-            ch = self._make_request("GET", f"/channels/{channel_id}")
+            ch = self._request("GET", f"/channels/{channel_id}")
             return json.dumps(
                 {
                     "id": ch.get("id", ""),
@@ -367,7 +522,27 @@ class DiscordTools(Toolkit):
                     "parent_id": ch.get("parent_id"),
                 }
             )
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
+            log_error(f"Failed to get channel info for {channel_id}: {e}")
+            return json.dumps({"error": str(e)})
+
+    async def aget_channel_info(self, channel_id: str) -> str:
+        """Async version of get_channel_info."""
+        try:
+            ch = await self._arequest("GET", f"/channels/{channel_id}")
+            return json.dumps(
+                {
+                    "id": ch.get("id", ""),
+                    "name": ch.get("name", ""),
+                    "type": ch.get("type", 0),
+                    "topic": ch.get("topic", ""),
+                    "guild_id": ch.get("guild_id", ""),
+                    "position": ch.get("position", 0),
+                    "nsfw": ch.get("nsfw", False),
+                    "parent_id": ch.get("parent_id"),
+                }
+            )
+        except httpx.HTTPStatusError as e:
             log_error(f"Failed to get channel info for {channel_id}: {e}")
             return json.dumps({"error": str(e)})
 
@@ -384,7 +559,7 @@ class DiscordTools(Toolkit):
         if not gid:
             return json.dumps({"error": "guild_id is required. Provide it as an argument or set it during init."})
         try:
-            raw = self._make_list_request("GET", f"/guilds/{gid}/channels")
+            raw = self._request_list("GET", f"/guilds/{gid}/channels")
             channels = [
                 {
                     "id": ch.get("id", ""),
@@ -396,7 +571,29 @@ class DiscordTools(Toolkit):
                 for ch in raw
             ]
             return json.dumps({"count": len(channels), "channels": channels})
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
+            log_error(f"Failed to list channels for guild {gid}: {e}")
+            return json.dumps({"error": str(e)})
+
+    async def alist_channels(self, guild_id: Optional[str] = None) -> str:
+        """Async version of list_channels."""
+        gid = guild_id or self.guild_id
+        if not gid:
+            return json.dumps({"error": "guild_id is required. Provide it as an argument or set it during init."})
+        try:
+            raw = await self._arequest_list("GET", f"/guilds/{gid}/channels")
+            channels = [
+                {
+                    "id": ch.get("id", ""),
+                    "name": ch.get("name", ""),
+                    "type": ch.get("type", 0),
+                    "position": ch.get("position", 0),
+                    "parent_id": ch.get("parent_id"),
+                }
+                for ch in raw
+            ]
+            return json.dumps({"count": len(channels), "channels": channels})
+        except httpx.HTTPStatusError as e:
             log_error(f"Failed to list channels for guild {gid}: {e}")
             return json.dumps({"error": str(e)})
 
@@ -413,9 +610,18 @@ class DiscordTools(Toolkit):
             A JSON string confirming deletion or containing an error.
         """
         try:
-            self._make_request("DELETE", f"/channels/{channel_id}/messages/{message_id}")
+            self._request("DELETE", f"/channels/{channel_id}/messages/{message_id}")
             return json.dumps({"ok": True, "channel_id": channel_id, "message_id": message_id})
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
+            log_error(f"Failed to delete message {message_id} from channel {channel_id}: {e}")
+            return json.dumps({"error": str(e)})
+
+    async def adelete_message(self, channel_id: str, message_id: str) -> str:
+        """Async version of delete_message."""
+        try:
+            await self._arequest("DELETE", f"/channels/{channel_id}/messages/{message_id}")
+            return json.dumps({"ok": True, "channel_id": channel_id, "message_id": message_id})
+        except httpx.HTTPStatusError as e:
             log_error(f"Failed to delete message {message_id} from channel {channel_id}: {e}")
             return json.dumps({"error": str(e)})
 
@@ -439,10 +645,10 @@ class DiscordTools(Toolkit):
             A JSON string containing the created thread's id, name, and parent channel id.
         """
         try:
-            result = self._make_request(
+            result = self._request(
                 "POST",
                 f"/channels/{channel_id}/messages/{message_id}/threads",
-                {
+                json={
                     "name": name,
                     "auto_archive_duration": auto_archive_duration,
                 },
@@ -456,7 +662,37 @@ class DiscordTools(Toolkit):
                     "message_count": result.get("message_count", 0),
                 }
             )
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
+            log_error(f"Failed to create thread on message {message_id}: {e}")
+            return json.dumps({"error": str(e)})
+
+    async def acreate_thread(
+        self,
+        channel_id: str,
+        message_id: str,
+        name: str,
+        auto_archive_duration: int = 1440,
+    ) -> str:
+        """Async version of create_thread."""
+        try:
+            result = await self._arequest(
+                "POST",
+                f"/channels/{channel_id}/messages/{message_id}/threads",
+                json={
+                    "name": name,
+                    "auto_archive_duration": auto_archive_duration,
+                },
+            )
+            return json.dumps(
+                {
+                    "id": result.get("id", ""),
+                    "name": result.get("name", ""),
+                    "parent_id": result.get("parent_id", ""),
+                    "type": result.get("type", 0),
+                    "message_count": result.get("message_count", 0),
+                }
+            )
+        except httpx.HTTPStatusError as e:
             log_error(f"Failed to create thread on message {message_id}: {e}")
             return json.dumps({"error": str(e)})
 
@@ -482,13 +718,13 @@ class DiscordTools(Toolkit):
             A JSON string containing the created thread's id, name, and the initial message id.
         """
         try:
-            result = self._make_request(
+            result = self._request(
                 "POST",
                 f"/channels/{channel_id}/threads",
-                {
+                json={
                     "name": name,
                     "auto_archive_duration": auto_archive_duration,
-                    "message": {"content": content},
+                    "message": {"content": content, "allowed_mentions": _SAFE_MENTIONS},
                 },
             )
             return json.dumps(
@@ -499,7 +735,37 @@ class DiscordTools(Toolkit):
                     "type": result.get("type", 0),
                 }
             )
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
+            log_error(f"Failed to create forum thread in channel {channel_id}: {e}")
+            return json.dumps({"error": str(e)})
+
+    async def acreate_forum_thread(
+        self,
+        channel_id: str,
+        name: str,
+        content: str,
+        auto_archive_duration: int = 1440,
+    ) -> str:
+        """Async version of create_forum_thread."""
+        try:
+            result = await self._arequest(
+                "POST",
+                f"/channels/{channel_id}/threads",
+                json={
+                    "name": name,
+                    "auto_archive_duration": auto_archive_duration,
+                    "message": {"content": content, "allowed_mentions": _SAFE_MENTIONS},
+                },
+            )
+            return json.dumps(
+                {
+                    "id": result.get("id", ""),
+                    "name": result.get("name", ""),
+                    "parent_id": result.get("parent_id", ""),
+                    "type": result.get("type", 0),
+                }
+            )
+        except httpx.HTTPStatusError as e:
             log_error(f"Failed to create forum thread in channel {channel_id}: {e}")
             return json.dumps({"error": str(e)})
 
@@ -517,7 +783,7 @@ class DiscordTools(Toolkit):
         """
         try:
             clamped = min(max(limit, 1), 100)
-            raw = self._make_list_request("GET", f"/channels/{thread_id}/messages?limit={clamped}")
+            raw = self._request_list("GET", f"/channels/{thread_id}/messages", params={"limit": clamped})
             messages = [
                 {
                     "id": msg.get("id", ""),
@@ -529,7 +795,27 @@ class DiscordTools(Toolkit):
                 for msg in raw
             ]
             return json.dumps({"thread_id": thread_id, "count": len(messages), "messages": messages})
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
+            log_error(f"Failed to get messages from thread {thread_id}: {e}")
+            return json.dumps({"error": str(e)})
+
+    async def aget_thread_messages(self, thread_id: str, limit: int = 50) -> str:
+        """Async version of get_thread_messages."""
+        try:
+            clamped = min(max(limit, 1), 100)
+            raw = await self._arequest_list("GET", f"/channels/{thread_id}/messages", params={"limit": clamped})
+            messages = [
+                {
+                    "id": msg.get("id", ""),
+                    "content": msg.get("content", ""),
+                    "author": msg.get("author", {}).get("username", ""),
+                    "author_id": msg.get("author", {}).get("id", ""),
+                    "timestamp": msg.get("timestamp", ""),
+                }
+                for msg in raw
+            ]
+            return json.dumps({"thread_id": thread_id, "count": len(messages), "messages": messages})
+        except httpx.HTTPStatusError as e:
             log_error(f"Failed to get messages from thread {thread_id}: {e}")
             return json.dumps({"error": str(e)})
 
@@ -547,9 +833,19 @@ class DiscordTools(Toolkit):
         """
         try:
             encoded_emoji = url_quote(emoji)
-            self._make_request("PUT", f"/channels/{channel_id}/messages/{message_id}/reactions/{encoded_emoji}/@me")
+            self._request("PUT", f"/channels/{channel_id}/messages/{message_id}/reactions/{encoded_emoji}/@me")
             return json.dumps({"ok": True, "channel_id": channel_id, "message_id": message_id, "emoji": emoji})
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
+            log_error(f"Failed to add reaction to message {message_id}: {e}")
+            return json.dumps({"error": str(e)})
+
+    async def aadd_reaction(self, channel_id: str, message_id: str, emoji: str) -> str:
+        """Async version of add_reaction."""
+        try:
+            encoded_emoji = url_quote(emoji)
+            await self._arequest("PUT", f"/channels/{channel_id}/messages/{message_id}/reactions/{encoded_emoji}/@me")
+            return json.dumps({"ok": True, "channel_id": channel_id, "message_id": message_id, "emoji": emoji})
+        except httpx.HTTPStatusError as e:
             log_error(f"Failed to add reaction to message {message_id}: {e}")
             return json.dumps({"error": str(e)})
 
@@ -566,9 +862,21 @@ class DiscordTools(Toolkit):
         """
         try:
             encoded_emoji = url_quote(emoji)
-            self._make_request("DELETE", f"/channels/{channel_id}/messages/{message_id}/reactions/{encoded_emoji}/@me")
+            self._request("DELETE", f"/channels/{channel_id}/messages/{message_id}/reactions/{encoded_emoji}/@me")
             return json.dumps({"ok": True, "channel_id": channel_id, "message_id": message_id, "emoji": emoji})
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
+            log_error(f"Failed to remove reaction from message {message_id}: {e}")
+            return json.dumps({"error": str(e)})
+
+    async def aremove_reaction(self, channel_id: str, message_id: str, emoji: str) -> str:
+        """Async version of remove_reaction."""
+        try:
+            encoded_emoji = url_quote(emoji)
+            await self._arequest(
+                "DELETE", f"/channels/{channel_id}/messages/{message_id}/reactions/{encoded_emoji}/@me"
+            )
+            return json.dumps({"ok": True, "channel_id": channel_id, "message_id": message_id, "emoji": emoji})
+        except httpx.HTTPStatusError as e:
             log_error(f"Failed to remove reaction from message {message_id}: {e}")
             return json.dumps({"error": str(e)})
 
@@ -590,7 +898,7 @@ class DiscordTools(Toolkit):
             return json.dumps({"error": "guild_id is required. Provide it as an argument or set it during init."})
         try:
             clamped = min(max(limit, 1), 1000)
-            raw = self._make_list_request("GET", f"/guilds/{gid}/members?limit={clamped}")
+            raw = self._request_list("GET", f"/guilds/{gid}/members", params={"limit": clamped})
             members = [
                 {
                     "user_id": m.get("user", {}).get("id", ""),
@@ -602,7 +910,30 @@ class DiscordTools(Toolkit):
                 for m in raw
             ]
             return json.dumps({"count": len(members), "members": members})
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
+            log_error(f"Failed to list members for guild {gid}: {e}")
+            return json.dumps({"error": str(e)})
+
+    async def alist_members(self, guild_id: Optional[str] = None, limit: int = 100) -> str:
+        """Async version of list_members."""
+        gid = guild_id or self.guild_id
+        if not gid:
+            return json.dumps({"error": "guild_id is required. Provide it as an argument or set it during init."})
+        try:
+            clamped = min(max(limit, 1), 1000)
+            raw = await self._arequest_list("GET", f"/guilds/{gid}/members", params={"limit": clamped})
+            members = [
+                {
+                    "user_id": m.get("user", {}).get("id", ""),
+                    "username": m.get("user", {}).get("username", ""),
+                    "display_name": m.get("nick") or m.get("user", {}).get("global_name", ""),
+                    "joined_at": m.get("joined_at", ""),
+                    "roles": m.get("roles", []),
+                }
+                for m in raw
+            ]
+            return json.dumps({"count": len(members), "members": members})
+        except httpx.HTTPStatusError as e:
             log_error(f"Failed to list members for guild {gid}: {e}")
             return json.dumps({"error": str(e)})
 
@@ -623,7 +954,7 @@ class DiscordTools(Toolkit):
         if not user_id:
             return json.dumps({"error": "user_id is required."})
         try:
-            m = self._make_request("GET", f"/guilds/{gid}/members/{user_id}")
+            m = self._request("GET", f"/guilds/{gid}/members/{user_id}")
             user = m.get("user", {})
             return json.dumps(
                 {
@@ -636,7 +967,32 @@ class DiscordTools(Toolkit):
                     "is_bot": user.get("bot", False),
                 }
             )
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
+            log_error(f"Failed to get member info for user {user_id} in guild {gid}: {e}")
+            return json.dumps({"error": str(e)})
+
+    async def aget_member_info(self, guild_id: Optional[str] = None, user_id: str = "") -> str:
+        """Async version of get_member_info."""
+        gid = guild_id or self.guild_id
+        if not gid:
+            return json.dumps({"error": "guild_id is required. Provide it as an argument or set it during init."})
+        if not user_id:
+            return json.dumps({"error": "user_id is required."})
+        try:
+            m = await self._arequest("GET", f"/guilds/{gid}/members/{user_id}")
+            user = m.get("user", {})
+            return json.dumps(
+                {
+                    "user_id": user.get("id", ""),
+                    "username": user.get("username", ""),
+                    "display_name": m.get("nick") or user.get("global_name", ""),
+                    "joined_at": m.get("joined_at", ""),
+                    "roles": m.get("roles", []),
+                    "avatar": m.get("avatar"),
+                    "is_bot": user.get("bot", False),
+                }
+            )
+        except httpx.HTTPStatusError as e:
             log_error(f"Failed to get member info for user {user_id} in guild {gid}: {e}")
             return json.dumps({"error": str(e)})
 
@@ -653,9 +1009,18 @@ class DiscordTools(Toolkit):
             A JSON string confirming the message was pinned or containing an error.
         """
         try:
-            self._make_request("PUT", f"/channels/{channel_id}/pins/{message_id}")
+            self._request("PUT", f"/channels/{channel_id}/pins/{message_id}")
             return json.dumps({"ok": True, "channel_id": channel_id, "message_id": message_id})
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
+            log_error(f"Failed to pin message {message_id} in channel {channel_id}: {e}")
+            return json.dumps({"error": str(e)})
+
+    async def apin_message(self, channel_id: str, message_id: str) -> str:
+        """Async version of pin_message."""
+        try:
+            await self._arequest("PUT", f"/channels/{channel_id}/pins/{message_id}")
+            return json.dumps({"ok": True, "channel_id": channel_id, "message_id": message_id})
+        except httpx.HTTPStatusError as e:
             log_error(f"Failed to pin message {message_id} in channel {channel_id}: {e}")
             return json.dumps({"error": str(e)})
 
@@ -696,7 +1061,11 @@ class DiscordTools(Toolkit):
                     }
                     for f in fields
                 ]
-            result = self._make_request("POST", f"/channels/{channel_id}/messages", {"embeds": [embed]})
+            result = self._request(
+                "POST",
+                f"/channels/{channel_id}/messages",
+                json={"embeds": [embed], "allowed_mentions": _SAFE_MENTIONS},
+            )
             return json.dumps(
                 {
                     "id": result.get("id", ""),
@@ -705,6 +1074,48 @@ class DiscordTools(Toolkit):
                     "timestamp": result.get("timestamp", ""),
                 }
             )
-        except requests.HTTPError as e:
+        except httpx.HTTPStatusError as e:
+            log_error(f"Failed to send embed to channel {channel_id}: {e}")
+            return json.dumps({"error": str(e)})
+
+    async def asend_embed(
+        self,
+        channel_id: str,
+        title: str,
+        description: str,
+        color: Optional[int] = None,
+        fields: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        """Async version of send_embed."""
+        try:
+            embed: Dict[str, Any] = {
+                "title": title,
+                "description": description,
+            }
+            if color is not None:
+                embed["color"] = color
+            if fields:
+                embed["fields"] = [
+                    {
+                        "name": f.get("name", ""),
+                        "value": f.get("value", ""),
+                        "inline": f.get("inline", False),
+                    }
+                    for f in fields
+                ]
+            result = await self._arequest(
+                "POST",
+                f"/channels/{channel_id}/messages",
+                json={"embeds": [embed], "allowed_mentions": _SAFE_MENTIONS},
+            )
+            return json.dumps(
+                {
+                    "id": result.get("id", ""),
+                    "channel_id": result.get("channel_id", ""),
+                    "embeds": result.get("embeds", []),
+                    "timestamp": result.get("timestamp", ""),
+                }
+            )
+        except httpx.HTTPStatusError as e:
             log_error(f"Failed to send embed to channel {channel_id}: {e}")
             return json.dumps({"error": str(e)})
