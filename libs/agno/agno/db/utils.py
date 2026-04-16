@@ -251,6 +251,7 @@ def _clone_db_with_table_overrides(
                 db_engine=source_db.db_engine,
                 db_schema=source_db.db_schema,
                 id=source_db.id,
+                create_schema=source_db.create_schema,
                 **overrides,
             )
     except Exception as e:
