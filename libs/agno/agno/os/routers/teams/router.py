@@ -15,6 +15,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from agno.agent.factory import FactoryContextRequired, FactoryError, FactoryPermissionError, FactoryValidationError
 from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
@@ -30,14 +31,17 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    build_request_context,
     format_sse_event,
     get_request_kwargs,
     get_team_by_id,
+    get_team_by_id_async,
     process_audio,
     process_document,
     process_image,
     process_video,
 )
+from agno.team.factory import TeamFactory
 from agno.registry import Registry
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.team.remote import RemoteTeam
@@ -180,6 +184,10 @@ def get_team_router(
         background: bool = Form(
             False, description="Run in background and return immediately with run metadata (requires database)"
         ),
+        factory_input: Optional[str] = Form(
+            None,
+            description="JSON object with factory-specific parameters for dynamic team construction",
+        ),
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
 
@@ -209,9 +217,24 @@ def get_team_router(
 
         logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
 
-        team = get_team_by_id(
-            team_id=team_id, teams=os.teams, db=os.db, version=version, registry=registry, create_fresh=True
-        )
+        ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
+        try:
+            team = await get_team_by_id_async(
+                team_id=team_id,
+                teams=os.teams,
+                db=os.db,
+                version=version,
+                registry=registry,
+                create_fresh=True,
+                ctx=ctx,
+            )
+        except FactoryValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except FactoryPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except FactoryError as e:
+            logger.error(f"Factory error for team '{team_id}': {e}")
+            raise HTTPException(status_code=500, detail="Team factory error")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -376,7 +399,13 @@ def get_team_router(
         team_id: str,
         run_id: str,
     ):
-        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        try:
+            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        except FactoryContextRequired:
+            raise HTTPException(
+                status_code=400,
+                detail="This team is a factory. Use the run endpoint with factory_input to create an instance.",
+            )
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -483,7 +512,9 @@ def get_team_router(
 
         teams = []
         for team in accessible_teams:
-            if isinstance(team, RemoteTeam):
+            if isinstance(team, TeamFactory):
+                teams.append(TeamResponse.from_factory(team))
+            elif isinstance(team, RemoteTeam):
                 teams.append(await team.get_team_config())
             else:
                 team_response = await TeamResponse.from_team(team=team, is_component=False)
@@ -588,7 +619,13 @@ def get_team_router(
         dependencies=[Depends(require_resource_access("teams", "read", "team_id"))],
     )
     async def get_team(team_id: str, request: Request) -> TeamResponse:
-        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        try:
+            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        except FactoryContextRequired:
+            raise HTTPException(
+                status_code=400,
+                detail="This team is a factory. Use the run endpoint with factory_input to create an instance.",
+            )
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -617,7 +654,13 @@ def get_team_router(
         run_id: str,
         session_id: str = Query(..., description="Session ID for the run"),
     ):
-        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        try:
+            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        except FactoryContextRequired:
+            raise HTTPException(
+                status_code=400,
+                detail="This team is a factory. Use the run endpoint with factory_input to create an instance.",
+            )
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
         if isinstance(team, RemoteTeam):
@@ -652,7 +695,13 @@ def get_team_router(
         from agno.os.schema import TeamRunSchema
         from agno.team._storage import _aread_or_create_session
 
-        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        try:
+            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        except FactoryContextRequired:
+            raise HTTPException(
+                status_code=400,
+                detail="This team is a factory. Use the run endpoint with factory_input to create an instance.",
+            )
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
         if isinstance(team, RemoteTeam):

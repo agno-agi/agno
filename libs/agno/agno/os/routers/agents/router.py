@@ -17,6 +17,13 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent
+from agno.agent.factory import (
+    AgentFactory,
+    FactoryContextRequired,
+    FactoryError,
+    FactoryPermissionError,
+    FactoryValidationError,
+)
 from agno.agent.remote import RemoteAgent
 from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
@@ -38,8 +45,10 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    build_request_context,
     format_sse_event,
     get_agent_by_id,
+    get_agent_by_id_async,
     get_request_kwargs,
     process_audio,
     process_document,
@@ -239,6 +248,10 @@ def get_agent_router(
         background: bool = Form(
             False, description="Run in background and return immediately with run metadata (requires database)"
         ),
+        factory_input: Optional[str] = Form(
+            None,
+            description="JSON object with factory-specific parameters for dynamic agent construction",
+        ),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
 
@@ -266,9 +279,25 @@ def get_agent_router(
                 log_warning("Metadata parameter passed in both request state and kwargs, using request state")
             kwargs["metadata"] = metadata
 
-        agent = get_agent_by_id(
-            agent_id, os.agents, os.db, registry, version=int(version) if version else None, create_fresh=True
-        )
+        # Build factory context and resolve agent (supports both prototypes and factories)
+        ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
+        try:
+            agent = await get_agent_by_id_async(
+                agent_id,
+                os.agents,
+                os.db,
+                registry,
+                version=int(version) if version else None,
+                create_fresh=True,
+                ctx=ctx,
+            )
+        except FactoryValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except FactoryPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except FactoryError as e:
+            log_error(f"Factory error for agent '{agent_id}': {e}")
+            raise HTTPException(status_code=500, detail="Agent factory error")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -468,7 +497,15 @@ def get_agent_router(
         agent_id: str,
         run_id: str,
     ):
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        try:
+            agent = get_agent_by_id(
+                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+            )
+        except FactoryContextRequired:
+            raise HTTPException(
+                status_code=400,
+                detail="This agent is a factory. Use the run endpoint with factory_input to create an instance.",
+            )
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -537,7 +574,15 @@ def get_agent_router(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
 
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        try:
+            agent = get_agent_by_id(
+                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+            )
+        except FactoryContextRequired:
+            raise HTTPException(
+                status_code=400,
+                detail="This agent is a factory. Use the run endpoint with factory_input to create an instance.",
+            )
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -679,7 +724,9 @@ def get_agent_router(
         agents: List[AgentResponse] = []
         if accessible_agents:
             for agent in accessible_agents:
-                if isinstance(agent, RemoteAgent):
+                if isinstance(agent, AgentFactory):
+                    agents.append(AgentResponse.from_factory(agent))
+                elif isinstance(agent, RemoteAgent):
                     agents.append(await agent.get_agent_config())
                 else:
                     agent_response = await AgentResponse.from_agent(agent=agent, is_component=False)
@@ -738,7 +785,15 @@ def get_agent_router(
         dependencies=[Depends(require_resource_access("agents", "read", "agent_id"))],
     )
     async def get_agent(agent_id: str, request: Request) -> AgentResponse:
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        try:
+            agent = get_agent_by_id(
+                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+            )
+        except FactoryContextRequired:
+            raise HTTPException(
+                status_code=400,
+                detail="This agent is a factory. Use the run endpoint with factory_input to create an instance.",
+            )
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -767,7 +822,15 @@ def get_agent_router(
         run_id: str,
         session_id: str = Query(..., description="Session ID for the run"),
     ):
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        try:
+            agent = get_agent_by_id(
+                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+            )
+        except FactoryContextRequired:
+            raise HTTPException(
+                status_code=400,
+                detail="This agent is a factory. Use the run endpoint with factory_input to create an instance.",
+            )
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
         if isinstance(agent, RemoteAgent):
@@ -801,7 +864,15 @@ def get_agent_router(
     ):
         from agno.os.schema import RunSchema
 
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        try:
+            agent = get_agent_by_id(
+                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+            )
+        except FactoryContextRequired:
+            raise HTTPException(
+                status_code=400,
+                detail="This agent is a factory. Use the run endpoint with factory_input to create an instance.",
+            )
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
         if isinstance(agent, RemoteAgent):

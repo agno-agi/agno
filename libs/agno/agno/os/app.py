@@ -13,7 +13,7 @@ from rich import box
 from rich.panel import Panel
 from starlette.requests import Request
 
-from agno.agent import Agent, RemoteAgent
+from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
@@ -66,10 +66,10 @@ from agno.os.utils import (
 )
 from agno.registry import Registry
 from agno.remote.base import RemoteDb, RemoteKnowledge
-from agno.team import RemoteTeam, Team
+from agno.team import RemoteTeam, Team, TeamFactory
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
-from agno.workflow import RemoteWorkflow, Workflow
+from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
 
 
 @asynccontextmanager
@@ -195,9 +195,9 @@ class AgentOS:
         description: Optional[str] = None,
         version: Optional[str] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-        agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
-        teams: Optional[List[Union[Team, RemoteTeam]]] = None,
-        workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
+        agents: Optional[List[Union[Agent, RemoteAgent, AgentFactory]]] = None,
+        teams: Optional[List[Union[Team, RemoteTeam, TeamFactory]]] = None,
+        workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = None,
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
@@ -259,9 +259,9 @@ class AgentOS:
 
         self.config = load_yaml_config(config) if isinstance(config, str) else config
 
-        self.agents: Optional[List[Union[Agent, RemoteAgent]]] = agents
-        self.workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = workflows
-        self.teams: Optional[List[Union[Team, RemoteTeam]]] = teams
+        self.agents: Optional[List[Union[Agent, RemoteAgent, AgentFactory]]] = agents
+        self.workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = workflows
+        self.teams: Optional[List[Union[Team, RemoteTeam, TeamFactory]]] = teams
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
@@ -510,7 +510,7 @@ class AgentOS:
         if not self.agents:
             return
         for agent in self.agents:
-            if isinstance(agent, RemoteAgent):
+            if isinstance(agent, (RemoteAgent, AgentFactory)):
                 continue
             # Set the default db to agents without their own
             if self.db is not None and agent.db is None:
@@ -539,7 +539,7 @@ class AgentOS:
             return
 
         for team in self.teams:
-            if isinstance(team, RemoteTeam):
+            if isinstance(team, (RemoteTeam, TeamFactory)):
                 continue
 
             # Set the default db to teams without their own
@@ -571,7 +571,7 @@ class AgentOS:
             return
 
         for workflow in self.workflows:
-            if isinstance(workflow, RemoteWorkflow):
+            if isinstance(workflow, (RemoteWorkflow, WorkflowFactory)):
                 continue
             # Set the default db to workflows without their own
             if self.db is not None and workflow.db is None:
@@ -602,7 +602,11 @@ class AgentOS:
             existing_agent_ids = {getattr(a, "id", None) for a in self.registry.agents}
             for agent in self.agents:
                 agent_id = getattr(agent, "id", None)
-                if not isinstance(agent, RemoteAgent) and agent_id is not None and agent_id not in existing_agent_ids:
+                if (
+                    not isinstance(agent, (RemoteAgent, AgentFactory))
+                    and agent_id is not None
+                    and agent_id not in existing_agent_ids
+                ):
                     self.registry.agents.append(agent)
                     existing_agent_ids.add(agent_id)
 
@@ -610,7 +614,11 @@ class AgentOS:
             existing_team_ids = {getattr(t, "id", None) for t in self.registry.teams}
             for team in self.teams:
                 team_id = getattr(team, "id", None)
-                if not isinstance(team, RemoteTeam) and team_id is not None and team_id not in existing_team_ids:
+                if (
+                    not isinstance(team, (RemoteTeam, TeamFactory))
+                    and team_id is not None
+                    and team_id not in existing_team_ids
+                ):
                     self.registry.teams.append(team)
                     existing_team_ids.add(team_id)
 
@@ -629,18 +637,24 @@ class AgentOS:
         db: Optional[Union[BaseDb, AsyncBaseDb, RemoteDb]] = None
 
         for agent in self.agents or []:
+            if isinstance(agent, AgentFactory):
+                continue
             if agent.db:
                 db = agent.db
                 break
 
         if db is None:
             for team in self.teams or []:
+                if isinstance(team, TeamFactory):
+                    continue
                 if team.db:
                     db = team.db
                     break
 
         if db is None:
             for workflow in self.workflows or []:
+                if isinstance(workflow, WorkflowFactory):
+                    continue
                 if workflow.db:
                     db = workflow.db
                     break
@@ -1002,6 +1016,8 @@ class AgentOS:
         ] = {}  # Track databases specifically used for knowledge
 
         for agent in self.agents or []:
+            if isinstance(agent, AgentFactory):
+                continue
             if agent.db:
                 self._register_db_with_validation(dbs, agent.db)
             agent_contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
@@ -1009,6 +1025,8 @@ class AgentOS:
                 self._register_db_with_validation(knowledge_dbs, agent_contents_db)
 
         for team in self.teams or []:
+            if isinstance(team, TeamFactory):
+                continue
             if team.db:
                 self._register_db_with_validation(dbs, team.db)
             team_contents_db = getattr(team.knowledge, "contents_db", None) if team.knowledge else None
@@ -1016,6 +1034,8 @@ class AgentOS:
                 self._register_db_with_validation(knowledge_dbs, team_contents_db)
 
         for workflow in self.workflows or []:
+            if isinstance(workflow, WorkflowFactory):
+                continue
             if workflow.db:
                 self._register_db_with_validation(dbs, workflow.db)
 
@@ -1156,10 +1176,14 @@ class AgentOS:
                 knowledge_instances.append(knowledge)
 
         for agent in self.agents or []:
+            if isinstance(agent, AgentFactory):
+                continue
             if agent.knowledge:
                 _add_knowledge_if_not_duplicate(agent.knowledge)
 
         for team in self.teams or []:
+            if isinstance(team, TeamFactory):
+                continue
             if team.knowledge:
                 _add_knowledge_if_not_duplicate(team.knowledge)
 

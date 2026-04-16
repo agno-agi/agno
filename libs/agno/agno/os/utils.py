@@ -1,13 +1,18 @@
 import json
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Set, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Union
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.routing import APIRoute, APIRouter
 from pydantic import BaseModel, create_model
 from starlette.middleware.cors import CORSMiddleware
 
-from agno.agent import Agent, RemoteAgent
+from agno.agent import Agent, AgentFactory, RemoteAgent
+from agno.agent.factory import (
+    FactoryContextRequired,
+    FactoryError,
+    RequestContext,
+)
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
@@ -19,10 +24,10 @@ from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
-from agno.team import RemoteTeam, Team
+from agno.team import RemoteTeam, Team, TeamFactory
 from agno.tools import Function, Toolkit
 from agno.utils.log import log_warning, logger
-from agno.workflow import RemoteWorkflow, Workflow
+from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
 
 
 def to_utc_datetime(value: Optional[Union[str, int, float, datetime]]) -> Optional[datetime]:
@@ -503,13 +508,51 @@ def extract_format(file: UploadFile) -> Optional[str]:
     return None
 
 
+def build_request_context(
+    request: Request,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    factory_input: Optional[str] = None,
+) -> RequestContext:
+    """Build a RequestContext from a FastAPI request and form fields.
+
+    Parses factory_input JSON and populates trusted context from request.state
+    (set by auth middleware).
+    """
+    from agno.agent.factory import TrustedContext
+
+    # Parse factory_input JSON string
+    parsed_input: Any = None
+    if factory_input is not None:
+        try:
+            parsed_input = json.loads(factory_input)
+        except (json.JSONDecodeError, TypeError):
+            parsed_input = factory_input  # Let validation catch it later
+
+    # Build trusted context from middleware-populated request.state
+    claims = getattr(request.state, "claims", None) or {}
+    scopes = getattr(request.state, "scopes", None) or frozenset()
+    if isinstance(scopes, (list, set)):
+        scopes = frozenset(scopes)
+    trusted = TrustedContext(claims=claims, scopes=scopes)
+
+    return RequestContext(
+        user_id=user_id,
+        session_id=session_id,
+        request=request,
+        input=parsed_input,
+        trusted=trusted,
+    )
+
+
 def get_agent_by_id(
     agent_id: str,
-    agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentFactory]]] = None,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     registry: Optional[Registry] = None,
     version: Optional[int] = None,
     create_fresh: bool = False,
+    ctx: Optional[RequestContext] = None,
 ) -> Optional[Union[Agent, RemoteAgent]]:
     """Get an agent by ID, optionally creating a fresh instance for request isolation.
 
@@ -517,10 +560,14 @@ def get_agent_by_id(
     state contamination between concurrent requests. The new instance shares heavy
     resources (db, model, MCP tools) but has isolated mutable state.
 
+    If the matched entry is an AgentFactory, invokes the factory with the provided
+    RequestContext to produce a fresh Agent.
+
     Args:
         agent_id: The agent ID to look up
-        agents: List of agents to search
+        agents: List of agents (and/or AgentFactory entries) to search
         create_fresh: If True, creates a new instance using deep_copy()
+        ctx: RequestContext for factory invocation (required if a factory is matched)
 
     Returns:
         The agent instance (shared or fresh copy based on create_fresh)
@@ -532,6 +579,24 @@ def get_agent_by_id(
     if agents:
         for agent in agents:
             if agent.id == agent_id:
+                # Factory path — invoke to produce a fresh Agent
+                if isinstance(agent, AgentFactory):
+                    if ctx is None:
+                        raise FactoryContextRequired(
+                            f"Agent '{agent_id}' is a factory and requires a RequestContext. "
+                            "Pass ctx= when calling get_agent_by_id from a request handler."
+                        )
+                    validated_input = agent.validate_input(ctx.input)
+                    from dataclasses import replace
+
+                    ctx_with_input = replace(ctx, input=validated_input)
+                    result = agent.invoke(ctx_with_input)
+                    if not isinstance(result, Agent):
+                        raise FactoryError(
+                            f"AgentFactory '{agent_id}' returned {type(result).__name__}, expected Agent."
+                        )
+                    return result
+                # Prototype path — unchanged
                 if create_fresh and isinstance(agent, Agent):
                     fresh_agent = agent.deep_copy()
                     # Clear team/workflow context — this is a standalone agent copy
@@ -554,23 +619,80 @@ def get_agent_by_id(
     return None
 
 
+async def get_agent_by_id_async(
+    agent_id: str,
+    agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentFactory]]] = None,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    registry: Optional[Registry] = None,
+    version: Optional[int] = None,
+    create_fresh: bool = False,
+    ctx: Optional[RequestContext] = None,
+) -> Optional[Union[Agent, RemoteAgent]]:
+    """Async variant of get_agent_by_id that supports async factories."""
+    if agent_id is None:
+        return None
+
+    if agents:
+        for agent in agents:
+            if agent.id == agent_id:
+                if isinstance(agent, AgentFactory):
+                    if ctx is None:
+                        raise FactoryContextRequired(
+                            f"Agent '{agent_id}' is a factory and requires a RequestContext. "
+                            "Pass ctx= when calling get_agent_by_id_async from a request handler."
+                        )
+                    validated_input = agent.validate_input(ctx.input)
+                    from dataclasses import replace
+
+                    ctx_with_input = replace(ctx, input=validated_input)
+                    result = await agent.invoke_async(ctx_with_input)
+                    if not isinstance(result, Agent):
+                        raise FactoryError(
+                            f"AgentFactory '{agent_id}' returned {type(result).__name__}, expected Agent."
+                        )
+                    return result
+                if create_fresh and isinstance(agent, Agent):
+                    fresh_agent = agent.deep_copy()
+                    fresh_agent.team_id = None
+                    fresh_agent.workflow_id = None
+                    return fresh_agent
+                return agent
+
+    if db and isinstance(db, BaseDb):
+        from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
+
+        try:
+            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
+            return db_agent
+        except Exception:
+            logger.exception(f"Error getting agent {agent_id} from database")
+            return None
+
+    return None
+
+
 def get_team_by_id(
     team_id: str,
-    teams: Optional[List[Union[Team, RemoteTeam]]] = None,
+    teams: Optional[Sequence[Union[Team, RemoteTeam, TeamFactory]]] = None,
     create_fresh: bool = False,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
+    ctx: Optional[RequestContext] = None,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Get a team by ID, optionally creating a fresh instance for request isolation.
 
     When create_fresh=True, creates a new team instance using deep_copy() to prevent
     state contamination between concurrent requests. Member agents are also deep copied.
 
+    If the matched entry is a TeamFactory, invokes the factory with the provided
+    RequestContext to produce a fresh Team.
+
     Args:
         team_id: The team ID to look up
-        teams: List of teams to search
+        teams: List of teams (and/or TeamFactory entries) to search
         create_fresh: If True, creates a new instance using deep_copy()
+        ctx: RequestContext for factory invocation (required if a factory is matched)
 
     Returns:
         The team instance (shared or fresh copy based on create_fresh)
@@ -581,6 +703,61 @@ def get_team_by_id(
     if teams:
         for team in teams:
             if team.id == team_id:
+                if isinstance(team, TeamFactory):
+                    if ctx is None:
+                        raise FactoryContextRequired(f"Team '{team_id}' is a factory and requires a RequestContext.")
+                    validated_input = team.validate_input(ctx.input)
+                    from dataclasses import replace
+
+                    ctx_with_input = replace(ctx, input=validated_input)
+                    result = team.invoke(ctx_with_input)
+                    if not isinstance(result, Team):
+                        raise FactoryError(f"TeamFactory '{team_id}' returned {type(result).__name__}, expected Team.")
+                    return result
+                if create_fresh and isinstance(team, Team):
+                    return team.deep_copy()
+                return team
+
+    if db and isinstance(db, BaseDb):
+        from agno.team.team import get_team_by_id as get_team_by_id_db
+
+        try:
+            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
+            return db_team
+        except Exception:
+            logger.exception(f"Error getting team {team_id} from database")
+            return None
+
+    return None
+
+
+async def get_team_by_id_async(
+    team_id: str,
+    teams: Optional[Sequence[Union[Team, RemoteTeam, TeamFactory]]] = None,
+    create_fresh: bool = False,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    version: Optional[int] = None,
+    registry: Optional[Registry] = None,
+    ctx: Optional[RequestContext] = None,
+) -> Optional[Union[Team, RemoteTeam]]:
+    """Async variant of get_team_by_id that supports async factories."""
+    if team_id is None:
+        return None
+
+    if teams:
+        for team in teams:
+            if team.id == team_id:
+                if isinstance(team, TeamFactory):
+                    if ctx is None:
+                        raise FactoryContextRequired(f"Team '{team_id}' is a factory and requires a RequestContext.")
+                    validated_input = team.validate_input(ctx.input)
+                    from dataclasses import replace
+
+                    ctx_with_input = replace(ctx, input=validated_input)
+                    result = await team.invoke_async(ctx_with_input)
+                    if not isinstance(result, Team):
+                        raise FactoryError(f"TeamFactory '{team_id}' returned {type(result).__name__}, expected Team.")
+                    return result
                 if create_fresh and isinstance(team, Team):
                     return team.deep_copy()
                 return team
@@ -600,24 +777,29 @@ def get_team_by_id(
 
 def get_workflow_by_id(
     workflow_id: str,
-    workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
+    workflows: Optional[Sequence[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = None,
     create_fresh: bool = False,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
+    ctx: Optional[RequestContext] = None,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Get a workflow by ID, optionally creating a fresh instance for request isolation.
 
     When create_fresh=True, creates a new workflow instance using deep_copy() to prevent
     state contamination between concurrent requests. Steps containing agents/teams are also deep copied.
 
+    If the matched entry is a WorkflowFactory, invokes the factory with the provided
+    RequestContext to produce a fresh Workflow.
+
     Args:
         workflow_id: The workflow ID to look up
-        workflows: List of workflows to search
+        workflows: List of workflows (and/or WorkflowFactory entries) to search
         create_fresh: If True, creates a new instance using deep_copy()
         db: Optional database interface
         version: Workflow version, if needed
         registry: Optional Registry instance
+        ctx: RequestContext for factory invocation (required if a factory is matched)
 
     Returns:
         The workflow instance (shared or fresh copy based on create_fresh)
@@ -628,6 +810,69 @@ def get_workflow_by_id(
     if workflows:
         for workflow in workflows:
             if workflow.id == workflow_id:
+                if isinstance(workflow, WorkflowFactory):
+                    if ctx is None:
+                        raise FactoryContextRequired(
+                            f"Workflow '{workflow_id}' is a factory and requires a RequestContext."
+                        )
+                    validated_input = workflow.validate_input(ctx.input)
+                    from dataclasses import replace
+
+                    ctx_with_input = replace(ctx, input=validated_input)
+                    result = workflow.invoke(ctx_with_input)
+                    if not isinstance(result, Workflow):
+                        raise FactoryError(
+                            f"WorkflowFactory '{workflow_id}' returned {type(result).__name__}, expected Workflow."
+                        )
+                    return result
+                if create_fresh and isinstance(workflow, Workflow):
+                    return workflow.deep_copy()
+                return workflow
+
+    if db and isinstance(db, BaseDb):
+        from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
+
+        try:
+            db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
+            return db_workflow
+        except Exception:
+            logger.exception(f"Error getting workflow {workflow_id} from database")
+            return None
+
+    return None
+
+
+async def get_workflow_by_id_async(
+    workflow_id: str,
+    workflows: Optional[Sequence[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = None,
+    create_fresh: bool = False,
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    version: Optional[int] = None,
+    registry: Optional[Registry] = None,
+    ctx: Optional[RequestContext] = None,
+) -> Optional[Union[Workflow, RemoteWorkflow]]:
+    """Async variant of get_workflow_by_id that supports async factories."""
+    if workflow_id is None:
+        return None
+
+    if workflows:
+        for workflow in workflows:
+            if workflow.id == workflow_id:
+                if isinstance(workflow, WorkflowFactory):
+                    if ctx is None:
+                        raise FactoryContextRequired(
+                            f"Workflow '{workflow_id}' is a factory and requires a RequestContext."
+                        )
+                    validated_input = workflow.validate_input(ctx.input)
+                    from dataclasses import replace
+
+                    ctx_with_input = replace(ctx, input=validated_input)
+                    result = await workflow.invoke_async(ctx_with_input)
+                    if not isinstance(result, Workflow):
+                        raise FactoryError(
+                            f"WorkflowFactory '{workflow_id}' returned {type(result).__name__}, expected Workflow."
+                        )
+                    return result
                 if create_fresh and isinstance(workflow, Workflow):
                     return workflow.deep_copy()
                 return workflow
