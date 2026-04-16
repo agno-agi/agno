@@ -966,7 +966,7 @@ def test_parent_step_id_three_level_nesting(shared_db):
         )
         # Make sure it's NOT the Level 1 step
         assert ev.parent_step_id != l1_nested_step_id, (
-            f"Level 3 event should NOT have parent_step_id pointing to Level 1 step"
+            "Level 3 event should NOT have parent_step_id pointing to Level 1 step"
         )
 
 
