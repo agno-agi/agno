@@ -18,6 +18,7 @@ rate-limited periodic snapshots via webhook PATCH, not character-by-character.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, Dict, List, Literal, Optional, Union
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -47,6 +48,7 @@ from agno.os.interfaces.discord.helpers import (
 )
 from agno.os.interfaces.discord.security import verify_discord_signature
 from agno.os.interfaces.discord.state import (
+    _PUBLIC_THREAD_TYPE,
     _THREAD_CHANNEL_TYPES,
     InstanceState,
     StreamState,
@@ -118,8 +120,6 @@ def attach_routes(
     # before any event loop exists
     _http_session: Optional[aiohttp.ClientSession] = None
 
-    # --- Helper closures (defined before callers for top-to-bottom readability) ---
-
     async def _get_session() -> aiohttp.ClientSession:
         nonlocal _http_session
         if _http_session is None or _http_session.closed:
@@ -166,7 +166,7 @@ def attach_routes(
         finally:
             await state.finalize()
 
-        # --- Post-stream media delivery ---
+        # Post-stream media delivery
         # Agent/team: media is on RunOutput. Workflow: media was collected from streaming events.
         if not is_workflow and state.final_run_output:
             if state.final_run_output.status == "ERROR":
@@ -227,7 +227,6 @@ def attach_routes(
         interaction_token = data.get("token", "")
 
         try:
-            # --- Extract input ---
             message_text = extract_interaction_options(data)
             if not message_text:
                 await edit_original_response(
@@ -243,8 +242,7 @@ def attach_routes(
             channel_type = channel_obj.get("type") if channel_obj else None
             in_thread = channel_type in _THREAD_CHANNEL_TYPES
 
-            # --- Thread creation ---
-            # When reply_in_thread is enabled and not already in a thread,
+            # Thread creation: when reply_in_thread is enabled and not already in a thread,
             # create a thread from the deferred response message
             thread_id: Optional[str] = None
             if reply_in_thread and bot_token and not in_thread:
@@ -257,10 +255,9 @@ def attach_routes(
                         session, channel_id, original_msg_id, format_thread_name(message_text), bot_token
                     )
 
-            # --- Resolve session ---
-            # Use thread channel for scoping when we created one
+            # Resolve session — use thread channel for scoping when we created one
             scope_channel = thread_id or channel_id
-            scope_channel_type = 11 if thread_id else channel_type  # PUBLIC_THREAD
+            scope_channel_type = _PUBLIC_THREAD_TYPE if thread_id else channel_type
             session_scope = _build_session_scope(
                 entity_id, scope_channel, user_id, guild_id=guild_id, channel_type=scope_channel_type
             )
@@ -275,10 +272,9 @@ def attach_routes(
                 except Exception as e:
                     log_warning(f"Session lookup failed, using default: {str(e)}")
 
-            # --- Download attachments ---
             media_kwargs = await download_resolved_attachments(session, data)
 
-            # --- Build run config ---
+            # Build run config
             # Remote entities proxy to a server and don't accept dependency kwargs;
             # only pass them to local agents/teams/workflows
             is_remote = isinstance(entity, (RemoteAgent, RemoteTeam, RemoteWorkflow))
@@ -296,7 +292,6 @@ def attach_routes(
                 }
                 run_kwargs["add_dependencies_to_context"] = True
 
-            # --- Execute ---
             if streaming:
                 await _stream_response(session, application_id, interaction_token, message_text, run_kwargs)
             else:
@@ -329,8 +324,6 @@ def attach_routes(
                 "data": {"content": "Session memory is not configured for this bot.", "flags": EPHEMERAL_FLAG},
             }
 
-        import uuid
-
         session_scope = _build_session_scope(
             entity_id, channel_id, user_id, guild_id=guild_id, channel_type=channel_type
         )
@@ -351,8 +344,6 @@ def attach_routes(
                 "flags": EPHEMERAL_FLAG,
             },
         }
-
-    # --- Route handlers ---
 
     @router.get(
         "/status",

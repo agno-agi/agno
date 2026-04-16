@@ -39,8 +39,12 @@ TaskStatus = Literal["in_progress", "complete", "error"]
 # Discord caps embed fields at 25
 _MAX_EMBED_FIELDS = 25
 
-# Discord channel types that represent threads
-_THREAD_CHANNEL_TYPES = frozenset((10, 11, 12))  # ANNOUNCEMENT, PUBLIC, PRIVATE
+# Discord channel type integers
+# https://discord.com/developers/docs/resources/channel#channel-object-channel-types
+_ANNOUNCEMENT_THREAD_TYPE = 10
+_PUBLIC_THREAD_TYPE = 11
+_PRIVATE_THREAD_TYPE = 12
+_THREAD_CHANNEL_TYPES = frozenset((_ANNOUNCEMENT_THREAD_TYPE, _PUBLIC_THREAD_TYPE, _PRIVATE_THREAD_TYPE))
 
 
 # Returns one of:
@@ -88,7 +92,9 @@ class InstanceState:
     entity_id: Optional[str] = None
     processed_interactions: Dict[str, float] = field(default_factory=dict)
 
-    # Matches the signature replay window in security.py
+    # Must match the signature replay window in security._REPLAY_WINDOW_SECONDS —
+    # a shorter dedup window would let a replayed signature (still within the
+    # signature window) be processed twice
     DEDUP_TTL_SECONDS: ClassVar[float] = 300.0
 
     def is_duplicate_interaction(self, interaction_id: str) -> bool:

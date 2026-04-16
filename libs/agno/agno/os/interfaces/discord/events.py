@@ -1,14 +1,3 @@
-"""
-Discord Streaming Event Handlers
-
-Processes streaming events from agents, teams, and workflows,
-translating them into Discord embed fields and buffered content.
-
-Events are normalized (Team prefix stripped) for unified handling.
-Workflow mode suppresses inner agent events to reduce noise.
-Task cards track progress; content is buffered for streaming display.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -30,9 +19,8 @@ _EventHandler = Callable[["BaseRunOutputEvent", StreamState], Awaitable[bool]]
 
 @dataclass
 class ToolCallCard:
-    """Pre-computed values for tracking a tool call as a task card."""
-
-    card_key: Optional[str]  # Task card key (None when tool_call_id is missing)
+    # card_key is None when tool_call_id is missing from the SDK event
+    card_key: Optional[str]
     display_title: str  # e.g. "Researcher: web_search"
     errored: bool  # True when tool_call_error is set on the event's tool object
 
@@ -77,9 +65,6 @@ def _make_step_lifecycle_handler(
     started: bool,
     name_attr: str = "step_name",
 ) -> _EventHandler:
-    """Factory for simple paired workflow events (Started/Completed) that just
-    track or complete a task card via _update_workflow_card."""
-
     async def handler(chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
         await _update_workflow_card(chunk, state, prefix, label, started=started, name_attr=name_attr)
         return False
@@ -284,7 +269,7 @@ async def _on_loop_execution_completed(chunk: "BaseRunOutputEvent", state: Strea
 # Keys are normalized (no "Team" prefix). Workflow event names never start with
 # "Team" so normalization is a no-op for them.
 HANDLERS: Dict[str, _EventHandler] = {
-    # --- Agent/Team ---
+    # Agent/Team
     RunEvent.reasoning_started.value: _on_reasoning_started,
     RunEvent.reasoning_completed.value: _on_reasoning_completed,
     RunEvent.tool_call_started.value: _on_tool_call_started,
@@ -297,22 +282,22 @@ HANDLERS: Dict[str, _EventHandler] = {
     RunEvent.run_completed.value: _on_run_completed,
     RunEvent.run_error.value: _on_run_error,
     RunEvent.run_cancelled.value: _on_run_error,
-    # --- Workflow Lifecycle ---
+    # Workflow Lifecycle
     WorkflowRunEvent.step_output.value: _on_step_output,
     WorkflowRunEvent.workflow_started.value: _on_workflow_started,
     WorkflowRunEvent.workflow_completed.value: _on_workflow_completed,
     WorkflowRunEvent.workflow_error.value: _on_workflow_error,
     WorkflowRunEvent.workflow_cancelled.value: _on_workflow_error,
-    # --- Workflow Steps ---
+    # Workflow Steps
     WorkflowRunEvent.step_started.value: _make_step_lifecycle_handler("step", "", started=True),
     WorkflowRunEvent.step_completed.value: _make_step_lifecycle_handler("step", "", started=False),
     WorkflowRunEvent.step_error.value: _on_step_error,
-    # --- Workflow Loops ---
+    # Workflow Loops
     WorkflowRunEvent.loop_execution_started.value: _on_loop_execution_started,
     WorkflowRunEvent.loop_iteration_started.value: _on_loop_iteration_started,
     WorkflowRunEvent.loop_iteration_completed.value: _on_loop_iteration_completed,
     WorkflowRunEvent.loop_execution_completed.value: _on_loop_execution_completed,
-    # --- Workflow Structural ---
+    # Workflow Structural
     WorkflowRunEvent.parallel_execution_started.value: _make_step_lifecycle_handler(
         "parallel", "Parallel", started=True
     ),
@@ -337,10 +322,7 @@ HANDLERS: Dict[str, _EventHandler] = {
 
 
 async def process_event(ev_raw: str, chunk: "BaseRunOutputEvent", state: StreamState) -> bool:
-    """Process a streaming event and update Discord accordingly.
-
-    Returns True if this is a terminal event and the stream loop should break.
-    """
+    # Returns True for terminal events (run_completed/error/cancelled) so caller breaks stream loop
     ev = normalize_event(ev_raw)
 
     # Suppress nested agent internals in workflow mode

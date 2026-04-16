@@ -66,14 +66,14 @@ signature returns 401) before the URL is saved.
 In any server where the bot is installed:
 
 ```
-/ask question: what's the weather on mars?
-/ask question: describe this image file: <drop an image>
+/ask message: what's the weather on mars?
+/ask message: describe this image file: <drop an image>
 /new                                    # start a fresh conversation in the current channel
 ```
 
 ## Slash Commands
 
-- `/ask question:<text> [file:<attachment>]` — ask the agent. If the bot is
+- `/ask message:<text> [attachment:<file>]` — ask the agent. If the bot is
   configured with `reply_in_thread=True` (the default), a new thread is opened
   for the answer. Inside an existing thread, the reply stays in that thread.
 - `/new` — rotate the current user's session in the current channel so the
