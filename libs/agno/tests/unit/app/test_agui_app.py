@@ -1361,6 +1361,97 @@ async def test_message_id_regression_prevention():
     )
 
 
+@pytest.mark.asyncio
+async def test_stream_with_followups():
+    """Test that followup suggestions are emitted as CustomEvent instances in the AG-UI stream."""
+    from agno.run.agent import FollowupsCompletedEvent, FollowupsStartedEvent, RunEvent
+
+    async def mock_stream_with_followups():
+        # Text response
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Here is my answer"
+        yield text_response
+
+        # Followups started
+        followups_started = FollowupsStartedEvent()
+        yield followups_started
+
+        # Followups completed with suggestions
+        followups_completed = FollowupsCompletedEvent()
+        followups_completed.followups = [
+            "Tell me more about this topic",
+            "What are the alternatives?",
+            "Can you give an example?",
+        ]
+        yield followups_completed
+
+        # Run completed
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_with_followups(), "thread_1", "run_1"):
+        events.append(event)
+
+    # Should have: TEXT_MESSAGE_START, TEXT_MESSAGE_CONTENT, CustomEvent (followups), TEXT_MESSAGE_END, RUN_FINISHED
+    event_types = [e.type for e in events]
+
+    assert EventType.TEXT_MESSAGE_START in event_types
+    assert EventType.TEXT_MESSAGE_CONTENT in event_types
+    assert EventType.TEXT_MESSAGE_END in event_types
+    assert EventType.RUN_FINISHED in event_types
+
+    # Find the custom event for followups
+    custom_events = [e for e in events if e.type == EventType.CUSTOM]
+    assert len(custom_events) == 1, f"Expected 1 custom event for followups, got {len(custom_events)}"
+
+    followup_event = custom_events[0]
+    assert followup_event.name == "FollowupSuggestionsEvent"
+    assert followup_event.value == {
+        "followups": [
+            "Tell me more about this topic",
+            "What are the alternatives?",
+            "Can you give an example?",
+        ]
+    }
+
+    # Followup event should come before RUN_FINISHED
+    custom_idx = events.index(followup_event)
+    run_finished_idx = next(i for i, e in enumerate(events) if e.type == EventType.RUN_FINISHED)
+    assert custom_idx < run_finished_idx, "Followup event should be emitted before RUN_FINISHED"
+
+
+@pytest.mark.asyncio
+async def test_stream_with_empty_followups():
+    """Test that empty followups list does not emit a CustomEvent."""
+    from agno.run.agent import FollowupsCompletedEvent, RunEvent
+
+    async def mock_stream_no_followups():
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Answer"
+        yield text_response
+
+        followups_completed = FollowupsCompletedEvent()
+        followups_completed.followups = []
+        yield followups_completed
+
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_no_followups(), "thread_1", "run_1"):
+        events.append(event)
+
+    custom_events = [e for e in events if e.type == EventType.CUSTOM]
+    assert len(custom_events) == 0, "Empty followups should not produce a CustomEvent"
+
+
 def test_validate_agui_state_with_valid_dict():
     """Test validate_agui_state with valid dict."""
     from agno.os.interfaces.agui.utils import validate_agui_state
