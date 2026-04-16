@@ -85,6 +85,7 @@ In any server where the bot is installed:
 
 - `basic.py` -- Single agent responding to `/ask`, with optional file attachment.
 - `team.py` -- Multi-agent Researcher + Writer team coordinated behind one bot.
+- `workflow.py` -- Sequential two-step Draft + Edit workflow exposed through Discord.
 - `research_assistant.py` -- Agent that combines `DiscordTools` (channel introspection) with web search to answer research questions.
 - `support_team.py` -- Team that routes questions between a Technical Support agent and a Documentation Specialist (the latter searches Discord history via `DiscordTools`).
 - `channel_summarizer.py` -- Agent that reads recent channel history via `DiscordTools` and produces a structured summary.
