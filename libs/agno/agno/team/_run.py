@@ -5288,7 +5288,7 @@ def continue_run_dispatch(
     old_requirements = run_response.requirements
 
     # Normalize and apply requirements
-    if requirements is not None:
+    if requirements:
         requirements = _normalize_requirements_payload(requirements)
         run_response.requirements = requirements
         # Update tools from requirements, preserving approval fields the FE omits
@@ -6323,7 +6323,7 @@ async def _acontinue_run(
                 old_requirements = run_response.requirements
 
                 # Normalize and apply requirements
-                if requirements is not None:
+                if requirements:
                     requirements = _normalize_requirements_payload(requirements)
                     run_response.requirements = requirements
                     updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
@@ -6660,7 +6660,7 @@ async def _acontinue_run_stream(
                 old_requirements = run_response.requirements
 
                 # Normalize and apply requirements
-                if requirements is not None:
+                if requirements:
                     requirements = _normalize_requirements_payload(requirements)
                     run_response.requirements = requirements
                     updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
