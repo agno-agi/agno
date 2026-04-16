@@ -37,7 +37,7 @@ agent = Agent(
 
 agent_os = AgentOS(
     agents=[agent],
-    interfaces=[Discord(agent=agent)],
+    interfaces=[Discord(agent=agent, reply_in_thread=True)],
 )
 app = agent_os.get_app()
 

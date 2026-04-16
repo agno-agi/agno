@@ -54,7 +54,7 @@ class Discord(BaseInterface):
         command_name: str = "ask",
         command_description: str = "Ask the AI a question",
         register_commands: bool = True,
-        reply_in_thread: bool = True,
+        reply_in_thread: bool = False,
     ):
         self.agent = agent
         self.team = team

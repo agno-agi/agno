@@ -67,7 +67,7 @@ research_assistant = Agent(
 
 agent_os = AgentOS(
     agents=[research_assistant],
-    interfaces=[Discord(agent=research_assistant)],
+    interfaces=[Discord(agent=research_assistant, reply_in_thread=True)],
 )
 app = agent_os.get_app()
 

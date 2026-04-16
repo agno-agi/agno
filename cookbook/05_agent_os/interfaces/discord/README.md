@@ -13,9 +13,9 @@ the `Discord` interface in AgentOS. Uses Discord's HTTP Interactions API
 3. Under **General Information**, copy the **Application ID** and **Public Key**.
 4. Under **Installation** (or **OAuth2 -> URL Generator**), add the `bot` and
    `applications.commands` scopes and invite the bot to a server. Grant at
-   minimum **Send Messages**, **Create Public Threads**, and **Send Messages
-   in Threads** (the bot replies in threads by default). If you disable
-   threads via `reply_in_thread=False`, only **Send Messages** is needed.
+   minimum **Send Messages**. If you enable `reply_in_thread=True` (as the
+   examples in this folder do), also grant **Create Public Threads** and
+   **Send Messages in Threads**.
 
 ### 2. Set Environment Variables
 
@@ -74,8 +74,9 @@ In any server where the bot is installed:
 ## Slash Commands
 
 - `/ask message:<text> [attachment:<file>]` — ask the agent. If the bot is
-  configured with `reply_in_thread=True` (the default), a new thread is opened
-  for the answer. Inside an existing thread, the reply stays in that thread.
+  configured with `reply_in_thread=True` (opt-in; enabled in these examples),
+  a new thread is opened for the answer. Inside an existing thread, the
+  reply stays in that thread.
 - `/new` — rotate the current user's session in the current channel so the
   next `/ask` starts fresh with no prior context. No effect inside a thread
   (threads already have their own session) and no effect on other users.
@@ -120,8 +121,9 @@ pasting IDs.
 - `/new` to rotate the current user's session in the current channel
 - Inbound media: image/audio/video/document attachments routed to the agent
   as `Image` / `Audio` / `Video` / `File` based on MIME type
-- Thread replies by default: a new thread opens on the bot's response message
-  using the question as the thread title. Disable with `reply_in_thread=False`.
+- Opt-in thread replies: when `reply_in_thread=True`, a new thread opens on
+  the bot's response message using the question as the thread title.
+  Defaults to `False` in the library so minimal setup needs only `SEND_MESSAGES`.
 - Live tool-call status: while the agent is running, the reply message shows
   `Running tool: <tool_name>...`, swapping for the final answer when done.
 - Per-user session scope: `discord-{user_id}-{scope_id}-{epoch}`, where

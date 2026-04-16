@@ -59,7 +59,7 @@ discord_team = Team(
 
 agent_os = AgentOS(
     teams=[discord_team],
-    interfaces=[Discord(team=discord_team)],
+    interfaces=[Discord(team=discord_team, reply_in_thread=True)],
 )
 app = agent_os.get_app()
 

@@ -75,7 +75,7 @@ discord_workflow = Workflow(
 
 agent_os = AgentOS(
     workflows=[discord_workflow],
-    interfaces=[Discord(workflow=discord_workflow)],
+    interfaces=[Discord(workflow=discord_workflow, reply_in_thread=True)],
 )
 app = agent_os.get_app()
 

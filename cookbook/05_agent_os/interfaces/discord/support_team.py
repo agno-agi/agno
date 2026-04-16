@@ -91,7 +91,7 @@ support_team = Team(
 
 agent_os = AgentOS(
     teams=[support_team],
-    interfaces=[Discord(team=support_team)],
+    interfaces=[Discord(team=support_team, reply_in_thread=True)],
 )
 app = agent_os.get_app()
 
