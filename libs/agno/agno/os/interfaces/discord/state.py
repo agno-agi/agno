@@ -10,9 +10,8 @@ from agno.os.interfaces.discord.formatting import normalize_discord_markdown, no
 from agno.os.interfaces.discord.helpers import (
     _FOLLOWUP_CHUNK_SIZE,
     _MAX_EMBED_DESCRIPTION,
+    DiscordWebhook,
     build_status_embed,
-    edit_original_response,
-    send_followup_message,
 )
 from agno.os.interfaces.shared import (
     SessionStoreConfig,
@@ -22,8 +21,6 @@ from agno.os.interfaces.shared import (
 from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
-    import aiohttp
-
     from agno.run.agent import RunOutput
     from agno.run.team import TeamRunOutput
 
@@ -117,16 +114,12 @@ class StreamState:
 
     def __init__(
         self,
-        http_session: "aiohttp.ClientSession",
-        application_id: str,
-        interaction_token: str,
+        webhook: DiscordWebhook,
         entity_type: EntityType,
         entity_name: str,
         error_message: str,
     ):
-        self.http_session = http_session
-        self.application_id = application_id
-        self.interaction_token = interaction_token
+        self.webhook = webhook
         self.entity_type: EntityType = entity_type
         self.entity_name = entity_name
         self.error_message = error_message
@@ -211,7 +204,7 @@ class StreamState:
             return
         embed = self._build_embed(title="Processing...")
         try:
-            await edit_original_response(self.http_session, self.application_id, self.interaction_token, embeds=[embed])
+            await self.webhook.edit_original(embeds=[embed])
             self.last_edit_time = time.monotonic()
         except Exception as e:
             log_warning(f"Stream display update failed: {str(e)}")
@@ -228,9 +221,7 @@ class StreamState:
         if not content and not self.task_cards:
             # Always update the deferred response — silence leaves the user on an infinite spinner
             try:
-                await edit_original_response(
-                    self.http_session, self.application_id, self.interaction_token, content="(no response)"
-                )
+                await self.webhook.edit_original(content="(no response)")
             except Exception as e:
                 log_warning(f"Failed to send empty-response fallback: {str(e)}")
             return
@@ -246,22 +237,20 @@ class StreamState:
         fields = self._build_fields()
         if len(normalized) <= _MAX_EMBED_DESCRIPTION:
             embed = build_status_embed(title=title, description=normalized, fields=fields)
-            await edit_original_response(self.http_session, self.application_id, self.interaction_token, embeds=[embed])
+            await self.webhook.edit_original(embeds=[embed])
             return
         # Content exceeds embed limit — truncated embed + overflow as follow-ups
         embed = build_status_embed(title=title, description=normalized[:_MAX_EMBED_DESCRIPTION], fields=fields)
-        await edit_original_response(self.http_session, self.application_id, self.interaction_token, embeds=[embed])
+        await self.webhook.edit_original(embeds=[embed])
         for part in chunk_text(normalized[_MAX_EMBED_DESCRIPTION:], _FOLLOWUP_CHUNK_SIZE):
-            await send_followup_message(self.http_session, self.application_id, self.interaction_token, content=part)
+            await self.webhook.send_followup(content=part)
 
     async def _finalize_plaintext(self, normalized: str) -> None:
         if not normalized.strip():
             return
         try:
             for part in chunk_text(normalized, _FOLLOWUP_CHUNK_SIZE):
-                await send_followup_message(
-                    self.http_session, self.application_id, self.interaction_token, content=part
-                )
+                await self.webhook.send_followup(content=part)
         except Exception as e:
             log_warning(f"Plain text fallback also failed: {str(e)}")
 

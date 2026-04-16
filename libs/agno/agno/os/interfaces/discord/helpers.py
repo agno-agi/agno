@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import aiohttp
@@ -35,11 +36,6 @@ def _message_payload(**fields: Any) -> Dict[str, Any]:
     # is invariant-by-construction rather than a convention each call has
     # to remember
     return {"allowed_mentions": _SAFE_MENTIONS, **{k: v for k, v in fields.items() if v is not None}}
-
-
-def _webhook_url(application_id: str, interaction_token: str, *, original: bool = False) -> str:
-    base = f"{DISCORD_API_BASE}/webhooks/{application_id}/{interaction_token}"
-    return f"{base}/messages/@original" if original else base
 
 
 async def _raise_for_status(resp: aiohttp.ClientResponse, operation: str) -> None:
@@ -107,63 +103,82 @@ def extract_user_name(data: Dict[str, Any]) -> str:
     return "user"
 
 
-async def edit_original_response(
-    session: aiohttp.ClientSession,
-    application_id: str,
-    interaction_token: str,
-    *,
-    content: Optional[str] = None,
-    embeds: Optional[List[Dict[str, Any]]] = None,
-    components: Optional[List[Dict[str, Any]]] = None,
-) -> None:
-    payload = _message_payload(content=content, embeds=embeds, components=components)
-    async with session.patch(_webhook_url(application_id, interaction_token, original=True), json=payload) as resp:
-        await _raise_for_status(resp, "edit original response")
+_MEDIA_SPECS = (
+    # (response_attr, log_label, default_filename)
+    ("images", "image", "image.png"),
+    ("files", "file", "file.bin"),
+    ("videos", "video", "video.mp4"),
+    ("audio", "audio", "audio.mp3"),
+)
 
 
-async def send_followup_message(
-    session: aiohttp.ClientSession,
-    application_id: str,
-    interaction_token: str,
-    *,
-    content: Optional[str] = None,
-    embeds: Optional[List[Dict[str, Any]]] = None,
-) -> Optional[str]:
-    payload = _message_payload(content=content, embeds=embeds)
-    async with session.post(_webhook_url(application_id, interaction_token), json=payload) as resp:
-        await _raise_for_status(resp, "send followup")
-        return (await resp.json()).get("id")
+@dataclass
+class DiscordWebhook:
+    # Bound to a single Discord interaction — every method hits an endpoint
+    # under /webhooks/{application_id}/{interaction_token}. Interaction tokens
+    # are valid for 15 minutes after ACK, so one instance spans a full /ask
+    # lifecycle.
+    session: aiohttp.ClientSession
+    application_id: str
+    interaction_token: str
 
+    def _url(self, *, original: bool = False) -> str:
+        base = f"{DISCORD_API_BASE}/webhooks/{self.application_id}/{self.interaction_token}"
+        return f"{base}/messages/@original" if original else base
 
-async def upload_webhook_file(
-    session: aiohttp.ClientSession,
-    application_id: str,
-    interaction_token: str,
-    content_bytes: bytes,
-    filename: str,
-) -> None:
-    form = aiohttp.FormData()
-    form.add_field(
-        "payload_json",
-        json.dumps(_message_payload(content="")),
-        content_type="application/json",
-    )
-    form.add_field("files[0]", content_bytes, filename=filename)
-    async with session.post(_webhook_url(application_id, interaction_token), data=form) as resp:
-        await _raise_for_status(resp, "upload file")
+    async def edit_original(
+        self,
+        *,
+        content: Optional[str] = None,
+        embeds: Optional[List[Dict[str, Any]]] = None,
+        components: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        payload = _message_payload(content=content, embeds=embeds, components=components)
+        async with self.session.patch(self._url(original=True), json=payload) as resp:
+            await _raise_for_status(resp, "edit original response")
 
+    async def send_followup(
+        self,
+        *,
+        content: Optional[str] = None,
+        embeds: Optional[List[Dict[str, Any]]] = None,
+    ) -> Optional[str]:
+        payload = _message_payload(content=content, embeds=embeds)
+        async with self.session.post(self._url(), json=payload) as resp:
+            await _raise_for_status(resp, "send followup")
+            return (await resp.json()).get("id")
 
-async def get_original_message_id(
-    session: aiohttp.ClientSession,
-    application_id: str,
-    interaction_token: str,
-) -> Optional[str]:
-    # Non-fatal — caller falls back to not creating a thread if this fails
-    async with session.get(_webhook_url(application_id, interaction_token, original=True)) as resp:
-        if not resp.ok:
-            log_warning(f"Could not fetch original interaction message ({resp.status})")
-            return None
-        return (await resp.json()).get("id")
+    async def upload_file(self, content_bytes: bytes, filename: str) -> None:
+        form = aiohttp.FormData()
+        form.add_field(
+            "payload_json",
+            json.dumps(_message_payload(content="")),
+            content_type="application/json",
+        )
+        form.add_field("files[0]", content_bytes, filename=filename)
+        async with self.session.post(self._url(), data=form) as resp:
+            await _raise_for_status(resp, "upload file")
+
+    async def get_original_message_id(self) -> Optional[str]:
+        # Non-fatal — caller falls back to not creating a thread if this fails
+        async with self.session.get(self._url(original=True)) as resp:
+            if not resp.ok:
+                log_warning(f"Could not fetch original interaction message ({resp.status})")
+                return None
+            return (await resp.json()).get("id")
+
+    async def send_response_media(self, response: Any) -> None:
+        for attr, label, default_name in _MEDIA_SPECS:
+            for item in getattr(response, attr, None) or []:
+                # aget_content_bytes is async so URL/file-backed media load off the event loop
+                content_bytes = await item.aget_content_bytes()
+                if not content_bytes:
+                    continue
+                filename = getattr(item, "filename", None) or default_name
+                try:
+                    await self.upload_file(content_bytes, filename)
+                except Exception as e:
+                    log_error(f"Failed to upload {label}: {e}")
 
 
 async def create_message_thread(
@@ -248,27 +263,3 @@ async def download_resolved_attachments(
         else:
             media.setdefault("files", []).append(File(content=content, filename=filename))
     return media
-
-
-async def send_response_media(
-    session: aiohttp.ClientSession,
-    application_id: str,
-    interaction_token: str,
-    response: Any,
-) -> None:
-    for attr, label, default_name in (
-        ("images", "image", "image.png"),
-        ("files", "file", "file.bin"),
-        ("videos", "video", "video.mp4"),
-        ("audio", "audio", "audio.mp3"),
-    ):
-        for item in getattr(response, attr, None) or []:
-            # aget_content_bytes is async so URL/file-backed media load off the event loop
-            content_bytes = await item.aget_content_bytes()
-            if not content_bytes:
-                continue
-            filename = getattr(item, "filename", None) or default_name
-            try:
-                await upload_webhook_file(session, application_id, interaction_token, content_bytes, filename)
-            except Exception as e:
-                log_error(f"Failed to upload {label}: {e}")

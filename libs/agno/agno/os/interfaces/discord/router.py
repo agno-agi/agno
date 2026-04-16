@@ -32,18 +32,15 @@ from agno.os.interfaces.discord.helpers import (
     _FOLLOWUP_CHUNK_SIZE,
     _MAX_EMBED_DESCRIPTION,
     FALLBACK_ERROR_MESSAGE,
+    DiscordWebhook,
     build_status_embed,
     create_message_thread,
     download_resolved_attachments,
-    edit_original_response,
     extract_interaction_options,
     extract_user_id,
     extract_user_name,
     format_attribution,
     format_thread_name,
-    get_original_message_id,
-    send_followup_message,
-    send_response_media,
 )
 from agno.os.interfaces.discord.security import verify_discord_signature
 from agno.os.interfaces.discord.state import (
@@ -126,9 +123,7 @@ def attach_routes(
         return _http_session
 
     async def _stream_response(
-        session: aiohttp.ClientSession,
-        application_id: str,
-        interaction_token: str,
+        webhook: DiscordWebhook,
         message_text: str,
         run_kwargs: Dict[str, Any],
     ) -> None:
@@ -140,9 +135,7 @@ def attach_routes(
             stream_kwargs["yield_run_output"] = True
 
         state = StreamState(
-            http_session=session,
-            application_id=application_id,
-            interaction_token=interaction_token,
+            webhook=webhook,
             entity_type=entity_type,
             entity_name=entity_name,
             error_message=error_message,
@@ -170,27 +163,25 @@ def attach_routes(
         if not is_workflow and state.final_run_output:
             if state.final_run_output.status == "ERROR":
                 return
-            await send_response_media(session, application_id, interaction_token, state.final_run_output)
+            await webhook.send_response_media(state.final_run_output)
 
         if is_workflow and (state.images or state.videos or state.audio or state.files):
-            await send_response_media(session, application_id, interaction_token, state)
+            await webhook.send_response_media(state)
 
     async def _sync_response(
-        session: aiohttp.ClientSession,
-        application_id: str,
-        interaction_token: str,
+        webhook: DiscordWebhook,
         message_text: str,
         run_kwargs: Dict[str, Any],
     ) -> None:
         response = await entity.arun(message_text, **run_kwargs)  # type: ignore[union-attr]
 
         if not response:
-            await edit_original_response(session, application_id, interaction_token, content="No response generated.")
+            await webhook.edit_original(content="No response generated.")
             return
 
         if response.status == "ERROR":
-            log_error(f"Agent returned error status for interaction {interaction_token[:8]}")
-            await edit_original_response(session, application_id, interaction_token, content=error_message)
+            log_error(f"Agent returned error status for interaction {webhook.interaction_token[:8]}")
+            await webhook.edit_original(content=error_message)
             return
 
         # Happy path: format and send content as embed
@@ -210,26 +201,27 @@ def attach_routes(
             description=full_description[:_MAX_EMBED_DESCRIPTION],
             fields=[],
         )
-        await edit_original_response(session, application_id, interaction_token, embeds=[embed])
+        await webhook.edit_original(embeds=[embed])
 
         if len(full_description) > _MAX_EMBED_DESCRIPTION:
             overflow = full_description[_MAX_EMBED_DESCRIPTION:]
             for part in chunk_text(overflow, _FOLLOWUP_CHUNK_SIZE):
-                await send_followup_message(session, application_id, interaction_token, content=part)
+                await webhook.send_followup(content=part)
 
-        await send_response_media(session, application_id, interaction_token, response)
+        await webhook.send_response_media(response)
 
     async def _process_interaction(data: dict) -> None:
         session = await _get_session()
-        application_id = data.get("application_id") or configured_app_id
-        interaction_token = data.get("token", "")
+        webhook = DiscordWebhook(
+            session=session,
+            application_id=data.get("application_id") or configured_app_id,
+            interaction_token=data.get("token", ""),
+        )
 
         try:
             message_text = extract_interaction_options(data)
             if not message_text:
-                await edit_original_response(
-                    session, application_id, interaction_token, content="Please provide a message."
-                )
+                await webhook.edit_original(content="Please provide a message.")
                 return
 
             user_id = extract_user_id(data)
@@ -246,8 +238,8 @@ def attach_routes(
             if reply_in_thread and bot_token and not in_thread:
                 # Show user attribution on the original message
                 attribution = format_attribution(user_name, message_text)
-                await edit_original_response(session, application_id, interaction_token, content=attribution)
-                original_msg_id = await get_original_message_id(session, application_id, interaction_token)
+                await webhook.edit_original(content=attribution)
+                original_msg_id = await webhook.get_original_message_id()
                 if original_msg_id:
                     thread_id = await create_message_thread(
                         session, channel_id, original_msg_id, format_thread_name(message_text), bot_token
@@ -291,14 +283,14 @@ def attach_routes(
                 run_kwargs["add_dependencies_to_context"] = True
 
             if streaming:
-                await _stream_response(session, application_id, interaction_token, message_text, run_kwargs)
+                await _stream_response(webhook, message_text, run_kwargs)
             else:
-                await _sync_response(session, application_id, interaction_token, message_text, run_kwargs)
+                await _sync_response(webhook, message_text, run_kwargs)
 
         except Exception as e:
             log_error(f"Error processing Discord interaction: {e}")
             try:
-                await edit_original_response(session, application_id, interaction_token, content=error_message)
+                await webhook.edit_original(content=error_message)
             except Exception:
                 pass  # Last resort — original error already logged; avoid masking it
 
