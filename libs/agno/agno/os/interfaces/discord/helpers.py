@@ -18,12 +18,10 @@ def bot_api_headers(bot_token: str) -> Dict[str, str]:
     return {"Authorization": f"Bot {bot_token}", "Content-Type": "application/json"}
 
 
-# Discord message/embed/thread limits — values come from the Discord API reference
-_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024  # 25 MB — Discord rejects uploads over this
+# Discord API limits — used in multiple places below
+_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024  # Discord rejects uploads over 25 MB
 _MAX_EMBED_DESCRIPTION = 4096  # chars — longer descriptions get truncated + followups
-_FOLLOWUP_CHUNK_SIZE = 1900  # leaves ~100-char headroom under the 2000-char message limit for overflow markers
-_THREAD_NAME_MAX = 100  # chars — Discord rejects longer thread names
-_THREAD_AUTO_ARCHIVE_MINUTES = 60  # 60 = 1h, shortest auto-archive window Discord allows
+_FOLLOWUP_CHUNK_SIZE = 1900  # ~100-char headroom under the 2000-char message limit for overflow markers
 
 EMBED_COLOR_PROCESSING = 0x5865F2  # Discord blurple
 EMBED_COLOR_COMPLETE = 0x57F287  # Green
@@ -33,14 +31,6 @@ FALLBACK_ERROR_MESSAGE = "Sorry, there was an error processing your message."
 
 # Suppress all mention parsing — prevents @everyone/@here/role pings from model output
 _SAFE_MENTIONS: Dict[str, Any] = {"parse": []}
-
-# (attribute_name, singular_label, default_filename) for media upload iteration
-_MEDIA_UPLOAD_CONFIG = [
-    ("images", "image", "image.png"),
-    ("files", "file", "file.bin"),
-    ("videos", "video", "video.mp4"),
-    ("audio", "audio", "audio.mp3"),
-]
 
 
 def build_status_embed(
@@ -239,10 +229,16 @@ async def send_response_media(
     interaction_token: str,
     response: Any,
 ) -> None:
-    for attr, label, default_name in _MEDIA_UPLOAD_CONFIG:
+    # (response_attr, log_label, default_filename) for each media type
+    for attr, label, default_name in (
+        ("images", "image", "image.png"),
+        ("files", "file", "file.bin"),
+        ("videos", "video", "video.mp4"),
+        ("audio", "audio", "audio.mp3"),
+    ):
         for item in getattr(response, attr, None) or []:
             # aget_content_bytes is async so URL/file-backed media don't block
-            # the event loop during the load (items with inline bytes return fast)
+            # the event loop during load (inline-bytes items return immediately)
             content_bytes = await item.aget_content_bytes()
             if not content_bytes:
                 continue
@@ -308,11 +304,10 @@ async def create_message_thread(
     name: str,
     bot_token: str,
 ) -> Optional[str]:
-    # 60 = Discord's shortest auto-archive window (1h); threads created for
-    # single-turn Q&A don't need longer retention since the conversation
-    # completes within seconds
     url = f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}/threads"
-    payload = {"name": name[:_THREAD_NAME_MAX], "auto_archive_duration": _THREAD_AUTO_ARCHIVE_MINUTES}
+    # 100-char name is Discord's hard cap; 60-minute auto-archive is the
+    # shortest window Discord accepts — long enough for multi-turn Q&A
+    payload = {"name": name[:100], "auto_archive_duration": 60}
     async with session.post(url, json=payload, headers=bot_api_headers(bot_token)) as resp:
         if resp.ok:
             data = await resp.json()
