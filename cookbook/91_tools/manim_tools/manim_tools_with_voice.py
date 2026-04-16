@@ -48,7 +48,7 @@ manim_agent = Agent(
         "Use `GTTSService` unless asked otherwise.",
         "Call `self.set_speech_service(GTTSService())` at the top of `construct`.",
         "Wrap each animation in `with self.voiceover(text=...) as tracker:` and pass `run_time=tracker.duration` on `self.play(...)`.",
-        "Keep the TOTAL runtime under 5 seconds. One or two short lines of narration.",
+        "Keep the TOTAL runtime under 10 seconds. One or two short lines of narration.",
         "Always call `render_scene` with the full scene code and the class name.",
         "If a render fails, read the stderr tail and fix the scene code before retrying.",
     ],
@@ -59,7 +59,7 @@ manim_agent = Agent(
 if __name__ == "__main__":
     response = manim_agent.run(
         "Create a tiny narrated animation: show a circle appearing, with the narration "
-        "'Hello from Agno'. Keep it under 5 seconds total."
+        "'Hello from Agno'. Keep it under 10 seconds total."
     )
     print("\n--- agent message ---")
     print(response.content)
