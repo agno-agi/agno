@@ -32,7 +32,7 @@ class Discord(BaseInterface):
         command_name: str = "ask",
         command_description: str = "Ask the AI a question",
         auto_register_command: bool = True,
-        reply_in_thread: bool = False,
+        reply_in_thread: bool = True,
     ):
         self.agent = agent
         self.team = team
@@ -60,35 +60,42 @@ class Discord(BaseInterface):
                 "Set the env var, pass bot_token, or disable both flags."
             )
 
-    def _register_command(self) -> None:
+    def _register_commands(self) -> None:
+        # Bulk overwrite with PUT so /ask and /new stay in sync on every restart
         url = f"{DISCORD_API}/applications/{self.application_id}/commands"
         headers = {
             "Authorization": f"Bot {self.bot_token}",
             "Content-Type": "application/json",
         }
-        payload = {
-            "name": self.command_name,
-            "description": self.command_description,
-            "options": [
-                {
-                    "name": "question",
-                    "description": "Your question",
-                    "type": 3,
-                    "required": True,
-                },
-                {
-                    "name": "file",
-                    "description": "Attach an image, audio, video, or document",
-                    "type": 11,
-                    "required": False,
-                },
-            ],
-        }
+        payload = [
+            {
+                "name": self.command_name,
+                "description": self.command_description,
+                "options": [
+                    {
+                        "name": "question",
+                        "description": "Your question",
+                        "type": 3,
+                        "required": True,
+                    },
+                    {
+                        "name": "file",
+                        "description": "Attach an image, audio, video, or document",
+                        "type": 11,
+                        "required": False,
+                    },
+                ],
+            },
+            {
+                "name": "new",
+                "description": "Start a fresh conversation in this channel",
+            },
+        ]
         try:
             with httpx.Client(timeout=10.0) as client:
-                resp = client.post(url, headers=headers, json=payload)
+                resp = client.put(url, headers=headers, json=payload)
             if 200 <= resp.status_code < 300:
-                log_info(f"Registered Discord slash command /{self.command_name}")
+                log_info(f"Registered Discord slash commands: /{self.command_name}, /new")
             else:
                 log_warning(f"Discord command registration returned {resp.status_code}: {resp.text}")
         except Exception as e:
@@ -96,7 +103,7 @@ class Discord(BaseInterface):
 
     def get_router(self) -> APIRouter:
         if self.auto_register_command:
-            self._register_command()
+            self._register_commands()
 
         self.router = attach_routes(
             router=APIRouter(prefix=self.prefix, tags=self.tags),  # type: ignore[arg-type]
@@ -107,5 +114,6 @@ class Discord(BaseInterface):
             application_id=self.application_id,
             bot_token=self.bot_token,
             reply_in_thread=self.reply_in_thread,
+            command_name=self.command_name,
         )
         return self.router

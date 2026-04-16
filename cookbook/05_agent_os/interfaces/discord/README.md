@@ -13,8 +13,9 @@ the `Discord` interface in AgentOS. Uses Discord's HTTP Interactions API
 3. Under **General Information**, copy the **Application ID** and **Public Key**.
 4. Under **Installation** (or **OAuth2 -> URL Generator**), add the `bot` and
    `applications.commands` scopes and invite the bot to a server. Grant at
-   minimum **Send Messages**. If you enable `reply_in_thread=True`, also
-   grant **Create Public Threads** and **Send Messages in Threads**.
+   minimum **Send Messages**, **Create Public Threads**, and **Send Messages
+   in Threads** (the bot replies in threads by default). If you disable
+   threads via `reply_in_thread=False`, only **Send Messages** is needed.
 
 ### 2. Set Environment Variables
 
@@ -43,8 +44,8 @@ Copy the HTTPS URL (e.g. `https://abc123.ngrok-free.app`).
 .venvs/demo/bin/python cookbook/05_agent_os/interfaces/discord/basic.py
 ```
 
-The server starts on `http://localhost:7777` and auto-registers the
-`/ask` slash command on startup.
+The server starts on `http://localhost:7777` and auto-registers both
+the `/ask` and `/new` slash commands on startup.
 
 ### 5. Set the Interactions Endpoint URL
 
@@ -67,11 +68,41 @@ In any server where the bot is installed:
 ```
 /ask question: what's the weather on mars?
 /ask question: describe this image file: <drop an image>
+/new                                    # start a fresh conversation in the current channel
 ```
+
+## Slash Commands
+
+- `/ask question:<text> [file:<attachment>]` — ask the agent. If the bot is
+  configured with `reply_in_thread=True` (the default), a new thread is opened
+  for the answer. Inside an existing thread, the reply stays in that thread.
+- `/new` — rotate the current user's session in the current channel so the
+  next `/ask` starts fresh with no prior context. No effect inside a thread
+  (threads already have their own session) and no effect on other users.
+  Requires the agent to have a DB configured for session memory.
 
 ## Examples
 
 - `basic.py` -- Single agent responding to `/ask`, with optional file attachment.
+- `team.py` -- Multi-agent Researcher + Writer team coordinated behind one bot.
+- `research_assistant.py` -- Agent that combines `DiscordTools` (channel introspection) with web search to answer research questions.
+- `support_team.py` -- Team that routes questions between a Technical Support agent and a Documentation Specialist (the latter searches Discord history via `DiscordTools`).
+- `channel_summarizer.py` -- Agent that reads recent channel history via `DiscordTools` and produces a structured summary.
+
+Run any example:
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/interfaces/discord/<filename>.py
+```
+
+### Notes on DiscordTools
+
+The examples that use `agno.tools.discord.DiscordTools` need the bot to have
+**Read Message History** and **View Channels** permissions in each channel
+you want it to introspect. The Discord interface automatically passes
+`discord_channel_id`, `discord_thread_id`, and `discord_guild_id` as agent
+dependencies so tool-using agents can act on "this channel" without the user
+pasting IDs.
 
 ## Environment Variables
 
@@ -84,28 +115,22 @@ In any server where the bot is installed:
 
 ## Features
 
-- `/ask` slash command with a required `question` string and optional file attachment
-- Inbound media: image, audio, video, or document attachments routed to the
-  agent as `Image`, `Audio`, `Video`, or `File` based on MIME type
-- Default: replies in-channel by editing the deferred interaction response.
-- Opt-in thread replies via `reply_in_thread=True` on the `Discord(...)`
-  constructor. When enabled, the bot opens a thread on its own response
-  message (with the question as thread title) and posts the reply inside, and
-  shows a "typing..." indicator in the thread while the agent runs. Running
-  `/ask` inside an existing thread continues that thread's conversation.
-- Session scope: with `reply_in_thread=True`, one session per thread
-  (`discord-thread-{thread_id}`); otherwise one per channel in guilds
-  (`discord-{channel_id}`). DMs always scope by user (`discord-dm-{user_id}`).
-- Ed25519 signature verification on every request
-- Deferred response pattern (`type: 5`) so the agent has more than 3 seconds
-  to run before Discord times out
-
-## Limitations (prototype)
-
-- Response text is truncated at Discord's 2000-character limit -- no chunking
-- No streaming -- the agent runs to completion, then sends a single followup
-- No outbound media (the agent can't send images/files back through Discord yet)
-- No progress embeds or reasoning indicators
+- `/ask` with a required `question` and optional `file` attachment
+- `/new` to rotate the current user's session in the current channel
+- Inbound media: image/audio/video/document attachments routed to the agent
+  as `Image` / `Audio` / `Video` / `File` based on MIME type
+- Thread replies by default: a new thread opens on the bot's response message
+  using the question as the thread title. Disable with `reply_in_thread=False`.
+- Live tool-call status: while the agent is running, the reply message shows
+  `Running tool: <tool_name>...`, swapping for the final answer when done.
+- Per-user session scope: `discord-{user_id}-{scope_id}-{epoch}`, where
+  `scope_id` is the thread id if inside a thread, else the channel id. Two
+  users in the same channel keep separate conversations. `/new` bumps the
+  epoch for the invoking user only.
+- Long responses are chunked at paragraph/line/word boundaries into
+  Discord's 2000-character messages.
+- Ed25519 signature verification on every request; signature-invalid probes
+  from the Dev Portal get `401` as expected.
 
 ## Troubleshooting
 
@@ -116,3 +141,5 @@ In any server where the bot is installed:
 | "DISCORD_BOT_TOKEN is required" on startup | Missing env var | Export `DISCORD_BOT_TOKEN` or pass `auto_register_command=False` |
 | Slash command doesn't appear | Registration failed | Check server logs for "Discord command registration returned ..." |
 | Bot says "Error: ..." | Agent run raised | Check server logs for the full stack trace |
+| `/new` says "Session memory isn't configured" | Agent has no `db=` wired up | Pass `db=SqliteDb(...)` (or another Agno DB) to the agent so sessions persist |
+| Tool-call status doesn't update | Agent isn't using tools, or status edits were rate-limited | Expected for plain chat. Tool names only show when the agent actually invokes a tool. |
