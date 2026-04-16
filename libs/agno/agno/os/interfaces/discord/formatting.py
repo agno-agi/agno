@@ -4,9 +4,6 @@ import re
 # <@id>, <@!id>, <#id>, <@&role>, <:emoji:id>, <a:emoji:id>, <t:timestamp:style>
 _HTML_TAG_RE = re.compile(r"<(?![#@:a][:\w&!]|a:|t:)(?!/)[^>]+>|</[^>]+>")
 
-# Bot messages ignore # headings; bold is the closest equivalent
-_HEADING_RE = re.compile(r"^#{1,6}\s+(.+)$", flags=re.MULTILINE)
-
 _FENCE_OPEN_RE = re.compile(r"^(?P<fence>`{3,})(?:\w+)?$")
 
 # Matches self-contained ```...``` blocks; used to exclude them from backtick parity check
@@ -15,10 +12,6 @@ _CLOSED_FENCE_BLOCK_RE = re.compile(r"`{3,}[^`]*`{3,}", re.DOTALL)
 
 def strip_html_tags(text: str) -> str:
     return _HTML_TAG_RE.sub("", text)
-
-
-def normalize_headings(text: str) -> str:
-    return _HEADING_RE.sub(r"**\1**", text)
 
 
 def close_unterminated_fences(text: str) -> str:
@@ -47,13 +40,14 @@ def close_unterminated_fences(text: str) -> str:
 
 
 def normalize_for_streaming(text: str) -> str:
-    # Lightweight — omits fence closing since chunks may be mid-block
-    return strip_html_tags(normalize_headings(text))
+    # Lightweight — omits fence closing since chunks may be mid-block.
+    # Discord renders # headings, **bold**, *italic*, `code`, and the
+    # full markdown subset natively; only HTML tags need stripping.
+    return strip_html_tags(text)
 
 
 def normalize_discord_markdown(text: str) -> str:
     # Full normalization for complete messages — closes unterminated fences
     text = strip_html_tags(text)
-    text = normalize_headings(text)
     text = close_unterminated_fences(text)
     return text
