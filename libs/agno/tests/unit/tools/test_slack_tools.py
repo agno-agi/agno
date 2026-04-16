@@ -490,3 +490,203 @@ def test_all_flag_includes_canvas():
             names = [f.name for f in tools.functions.values()]
             assert "create_canvas" in names
             assert len(names) == 18
+
+
+# === Canvas: SlackResponse object handling ===
+# Verifies tools work with real SlackResponse objects, not just plain dicts
+
+
+def _make_slack_response(data):
+    """Build a SlackResponse mimicking what the real SDK returns."""
+    from slack_sdk.web import SlackResponse
+
+    return SlackResponse(
+        client=None,
+        http_verb="POST",
+        api_url="https://slack.com/api/test",
+        req_args={},
+        data=data,
+        headers={},
+        status_code=200,
+    )
+
+
+def test_create_canvas_with_slack_response(canvas_tools):
+    canvas_tools.client.canvases_create.return_value = _make_slack_response({"ok": True, "canvas_id": "F0166DCSTS7"})
+    result = json.loads(canvas_tools.create_canvas(title="Test"))
+    assert result["canvas_id"] == "F0166DCSTS7"
+
+
+def test_edit_canvas_with_slack_response(canvas_tools):
+    canvas_tools.client.canvases_edit.return_value = _make_slack_response({"ok": True})
+    result = json.loads(canvas_tools.edit_canvas("F123", "insert_at_end", markdown="new"))
+    assert result["ok"] is True
+
+
+def test_lookup_sections_with_slack_response(canvas_tools):
+    canvas_tools.client.canvases_sections_lookup.return_value = _make_slack_response(
+        {"ok": True, "sections": [{"id": "temp:C:abc"}, {"id": "temp:C:def"}]}
+    )
+    result = json.loads(canvas_tools.lookup_canvas_sections("F123", section_types=["h1"]))
+    assert len(result["sections"]) == 2
+
+
+def test_set_canvas_access_with_slack_response(canvas_tools):
+    canvas_tools.client.canvases_access_set.return_value = _make_slack_response({"ok": True})
+    result = json.loads(canvas_tools.set_canvas_access("F123", "write", user_ids=["U1"]))
+    assert result["ok"] is True
+
+
+def test_delete_canvas_with_slack_response(canvas_tools):
+    canvas_tools.client.canvases_delete.return_value = _make_slack_response({"ok": True})
+    result = json.loads(canvas_tools.delete_canvas("F123"))
+    assert result["ok"] is True
+
+
+# === Canvas: multi-step chaining ===
+# Simulates a real workflow: create → lookup sections → edit → set access
+
+
+def test_canvas_workflow_chain(canvas_tools):
+    """Full canvas workflow: create, lookup sections, edit by section, set access.
+
+    Verifies that canvas_id returned from create is usable in all subsequent calls,
+    and that section_id from lookup is usable in edit.
+    """
+    canvas_id = "F_WORKFLOW_1"
+
+    # Step 1: Create canvas
+    canvas_tools.client.canvases_create.return_value = _make_slack_response({"ok": True, "canvas_id": canvas_id})
+    create_result = json.loads(
+        canvas_tools.create_canvas(
+            title="Sprint Retro",
+            markdown="# Retro\n## What went well\n## What to improve",
+        )
+    )
+    assert create_result["canvas_id"] == canvas_id
+
+    # Step 2: Lookup sections using canvas_id from step 1
+    section_id = "temp:C:eBa219af721c664422cb90a52fac"
+    canvas_tools.client.canvases_sections_lookup.return_value = _make_slack_response(
+        {"ok": True, "sections": [{"id": section_id}]}
+    )
+    lookup_result = json.loads(
+        canvas_tools.lookup_canvas_sections(
+            create_result["canvas_id"],
+            section_types=["h2"],
+            contains_text="What went well",
+        )
+    )
+    assert len(lookup_result["sections"]) == 1
+    found_section_id = lookup_result["sections"][0]["id"]
+    assert found_section_id == section_id
+    # Verify the canvas_id was passed correctly to the SDK
+    canvas_tools.client.canvases_sections_lookup.assert_called_once_with(
+        canvas_id=canvas_id,
+        criteria={"section_types": ["h2"], "contains_text": "What went well"},
+    )
+
+    # Step 3: Edit using both canvas_id and section_id from previous steps
+    canvas_tools.client.canvases_edit.return_value = _make_slack_response({"ok": True})
+    edit_result = json.loads(
+        canvas_tools.edit_canvas(
+            create_result["canvas_id"],
+            "insert_after",
+            markdown="- Team shipped the feature on time\n- Great code reviews",
+            section_id=found_section_id,
+        )
+    )
+    assert edit_result["ok"] is True
+    edit_call = canvas_tools.client.canvases_edit.call_args
+    assert edit_call[1]["canvas_id"] == canvas_id
+    assert edit_call[1]["changes"][0]["section_id"] == section_id
+    assert edit_call[1]["changes"][0]["operation"] == "insert_after"
+
+    # Step 4: Set access using canvas_id from step 1
+    canvas_tools.client.canvases_access_set.return_value = _make_slack_response({"ok": True})
+    access_result = json.loads(
+        canvas_tools.set_canvas_access(
+            create_result["canvas_id"],
+            "write",
+            user_ids=["U_ALICE", "U_BOB"],
+        )
+    )
+    assert access_result["ok"] is True
+    canvas_tools.client.canvases_access_set.assert_called_once_with(
+        canvas_id=canvas_id,
+        access_level="write",
+        user_ids=["U_ALICE", "U_BOB"],
+    )
+
+
+def test_channel_canvas_workflow(canvas_tools):
+    """Create a channel canvas, then edit it — verifies channel canvas returns canvas_id too."""
+    canvas_id = "F_CHAN_CANVAS"
+    canvas_tools.client.conversations_canvases_create.return_value = _make_slack_response(
+        {"ok": True, "canvas_id": canvas_id}
+    )
+    create_result = json.loads(
+        canvas_tools.create_channel_canvas(
+            "C_ENGINEERING",
+            title="Onboarding",
+            markdown="# Welcome\nSetup instructions here.",
+        )
+    )
+    assert create_result["canvas_id"] == canvas_id
+
+    # Edit the channel canvas using returned canvas_id
+    canvas_tools.client.canvases_edit.return_value = _make_slack_response({"ok": True})
+    edit_result = json.loads(
+        canvas_tools.edit_canvas(
+            create_result["canvas_id"],
+            "insert_at_end",
+            markdown="## FAQ\n- Q: How do I get access?\n- A: Ask in #it-help",
+        )
+    )
+    assert edit_result["ok"] is True
+    assert canvas_tools.client.canvases_edit.call_args[1]["canvas_id"] == canvas_id
+
+
+# === Canvas: edge cases ===
+
+
+def test_edit_canvas_all_section_ops_pass_section_id(canvas_tools):
+    """All section-targeted operations correctly pass section_id to the API."""
+    canvas_tools.client.canvases_edit.return_value = _make_slack_response({"ok": True})
+    for op in ("insert_before", "insert_after", "replace"):
+        canvas_tools.client.canvases_edit.reset_mock()
+        result = json.loads(canvas_tools.edit_canvas("F1", op, markdown="text", section_id="S1"))
+        assert result["ok"] is True
+        changes = canvas_tools.client.canvases_edit.call_args[1]["changes"]
+        assert changes[0]["section_id"] == "S1"
+        assert changes[0]["operation"] == op
+
+
+def test_edit_canvas_delete_omits_document_content(canvas_tools):
+    """Delete operation should not send document_content."""
+    canvas_tools.client.canvases_edit.return_value = _make_slack_response({"ok": True})
+    canvas_tools.edit_canvas("F1", "delete", section_id="S1")
+    changes = canvas_tools.client.canvases_edit.call_args[1]["changes"]
+    assert "document_content" not in changes[0]
+    assert changes[0]["operation"] == "delete"
+
+
+def test_create_canvas_title_only(canvas_tools):
+    """Create with title but no content — common for placeholder canvases."""
+    canvas_tools.client.canvases_create.return_value = _make_slack_response({"ok": True, "canvas_id": "F_EMPTY"})
+    result = json.loads(canvas_tools.create_canvas(title="Placeholder"))
+    assert result["canvas_id"] == "F_EMPTY"
+    # Should NOT send document_content
+    call_kwargs = canvas_tools.client.canvases_create.call_args[1]
+    assert "document_content" not in call_kwargs
+    assert call_kwargs["title"] == "Placeholder"
+
+
+def test_set_canvas_access_read_to_channels(canvas_tools):
+    """Grant read access to multiple channels."""
+    canvas_tools.client.canvases_access_set.return_value = _make_slack_response({"ok": True})
+    result = json.loads(canvas_tools.set_canvas_access("F1", "read", channel_ids=["C1", "C2", "C3"]))
+    assert result["ok"] is True
+    call_kwargs = canvas_tools.client.canvases_access_set.call_args[1]
+    assert call_kwargs["channel_ids"] == ["C1", "C2", "C3"]
+    assert "user_ids" not in call_kwargs
