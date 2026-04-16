@@ -2,7 +2,7 @@ import os
 import time
 from typing import Any, Optional
 
-from agno.os.interfaces.shared import is_dev_mode
+from agno.os.interfaces.common import is_dev_mode
 from agno.utils.log import log_warning
 
 # PyNaCl is optional — resolve BadSignatureError at import time so except

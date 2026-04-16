@@ -13,7 +13,7 @@ from agno.os.interfaces.discord.helpers import (
     DiscordWebhook,
     build_status_embed,
 )
-from agno.os.interfaces.shared import (
+from agno.os.interfaces.common import (
     SessionStoreConfig,
     chunk_text,
     collect_media_from_chunk,

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from agno.agent.agent import Agent
 from agno.agent.remote import RemoteAgent
-from agno.os.interfaces.shared import build_session_store_config
+from agno.os.interfaces.common import build_session_store_config
 from agno.os.interfaces.whatsapp.helpers import (
     WhatsAppConfig,
     download_event_media_async,

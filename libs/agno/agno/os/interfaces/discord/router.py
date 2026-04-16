@@ -50,7 +50,7 @@ from agno.os.interfaces.discord.state import (
     _build_session_scope,
     insert_sentinel_session,
 )
-from agno.os.interfaces.shared import build_session_store_config, chunk_text, find_latest_session_id
+from agno.os.interfaces.common import build_session_store_config, chunk_text, find_latest_session_id
 from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.team import RemoteTeam, Team
