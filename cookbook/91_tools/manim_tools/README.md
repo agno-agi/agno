@@ -10,11 +10,15 @@ Renders Manim Community Edition animations with an Agno agent and attaches the m
 
 ### Voiceover (only if `enable_voiceover=True`)
 
+Pass `voice_service="gtts"` (default, free) or `voice_service="elevenlabs"` (paid, higher quality) to `ManimTools(...)`. The toolkit validates the import at construction time and feeds the LLM instructions tailored to the chosen service.
+
 - `manim-voiceover` with a speech service extra:
   ```bash
-  pip install "manim-voiceover[gtts]"     # free, Google TTS
-  # or [openai], [azure], [elevenlabs], [coqui], [recorder]
+  pip install "manim-voiceover[gtts]"         # free, Google TTS (default)
+  pip install "manim-voiceover[elevenlabs]"   # paid, ElevenLabs
+  # other extras: [openai], [azure], [coqui], [recorder]
   ```
+- **ElevenLabs env var.** `manim-voiceover`'s `ElevenLabsService` reads `ELEVEN_API_KEY` - *not* `ELEVEN_LABS_API_KEY` that Agno's separate `ElevenLabsTools` uses. Set `ELEVEN_API_KEY` before running an ElevenLabs-backed scene.
 - **SoX** on PATH (used by `manim_voiceover` to trim silence and normalize audio). The toolkit prints a warning at startup if it's missing; voiceover renders still work without it but audio quality is degraded.
   ```bash
   winget install ChrisBagwell.SoX    # Windows
@@ -25,15 +29,17 @@ Renders Manim Community Edition animations with an Agno agent and attaches the m
 
 ## Files
 
-- `manim_tools.py` - CLI demo without voice. Runs a single prompt, saves the decoded mp4 to `tmp/saved/<id>.mp4`. Good for smoke testing.
-- `manim_tools_with_voice.py` - CLI demo with `enable_voiceover=True`. Renders a short narrated animation and saves it to `tmp/saved/<id>.mp4`. Requires `manim-voiceover` and SoX (see below).
-- `manim_agentos.py` - Same voice-enabled agent plus web research tools, wrapped in AgentOS for end-to-end UI testing.
+- `manim_tools.py` - CLI demo without voice. Runs a single prompt, saves the mp4 to `tmp/saved/<id>.mp4`. Good for smoke testing.
+- `manim_tools_with_voice.py` - CLI demo with `enable_voiceover=True, voice_service="gtts"`. Free Google TTS narration. Requires `manim-voiceover[gtts]` and SoX.
+- `manim_tools_with_voice_elevenlabs.py` - CLI demo with `voice_service="elevenlabs"`. Higher-quality narration. Requires `manim-voiceover[elevenlabs]`, SoX, and `ELEVEN_API_KEY`.
+- `manim_agentos.py` - Voice-enabled agent plus web research tools, wrapped in AgentOS for end-to-end UI testing.
 
 ## Run
 
 ```bash
 .venvs/demo/bin/python cookbook/91_tools/manim_tools/manim_tools.py
 .venvs/demo/bin/python cookbook/91_tools/manim_tools/manim_tools_with_voice.py
+.venvs/demo/bin/python cookbook/91_tools/manim_tools/manim_tools_with_voice_elevenlabs.py
 .venvs/demo/bin/python cookbook/91_tools/manim_tools/manim_agentos.py
 ```
 
@@ -43,7 +49,7 @@ Renders under `max_inline_bytes` (default **25 MB**) come back as `Video(content
 
 Renders over that cap are persisted to `output_dir` and returned as `Video(filepath=...)` instead. Consumers still get a `Video` artifact; they load bytes lazily from disk via `video.get_content_bytes()` / `aget_content_bytes()` (see `libs/agno/agno/media.py`). This avoids blowing up the SSE payload on a long 1080p render while keeping a uniform API.
 
-`manim_tools.py` also shows the opposite direction: take a returned `Video`, call `video.to_base64()`, decode it, and write it to disk as an mp4. See `save_base64_video_to_disk`.
+`manim_tools.py` also shows the opposite direction: handle both delivery modes and write the mp4 to disk. See `save_video_to_disk` (decodes `Video.content` for inline, copies from `Video.filepath` for the over-cap case).
 
 ## Safety bounds
 

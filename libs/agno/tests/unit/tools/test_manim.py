@@ -68,6 +68,12 @@ def test_invalid_max_duration_rejected():
             ManimTools(output_dir=tmp_dir, max_duration_seconds=0)
 
 
+def test_invalid_voice_service_rejected():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        with pytest.raises(ValueError, match="voice_service must be one of"):
+            ManimTools(output_dir=tmp_dir, enable_voiceover=True, voice_service="bogus")
+
+
 def test_invalid_max_inline_bytes_rejected():
     with tempfile.TemporaryDirectory() as tmp_dir:
         with pytest.raises(ValueError, match="max_inline_bytes"):

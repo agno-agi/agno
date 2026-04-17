@@ -1,14 +1,22 @@
 """
-Manim Tools with AgentOS
-========================
+Manim Tools with AgentOS (ElevenLabs voiceover)
+===============================================
 
-Same agent as `manim_tools.py`, mounted in AgentOS so the rendered mp4
-plays inline in the AgentOS UI.
+Research-and-animate agent mounted in AgentOS with web tools and
+ElevenLabs narration. The rendered mp4 plays inline in the AgentOS UI.
+
+Prerequisites:
+    pip install manim
+    pip install "manim-voiceover[elevenlabs]"
+    ffmpeg on PATH
+    sox on PATH
+    export ELEVEN_API_KEY=sk-...      (NOT ELEVEN_LABS_API_KEY)
 
 Run:
     .venvs/demo/bin/python cookbook/91_tools/manim_tools/manim_agentos.py
 """
 
+import os
 from pathlib import Path
 
 from agno.agent import Agent
@@ -17,6 +25,13 @@ from agno.os import AgentOS
 from agno.tools.manim import ManimTools
 from agno.tools.website import WebsiteTools
 from agno.tools.websearch import WebSearchTools
+
+if not os.getenv("ELEVEN_API_KEY"):
+    raise SystemExit(
+        "ELEVEN_API_KEY is not set. manim-voiceover's ElevenLabsService "
+        "reads ELEVEN_API_KEY (not ELEVEN_LABS_API_KEY). "
+        "Export it before running this cookbook."
+    )
 
 HERE = Path(__file__).parent
 OUTPUT_DIR = HERE / "tmp" / "render"
@@ -30,6 +45,7 @@ manim_agent = Agent(
             output_dir=OUTPUT_DIR,
             quality="h",
             enable_voiceover=True,
+            voice_service="elevenlabs",
         ),
         WebSearchTools(enable_search=True, enable_news=True),
         WebsiteTools(),
@@ -38,7 +54,9 @@ manim_agent = Agent(
     instructions=[
         "For any animation topic, first research it: use WebSearchTools to find authoritative sources, then use WebsiteTools.read_url to read specific pages in depth.",
         "Synthesize the key facts, then compose a single Python string containing `from manim import *` and a VoiceoverScene subclass.",
-        "Use voiceover: subclass `VoiceoverScene`, import a service from `manim_voiceover.services` (default to `GTTSService`), call `self.set_speech_service(...)` at the top of `construct`, and wrap each animation in `with self.voiceover(text=...) as tracker:` using `run_time=tracker.duration`.",
+        "Use the voice service the toolkit was configured with - its instructions tell you the exact import path and class name.",
+        "Prefer `ElevenLabsService(voice_name='Rachel', transcription_model=None)` unless the user asks for a specific voice or voice_id. transcription_model=None skips local Whisper, which is unnecessary for run_time=tracker.duration sync and adds several seconds per chunk.",
+        "Wrap each animation in `with self.voiceover(text=...) as tracker:` using `run_time=tracker.duration`.",
         "Keep scenes short (under ~30 seconds) unless asked for more. The narration text should be factually grounded in what you researched.",
         "Always call `render_scene` with the full scene code and the class name.",
         "If a render fails, read the stderr tail and fix the scene code before retrying.",

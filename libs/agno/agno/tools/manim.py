@@ -20,13 +20,14 @@ if you want to inspect the render artifacts on disk.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import shutil
 import subprocess
 import sys
 import uuid
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from agno.media import Video
 from agno.tools import Toolkit
@@ -45,14 +46,46 @@ QUALITY_MAP = {
     "k": ("qk", "2160p60"),
 }
 
-_VOICEOVER_INSTRUCTIONS = (
-    "Voiceovers are available via `manim_voiceover`. "
-    "Subclass `VoiceoverScene` instead of `Scene`, import a service from "
-    "`manim_voiceover.services` (e.g., `GTTSService`, `OpenAIService`), call "
-    "`self.set_speech_service(...)` at the top of `construct`, and wrap each "
-    "animation in `with self.voiceover(text=...) as tracker:` using "
-    "`run_time=tracker.duration` so animations sync to the narration."
-)
+_VOICE_SERVICES: Dict[str, Dict[str, str]] = {
+    "gtts": {
+        "class_name": "GTTSService",
+        "import_path": "manim_voiceover.services.gtts",
+        "install_extra": "gtts",
+        "usage_hint": (
+            "GTTSService() takes no args for defaults; use "
+            "GTTSService(lang='en', tld='com') to override. Free, no API key."
+        ),
+    },
+    "elevenlabs": {
+        "class_name": "ElevenLabsService",
+        "import_path": "manim_voiceover.services.elevenlabs",
+        "install_extra": "elevenlabs",
+        "usage_hint": (
+            "ElevenLabsService(voice_name='Rachel', transcription_model=None) is the "
+            "recommended default: voice_name picks a voice by name, and "
+            "transcription_model=None skips local Whisper transcription (the ElevenLabs "
+            "service defaults it to 'base', which adds 2-10s per chunk and is only "
+            "needed for word-level tracker.time_until_bookmark sync - whole-clip "
+            "run_time=tracker.duration does NOT need it). Pass voice_id=... for an "
+            "explicit ID, or model='eleven_multilingual_v2' for multilingual output. "
+            "Requires ELEVEN_API_KEY env var."
+        ),
+    },
+}
+
+
+def _build_voiceover_instructions(service_name: str) -> str:
+    svc = _VOICE_SERVICES[service_name]
+    return (
+        f"Voiceovers are available via `manim_voiceover`. "
+        f"Subclass `VoiceoverScene` instead of `Scene`, import "
+        f"`{svc['class_name']}` from `{svc['import_path']}`, call "
+        f"`self.set_speech_service({svc['class_name']}(...))` at the top of "
+        f"`construct`, and wrap each animation in "
+        f"`with self.voiceover(text=...) as tracker:` using "
+        f"`run_time=tracker.duration` so animations sync to the narration. "
+        f"{svc['usage_hint']}"
+    )
 
 
 class ManimTools(Toolkit):
@@ -66,6 +99,7 @@ class ManimTools(Toolkit):
         python_executable: Optional[str] = None,
         delete_after_render: bool = True,
         enable_voiceover: bool = False,
+        voice_service: str = "gtts",
         enable_render_scene: bool = True,
         enable_list_rendered_videos: bool = True,
         all: bool = False,
@@ -79,13 +113,24 @@ class ManimTools(Toolkit):
             raise ValueError(f"max_inline_bytes must be > 0, got {max_inline_bytes!r}")
 
         if enable_voiceover:
+            if voice_service not in _VOICE_SERVICES:
+                raise ValueError(f"voice_service must be one of {list(_VOICE_SERVICES)}, got {voice_service!r}")
+            svc = _VOICE_SERVICES[voice_service]
             try:
                 import manim_voiceover  # type: ignore  # noqa: F401
             except ImportError:
                 raise ImportError(
                     "`manim_voiceover` is required when enable_voiceover=True. "
-                    'Install with `pip install "manim-voiceover[gtts]"` '
-                    "(swap the extra for your service: openai, azure, elevenlabs, coqui, recorder)."
+                    f'Install with `pip install "manim-voiceover[{svc["install_extra"]}]"` '
+                    "(swap the extra for a different service: gtts, openai, azure, elevenlabs, coqui, recorder)."
+                )
+            try:
+                importlib.import_module(svc["import_path"])
+            except ImportError as e:
+                raise ImportError(
+                    f"`{svc['class_name']}` is not available. Install with "
+                    f'`pip install "manim-voiceover[{svc["install_extra"]}]"`. '
+                    f"Underlying error: {e}"
                 )
             if shutil.which("sox") is None:
                 log_warning(
@@ -106,6 +151,7 @@ class ManimTools(Toolkit):
         self.python_executable = python_executable or sys.executable
         self.delete_after_render = delete_after_render
         self.voiceover_enabled = enable_voiceover
+        self.voice_service = voice_service if enable_voiceover else None
         self._rendered: List[dict] = []
 
         tools: List = []
@@ -120,7 +166,7 @@ class ManimTools(Toolkit):
             name="manim_tools",
             tools=tools,
             async_tools=async_tools,
-            instructions=_VOICEOVER_INSTRUCTIONS if enable_voiceover else None,
+            instructions=_build_voiceover_instructions(voice_service) if enable_voiceover else None,
             add_instructions=enable_voiceover,
             **kwargs,
         )
