@@ -135,7 +135,7 @@ Message us on [Discord](https://discord.gg/4MtYHHrgA8) or post on [Discourse](ht
 
 - <a href="https://docs.agno.com/introduction" target="_blank" rel="noopener noreferrer">Documentation</a>
 - <a href="https://discord.gg/4MtYHHrgA8" target="_blank" rel="noopener noreferrer">Discord</a>
-- <a href="https://community.agno.com/" target="_blank" rel="noopener noreferrer">Discourse</a>
+- <a href="https://docs.agno.com/get-help" target="_blank" rel="noopener noreferrer">Support Resources</a>
 
 ## 📝 License
 
