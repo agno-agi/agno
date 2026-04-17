@@ -21,7 +21,7 @@ from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import RemoteTeam, Team
 from agno.tools import Function, Toolkit
-from agno.utils.log import log_warning, logger
+from agno.utils.log import log_error, log_warning, logger
 from agno.workflow import RemoteWorkflow, Workflow
 
 
@@ -186,17 +186,24 @@ def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRu
         data: { ... }
         ```
     """
+    event_type = getattr(event, "event", None) or "message"
     try:
-        # Parse the JSON to extract the event type
-        event_type = event.event or "message"
-
         # Serialize to valid JSON with double quotes and no newlines
         clean_json = event.to_json(separators=(",", ":"), indent=None)
-
         return f"event: {event_type}\ndata: {clean_json}\n\n"
-    except json.JSONDecodeError:
-        clean_json = event.to_json(separators=(",", ":"), indent=None)
-        return f"event: message\ndata: {clean_json}\n\n"
+    except Exception as e:
+        # Never let a single bad event kill the stream. Log loudly so the
+        # offending event class is visible in production logs, then emit a
+        # valid SSE error frame so the ASGI response completes cleanly.
+        log_error(f"Failed to serialize SSE event {type(event).__name__} (event_type={event_type}): {e}")
+        fallback = json.dumps(
+            {
+                "event": "RunError",
+                "content": f"Failed to serialize {type(event).__name__}: {e}",
+            },
+            separators=(",", ":"),
+        )
+        return f"event: RunError\ndata: {fallback}\n\n"
 
 
 async def get_db(

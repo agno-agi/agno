@@ -1,8 +1,9 @@
 """Unit tests for OS utility functions."""
 
+import json
 from datetime import datetime, timezone
 
-from agno.os.utils import to_utc_datetime
+from agno.os.utils import format_sse_event, to_utc_datetime
 
 
 def test_returns_none_for_none_input():
@@ -89,3 +90,55 @@ def test_handles_negative_timestamp():
     assert result.year == 1969
     assert result.month == 12
     assert result.day == 31
+
+
+class _GoodEvent:
+    event = "RunContent"
+
+    def to_json(self, **kwargs):
+        return json.dumps({"event": self.event, "content": "hello"}, **kwargs)
+
+
+class _BadEvent:
+    event = "RunContent"
+
+    def to_json(self, **kwargs):
+        raise TypeError("Object of type bytes is not JSON serializable")
+
+
+class _EventMissingType:
+    event = None
+
+    def to_json(self, **kwargs):
+        return json.dumps({"content": "x"}, **kwargs)
+
+
+def test_format_sse_event_happy_path():
+    """Well-formed events serialize to a valid SSE frame."""
+    frame = format_sse_event(_GoodEvent())  # type: ignore[arg-type]
+    assert frame.startswith("event: RunContent\ndata: ")
+    assert frame.endswith("\n\n")
+    payload_line = frame.split("\n")[1]
+    body = payload_line[len("data: ") :]
+    assert json.loads(body) == {"event": "RunContent", "content": "hello"}
+
+
+def test_format_sse_event_swallows_serialization_errors():
+    """A failing to_json() must not raise - it must return a valid error SSE frame.
+
+    Regression guard for "ASGI callable returned without complete response":
+    if this raises, the streaming generator exits mid-stream and Starlette
+    closes the socket without a terminating chunk.
+    """
+    frame = format_sse_event(_BadEvent())  # type: ignore[arg-type]
+    assert frame.startswith("event: RunError\ndata: ")
+    assert frame.endswith("\n\n")
+    body = json.loads(frame.split("\n")[1][len("data: ") :])
+    assert body["event"] == "RunError"
+    assert "_BadEvent" in body["content"]
+
+
+def test_format_sse_event_defaults_missing_event_type():
+    """Events without an `event` attribute fall back to 'message'."""
+    frame = format_sse_event(_EventMissingType())  # type: ignore[arg-type]
+    assert frame.startswith("event: message\ndata: ")
