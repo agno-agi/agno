@@ -346,7 +346,7 @@ class MCPTools(Toolkit):
                     sse_params["url"] = self.url
 
                 # Merge dynamic headers into existing headers
-                existing_headers = sse_params.get("headers", {})
+                existing_headers = sse_params.get("headers") or {}
                 sse_params["headers"] = {**existing_headers, **dynamic_headers}
 
                 context = sse_client(**sse_params)  # type: ignore
@@ -358,7 +358,7 @@ class MCPTools(Toolkit):
                     streamable_http_params["url"] = self.url
 
                 # Merge dynamic headers into existing headers
-                existing_headers = streamable_http_params.get("headers", {})
+                existing_headers = streamable_http_params.get("headers") or {}
                 streamable_http_params["headers"] = {**existing_headers, **dynamic_headers}
 
                 context = streamablehttp_client(**streamable_http_params)  # type: ignore
