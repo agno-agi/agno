@@ -61,13 +61,15 @@ _VOICE_SERVICES: Dict[str, Dict[str, str]] = {
         "import_path": "manim_voiceover.services.elevenlabs",
         "install_extra": "elevenlabs",
         "usage_hint": (
-            "ElevenLabsService(voice_name='Rachel', transcription_model=None) is the "
-            "recommended default: voice_name picks a voice by name, and "
-            "transcription_model=None skips local Whisper transcription (the ElevenLabs "
-            "service defaults it to 'base', which adds 2-10s per chunk and is only "
-            "needed for word-level tracker.time_until_bookmark sync - whole-clip "
-            "run_time=tracker.duration does NOT need it). Pass voice_id=... for an "
-            "explicit ID, or model='eleven_multilingual_v2' for multilingual output. "
+            "ElevenLabsService(voice_id='21m00Tcm4TlvDq8ikWAM', transcription_model=None) "
+            "is the recommended default. Use voice_id (not voice_name) for predictable "
+            "results: voice_name does an exact-string match against the user's ENTIRE "
+            "ElevenLabs library (including cloned voices), so name collisions can pick "
+            "the wrong voice. '21m00Tcm4TlvDq8ikWAM' is canonical female Rachel. Other "
+            "safe IDs: 'EXAVITQu4vr4xnSDxMaL' (Bella, soft), 'XB0fDUnXU5powFXDhCwa' "
+            "(Charlotte, British). transcription_model=None skips local Whisper "
+            "(unnecessary for run_time=tracker.duration sync; adds 2-10s per chunk "
+            "otherwise). Pass model='eleven_multilingual_v2' for multilingual output. "
             "Requires ELEVEN_API_KEY env var."
         ),
     },

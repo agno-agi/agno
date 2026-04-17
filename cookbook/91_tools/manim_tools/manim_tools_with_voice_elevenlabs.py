@@ -59,7 +59,7 @@ manim_agent = Agent(
     instructions=[
         "Compose a single Python string with `from manim import *` and a VoiceoverScene subclass.",
         "Use the voice service the toolkit was configured with - its instructions tell you the exact import path and class name.",
-        "Prefer `ElevenLabsService(voice_name='Rachel', transcription_model=None)` unless the user asks for a specific voice or voice_id. transcription_model=None is important: it skips local Whisper transcription which adds several seconds per chunk and is not needed for run_time=tracker.duration sync.",
+        "Default to `ElevenLabsService(voice_id='21m00Tcm4TlvDq8ikWAM', transcription_model=None)` (canonical female Rachel). Use voice_id rather than voice_name - voice_name matches against the user's full ElevenLabs library and can pick a cloned voice with the same name. transcription_model=None skips local Whisper which is unnecessary for run_time=tracker.duration sync and adds several seconds per chunk.",
         "Wrap each animation in `with self.voiceover(text=...) as tracker:` and pass `run_time=tracker.duration` on `self.play(...)`.",
         "Keep the TOTAL runtime under 10 seconds. One or two short lines of narration.",
         "Always call `render_scene` with the full scene code and the class name.",

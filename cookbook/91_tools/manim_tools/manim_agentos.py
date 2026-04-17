@@ -55,7 +55,7 @@ manim_agent = Agent(
         "For any animation topic, first research it: use WebSearchTools to find authoritative sources, then use WebsiteTools.read_url to read specific pages in depth.",
         "Synthesize the key facts, then compose a single Python string containing `from manim import *` and a VoiceoverScene subclass.",
         "Use the voice service the toolkit was configured with - its instructions tell you the exact import path and class name.",
-        "Prefer `ElevenLabsService(voice_name='Rachel', transcription_model=None)` unless the user asks for a specific voice or voice_id. transcription_model=None skips local Whisper, which is unnecessary for run_time=tracker.duration sync and adds several seconds per chunk.",
+        "Default to `ElevenLabsService(voice_id='21m00Tcm4TlvDq8ikWAM', transcription_model=None)` (canonical female Rachel). Use voice_id rather than voice_name - voice_name matches against the user's full ElevenLabs library and can pick a cloned voice with the same name. transcription_model=None skips local Whisper which is unnecessary for run_time=tracker.duration sync and adds several seconds per chunk.",
         "Wrap each animation in `with self.voiceover(text=...) as tracker:` using `run_time=tracker.duration`.",
         "Keep scenes short (under ~30 seconds) unless asked for more. The narration text should be factually grounded in what you researched.",
         "Always call `render_scene` with the full scene code and the class name.",
