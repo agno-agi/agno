@@ -317,6 +317,23 @@ def _run_tasks(
                 accumulated_messages.append(state_message)
 
             # Get model response
+                # -*- Compaction: compact conversation history if threshold is met
+                if team.enable_compaction and team.compaction_manager is not None:
+                    if team.compaction_manager.should_compact(
+                        messages=accumulated_messages,
+                        tools=_tools,
+                        model=team.model,
+                        response_format=response_format,
+                    ):
+                        loaded_run_ids = getattr(run_response, "_compaction_loaded_run_ids", [])
+                        accumulated_messages, compacted_run_ids = team.compaction_manager.compact(
+                            messages=accumulated_messages,
+                            loaded_run_ids=loaded_run_ids,
+                            model=team.model,
+                            run_metrics=run_response.metrics if run_response is not None else None,
+                        )
+                        run_response.compacted_run_ids = compacted_run_ids
+
             model_response = call_model_with_fallback(
                 team.model,
                 team.fallback_config,
@@ -1128,6 +1145,23 @@ def _run(
 
                 # 6. Get the model response for the team leader
                 team.model = cast(Model, team.model)
+                # -*- Compaction: compact conversation history if threshold is met
+                if team.enable_compaction and team.compaction_manager is not None:
+                    if team.compaction_manager.should_compact(
+                        messages=run_messages.messages,
+                        tools=_tools,
+                        model=team.model,
+                        response_format=response_format,
+                    ):
+                        loaded_run_ids = getattr(run_response, "_compaction_loaded_run_ids", [])
+                        run_messages.messages, compacted_run_ids = team.compaction_manager.compact(
+                            messages=run_messages.messages,
+                            loaded_run_ids=loaded_run_ids,
+                            model=team.model,
+                            run_metrics=run_response.metrics if run_response is not None else None,
+                        )
+                        run_response.compacted_run_ids = compacted_run_ids
+
                 model_response: ModelResponse = call_model_with_fallback(
                     team.model,
                     team.fallback_config,
@@ -2117,6 +2151,23 @@ async def _arun_tasks(
                 accumulated_messages.append(state_message)
 
             # Get model response
+                # -*- Compaction: compact conversation history if threshold is met
+                if team.enable_compaction and team.compaction_manager is not None:
+                    if await team.compaction_manager.ashould_compact(
+                        messages=accumulated_messages,
+                        tools=_tools,
+                        model=team.model,
+                        response_format=response_format,
+                    ):
+                        loaded_run_ids = getattr(run_response, "_compaction_loaded_run_ids", [])
+                        accumulated_messages, compacted_run_ids = await team.compaction_manager.acompact(
+                            messages=accumulated_messages,
+                            loaded_run_ids=loaded_run_ids,
+                            model=team.model,
+                            run_metrics=run_response.metrics if run_response is not None else None,
+                        )
+                        run_response.compacted_run_ids = compacted_run_ids
+
             model_response = await acall_model_with_fallback(
                 team.model,
                 team.fallback_config,
@@ -2984,6 +3035,23 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 6. Get the model response for the team leader
+                # -*- Compaction: compact conversation history if threshold is met
+                if team.enable_compaction and team.compaction_manager is not None:
+                    if await team.compaction_manager.ashould_compact(
+                        messages=run_messages.messages,
+                        tools=_tools,
+                        model=team.model,
+                        response_format=response_format,
+                    ):
+                        loaded_run_ids = getattr(run_response, "_compaction_loaded_run_ids", [])
+                        run_messages.messages, compacted_run_ids = await team.compaction_manager.acompact(
+                            messages=run_messages.messages,
+                            loaded_run_ids=loaded_run_ids,
+                            model=team.model,
+                            run_metrics=run_response.metrics if run_response is not None else None,
+                        )
+                        run_response.compacted_run_ids = compacted_run_ids
+
                 model_response = await acall_model_with_fallback(
                     team.model,
                     team.fallback_config,
@@ -5042,6 +5110,23 @@ def _continue_run(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # Generate model response
+                # -*- Compaction: compact conversation history if threshold is met
+                if team.enable_compaction and team.compaction_manager is not None:
+                    if team.compaction_manager.should_compact(
+                        messages=run_messages.messages,
+                        tools=tools,
+                        model=team.model,
+                        response_format=response_format,
+                    ):
+                        loaded_run_ids = getattr(run_response, "_compaction_loaded_run_ids", [])
+                        run_messages.messages, compacted_run_ids = team.compaction_manager.compact(
+                            messages=run_messages.messages,
+                            loaded_run_ids=loaded_run_ids,
+                            model=team.model,
+                            run_metrics=run_response.metrics if run_response is not None else None,
+                        )
+                        run_response.compacted_run_ids = compacted_run_ids
+
                 model_response: ModelResponse = call_model_with_fallback(
                     team.model,
                     team.fallback_config,
@@ -5706,6 +5791,23 @@ async def _acontinue_run(
                     run_response.content = None
 
                     # Get model response
+                # -*- Compaction: compact conversation history if threshold is met
+                if team.enable_compaction and team.compaction_manager is not None:
+                    if await team.compaction_manager.ashould_compact(
+                        messages=run_messages.messages,
+                        tools=_tools,
+                        model=team.model,
+                        response_format=response_format,
+                    ):
+                        loaded_run_ids = getattr(run_response, "_compaction_loaded_run_ids", [])
+                        run_messages.messages, compacted_run_ids = await team.compaction_manager.acompact(
+                            messages=run_messages.messages,
+                            loaded_run_ids=loaded_run_ids,
+                            model=team.model,
+                            run_metrics=run_response.metrics if run_response is not None else None,
+                        )
+                        run_response.compacted_run_ids = compacted_run_ids
+
                     model_response: ModelResponse = await acall_model_with_fallback(
                         team.model,
                         team.fallback_config,

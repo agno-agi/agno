@@ -661,6 +661,11 @@ class RunOutput:
     # User control flow (HITL) requirements to continue a run when paused, in order of arrival
     requirements: Optional[list[RunRequirement]] = None
 
+    # Compaction: run IDs that were compacted (summarized) during this run.
+    # When loading history, runs with these IDs are skipped since their content
+    # is already captured in the compaction summary message.
+    compacted_run_ids: Optional[List[str]] = None
+
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity

@@ -33,6 +33,7 @@ from agno.agent import (
     _utils,
 )
 from agno.compression.manager import CompressionManager
+from agno.compaction.manager import CompactionManager
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
@@ -355,6 +356,12 @@ class Agent:
     # Compression manager for compressing tool call results
     compression_manager: Optional[CompressionManager] = None
 
+    # --- Context Compaction ---
+    # If True, compact conversation history when approaching context window limit
+    enable_compaction: bool = False
+    # Compaction manager for conversation history compaction
+    compaction_manager: Optional["CompactionManager"] = None
+
     # --- Debug ---
     # Enable debug logs
     debug_mode: bool = False
@@ -407,6 +414,8 @@ class Agent:
         session_summary_manager: Optional[SessionSummaryManager] = None,
         compress_tool_results: bool = False,
         compression_manager: Optional[CompressionManager] = None,
+        enable_compaction: bool = False,
+        compaction_manager: Optional[CompactionManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
@@ -550,6 +559,10 @@ class Agent:
         # Context compression settings
         self.compress_tool_results = compress_tool_results
         self.compression_manager = compression_manager
+
+        # Context compaction settings
+        self.enable_compaction = enable_compaction
+        self.compaction_manager = compaction_manager
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs

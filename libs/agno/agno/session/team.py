@@ -200,6 +200,16 @@ class TeamSession:
                 return []
             session_runs = session_runs[-last_n_runs:]
 
+        # Compaction boundary: skip runs whose content has been compacted (summarized).
+        # Scan runs from newest to oldest to find the most recent compaction marker.
+        compacted_ids: set = set()
+        for run in reversed(session_runs):
+            if hasattr(run, "compacted_run_ids") and run.compacted_run_ids:
+                compacted_ids.update(run.compacted_run_ids)
+                break  # Only respect the latest compaction boundary
+        if compacted_ids:
+            session_runs = [r for r in session_runs if not (hasattr(r, "run_id") and r.run_id in compacted_ids)]
+
         messages_from_history = []
         system_message = None
 

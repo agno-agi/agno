@@ -1238,7 +1238,16 @@ def get_run_messages(
                 run_response.additional_input.extend(messages_to_add_to_run_response)
 
     # 3. Add history to run_messages
-    if add_history_to_context:
+    # Compaction takes priority: when enabled it manages history loading itself,
+    # and the legacy add_history_to_context path is skipped to avoid duplication.
+    if agent.enable_compaction and agent.compaction_manager is not None:
+        history_messages, loaded_run_ids = agent.compaction_manager.load_history(session)
+        if history_messages:
+            log_debug(f"Adding {len(history_messages)} messages from compaction-managed history")
+            run_messages.messages += history_messages
+        # Store loaded_run_ids on run_response so _run.py can use it for compacted_run_ids
+        run_response._compaction_loaded_run_ids = loaded_run_ids
+    elif add_history_to_context:
         from copy import deepcopy
 
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
@@ -1443,7 +1452,16 @@ async def aget_run_messages(
                 run_response.additional_input.extend(messages_to_add_to_run_response)
 
     # 3. Add history to run_messages
-    if add_history_to_context:
+    # Compaction takes priority: when enabled it manages history loading itself,
+    # and the legacy add_history_to_context path is skipped to avoid duplication.
+    if agent.enable_compaction and agent.compaction_manager is not None:
+        history_messages, loaded_run_ids = agent.compaction_manager.load_history(session)
+        if history_messages:
+            log_debug(f"Adding {len(history_messages)} messages from compaction-managed history")
+            run_messages.messages += history_messages
+        # Store loaded_run_ids on run_response so _run.py can use it for compacted_run_ids
+        run_response._compaction_loaded_run_ids = loaded_run_ids
+    elif add_history_to_context:
         from copy import deepcopy
 
         # Only skip messages from history when system_message_role is NOT a standard conversation role.

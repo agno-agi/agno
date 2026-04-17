@@ -3,6 +3,7 @@
 Examples for instructions, system messages, introduction messages, and context shaping.
 
 ## Files
+- `conversation_compaction.py` - Automatic conversation compaction when approaching context window limit.
 - `few_shot_learning.py` - Demonstrates few-shot learning with example messages.
 - `filter_tool_calls_from_history.py` - Filter tool calls from conversation history.
 - `instructions.py` - Set agent instructions.

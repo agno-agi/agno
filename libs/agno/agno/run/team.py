@@ -771,6 +771,9 @@ class TeamRunOutput:
 
     status: RunStatus = RunStatus.running
 
+    # IDs of runs that were compacted (summarized) during this run
+    compacted_run_ids: Optional[List[str]] = None
+
     # User control flow (HITL) requirements to continue a run when paused, in order of arrival
     requirements: Optional[list[RunRequirement]] = None
 

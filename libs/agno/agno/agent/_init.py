@@ -184,6 +184,17 @@ def set_compression_manager(agent: Agent) -> None:
         agent.compress_tool_results = True
 
 
+def set_compaction_manager(agent: Agent) -> None:
+    """Initialize the compaction manager if compaction is enabled."""
+    if agent.enable_compaction and agent.compaction_manager is None:
+        from agno.compaction.manager import CompactionManager
+
+        agent.compaction_manager = CompactionManager()
+
+    if agent.compaction_manager is not None and agent.compaction_manager.model is None:
+        agent.compaction_manager.model = agent.model
+
+
 def _initialize_session_state(
     session_state: Dict[str, Any],
     user_id: Optional[str] = None,
@@ -255,6 +266,8 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_session_summary_manager(agent)
     if agent.compress_tool_results or agent.compression_manager is not None:
         set_compression_manager(agent)
+    if agent.enable_compaction or agent.compaction_manager is not None:
+        set_compaction_manager(agent)
     if agent.learning is not None and agent.learning is not False:
         set_learning_machine(agent)
 

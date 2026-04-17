@@ -156,6 +156,8 @@ def __init__(
     add_learnings_to_context: bool = True,
     compress_tool_results: bool = False,
     compression_manager: Optional["CompressionManager"] = None,
+    enable_compaction: bool = False,
+    compaction_manager: Optional["CompactionManager"] = None,
     metadata: Optional[Dict[str, Any]] = None,
     reasoning: bool = False,
     reasoning_model: Optional[Union[Model, str]] = None,
@@ -348,6 +350,10 @@ def __init__(
     # Context compression settings
     team.compress_tool_results = compress_tool_results
     team.compression_manager = compression_manager
+
+    # Context compaction settings
+    team.enable_compaction = enable_compaction
+    team.compaction_manager = compaction_manager
 
     team.metadata = metadata
 
@@ -600,6 +606,15 @@ def _set_compression_manager(team: "Team") -> None:
             team.compress_tool_results = True
 
 
+def _set_compaction_manager(team: "Team") -> None:
+    if team.enable_compaction and team.compaction_manager is None:
+        from agno.compaction import CompactionManager
+
+        team.compaction_manager = CompactionManager()
+    if team.compaction_manager is not None and team.compaction_manager.model is None:
+        team.compaction_manager.model = team.model
+
+
 def _set_learning_machine(team: "Team") -> None:
     """Initialize LearningMachine with team's db and model.
 
@@ -719,6 +734,8 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         _set_session_summary_manager(team)
     if team.compress_tool_results or team.compression_manager is not None:
         _set_compression_manager(team)
+    if team.enable_compaction or team.compaction_manager is not None:
+        _set_compaction_manager(team)
     if team.learning is not None and team.learning is not False:
         _set_learning_machine(team)
 

@@ -134,6 +134,9 @@ class Model(ABC):
     # Functional role of this model (e.g., MODEL, OUTPUT_MODEL, PARSER_MODEL).
     # Set by the agent during initialization; defaults to MODEL.
     model_type: ModelType = ModelType.MODEL
+    # Context window size in tokens for this model. Used by compaction and compression
+    # to automatically determine when to trigger. Subclasses should override this.
+    context_window: Optional[int] = 128000
 
     # -*- Do not set the following attributes directly -*-
     # -*- Set them on the Agent instead -*-

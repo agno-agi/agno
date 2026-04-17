@@ -504,6 +504,23 @@ def _run(
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
+                # 5b. Compact conversation history if enabled and threshold is met
+                if agent.enable_compaction and agent.compaction_manager is not None:
+                    if agent.compaction_manager.should_compact(
+                        messages=run_messages.messages,
+                        tools=_tools,
+                        model=agent.model,
+                        response_format=response_format,
+                    ):
+                        loaded_run_ids = getattr(run_response, "_compaction_loaded_run_ids", [])
+                        run_messages.messages, compacted_run_ids = agent.compaction_manager.compact(
+                            messages=run_messages.messages,
+                            loaded_run_ids=loaded_run_ids,
+                            model=agent.model,
+                            run_metrics=run_response.metrics if run_response is not None else None,
+                        )
+                        run_response.compacted_run_ids = compacted_run_ids
+
                 # 6. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
 
@@ -906,6 +923,23 @@ def _run_stream(
 
                 # Check for cancellation before model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # 5b. Compact conversation history if enabled and threshold is met
+                if agent.enable_compaction and agent.compaction_manager is not None:
+                    if agent.compaction_manager.should_compact(
+                        messages=run_messages.messages,
+                        tools=_tools,
+                        model=agent.model,
+                        response_format=response_format,
+                    ):
+                        loaded_run_ids = getattr(run_response, "_compaction_loaded_run_ids", [])
+                        run_messages.messages, compacted_run_ids = agent.compaction_manager.compact(
+                            messages=run_messages.messages,
+                            loaded_run_ids=loaded_run_ids,
+                            model=agent.model,
+                            run_metrics=run_response.metrics if run_response is not None else None,
+                        )
+                        run_response.compacted_run_ids = compacted_run_ids
 
                 # 6. Process model response
                 if agent.output_model is None:
@@ -1590,6 +1624,23 @@ async def _arun(
                 # Check for cancellation before model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
+                # 8b. Compact conversation history if enabled and threshold is met
+                if agent.enable_compaction and agent.compaction_manager is not None:
+                    if await agent.compaction_manager.ashould_compact(
+                        messages=run_messages.messages,
+                        tools=_tools,
+                        model=agent.model,
+                        response_format=response_format,
+                    ):
+                        loaded_run_ids = getattr(run_response, "_compaction_loaded_run_ids", [])
+                        run_messages.messages, compacted_run_ids = await agent.compaction_manager.acompact(
+                            messages=run_messages.messages,
+                            loaded_run_ids=loaded_run_ids,
+                            model=agent.model,
+                            run_metrics=run_response.metrics if run_response is not None else None,
+                        )
+                        run_response.compacted_run_ids = compacted_run_ids
+
                 # 9. Generate a response from the Model (includes running function calls)
                 model_response: ModelResponse = await acall_model_with_fallback(
                     agent.model,
@@ -2102,6 +2153,23 @@ async def _arun_stream(
                     yield item
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # 8b. Compact conversation history if enabled and threshold is met
+                if agent.enable_compaction and agent.compaction_manager is not None:
+                    if await agent.compaction_manager.ashould_compact(
+                        messages=run_messages.messages,
+                        tools=_tools,
+                        model=agent.model,
+                        response_format=response_format,
+                    ):
+                        loaded_run_ids = getattr(run_response, "_compaction_loaded_run_ids", [])
+                        run_messages.messages, compacted_run_ids = await agent.compaction_manager.acompact(
+                            messages=run_messages.messages,
+                            loaded_run_ids=loaded_run_ids,
+                            model=agent.model,
+                            run_metrics=run_response.metrics if run_response is not None else None,
+                        )
+                        run_response.compacted_run_ids = compacted_run_ids
 
                 # 9. Generate a response from the Model
                 if agent.output_model is None:

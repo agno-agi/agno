@@ -23,6 +23,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
+from agno.compaction import CompactionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
@@ -321,6 +322,12 @@ class Team:
     # Compression manager for compressing tool call results
     compression_manager: Optional["CompressionManager"] = None
 
+    # --- Conversation Compaction ---
+    # If True, automatically compact conversation history when approaching context window limits
+    enable_compaction: bool = False
+    # Compaction manager for compacting conversation history
+    compaction_manager: Optional["CompactionManager"] = None
+
     # --- Team History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
     add_history_to_context: bool = False
@@ -522,6 +529,8 @@ class Team:
         add_learnings_to_context: bool = True,
         compress_tool_results: bool = False,
         compression_manager: Optional["CompressionManager"] = None,
+        enable_compaction: bool = False,
+        compaction_manager: Optional["CompactionManager"] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Union[Model, str]] = None,
@@ -644,6 +653,8 @@ class Team:
             add_learnings_to_context=add_learnings_to_context,
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,
+            enable_compaction=enable_compaction,
+            compaction_manager=compaction_manager,
             metadata=metadata,
             reasoning=reasoning,
             reasoning_model=reasoning_model,
