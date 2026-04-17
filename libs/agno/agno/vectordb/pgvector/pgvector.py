@@ -589,10 +589,22 @@ class PgVector(VectorDb):
             embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
             results = await asyncio.gather(*embed_tasks, return_exceptions=True)
 
+            # Re-raise on rate limits to avoid writing NULL embeddings.
+            rate_limit_error: Optional[Exception] = None
+
             # Check for exceptions and handle them
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
                     error_msg = str(result)
+
+                    error_str = error_msg.lower()
+                    is_rate_limit = any(
+                        phrase in error_str
+                        for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+                    )
+                    if is_rate_limit and rate_limit_error is None:
+                        rate_limit_error = result
+
                     # If it's an event loop closure error, log it but don't fail
                     if "Event loop is closed" in error_msg or "RuntimeError" in type(result).__name__:
                         log_warning(
@@ -600,6 +612,9 @@ class PgVector(VectorDb):
                         )
                     else:
                         log_error(f"Error embedding document {i}: {result}")
+
+            if rate_limit_error is not None:
+                raise rate_limit_error
 
     async def async_upsert(
         self,
