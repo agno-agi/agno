@@ -1613,7 +1613,9 @@ class Workflow:
                 if event.step_index is None:
                     event.step_index = step_index
         else:
-            if hasattr(event, "parent_step_id") and step_id:
+            # Only set parent_step_id if not already set — the innermost enclosing
+            # workflow is the true host step; outer layers must not overwrite it.
+            if hasattr(event, "parent_step_id") and step_id and event.parent_step_id is None:
                 event.parent_step_id = step_id
 
         return event
@@ -7918,6 +7920,20 @@ class Workflow:
                 }
                 return step_dict
 
+            # Handle Workflow passed directly as a step (auto-wrap shorthand)
+            if isinstance(step, Workflow):
+                nested_steps_list = []
+                if step.steps is not None and not callable(step.steps):
+                    nested_iter = step.steps.steps if isinstance(step.steps, Steps) else step.steps
+                    nested_steps_list = [serialize_step(s) for s in nested_iter]
+                return {
+                    "name": step.name or "unnamed_workflow",
+                    "description": step.description or "Nested workflow step",
+                    "type": StepType.WORKFLOW.value,
+                    "workflow_id": step.id,
+                    "steps": nested_steps_list,
+                }
+
             step_dict = {
                 "name": step.name if hasattr(step, "name") else f"unnamed_{type(step).__name__.lower()}",
                 "description": step.description if hasattr(step, "description") else "User-defined callable step",
@@ -7934,6 +7950,19 @@ class Workflow:
             if hasattr(step, "team"):
                 step_dict["team"] = step.team if hasattr(step, "team") else None  # type: ignore
 
+            # Handle Step wrapping a nested Workflow (Step(workflow=...))
+            nested_workflow = getattr(step, "workflow", None)
+            if isinstance(nested_workflow, Workflow):
+                step_dict["type"] = StepType.WORKFLOW.value
+                step_dict["workflow_id"] = nested_workflow.id
+                if nested_workflow.steps is not None and not callable(nested_workflow.steps):
+                    nested_iter = (
+                        nested_workflow.steps.steps
+                        if isinstance(nested_workflow.steps, Steps)
+                        else nested_workflow.steps
+                    )
+                    step_dict["steps"] = [serialize_step(s) for s in nested_iter]
+
             # Handle nested steps for Router/Loop
             if isinstance(step, Router):
                 step_dict["steps"] = (
@@ -7941,7 +7970,10 @@ class Workflow:
                 )
 
             elif isinstance(step, (Loop, Condition, Steps, Parallel)):
-                step_dict["steps"] = [serialize_step(step) for step in step.steps] if hasattr(step, "steps") else None
+                # Condition may also have else_steps
+                step_dict["steps"] = [serialize_step(s) for s in step.steps] if hasattr(step, "steps") else None
+                if isinstance(step, Condition) and getattr(step, "else_steps", None):
+                    step_dict["else_steps"] = [serialize_step(s) for s in step.else_steps]  # type: ignore
 
             return step_dict
 

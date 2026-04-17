@@ -117,6 +117,9 @@ class WorkflowResponse(BaseModel):
             if step.get("steps"):
                 step["steps"] = await cls._resolve_agents_and_teams_recursively(step["steps"])
 
+            if step.get("else_steps"):
+                step["else_steps"] = await cls._resolve_agents_and_teams_recursively(step["else_steps"])
+
             # Prune None values in the entire step
             steps[idx] = _prune_none(step)
 
