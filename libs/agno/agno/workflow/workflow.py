@@ -5393,11 +5393,11 @@ class Workflow:
 
                     # Check if executor (agent/team) inside router is paused for tool-level HITL
                     if getattr(step_output, "is_paused", False):
-                        _inner = _find_inner_step_by_executor(step) or step
+                        _router_inner = _find_inner_step_by_executor(step) or step
                         _executor_run = get_last_executor_run(workflow_run_response)
                         if _executor_run:
                             apply_executor_pause(
-                                _inner, i, step_name, _executor_run, workflow_run_response, collected_step_outputs
+                                _router_inner, i, step_name, _executor_run, workflow_run_response, collected_step_outputs
                             )
                             save_paused_session(self, session, workflow_run_response)
                             return workflow_run_response
@@ -6214,11 +6214,11 @@ class Workflow:
 
                     # Check if executor (agent/team) inside router is paused for tool-level HITL
                     if getattr(final_router_output, "is_paused", False):
-                        _inner = _find_inner_step_by_executor(step) or step
+                        _router_inner = _find_inner_step_by_executor(step) or step
                         _executor_run = get_last_executor_run(workflow_run_response)
                         if _executor_run:
                             new_req = apply_executor_pause(
-                                _inner, i, step_name, _executor_run, workflow_run_response, collected_step_outputs
+                                _router_inner, i, step_name, _executor_run, workflow_run_response, collected_step_outputs
                             )
                             yield create_executor_paused_event(new_req, _inner, i, step_name, workflow_run_response)
                             save_paused_session(self, session, workflow_run_response)
@@ -7195,11 +7195,11 @@ class Workflow:
 
                     # Check if executor (agent/team) inside router is paused for tool-level HITL (async)
                     if getattr(step_output, "is_paused", False):
-                        _inner = _find_inner_step_by_executor(step) or step
+                        _router_inner = _find_inner_step_by_executor(step) or step
                         _executor_run = get_last_executor_run(workflow_run_response)
                         if _executor_run:
                             apply_executor_pause(
-                                _inner, i, step_name, _executor_run, workflow_run_response, collected_step_outputs
+                                _router_inner, i, step_name, _executor_run, workflow_run_response, collected_step_outputs
                             )
                             await asave_paused_session(self, session, workflow_run_response)
                             return workflow_run_response
@@ -7739,11 +7739,11 @@ class Workflow:
 
                     # Check if executor (agent/team) inside router is paused for tool-level HITL
                     if getattr(final_router_output, "is_paused", False):
-                        _inner = _find_inner_step_by_executor(step) or step
+                        _router_inner = _find_inner_step_by_executor(step) or step
                         _executor_run = get_last_executor_run(workflow_run_response)
                         if _executor_run:
                             new_req = apply_executor_pause(
-                                _inner, i, step_name, _executor_run, workflow_run_response, collected_step_outputs
+                                _router_inner, i, step_name, _executor_run, workflow_run_response, collected_step_outputs
                             )
                             yield create_executor_paused_event(new_req, _inner, i, step_name, workflow_run_response)
                             save_paused_session(self, session, workflow_run_response)
