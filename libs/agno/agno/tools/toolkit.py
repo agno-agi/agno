@@ -1,3 +1,4 @@
+import functools
 from collections import OrderedDict
 from inspect import iscoroutinefunction
 from pathlib import Path
@@ -243,20 +244,18 @@ class Toolkit:
             if is_async:
 
                 def make_bound_method(func, instance):
+                    @functools.wraps(func)
                     async def bound(*args, **kwargs):
                         return await func(instance, *args, **kwargs)
 
-                    bound.__name__ = getattr(func, "__name__", tool_name)
-                    bound.__doc__ = getattr(func, "__doc__", None)
                     return bound
             else:
 
                 def make_bound_method(func, instance):
+                    @functools.wraps(func)
                     def bound(*args, **kwargs):
                         return func(instance, *args, **kwargs)
 
-                    bound.__name__ = getattr(func, "__name__", tool_name)
-                    bound.__doc__ = getattr(func, "__doc__", None)
                     return bound
 
             bound_method = make_bound_method(original_func, self)
