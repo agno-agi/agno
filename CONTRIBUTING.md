@@ -129,7 +129,7 @@ Make sure all tests pass before submitting your pull request. If you add new fea
 5. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
 6. Submit a pull request.
 
-Message us on [Discord](https://discord.gg/4MtYHHrgA8) or post on [Discourse](https://community.agno.com/) if you have any questions or need help with credits.
+Message us on [Discord](https://discord.gg/4MtYHHrgA8) if you have any questions or need help with credits.
 
 ## 📚 Resources
 
