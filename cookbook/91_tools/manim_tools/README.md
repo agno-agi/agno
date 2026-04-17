@@ -10,15 +10,24 @@ Renders Manim Community Edition animations with an Agno agent and attaches the m
 
 ### Voiceover (only if `enable_voiceover=True`)
 
-Pass `voice_service="gtts"` (default, free) or `voice_service="elevenlabs"` (paid, higher quality) to `ManimTools(...)`. The toolkit validates the import at construction time and feeds the LLM instructions tailored to the chosen service.
+Pass `voice_service=` to `ManimTools(...)`. Three services are wired in:
 
-- `manim-voiceover` with a speech service extra:
+| `voice_service` | Cost | Env var | Notes |
+|---|---|---|---|
+| `"gtts"` (default) | Free | none | Google TTS. |
+| `"elevenlabs"` | Paid | `ELEVEN_API_KEY` | Highest quality. Use `voice_id=` not `voice_name=` (see `manim_tools_with_voice_elevenlabs.py`). |
+| `"openai"` | Paid | `OPENAI_API_KEY` | 6 canonical voices; no library collisions. |
+
+The toolkit validates the import at construction time and feeds the LLM instructions tailored to the chosen service - including a `transcription_model=None` hint so scenes don't run local Whisper for word timings you don't need.
+
+- `manim-voiceover` with the extra for your service:
   ```bash
   pip install "manim-voiceover[gtts]"         # free, Google TTS (default)
   pip install "manim-voiceover[elevenlabs]"   # paid, ElevenLabs
-  # other extras: [openai], [azure], [coqui], [recorder]
+  pip install "manim-voiceover[openai]"       # paid, OpenAI TTS
+  # other extras: [azure], [coqui], [recorder]
   ```
-- **ElevenLabs env var.** `manim-voiceover`'s `ElevenLabsService` reads `ELEVEN_API_KEY` - *not* `ELEVEN_LABS_API_KEY` that Agno's separate `ElevenLabsTools` uses. Set `ELEVEN_API_KEY` before running an ElevenLabs-backed scene.
+- **ElevenLabs env var gotcha.** `manim-voiceover`'s `ElevenLabsService` reads `ELEVEN_API_KEY` - *not* `ELEVEN_LABS_API_KEY` that Agno's separate `ElevenLabsTools` uses. Set `ELEVEN_API_KEY` before running an ElevenLabs-backed scene.
 - **SoX** on PATH (used by `manim_voiceover` to trim silence and normalize audio). The toolkit prints a warning at startup if it's missing; voiceover renders still work without it but audio quality is degraded.
   ```bash
   winget install ChrisBagwell.SoX    # Windows
@@ -32,7 +41,8 @@ Pass `voice_service="gtts"` (default, free) or `voice_service="elevenlabs"` (pai
 - `manim_tools.py` - CLI demo without voice. Runs a single prompt, saves the mp4 to `tmp/saved/<id>.mp4`. Good for smoke testing.
 - `manim_tools_with_voice.py` - CLI demo with `enable_voiceover=True, voice_service="gtts"`. Free Google TTS narration. Requires `manim-voiceover[gtts]` and SoX.
 - `manim_tools_with_voice_elevenlabs.py` - CLI demo with `voice_service="elevenlabs"`. Higher-quality narration. Requires `manim-voiceover[elevenlabs]`, SoX, and `ELEVEN_API_KEY`.
-- `manim_agentos.py` - Voice-enabled agent plus web research tools, wrapped in AgentOS for end-to-end UI testing.
+- `manim_tools_with_voice_openai.py` - CLI demo with `voice_service="openai"`. OpenAI TTS narration. Requires `manim-voiceover[openai]`, SoX, and `OPENAI_API_KEY`.
+- `manim_agentos.py` - Voice-enabled agent plus web research tools, wrapped in AgentOS for end-to-end UI testing. Uses OpenAI TTS (deterministic voice selection) + SQLite session storage.
 
 ## Run
 
@@ -40,6 +50,7 @@ Pass `voice_service="gtts"` (default, free) or `voice_service="elevenlabs"` (pai
 .venvs/demo/bin/python cookbook/91_tools/manim_tools/manim_tools.py
 .venvs/demo/bin/python cookbook/91_tools/manim_tools/manim_tools_with_voice.py
 .venvs/demo/bin/python cookbook/91_tools/manim_tools/manim_tools_with_voice_elevenlabs.py
+.venvs/demo/bin/python cookbook/91_tools/manim_tools/manim_tools_with_voice_openai.py
 .venvs/demo/bin/python cookbook/91_tools/manim_tools/manim_agentos.py
 ```
 

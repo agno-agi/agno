@@ -73,6 +73,21 @@ _VOICE_SERVICES: Dict[str, Dict[str, str]] = {
             "Requires ELEVEN_API_KEY env var."
         ),
     },
+    "openai": {
+        "class_name": "OpenAIService",
+        "import_path": "manim_voiceover.services.openai",
+        "install_extra": "openai",
+        "usage_hint": (
+            "OpenAIService(voice='nova', model='tts-1-hd', transcription_model=None) "
+            "is the recommended default. transcription_model=None is CRITICAL: the "
+            "service defaults it to 'base', which runs local Whisper on every clip "
+            "(adds 2-10s per chunk and is only needed for word-level "
+            "tracker.time_until_bookmark sync - whole-clip run_time=tracker.duration "
+            "does NOT need it). Voices: 'alloy', 'echo', 'fable', 'onyx', 'nova', "
+            "'shimmer' (no library collisions - all are canonical). Models: 'tts-1' "
+            "(faster) or 'tts-1-hd' (higher quality). Requires OPENAI_API_KEY env var."
+        ),
+    },
 }
 
 
