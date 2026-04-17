@@ -3,6 +3,22 @@ from typing import Any, Callable, Dict, List, Optional
 
 from agno.knowledge.reader.base import Reader
 
+# Maps MIME types to the bare extension keys used by this factory.
+# Limited to the formats that have a dedicated reader — no expansion intended.
+_MIME_TO_EXT: Dict[str, str] = {
+    "application/pdf": "pdf",
+    "text/csv": "csv",
+    "application/csv": "csv",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.ms-excel": "xls",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/msword": "doc",
+    "application/json": "json",
+    "text/markdown": "md",
+    "text/x-markdown": "md",
+    "text/plain": "txt",
+}
+
 
 class ReaderFactory:
     """Factory for creating and managing document readers with lazy loading."""
@@ -381,33 +397,35 @@ class ReaderFactory:
 
     @classmethod
     def get_reader_for_extension(cls, extension: str) -> Reader:
-        """Get the appropriate reader for a file extension."""
-        # TODO: add docling for unique file extensions eg: images, audios, etc.
-        extension = extension.lower()
+        """Get the appropriate reader for a file extension or MIME type.
 
-        if extension in [".pdf", "application/pdf"]:
+        Accepts dotted extensions (".pdf"), bare extensions ("pdf"),
+        MIME types ("application/pdf"), and MIME types with parameters
+        ("text/csv; charset=UTF-8").
+        """
+        # TODO: add docling for unique file extensions eg: images, audios, etc.
+        ext = extension.lower().split(";")[0].strip()
+        if ext.startswith("."):
+            ext = ext[1:]
+        ext = _MIME_TO_EXT.get(ext, ext)
+
+        if ext == "pdf":
             return cls.create_reader("pdf")
-        elif extension in [".csv", "text/csv"]:
+        elif ext == "csv":
             return cls.create_reader("csv")
-        elif extension in [
-            ".xlsx",
-            ".xls",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "application/vnd.ms-excel",
-        ]:
+        elif ext in ("xlsx", "xls"):
             return cls.create_reader("excel")
-        elif extension in [".docx", ".doc", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
+        elif ext in ("docx", "doc"):
             return cls.create_reader("docx")
-        elif extension == ".pptx":
+        elif ext == "pptx":
             return cls.create_reader("pptx")
-        elif extension == ".json":
+        elif ext == "json":
             return cls.create_reader("json")
-        elif extension in [".md", ".markdown"]:
+        elif ext in ("md", "markdown"):
             return cls.create_reader("markdown")
-        elif extension in [".txt", ".text"]:
+        elif ext in ("txt", "text"):
             return cls.create_reader("text")
         else:
-            # Default to text reader for unknown extensions
             return cls.create_reader("text")
 
     @classmethod
