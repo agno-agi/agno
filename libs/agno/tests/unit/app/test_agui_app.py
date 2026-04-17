@@ -1502,3 +1502,64 @@ def test_extract_agui_user_input_multimodal_content():
     result = extract_agui_user_input(messages)
 
     assert result == "describe this image"
+
+
+@pytest.mark.asyncio
+async def test_stream_emits_followups_as_custom_events():
+    """FollowupsStartedEvent and FollowupsCompletedEvent should be forwarded over
+    AG-UI as CustomEvents so frontends can render suggested follow-up prompts
+    (see agno-agi/agno#7398)."""
+    from agno.run.agent import FollowupsCompletedEvent, FollowupsStartedEvent, RunCompletedEvent, RunEvent
+
+    async def mock_stream():
+        text_response = RunContentEvent()
+        text_response.event = RunEvent.run_content
+        text_response.content = "Here is the answer."
+        yield text_response
+
+        yield FollowupsStartedEvent()
+        yield FollowupsCompletedEvent(followups=["What next?", "How about this?"])
+
+        completed = RunCompletedEvent()
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "thread_1", "run_1"):
+        events.append(event)
+
+    custom_events = [e for e in events if e.type == EventType.CUSTOM]
+    names = [e.name for e in custom_events]
+    assert "FollowupsStartedEvent" in names
+    assert "FollowupsCompletedEvent" in names
+
+    # The completed event should carry the followups payload.
+    completed_custom = next(e for e in custom_events if e.name == "FollowupsCompletedEvent")
+    assert isinstance(completed_custom.value, dict)
+    assert completed_custom.value.get("followups") == ["What next?", "How about this?"]
+
+    # The followup events must be emitted *before* RUN_FINISHED so consumers can
+    # render them as part of the same run.
+    finished_idx = next(i for i, e in enumerate(events) if e.type == EventType.RUN_FINISHED)
+    custom_indices = [i for i, e in enumerate(events) if e.type == EventType.CUSTOM and e.name.startswith("Followups")]
+    assert all(i < finished_idx for i in custom_indices)
+
+
+@pytest.mark.asyncio
+async def test_stream_emits_team_followups_as_custom_events():
+    """Team followups events should be forwarded the same way agent followups are."""
+    from agno.run.agent import RunCompletedEvent
+    from agno.run.team import FollowupsCompletedEvent as TeamFollowupsCompletedEvent
+    from agno.run.team import FollowupsStartedEvent as TeamFollowupsStartedEvent
+
+    async def mock_stream():
+        yield TeamFollowupsStartedEvent()
+        yield TeamFollowupsCompletedEvent(followups=["Drill down further?"])
+        yield RunCompletedEvent()
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "thread_1", "run_1"):
+        events.append(event)
+
+    custom_event_names = [e.name for e in events if e.type == EventType.CUSTOM]
+    assert "FollowupsStartedEvent" in custom_event_names
+    assert "FollowupsCompletedEvent" in custom_event_names
