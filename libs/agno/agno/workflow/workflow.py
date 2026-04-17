@@ -5249,6 +5249,23 @@ class Workflow:
                     output_files.extend(step_output.files or [])
                     if step_output.stop:
                         break
+
+                    # Post-execution output review after executor HITL completes
+                    if isinstance(step, (Step, Router)):
+                        review_result = check_output_review_status(step, i, step_input, step_output)
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            save_paused_session(self, session, workflow_run_response)
+                            return workflow_run_response
+
                     kwargs["executor_step_requirement"] = None
                     continue
 
@@ -5373,6 +5390,17 @@ class Workflow:
                         finally:
                             # Restore original selector even if execution fails
                             step.selector = original_selector
+
+                    # Check if executor (agent/team) inside router is paused for tool-level HITL
+                    if getattr(step_output, "is_paused", False):
+                        _inner = _find_inner_step_by_executor(step) or step
+                        _executor_run = get_last_executor_run(workflow_run_response)
+                        if _executor_run:
+                            apply_executor_pause(
+                                _inner, i, step_name, _executor_run, workflow_run_response, collected_step_outputs
+                            )
+                            save_paused_session(self, session, workflow_run_response)
+                            return workflow_run_response
 
                     # Update tracking
                     previous_step_outputs[step_name] = step_output
@@ -5978,6 +6006,27 @@ class Workflow:
                     output_files.extend(step_output.files or [])
                     if step_output.stop:
                         break
+
+                    # Post-execution output review after executor HITL completes (streaming)
+                    if isinstance(step, (Step, Router)):
+                        review_result = check_output_review_status(step, i, step_input, step_output)
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            paused_event = create_step_paused_event(
+                                workflow_run_response, step, step_name, i, review_result
+                            )
+                            yield self._handle_event(paused_event, workflow_run_response)
+                            save_paused_session(self, session, workflow_run_response)
+                            return
+
                     kwargs["executor_step_requirement"] = None
                     continue
 
@@ -6162,6 +6211,19 @@ class Workflow:
                     # Update tracking - router_step_output is guaranteed non-None at this point
                     # Both branches above ensure router_step_output is assigned a StepOutput
                     final_router_output: StepOutput = router_step_output  # type: ignore[assignment]
+
+                    # Check if executor (agent/team) inside router is paused for tool-level HITL
+                    if getattr(final_router_output, "is_paused", False):
+                        _inner = _find_inner_step_by_executor(step) or step
+                        _executor_run = get_last_executor_run(workflow_run_response)
+                        if _executor_run:
+                            new_req = apply_executor_pause(
+                                _inner, i, step_name, _executor_run, workflow_run_response, collected_step_outputs
+                            )
+                            yield create_executor_paused_event(new_req, _inner, i, step_name, workflow_run_response)
+                            save_paused_session(self, session, workflow_run_response)
+                            return
+
                     previous_step_outputs[step_name] = final_router_output
                     collected_step_outputs.append(final_router_output)
 
@@ -6989,6 +7051,23 @@ class Workflow:
                     output_files.extend(step_output.files or [])
                     if step_output.stop:
                         break
+
+                    # Post-execution output review after executor HITL completes (async)
+                    if isinstance(step, (Step, Router)):
+                        review_result = check_output_review_status(step, i, step_input, step_output)
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            await asave_paused_session(self, session, workflow_run_response)
+                            return workflow_run_response
+
                     kwargs["executor_step_requirement"] = None
                     continue
 
@@ -7113,6 +7192,17 @@ class Workflow:
                         finally:
                             # Restore original selector even if execution fails
                             step.selector = original_selector
+
+                    # Check if executor (agent/team) inside router is paused for tool-level HITL (async)
+                    if getattr(step_output, "is_paused", False):
+                        _inner = _find_inner_step_by_executor(step) or step
+                        _executor_run = get_last_executor_run(workflow_run_response)
+                        if _executor_run:
+                            apply_executor_pause(
+                                _inner, i, step_name, _executor_run, workflow_run_response, collected_step_outputs
+                            )
+                            await asave_paused_session(self, session, workflow_run_response)
+                            return workflow_run_response
 
                     # Update tracking
                     previous_step_outputs[step_name] = step_output
@@ -7440,6 +7530,27 @@ class Workflow:
                     output_files.extend(step_output.files or [])
                     if step_output.stop:
                         break
+
+                    # Post-execution output review after executor HITL completes (async streaming)
+                    if isinstance(step, (Step, Router)):
+                        review_result = check_output_review_status(step, i, step_input, step_output)
+                        if review_result.should_pause:
+                            apply_post_execution_pause_state(
+                                workflow_run_response,
+                                i,
+                                step_name,
+                                collected_step_outputs,
+                                review_result,
+                                step_output,
+                                previous_step_outputs=previous_step_outputs,
+                            )
+                            paused_event = create_step_paused_event(
+                                workflow_run_response, step, step_name, i, review_result
+                            )
+                            yield self._handle_event(paused_event, workflow_run_response)
+                            await asave_paused_session(self, session, workflow_run_response)
+                            return
+
                     kwargs["executor_step_requirement"] = None
                     continue
 
@@ -7625,6 +7736,19 @@ class Workflow:
                     # Update tracking - router_step_output is guaranteed non-None at this point
                     # Both branches above ensure router_step_output is assigned a StepOutput
                     final_router_output: StepOutput = router_step_output  # type: ignore[assignment]
+
+                    # Check if executor (agent/team) inside router is paused for tool-level HITL
+                    if getattr(final_router_output, "is_paused", False):
+                        _inner = _find_inner_step_by_executor(step) or step
+                        _executor_run = get_last_executor_run(workflow_run_response)
+                        if _executor_run:
+                            new_req = apply_executor_pause(
+                                _inner, i, step_name, _executor_run, workflow_run_response, collected_step_outputs
+                            )
+                            yield create_executor_paused_event(new_req, _inner, i, step_name, workflow_run_response)
+                            save_paused_session(self, session, workflow_run_response)
+                            return
+
                     previous_step_outputs[step_name] = final_router_output
                     collected_step_outputs.append(final_router_output)
 
