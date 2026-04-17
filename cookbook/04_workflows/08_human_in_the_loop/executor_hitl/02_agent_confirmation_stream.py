@@ -15,7 +15,6 @@ from agno.models.openai import OpenAIChat
 from agno.run.workflow import (
     StepExecutorPausedEvent,
     WorkflowCompletedEvent,
-    WorkflowRunOutput,
 )
 from agno.tools import tool
 from agno.workflow.step import Step
@@ -68,8 +67,6 @@ workflow = Workflow(
 # Run with streaming
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    paused_response = None
-
     for event in workflow.run("What is the weather in Tokyo?", stream=True):
         if isinstance(event, StepExecutorPausedEvent):
             console.print(
@@ -78,8 +75,14 @@ if __name__ == "__main__":
                 f"  Executor: {event.executor_agent_name} ({event.executor_type})\n"
                 f"  Requirements: {len(event.executor_requirements or [])}"
             )
-        elif isinstance(event, WorkflowRunOutput):
-            paused_response = event
+        elif isinstance(event, WorkflowCompletedEvent):
+            console.print("\n[bold green]Workflow completed![/]")
+        elif hasattr(event, "content") and event.content:
+            print(event.content, end="", flush=True)
+
+    # Get run output from session (not from stream - WorkflowRunOutput is saved to session, not yielded)
+    session = workflow.get_session()
+    paused_response = session.runs[-1] if session and session.runs else None
 
     if paused_response and paused_response.is_paused:
         console.print("\n[bold yellow]Workflow is paused. Resolving requirements...[/]")
@@ -115,8 +118,6 @@ if __name__ == "__main__":
         for event in workflow.continue_run(paused_response, stream=True):
             if isinstance(event, WorkflowCompletedEvent):
                 console.print("\n\n[bold green]Workflow completed![/]")
-            elif isinstance(event, WorkflowRunOutput):
-                pass  # Final run output (only emitted on pause)
             elif hasattr(event, "content") and event.content:
                 print(event.content, end="", flush=True)
 
