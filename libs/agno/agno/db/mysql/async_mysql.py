@@ -244,7 +244,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
 
                 except Exception as e:
-                    log_error(f"Error creating index {idx.name}: {e}")
+                    log_error(f"Error creating index {idx.name}: {str(e)}")
 
             log_debug(f"Successfully created table {table_name} in schema {self.db_schema}")
 
@@ -259,7 +259,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {self.db_schema}.{table_name}: {e}")
+            log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
     async def _create_all_tables(self):
@@ -399,7 +399,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return table
 
         except Exception as e:
-            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {e}")
+            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
     async def get_latest_schema_version(self, table_name: str) -> str:
@@ -467,7 +467,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     return True
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_error(f"Error deleting session: {str(e)}")
             return False
 
     async def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -493,7 +493,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_error(f"Error deleting sessions: {str(e)}")
 
     async def get_session(
         self,
@@ -547,7 +547,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception reading from session table: {e}")
+            log_error(f"Exception reading from session table: {str(e)}")
             return None
 
     async def get_sessions(
@@ -649,7 +649,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception reading from session table: {e}")
+            log_error(f"Exception reading from session table: {str(e)}")
             return [] if deserialize else ([], 0)
 
     async def rename_session(
@@ -719,7 +719,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+            log_error(f"Exception renaming session: {str(e)}")
             return None
 
     async def upsert_session(
@@ -907,7 +907,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 raise ValueError(f"Invalid session type: {session.session_type}")
 
         except Exception as e:
-            log_error(f"Exception upserting into sessions table: {e}")
+            log_error(f"Exception upserting into sessions table: {str(e)}")
             return None
 
     async def upsert_sessions(
@@ -1112,7 +1112,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {e}")
+            log_error(f"Exception during bulk session upsert, falling back to individual upserts: {str(e)}")
             # Fallback to individual upserts
             return [
                 result
@@ -1148,7 +1148,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     log_debug(f"No user memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting user memory: {e}")
+            log_error(f"Error deleting user memory: {str(e)}")
 
     async def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
@@ -1175,7 +1175,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     log_debug(f"Successfully deleted {result.rowcount} user memories")  # type: ignore
 
         except Exception as e:
-            log_error(f"Error deleting user memories: {e}")
+            log_error(f"Error deleting user memories: {str(e)}")
 
     async def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
@@ -1211,7 +1211,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return list(topics_set)
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             return []
 
     async def get_user_memory(
@@ -1251,7 +1251,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             return None
 
     async def get_user_memories(
@@ -1335,7 +1335,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return [UserMemory.from_dict(record) for record in memories_raw]
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             return [] if deserialize else ([], 0)
 
     async def clear_memories(self) -> None:
@@ -1351,7 +1351,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 await sess.execute(table.delete())
 
         except Exception as e:
-            log_warning(f"Exception deleting all memories: {e}")
+            log_warning(f"Exception deleting all memories: {str(e)}")
 
     # -- Cultural Knowledge methods --
     async def clear_cultural_knowledge(self) -> None:
@@ -1367,7 +1367,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 await sess.execute(table.delete())
 
         except Exception as e:
-            log_warning(f"Exception deleting all cultural knowledge: {e}")
+            log_warning(f"Exception deleting all cultural knowledge: {str(e)}")
 
     async def delete_cultural_knowledge(self, id: str) -> None:
         """Delete cultural knowledge by ID.
@@ -1386,7 +1386,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 await sess.execute(stmt)
 
         except Exception as e:
-            log_warning(f"Exception deleting cultural knowledge: {e}")
+            log_warning(f"Exception deleting cultural knowledge: {str(e)}")
             raise e
 
     async def get_cultural_knowledge(
@@ -1423,7 +1423,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return deserialize_cultural_knowledge_from_db(db_row)
 
         except Exception as e:
-            log_warning(f"Exception reading cultural knowledge: {e}")
+            log_warning(f"Exception reading cultural knowledge: {str(e)}")
             raise e
 
     async def get_all_cultural_knowledge(
@@ -1496,7 +1496,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
 
         except Exception as e:
-            log_warning(f"Exception reading all cultural knowledge: {e}")
+            log_warning(f"Exception reading all cultural knowledge: {str(e)}")
             raise e
 
     async def upsert_cultural_knowledge(
@@ -1570,7 +1570,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return deserialize_cultural_knowledge_from_db(db_row)
 
         except Exception as e:
-            log_warning(f"Exception upserting cultural knowledge: {e}")
+            log_warning(f"Exception upserting cultural knowledge: {str(e)}")
             raise e
 
     async def get_user_memory_stats(
@@ -1639,7 +1639,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 ], total_count
 
         except Exception as e:
-            log_error(f"Exception getting user memory stats: {e}")
+            log_error(f"Exception getting user memory stats: {str(e)}")
             return [], 0
 
     async def upsert_user_memory(
@@ -1710,7 +1710,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Exception upserting user memory: {e}")
+            log_error(f"Exception upserting user memory: {str(e)}")
             return None
 
     async def upsert_memories(
@@ -1794,7 +1794,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {e}")
+            log_error(f"Exception during bulk memory upsert, falling back to individual upserts: {str(e)}")
             # Fallback to individual upserts
             return [
                 result
@@ -1844,7 +1844,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return [dict(record._mapping) for record in records]
 
         except Exception as e:
-            log_error(f"Exception reading from sessions table: {e}")
+            log_error(f"Exception reading from sessions table: {str(e)}")
             return []
 
     async def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
@@ -1950,7 +1950,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception refreshing metrics: {e}")
+            log_error(f"Exception refreshing metrics: {str(e)}")
             return None
 
     async def get_metrics(
@@ -1990,7 +1990,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return [dict(row._mapping) for row in records], latest_updated_at
 
         except Exception as e:
-            log_warning(f"Exception getting metrics: {e}")
+            log_warning(f"Exception getting metrics: {str(e)}")
             return [], None
 
     # -- Knowledge methods --
@@ -2008,7 +2008,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 await sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Exception deleting knowledge content: {e}")
+            log_error(f"Exception deleting knowledge content: {str(e)}")
 
     async def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
@@ -2032,7 +2032,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return KnowledgeRow.model_validate(row._mapping)
 
         except Exception as e:
-            log_error(f"Exception getting knowledge content: {e}")
+            log_error(f"Exception getting knowledge content: {str(e)}")
             return None
 
     async def get_knowledge_contents(
@@ -2087,7 +2087,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return [KnowledgeRow.model_validate(record._mapping) for record in records], total_count
 
         except Exception as e:
-            log_error(f"Exception getting knowledge contents: {e}")
+            log_error(f"Exception getting knowledge contents: {str(e)}")
             return [], 0
 
     async def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -2160,7 +2160,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge row: {e}")
+            log_error(f"Error upserting knowledge row: {str(e)}")
             return None
 
     # -- Eval methods --
@@ -2191,7 +2191,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_error(f"Error creating eval run: {str(e)}")
             return None
 
     async def delete_eval_run(self, eval_run_id: str) -> None:
@@ -2213,7 +2213,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+            log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
 
     async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         """Delete multiple eval runs from the database.
@@ -2234,7 +2234,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     log_debug(f"Deleted {result.rowcount} eval runs")  # type: ignore
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_error(f"Error deleting eval runs {eval_run_ids}: {str(e)}")
 
     async def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
@@ -2270,7 +2270,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}: {str(e)}")
             return None
 
     async def get_eval_runs(
@@ -2363,7 +2363,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_error(f"Exception getting eval runs: {str(e)}")
             return [] if deserialize else ([], 0)
 
     async def rename_eval_run(
@@ -2396,7 +2396,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Error upserting eval run name {eval_run_id}: {e}")
+            log_error(f"Error upserting eval run name {eval_run_id}: {str(e)}")
             return None
 
     # -- Migrations --
@@ -2595,7 +2595,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 await sess.execute(upsert_stmt)
 
         except Exception as e:
-            log_error(f"Error creating trace: {e}")
+            log_error(f"Error creating trace: {str(e)}")
             # Don't raise - tracing should not break the main application flow
 
     async def get_trace(
@@ -2648,7 +2648,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return None
 
         except Exception as e:
-            log_error(f"Error getting trace: {e}")
+            log_error(f"Error getting trace: {str(e)}")
             return None
 
     async def get_traces(
@@ -2740,7 +2740,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return traces, total_count
 
         except Exception as e:
-            log_error(f"Error getting traces: {e}")
+            log_error(f"Error getting traces: {str(e)}")
             return [], 0
 
     async def get_trace_stats(
@@ -2782,18 +2782,16 @@ class AsyncMySQLDb(AsyncBaseDb):
                 base_stmt = (
                     select(
                         table.c.session_id,
-                        table.c.user_id,
-                        table.c.agent_id,
-                        table.c.team_id,
-                        table.c.workflow_id,
+                        func.max(table.c.user_id).label("user_id"),
+                        func.max(table.c.agent_id).label("agent_id"),
+                        func.max(table.c.team_id).label("team_id"),
+                        func.max(table.c.workflow_id).label("workflow_id"),
                         func.count(table.c.trace_id).label("total_traces"),
                         func.min(table.c.created_at).label("first_trace_at"),
                         func.max(table.c.created_at).label("last_trace_at"),
                     )
                     .where(table.c.session_id.isnot(None))  # Only sessions with session_id
-                    .group_by(
-                        table.c.session_id, table.c.user_id, table.c.agent_id, table.c.team_id, table.c.workflow_id
-                    )
+                    .group_by(table.c.session_id)
                 )
 
                 # Apply filters
@@ -2851,7 +2849,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return stats_list, total_count
 
         except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+            log_error(f"Error getting trace stats: {str(e)}")
             return [], 0
 
     # --- Spans ---
@@ -2871,7 +2869,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 await sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Error creating span: {e}")
+            log_error(f"Error creating span: {str(e)}")
 
     async def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2893,7 +2891,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                     await sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+            log_error(f"Error creating spans batch: {str(e)}")
 
     async def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2920,7 +2918,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return None
 
         except Exception as e:
-            log_error(f"Error getting span: {e}")
+            log_error(f"Error getting span: {str(e)}")
             return None
 
     async def get_spans(
@@ -2963,7 +2961,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return [Span.from_dict(dict(row._mapping)) for row in results]
 
         except Exception as e:
-            log_error(f"Error getting spans: {e}")
+            log_error(f"Error getting spans: {str(e)}")
             return []
 
     # -- Learning methods (stubs) --

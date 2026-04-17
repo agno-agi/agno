@@ -110,7 +110,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         limit: Optional[int] = Query(default=20, description="Number of sessions to return per page", ge=1),
         page: Optional[int] = Query(default=1, description="Page number for pagination", ge=0),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort sessions by"),
-        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
+        sort_order: Optional[SortOrder] = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="Database ID to query sessions from"),
         table: Optional[str] = Query(default=None, description="The database table to use"),
     ) -> PaginatedResponse[SessionSchema]:
@@ -317,7 +317,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             else:
                 return WorkflowSessionDetailSchema.from_session(created_session)  # type: ignore
         except Exception as e:
-            logger.error(f"Error creating session: {e}")
+            logger.exception("Error creating session")
             raise HTTPException(status_code=500, detail=f"Failed to create session: {str(e)}")
 
     @router.get(

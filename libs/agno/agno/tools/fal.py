@@ -11,7 +11,7 @@ from agno.media import Image, Video
 from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 try:
     import fal_client  # type: ignore
@@ -31,7 +31,7 @@ class FalTools(Toolkit):
     ):
         self.api_key = api_key or getenv("FAL_API_KEY")
         if not self.api_key:
-            logger.error("FAL_API_KEY not set. Please set the FAL_API_KEY environment variable.")
+            log_error("FAL_API_KEY not set. Please set the FAL_API_KEY environment variable.")
         self.model = model
         self.seen_logs: set[str] = set()
 
@@ -85,11 +85,11 @@ class FalTools(Toolkit):
                 )
                 return ToolResult(content=f"Video generated successfully at {url}", videos=[video_artifact])
             else:
-                logger.error(f"Unsupported type in result: {result}")
+                log_error(f"Unsupported type in result: {result}")
                 return ToolResult(content=f"Unsupported type in result: {result}")
 
         except Exception as e:
-            logger.error(f"Failed to run model: {e}")
+            logger.exception("Failed to run model")
             return ToolResult(content=f"Error: {e}")
 
     def image_to_image(self, agent: Union[Agent, Team], prompt: str, image_url: Optional[str] = None) -> ToolResult:
@@ -123,5 +123,5 @@ class FalTools(Toolkit):
             return ToolResult(content=f"Image generated successfully at {url}", images=[image_artifact])
 
         except Exception as e:
-            logger.error(f"Failed to generate image: {e}")
+            logger.exception("Failed to generate image")
             return ToolResult(content=f"Error: {e}")

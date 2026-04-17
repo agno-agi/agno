@@ -218,6 +218,122 @@ async def asave_paused_session(
         workflow.save_session(session=session)
 
 
+def check_output_review_status(
+    step: Any,
+    step_index: int,
+    step_input: "StepInput",
+    step_output: "StepOutput",
+    retry_count: int = 0,
+) -> StepPauseResult:
+    """Check if a step requires post-execution output review.
+
+    Handles both bool and callable for requires_output_review (conditional HITL).
+
+    Args:
+        step: The step component that was executed.
+        step_index: Index of the step in the workflow.
+        step_input: The input that was used for the step.
+        step_output: The output produced by the step.
+        retry_count: Number of previous retry attempts.
+
+    Returns:
+        StepPauseResult indicating whether to pause for review.
+    """
+    requires_review = getattr(step, "requires_output_review", False)
+
+    # Handle callable predicate (conditional HITL)
+    if callable(requires_review):
+        try:
+            requires_review = requires_review(step_output)
+        except Exception as e:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "requires_output_review predicate raised %s: %s — defaulting to no review",
+                type(e).__name__,
+                e,
+            )
+            requires_review = False
+
+    if not requires_review:
+        return StepPauseResult(should_pause=False)
+
+    step_name = getattr(step, "name", None) or f"step_{step_index + 1}"
+    log_debug(f"Step '{step_name}' requires output review - pausing workflow")
+
+    step_requirement = step.create_output_review_requirement(
+        step_index, step_input, step_output, retry_count=retry_count
+    )
+    return StepPauseResult(should_pause=True, step_requirement=step_requirement)
+
+
+def check_timeout(step_requirement: "StepRequirement") -> Optional[str]:
+    """Check if a step requirement has timed out.
+
+    Returns the on_timeout action if timed out, None otherwise.
+    Timeout is checked at continue_run() time, not via a background timer.
+
+    Args:
+        step_requirement: The step requirement to check.
+
+    Returns:
+        The on_timeout action string ("cancel", "skip", "approve") if timed out, None otherwise.
+    """
+    if step_requirement.timeout_at is None:
+        return None
+
+    from datetime import datetime, timezone
+
+    if datetime.now(timezone.utc) >= step_requirement.timeout_at:
+        return step_requirement.on_timeout
+    return None
+
+
+def apply_post_execution_pause_state(
+    workflow_run_response: "WorkflowRunOutput",
+    step_index: int,
+    step_name: Optional[str],
+    collected_step_outputs: List[Union["StepOutput", List["StepOutput"]]],
+    pause_result: StepPauseResult,
+    step_output: "StepOutput",
+    previous_step_outputs: Optional[Dict[str, "StepOutput"]] = None,
+) -> None:
+    """Apply paused state after a step has already executed (for output review).
+
+    Unlike apply_pause_state() which is for pre-execution pauses, this function
+    handles the case where the step has already produced output. The step_output
+    is added to collected_step_outputs before pausing so it's preserved across
+    the pause/resume cycle.
+
+    Args:
+        workflow_run_response: The workflow run output to update.
+        step_index: Index of the step that triggered the pause.
+        step_name: Name of the step that triggered the pause.
+        collected_step_outputs: The step outputs collected so far.
+        pause_result: The step pause result containing the requirement.
+        step_output: The output from the executed step.
+        previous_step_outputs: Dict of step name -> output (updated if provided).
+    """
+    # Clear transient loop iteration review flag before storing.
+    if getattr(step_output, "requires_iteration_review_pause", False):
+        step_output.requires_iteration_review_pause = False
+
+    # Store the output before pausing so it survives the pause/resume cycle
+    if previous_step_outputs is not None and step_name:
+        previous_step_outputs[step_name] = step_output
+    # Guard against double-append (streaming paths may have already appended the output)
+    if not collected_step_outputs or collected_step_outputs[-1] is not step_output:
+        collected_step_outputs.append(step_output)
+
+    workflow_run_response.status = RunStatus.paused
+    workflow_run_response.paused_step_index = step_index
+    workflow_run_response.paused_step_name = step_name
+    workflow_run_response.step_results = collected_step_outputs
+
+    if pause_result.step_requirement:
+        workflow_run_response.step_requirements = [pause_result.step_requirement]
+
+
 class ContinueExecutionState:
     """State container for continue execution methods.
 

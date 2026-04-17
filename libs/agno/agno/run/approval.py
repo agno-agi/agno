@@ -197,7 +197,7 @@ def create_approval_from_pause(
     except NotImplementedError:
         pass
     except Exception as e:
-        log_warning(f"Error creating approval record (sync): {e}")
+        log_warning(f"Error creating approval record (sync): {str(e)}")
     return None
 
 
@@ -257,7 +257,7 @@ async def acreate_approval_from_pause(
     except NotImplementedError:
         pass
     except Exception as e:
-        log_warning(f"Error creating approval record (async): {e}")
+        log_warning(f"Error creating approval record (async): {str(e)}")
     return None
 
 
@@ -321,7 +321,7 @@ def create_audit_approval(
     except NotImplementedError:
         pass
     except Exception as e:
-        log_warning(f"Error creating audit approval record (sync): {e}")
+        log_warning(f"Error creating audit approval record (sync): {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -502,7 +502,7 @@ async def acreate_audit_approval(
     except NotImplementedError:
         pass
     except Exception as e:
-        log_warning(f"Error creating audit approval record (async): {e}")
+        log_warning(f"Error creating audit approval record (async): {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -534,7 +534,7 @@ def update_approval_run_status(db: Any, run_id: str, run_status: RunStatus) -> N
     except NotImplementedError:
         pass
     except Exception as e:
-        log_warning(f"Error updating approval run_status (sync): {e}")
+        log_warning(f"Error updating approval run_status (sync): {str(e)}")
 
 
 async def aupdate_approval_run_status(db: Any, run_id: str, run_status: RunStatus) -> None:
@@ -566,4 +566,4 @@ async def aupdate_approval_run_status(db: Any, run_id: str, run_status: RunStatu
     except NotImplementedError:
         pass
     except Exception as e:
-        log_warning(f"Error updating approval run_status (async): {e}")
+        log_warning(f"Error updating approval run_status (async): {str(e)}")
