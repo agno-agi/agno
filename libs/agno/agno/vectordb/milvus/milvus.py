@@ -175,7 +175,7 @@ class Milvus(VectorDb):
             ("content", DataType.VARCHAR, 65535, False),
             ("content_id", DataType.VARCHAR, 1000, False),
             ("content_hash", DataType.VARCHAR, 1000, False),
-            ("text", DataType.VARCHAR, 1000, False),
+            ("text", DataType.VARCHAR, 65535, False),
             ("meta_data", DataType.VARCHAR, 65535, False),
             ("usage", DataType.VARCHAR, 65535, False),
         ]
@@ -427,14 +427,17 @@ class Milvus(VectorDb):
                 if filters:
                     meta_data.update(filters)
 
+                # Convert dictionary fields to JSON strings
+                meta_data_str = json.dumps(document.meta_data) if document.meta_data else "{}"
+                usage_str = json.dumps(document.usage) if document.usage else "{}"
                 data = {
                     "id": doc_id,
                     "vector": document.embedding,
                     "name": document.name,
                     "content_id": document.content_id or "",
-                    "meta_data": meta_data,
+                    "meta_data": meta_data_str,
                     "content": cleaned_content,
-                    "usage": document.usage,
+                    "usage": usage_str,
                     "content_hash": content_hash,
                 }
                 self.client.insert(
@@ -478,7 +481,7 @@ class Milvus(VectorDb):
                 )
 
                 if is_rate_limit:
-                    log_error(f"Rate limit detected during batch embedding.: {str(e)}")
+                    log_error(f"Rate limit detected during batch embedding. {str(e)}")
                     raise e
                 else:
                     log_error(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
@@ -510,14 +513,17 @@ class Milvus(VectorDb):
                 if filters:
                     meta_data.update(filters)
 
+                # Convert dictionary fields to JSON strings
+                meta_data_str = json.dumps(document.meta_data) if document.meta_data else "{}"
+                usage_str = json.dumps(document.usage) if document.usage else "{}"
                 data = {
                     "id": doc_id,
                     "vector": document.embedding,
                     "name": document.name,
                     "content_id": document.content_id or "",
-                    "meta_data": meta_data,
+                    "meta_data": meta_data_str,
                     "content": cleaned_content,
-                    "usage": document.usage,
+                    "usage": usage_str,
                     "content_hash": content_hash,
                 }
                 await self.async_client.insert(
@@ -569,14 +575,17 @@ class Milvus(VectorDb):
                 if filters:
                     meta_data.update(filters)
 
+                # Convert dictionary fields to JSON strings
+                meta_data_str = json.dumps(document.meta_data) if document.meta_data else "{}"
+                usage_str = json.dumps(document.usage) if document.usage else "{}"
                 data = {
                     "id": doc_id,
                     "vector": document.embedding,
                     "name": document.name,
                     "content_id": document.content_id or "",
-                    "meta_data": meta_data,  # type: ignore[dict-item]
+                    "meta_data": meta_data_str,  # type: ignore[dict-item]
                     "content": cleaned_content,
-                    "usage": document.usage,  # type: ignore[dict-item]
+                    "usage": usage_str,  # type: ignore[dict-item]
                     "content_hash": content_hash,
                 }
                 self.client.upsert(
@@ -606,7 +615,7 @@ class Milvus(VectorDb):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
                     except Exception as e:
-                        log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
+                        log_error(f"Error assigning batch embedding to document '{doc.name}': {e}")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -617,10 +626,10 @@ class Milvus(VectorDb):
                 )
 
                 if is_rate_limit:
-                    log_error(f"Rate limit detected during batch embedding.: {str(e)}")
+                    log_error(f"Rate limit detected during batch embedding. {e}")
                     raise e
                 else:
-                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
+                    log_error(f"Async batch embedding failed, falling back to individual embeddings: {e}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -651,14 +660,17 @@ class Milvus(VectorDb):
                 if filters:
                     meta_data.update(filters)
 
+                # Convert dictionary fields to JSON strings
+                meta_data_str = json.dumps(document.meta_data) if document.meta_data else "{}"
+                usage_str = json.dumps(document.usage) if document.usage else "{}"
                 data = {
                     "id": doc_id,
                     "vector": document.embedding,
                     "name": document.name,
                     "content_id": document.content_id or "",
-                    "meta_data": meta_data,  # type: ignore[dict-item]
+                    "meta_data": meta_data_str,  # type: ignore[dict-item]
                     "content": cleaned_content,
-                    "usage": document.usage,  # type: ignore[dict-item]
+                    "usage": usage_str,  # type: ignore[dict-item]
                     "content_hash": content_hash,
                 }
                 await self.async_client.upsert(
@@ -1048,7 +1060,7 @@ class Milvus(VectorDb):
             log_info(f"Deleted document with ID '{id}' from collection '{self.collection}'.")
             return True
         except Exception as e:
-            log_info(f"Error deleting document with ID {id}: {e}")
+            log_info(f"Error deleting document with ID {id}: {str(e)}")
             return False
 
     def delete_by_name(self, name: str) -> bool:
@@ -1072,7 +1084,7 @@ class Milvus(VectorDb):
             log_info(f"Deleted documents with name '{name}' from collection '{self.collection}'.")
             return True
         except Exception as e:
-            log_info(f"Error deleting documents with name {name}: {e}")
+            log_info(f"Error deleting documents with name {name}: {str(e)}")
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
@@ -1098,7 +1110,7 @@ class Milvus(VectorDb):
             log_info(f"Deleted documents with metadata '{metadata}' from collection '{self.collection}'.")
             return True
         except Exception as e:
-            log_info(f"Error deleting documents with metadata {metadata}: {e}")
+            log_info(f"Error deleting documents with metadata {metadata}: {str(e)}")
             return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
@@ -1167,23 +1179,24 @@ class Milvus(VectorDb):
             content_id (str): The content ID to update
             metadata (Dict[str, Any]): The metadata to update
         """
-        try:
+        try: 
             # Search for documents with the given content_id
             search_expr = f'content_id == "{content_id}"'
             results = self.client.query(
-                collection_name=self.collection, filter=search_expr, output_fields=["id", "meta_data", "filters"]
+                collection_name=self.collection, filter=search_expr, 
+                output_fields=["*"]
             )
 
             if not results:
                 log_debug(f"No documents found with content_id: {content_id}")
                 return
-
+            
             # Update each document
             updated_count = 0
             for result in results:
                 doc_id = result["id"]
-                current_metadata = result.get("meta_data", {})
-                current_filters = result.get("filters", {})
+                current_metadata = json.loads(result.get("meta_data", "{}"))
+                current_filters = json.loads(result.get("filters", "{}"))
 
                 # Merge existing metadata with new metadata
                 if isinstance(current_metadata, dict):
@@ -1198,10 +1211,25 @@ class Milvus(VectorDb):
                 else:
                     updated_filters = metadata
 
+
+                # Convert dictionary fields to JSON strings
+                updated_metadata_str = json.dumps(updated_metadata) if updated_metadata else "{}"
+                updated_filters_str = json.dumps(updated_filters) if updated_filters else "{}"
+
                 # Update the document
+                complete_data = {
+                    "id": doc_id,
+                    "meta_data": updated_metadata_str,
+                    "filters": updated_filters_str,
+                }
+                
+                for key in result.keys():
+                    if key not in ["id", "meta_data", "filters"]:
+                        complete_data[key] = result[key]
+                
                 self.client.upsert(
                     collection_name=self.collection,
-                    data=[{"id": doc_id, "meta_data": updated_metadata, "filters": updated_filters}],
+                    data=[complete_data],
                 )
                 updated_count += 1
 
