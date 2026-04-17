@@ -66,6 +66,8 @@ def parse_opengauss_version(version_string: str) -> Optional[tuple[int, int, int
 class OpenGaussPsycopgDialect(PGDialect_psycopg):
     """SQLAlchemy psycopg dialect variant that understands openGauss version strings."""
 
+    supports_statement_cache = True
+
     def _get_server_version_info(self, connection):
         version_string = connection.exec_driver_sql("select pg_catalog.version()").scalar()
         parsed_version = parse_opengauss_version(version_string)
