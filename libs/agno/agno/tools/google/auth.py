@@ -286,6 +286,12 @@ class GoogleAuth(Toolkit):
         Returns:
             Dict with status, user_id, and services that were authorized.
         """
+        if not self._state_secret:
+            return {
+                "error": "GoogleAuth requires a state signing secret. Set state_secret= on "
+                "construction or the GOOGLE_OAUTH_STATE_SECRET environment variable."
+            }
+
         try:
             import jwt  # imported for the exception type
         except ImportError:
