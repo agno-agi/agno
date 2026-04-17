@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
-from agno.db.utils import db_from_dict
+from agno.db.utils import resolve_db_from_config
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
@@ -774,21 +774,11 @@ class Workflow:
 
         # --- Handle DB reconstruction ---
         if "db" in config and isinstance(config["db"], dict):
-            db_data = config["db"]
-            db_id = db_data.get("id")
-
-            # Try to get the db from the registry
-            if registry and db_id:
-                registry_db = registry.get_db(db_id)
-                if registry_db is not None:
-                    config["db"] = registry_db
-                else:
-                    del config["db"]
+            resolved = resolve_db_from_config(config["db"], registry=registry)
+            if resolved is not None:
+                config["db"] = resolved
             else:
-                # No registry or no db_id, fall back to creating from dict
-                config["db"] = db_from_dict(db_data)
-                if config["db"] is None:
-                    del config["db"]
+                del config["db"]
 
         # --- Handle Schema reconstruction ---
         if "input_schema" in config and isinstance(config["input_schema"], str):
@@ -976,7 +966,12 @@ class Workflow:
         workflow = cls.from_dict(config, db=db, registry=registry)
 
         workflow.id = id
-        workflow.db = db
+        # Only fall back to the caller-provided db if the config didn't
+        # reconstruct one. Otherwise we'd clobber any custom table names
+        # (session_table, memory_table, ...) that were serialized with the
+        # workflow.
+        if workflow.db is None:
+            workflow.db = db
 
         return workflow
 
@@ -1605,15 +1600,23 @@ class Workflow:
         # Set session_id to match workflow's session_id for consistent event tracking
         if hasattr(event, "session_id") and workflow_run_response.session_id:
             event.session_id = workflow_run_response.session_id
-        if hasattr(event, "step_id") and step_id:
-            event.step_id = step_id
-        if hasattr(event, "step_name") and step_name is not None:
-            if event.step_name is None:
-                event.step_name = step_name
-        # Only set step_index if it's not already set (preserve parallel.py's tuples)
-        if hasattr(event, "step_index") and step_index is not None:
-            if event.step_index is None:
-                event.step_index = step_index
+        # For nested events, preserve the inner workflow's step_id/step_name/step_index.
+        # Set parent_step_id so consumers know which outer step contains them.
+        if not is_nested_event:
+            if hasattr(event, "step_id") and step_id:
+                event.step_id = step_id
+            if hasattr(event, "step_name") and step_name is not None:
+                if event.step_name is None:
+                    event.step_name = step_name
+            # Only set step_index if it's not already set (preserve parallel.py's tuples)
+            if hasattr(event, "step_index") and step_index is not None:
+                if event.step_index is None:
+                    event.step_index = step_index
+        else:
+            # Only set parent_step_id if not already set — the innermost enclosing
+            # workflow is the true host step; outer layers must not overwrite it.
+            if hasattr(event, "parent_step_id") and step_id and event.parent_step_id is None:
+                event.parent_step_id = step_id
 
         return event
 
@@ -7917,6 +7920,20 @@ class Workflow:
                 }
                 return step_dict
 
+            # Handle Workflow passed directly as a step (auto-wrap shorthand)
+            if isinstance(step, Workflow):
+                nested_steps_list = []
+                if step.steps is not None and not callable(step.steps):
+                    nested_iter = step.steps.steps if isinstance(step.steps, Steps) else step.steps
+                    nested_steps_list = [serialize_step(s) for s in nested_iter]
+                return {
+                    "name": step.name or "unnamed_workflow",
+                    "description": step.description or "Nested workflow step",
+                    "type": StepType.WORKFLOW.value,
+                    "workflow_id": step.id,
+                    "steps": nested_steps_list,
+                }
+
             step_dict = {
                 "name": step.name if hasattr(step, "name") else f"unnamed_{type(step).__name__.lower()}",
                 "description": step.description if hasattr(step, "description") else "User-defined callable step",
@@ -7933,6 +7950,19 @@ class Workflow:
             if hasattr(step, "team"):
                 step_dict["team"] = step.team if hasattr(step, "team") else None  # type: ignore
 
+            # Handle Step wrapping a nested Workflow (Step(workflow=...))
+            nested_workflow = getattr(step, "workflow", None)
+            if isinstance(nested_workflow, Workflow):
+                step_dict["type"] = StepType.WORKFLOW.value
+                step_dict["workflow_id"] = nested_workflow.id
+                if nested_workflow.steps is not None and not callable(nested_workflow.steps):
+                    nested_iter = (
+                        nested_workflow.steps.steps
+                        if isinstance(nested_workflow.steps, Steps)
+                        else nested_workflow.steps
+                    )
+                    step_dict["steps"] = [serialize_step(s) for s in nested_iter]
+
             # Handle nested steps for Router/Loop
             if isinstance(step, Router):
                 step_dict["steps"] = (
@@ -7940,7 +7970,10 @@ class Workflow:
                 )
 
             elif isinstance(step, (Loop, Condition, Steps, Parallel)):
-                step_dict["steps"] = [serialize_step(step) for step in step.steps] if hasattr(step, "steps") else None
+                # Condition may also have else_steps
+                step_dict["steps"] = [serialize_step(s) for s in step.steps] if hasattr(step, "steps") else None
+                if isinstance(step, Condition) and getattr(step, "else_steps", None):
+                    step_dict["else_steps"] = [serialize_step(s) for s in step.else_steps]  # type: ignore
 
             return step_dict
 
@@ -8420,6 +8453,8 @@ class Workflow:
                 step_kwargs["agent"] = step.agent.deep_copy() if hasattr(step.agent, "deep_copy") else step.agent
             if step.team:
                 step_kwargs["team"] = step.team.deep_copy() if hasattr(step.team, "deep_copy") else step.team
+            if step.workflow:
+                step_kwargs["workflow"] = step.workflow.deep_copy() if hasattr(step.workflow, "deep_copy") else step.workflow
             # Copy Step configuration attributes
             for attr in [
                 "max_retries",
@@ -8443,6 +8478,10 @@ class Workflow:
         # Handle direct Team
         if isinstance(step, Team):
             return step.deep_copy() if hasattr(step, "deep_copy") else step
+
+        # Handle direct Workflow (auto-wrapped as a step)
+        if isinstance(step, Workflow):
+            return step.deep_copy()
 
         # Handle Parallel steps
         if isinstance(step, Parallel):
