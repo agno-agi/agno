@@ -99,6 +99,22 @@ def test_authenticate_google_includes_oauth_params(google_auth):
     assert params["response_type"] == ["code"]
     assert params["access_type"] == ["offline"]
     assert params["prompt"] == ["consent"]
+    # Default is False (privacy-first); see test_include_granted_scopes_opt_in for True case
+    assert params["include_granted_scopes"] == ["false"]
+
+
+def test_include_granted_scopes_opt_in(tmp_path):
+    from agno.db.sqlite.sqlite import SqliteDb
+
+    ga = GoogleAuth(
+        client_id="id",
+        state_secret="secret",
+        db=SqliteDb(db_file=str(tmp_path / "t.db")),
+        include_granted_scopes=True,
+    )
+    ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
+    result = json.loads(ga.authenticate_google(services=["gmail"]))
+    params = parse_qs(urlparse(result["url"]).query)
     assert params["include_granted_scopes"] == ["true"]
 
 

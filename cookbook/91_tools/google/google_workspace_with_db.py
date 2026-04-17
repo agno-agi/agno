@@ -39,7 +39,9 @@ from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.drive import GoogleDriveTools
 from agno.tools.google.gmail import GmailTools
 
-google_auth = GoogleAuth()
+# Multi-toolkit scope carry-over: Google skips re-consent for tools the user already
+# approved under this OAuth client. Per-scope revocation moves to account settings.
+google_auth = GoogleAuth(include_granted_scopes=True)
 
 gmail = GmailTools(
     google_auth=google_auth,

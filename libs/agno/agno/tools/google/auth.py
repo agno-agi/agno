@@ -187,6 +187,7 @@ class GoogleAuth(Toolkit):
         db: Optional[Any] = None,
         state_secret: Optional[str] = None,
         state_ttl_seconds: int = 600,
+        include_granted_scopes: bool = False,
         **kwargs: Any,
     ):
         super().__init__(
@@ -205,6 +206,10 @@ class GoogleAuth(Toolkit):
         self._callback_configured: bool = False
         # Shared HMAC secret for signing the state JWT. Must match across workers.
         self._state_secret = state_secret or os.getenv("GOOGLE_OAUTH_STATE_SECRET")
+        # When True, Google carries prior grants for the same OAuth client into the
+        # response — convenient for multi-toolkit, but per-scope revocation moves to
+        # myaccount.google.com rather than clearing a scope-narrow row here.
+        self._include_granted_scopes = include_granted_scopes
         self._state_ttl_seconds = state_ttl_seconds
         self.register(self.authenticate_google)
 
@@ -263,7 +268,7 @@ class GoogleAuth(Toolkit):
             "response_type": "code",
             "access_type": "offline",
             "prompt": "consent",
-            "include_granted_scopes": "true",
+            "include_granted_scopes": "true" if self._include_granted_scopes else "false",
             "state": state,
         }
         url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
@@ -301,10 +306,17 @@ class GoogleAuth(Toolkit):
         try:
             from google_auth_oauthlib.flow import Flow
 
-            # Collect ALL registered scopes as the base request
-            scopes: list = []
-            for svc_scopes in self._services.values():
-                scopes.extend(svc_scopes)
+            # include_granted_scopes=true may return scopes beyond this flow's request;
+            # pass the union and disable strict-match. false mode passes just this flow's
+            # scopes and lets oauthlib verify the response shape normally.
+            if self._include_granted_scopes:
+                scopes: list = []
+                for svc_scopes in self._services.values():
+                    scopes.extend(svc_scopes)
+            else:
+                scopes = []
+                for svc in services:
+                    scopes.extend(self._services.get(svc, []))
 
             flow = Flow.from_client_config(
                 {
@@ -320,10 +332,8 @@ class GoogleAuth(Toolkit):
                 redirect_uri=self.redirect_uri,
             )
 
-            # Disable strict scope validation — Google returns a superset of
-            # scopes when include_granted_scopes=true carries over prior grants.
-            # Setting scope=None tells oauthlib to skip the comparison.
-            flow.oauth2session.scope = None
+            if self._include_granted_scopes:
+                flow.oauth2session.scope = None
 
             flow.fetch_token(code=code)
             creds = flow.credentials
