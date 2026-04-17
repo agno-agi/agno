@@ -828,12 +828,15 @@ class SlackTools(Toolkit):
     def list_canvases(self, channel: Optional[str] = None, limit: int = 20) -> str:
         """List canvases in the workspace, optionally filtered by channel.
 
+        Use this to discover existing canvases before reading or editing them.
+        Returns canvas_id values needed by read_canvas, edit_canvas, and other canvas tools.
+
         Args:
             channel (str): Optional channel ID to filter canvases by.
             limit (int): Maximum number of canvases to return. Defaults to 20.
 
         Returns:
-            str: A JSON string containing a list of canvases with their IDs, titles, and metadata.
+            str: A JSON string with a list of canvases including canvas_id, title, created, and updated timestamps.
         """
         try:
             kwargs: Dict[str, Any] = {"types": "canvases", "count": min(limit, 100)}
@@ -857,17 +860,16 @@ class SlackTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def read_canvas(self, canvas_id: str) -> str:
-        """Read the full content of a canvas.
+        """Read the full content of a canvas as HTML.
 
-        Retrieves canvas content as HTML which preserves headings, lists, bold,
-        code blocks, and other formatting. Use this before editing to see what's
-        currently in the canvas.
+        Use this before editing to see current content. The HTML includes section IDs
+        in element attributes that can be used directly with edit_canvas.
 
         Args:
-            canvas_id (str): The canvas ID (file ID) to read.
+            canvas_id (str): The canvas ID to read. Get this from list_canvases or create_canvas.
 
         Returns:
-            str: A JSON string containing the canvas title and content as HTML.
+            str: A JSON string with canvas_id, title, and content as HTML.
         """
         try:
             response = self.client.files_info(file=canvas_id)
@@ -953,15 +955,18 @@ class SlackTools(Toolkit):
     ) -> str:
         """Edit an existing Slack canvas. Only one operation per call.
 
+        To update specific sections: first call lookup_canvas_sections or read_canvas
+        to get section IDs, then use replace or insert_before/insert_after with that section_id.
+        For appending content, use insert_at_end (no section_id needed).
+
         Args:
             canvas_id (str): The ID of the canvas to edit.
-            operation (str): The edit operation. One of: insert_at_start, insert_at_end,
-                insert_before, insert_after, replace, delete.
-                Operations insert_before, insert_after, replace, and delete require a section_id.
-                Use lookup_canvas_sections to find section IDs first.
+            operation (str): The edit operation: insert_at_start, insert_at_end,
+                insert_before, insert_after, replace, or delete.
+                insert_before/insert_after/replace/delete require a section_id.
             markdown (str): The content in markdown format. Required for all operations except delete.
             section_id (str): The target section ID. Required for insert_before, insert_after,
-                replace, and delete. Get section IDs from lookup_canvas_sections.
+                replace, and delete. Get from lookup_canvas_sections or read_canvas HTML.
 
         Returns:
             str: A JSON string indicating success or error.
