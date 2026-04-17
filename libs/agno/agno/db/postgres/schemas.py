@@ -309,9 +309,9 @@ APPROVAL_TABLE_SCHEMA = {
 
 AUTH_TOKEN_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
-    "provider": {"type": String, "nullable": False},
+    "provider": {"type": String, "nullable": False, "index": True},
     "user_id": {"type": String, "nullable": True, "index": True},
-    "service": {"type": String, "nullable": False},
+    "service": {"type": String, "nullable": False, "index": True},
     "token_data": {"type": JSONB, "nullable": False},
     "granted_scopes": {"type": JSONB, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},

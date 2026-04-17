@@ -4856,6 +4856,7 @@ class SqliteDb(BaseDb):
 
     def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
+            self._validate_auth_token_payload(token)
             table = self._get_table(table_type="auth_tokens", create_table_if_not_found=True)
             if table is None:
                 raise RuntimeError("Failed to get or create auth_tokens table")

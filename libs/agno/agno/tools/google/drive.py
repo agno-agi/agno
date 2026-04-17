@@ -132,7 +132,7 @@ class GoogleDriveTools(Toolkit):
         google_auth: Optional[Any] = None,
         store_token_in_db: bool = False,
         # Authentication
-        auth_port: Optional[int] = 5050,
+        oauth_port: Optional[int] = 5050,
         login_hint: Optional[str] = None,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         scopes: Optional[List[str]] = None,
@@ -184,7 +184,7 @@ class GoogleDriveTools(Toolkit):
         self.login_hint = login_hint
         self.quota_project_id = quota_project_id or getenv("GOOGLE_CLOUD_QUOTA_PROJECT_ID")
 
-        self.auth_port = auth_port
+        self.oauth_port = oauth_port
 
         read_tools_enabled = any([list_files, search_files, read_file, download_file])
 
@@ -286,9 +286,7 @@ class GoogleDriveTools(Toolkit):
         if not self.creds or not self.creds.valid:
             # Coordinator mode: request the union of all registered scopes in one consent flow
             if self.google_auth is not None and self.google_auth._services:
-                consent_scopes = sorted(
-                    {s for scope_list in self.google_auth._services.values() for s in scope_list}
-                )
+                consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
             else:
                 consent_scopes = self.scopes
             client_config = {
@@ -306,7 +304,7 @@ class GoogleDriveTools(Toolkit):
                 flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), consent_scopes)
             else:
                 flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
-            run_kwargs: dict = {"port": self.auth_port, "prompt": "consent"}
+            run_kwargs: dict = {"port": self.oauth_port, "prompt": "consent"}
             if self.login_hint:
                 run_kwargs["login_hint"] = self.login_hint
             self.creds = flow.run_local_server(**run_kwargs)

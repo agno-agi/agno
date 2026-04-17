@@ -129,15 +129,13 @@ def get_tools(
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
 
-    # Bind agent.db to toolkits that declare _db (e.g. GoogleAuth for token storage)
+    # Bind agent.db to toolkits that declare _db (e.g. GoogleAuth for token storage).
+    # Only sync BaseDb backends are wired — callers of auth_token CRUD invoke it
+    # synchronously, so an AsyncBaseDb would return unawaited coroutines.
     if agent.db is not None and resolved_tools:
-        from agno.db.base import AsyncBaseDb, BaseDb
+        from agno.db.base import BaseDb
 
-        db_cls = type(agent.db)
-        supports_tokens = (isinstance(agent.db, BaseDb) and db_cls.get_auth_token is not BaseDb.get_auth_token) or (
-            isinstance(agent.db, AsyncBaseDb) and db_cls.get_auth_token is not AsyncBaseDb.get_auth_token
-        )
-        if supports_tokens:
+        if isinstance(agent.db, BaseDb) and type(agent.db).get_auth_token is not BaseDb.get_auth_token:
             for tool in resolved_tools:
                 if isinstance(tool, Toolkit) and hasattr(tool, "_db") and tool._db is None:
                     tool._db = agent.db
@@ -246,15 +244,13 @@ async def aget_tools(
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
 
-    # Bind agent.db to toolkits that declare _db (e.g. GoogleAuth for token storage)
+    # Bind agent.db to toolkits that declare _db (e.g. GoogleAuth for token storage).
+    # Only sync BaseDb backends are wired — callers of auth_token CRUD invoke it
+    # synchronously, so an AsyncBaseDb would return unawaited coroutines.
     if agent.db is not None and resolved_tools:
-        from agno.db.base import AsyncBaseDb, BaseDb
+        from agno.db.base import BaseDb
 
-        db_cls = type(agent.db)
-        supports_tokens = (isinstance(agent.db, BaseDb) and db_cls.get_auth_token is not BaseDb.get_auth_token) or (
-            isinstance(agent.db, AsyncBaseDb) and db_cls.get_auth_token is not AsyncBaseDb.get_auth_token
-        )
-        if supports_tokens:
+        if isinstance(agent.db, BaseDb) and type(agent.db).get_auth_token is not BaseDb.get_auth_token:
             for tool in resolved_tools:
                 if isinstance(tool, Toolkit) and hasattr(tool, "_db") and tool._db is None:
                     tool._db = agent.db

@@ -139,7 +139,7 @@ class GmailTools(Toolkit):
         scopes: Optional[List[str]] = None,
         # Port 0 lets the OS pick a free port — supports parallel toolkit OAuth flows
         # and matches sheets/slides. Google's installed-app OAuth accepts any localhost port.
-        port: int = 0,
+        oauth_port: int = 0,
         login_hint: Optional[str] = None,
         include_html: bool = False,
         max_body_length: Optional[int] = None,
@@ -196,7 +196,7 @@ class GmailTools(Toolkit):
             service_account_path (Optional[str]): Path to a service account JSON key file. When provided (or GOOGLE_SERVICE_ACCOUNT_FILE env var is set), service account auth is used instead of OAuth. Requires delegated_user for Gmail.
             delegated_user (Optional[str]): Email of the user to impersonate via domain-wide delegation. Required when using service account auth. Can also be set via GOOGLE_DELEGATED_USER env var.
             scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
-            port (Optional[int]): Port to use for OAuth authentication. Defaults to None.
+            oauth_port (int): Local port for the OAuth consent loopback server. Defaults to 0 (OS picks free port).
             login_hint (Optional[str]): Email to pre-select in the OAuth consent screen. Defaults to None.
             include_html (bool): If True, return raw HTML body instead of stripping tags. Defaults to False.
             max_body_length (Optional[int]): Truncate message bodies to this length. Defaults to None (no truncation).
@@ -220,7 +220,7 @@ class GmailTools(Toolkit):
         self.delegated_user = delegated_user
         self.service = None
         self.scopes = scopes or self.DEFAULT_SCOPES
-        self.port = port
+        self.oauth_port = oauth_port
         self.login_hint = login_hint
         self.include_html = include_html
         self.max_body_length = max_body_length
@@ -415,9 +415,7 @@ class GmailTools(Toolkit):
             # In coordinator mode, request the union of all registered scopes so one consent
             # flow covers gmail + calendar + drive + ... and the stored token serves every toolkit.
             if self.google_auth is not None and self.google_auth._services:
-                consent_scopes = sorted(
-                    {s for scope_list in self.google_auth._services.values() for s in scope_list}
-                )
+                consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
             else:
                 consent_scopes = self.scopes
             client_config = {
@@ -438,7 +436,7 @@ class GmailTools(Toolkit):
             oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
             if self.login_hint:
                 oauth_kwargs["login_hint"] = self.login_hint
-            self.creds = flow.run_local_server(port=self.port, **oauth_kwargs)
+            self.creds = flow.run_local_server(port=self.oauth_port, **oauth_kwargs)
 
         if self.creds and self.creds.valid:
             if save_token(self, self.creds, user_id=user_id):
