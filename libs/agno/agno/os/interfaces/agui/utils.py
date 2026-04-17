@@ -4,7 +4,7 @@ import json
 import uuid
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple, Union, get_args
 
 from ag_ui.core import (
     BaseEvent,
@@ -41,6 +41,20 @@ from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
 from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
+
+
+def _get_reasoning_message_role() -> str:
+    """Return the AG-UI reasoning role supported by the installed ag-ui-protocol version."""
+    role_field = ReasoningMessageStartEvent.model_fields.get("role")
+    if role_field is None:
+        return "assistant"
+
+    supported_roles = get_args(role_field.annotation)
+    if "assistant" in supported_roles:
+        return "assistant"
+    if supported_roles:
+        return str(supported_roles[0])
+    return "assistant"
 
 
 def validate_agui_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
@@ -381,7 +395,9 @@ def _create_events_from_chunk(
         events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
         events_to_emit.append(
             ReasoningMessageStartEvent(
-                type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="reasoning"
+                type=EventType.REASONING_MESSAGE_START,
+                message_id=reasoning_id,
+                role=_get_reasoning_message_role(),
             )
         )
 
@@ -392,7 +408,9 @@ def _create_events_from_chunk(
             events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
             events_to_emit.append(
                 ReasoningMessageStartEvent(
-                    type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="reasoning"
+                    type=EventType.REASONING_MESSAGE_START,
+                    message_id=reasoning_id,
+                    role=_get_reasoning_message_role(),
                 )
             )
         if chunk.reasoning_content:
@@ -410,7 +428,9 @@ def _create_events_from_chunk(
             events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
             events_to_emit.append(
                 ReasoningMessageStartEvent(
-                    type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="reasoning"
+                    type=EventType.REASONING_MESSAGE_START,
+                    message_id=reasoning_id,
+                    role=_get_reasoning_message_role(),
                 )
             )
         step_num = event_buffer.next_reasoning_step()

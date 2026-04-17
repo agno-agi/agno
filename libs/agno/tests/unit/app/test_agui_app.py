@@ -6,6 +6,7 @@ from ag_ui.core.types import AssistantMessage, SystemMessage, TextInputContent, 
 
 from agno.os.interfaces.agui.utils import (
     EventBuffer,
+    _get_reasoning_message_role,
     async_stream_agno_response_as_agui_events,
     extract_agui_user_input,
 )
@@ -614,6 +615,9 @@ async def test_reasoning_events_handling():
     r_end = event_types.index(EventType.REASONING_END)
     assert r_start < r_msg_start < r_content < r_msg_end < r_end
 
+    reasoning_start_event = next(event for event in events if event.type == EventType.REASONING_MESSAGE_START)
+    assert reasoning_start_event.role == _get_reasoning_message_role()
+
     # Should have text content after reasoning
     assert EventType.TEXT_MESSAGE_CONTENT in event_types
     assert EventType.RUN_FINISHED in event_types
@@ -698,6 +702,9 @@ async def test_orphaned_reasoning_cleanup():
     assert EventType.REASONING_MESSAGE_END in event_types, "Orphaned session should be closed"
     assert EventType.REASONING_END in event_types, "Orphaned session should be closed"
     assert EventType.RUN_FINISHED in event_types, "Should still emit RUN_FINISHED"
+
+    reasoning_start_event = next(event for event in events if event.type == EventType.REASONING_MESSAGE_START)
+    assert reasoning_start_event.role == _get_reasoning_message_role()
 
 
 @pytest.mark.asyncio
