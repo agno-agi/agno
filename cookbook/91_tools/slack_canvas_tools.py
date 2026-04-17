@@ -2,6 +2,10 @@
 
 Requires canvases:read and canvases:write bot scopes in your Slack app.
 Set the SLACK_TOKEN environment variable before running.
+
+Supported canvas markdown: headings, bold, italic, strikethrough, inline code,
+bullet/numbered lists, checklists (- [ ] / - [x]), code blocks, links, emojis,
+blockquotes, tables (max 300 cells), and horizontal rules.
 """
 
 from agno.agent import Agent
@@ -14,16 +18,18 @@ agent = Agent(
 )
 
 if __name__ == "__main__":
-    # Create a standalone canvas
+    # Create a canvas with rich content
     agent.print_response(
-        "Create a canvas titled 'Sprint Planning' with a markdown checklist: "
-        "## Tasks\n- [ ] Review PRs\n- [ ] Update docs\n- [ ] Deploy to staging",
+        "Create a canvas titled 'Sprint Planning' with these sections: "
+        "a checklist under '## Tasks' with 3 items, "
+        "a table under '## Timeline' with columns Task/Owner/Status, "
+        "and a '## Notes' section with a blockquote.",
         stream=True,
     )
 
-    # Create a canvas in a channel
+    # Read and update an existing canvas
     agent.print_response(
-        "Create a canvas in channel #engineering titled 'Onboarding Guide' "
-        "with an intro paragraph and three H2 sections: Setup, Tools, Contacts",
+        "List all canvases, read the 'Sprint Planning' canvas, "
+        "then add a new task '- [ ] Write release notes' to the Tasks section.",
         stream=True,
     )
