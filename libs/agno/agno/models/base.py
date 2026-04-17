@@ -2018,6 +2018,9 @@ class Model(ABC):
                 else:
                     stream_data.extra[key] = model_response_delta.extra[key]
 
+        if model_response_delta.tool_call_deltas is not None:
+            should_yield = True
+
         if should_yield:
             yield model_response_delta
 

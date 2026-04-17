@@ -1316,6 +1316,14 @@ class OpenAIResponses(Model):
         # 4.2 Add tool call arguments
         elif stream_event.type == "response.function_call_arguments.delta":
             tool_use["function"]["arguments"] += stream_event.delta
+            model_response.tool_call_deltas = [
+                {
+                    "index": 0,
+                    "id": tool_use.get("id"),
+                    "name": tool_use.get("function", {}).get("name"),
+                    "arguments_delta": stream_event.delta,
+                }
+            ]
 
         # 4.3 Add tool call completion data
         elif stream_event.type == "response.output_item.done" and tool_use:
