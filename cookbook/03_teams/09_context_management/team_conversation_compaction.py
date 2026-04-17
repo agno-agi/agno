@@ -351,7 +351,7 @@ if __name__ == "__main__":
     print(f"Members: {[m.name for m in team.members]}")
     threshold = int(model.context_window * team.compaction_manager.context_usage_threshold)
     print(f"Compaction threshold: {team.compaction_manager.context_usage_threshold * 100}% (~{threshold} tokens)")
-    print(f"Messages log: tmp/team_compaction_messages.json")
+    print("Messages log: tmp/team_compaction_messages.json")
     print("=" * 80)
 
     # --- Multi-round questions that generate large delegation results ---
@@ -396,7 +396,7 @@ if __name__ == "__main__":
                 print(f"  Member '{agent_name}': {content_len:,} chars")
 
         if compacted:
-            print(f"  ** COMPACTION TRIGGERED **")
+            print("  ** COMPACTION TRIGGERED **")
             print(f"  Compacted run IDs: {compacted}")
             print(f"  Stats: {team.compaction_manager.stats}")
 

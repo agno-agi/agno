@@ -201,12 +201,32 @@ class TeamSession:
             session_runs = session_runs[-last_n_runs:]
 
         # Compaction boundary: skip runs whose content has been compacted (summarized).
-        # Scan runs from newest to oldest to find the most recent compaction marker.
+        # Compaction is chainable, so we need to expand the full chain of compacted IDs.
         compacted_ids: set = set()
-        for run in reversed(session_runs):
-            if hasattr(run, "compacted_run_ids") and run.compacted_run_ids:
-                compacted_ids.update(run.compacted_run_ids)
-                break  # Only respect the latest compaction boundary
+
+        # Build map of run_id -> compacted_run_ids
+        run_compaction_map: dict = {}
+        for run in session_runs:
+            if hasattr(run, "run_id") and hasattr(run, "compacted_run_ids") and run.compacted_run_ids:
+                run_compaction_map[run.run_id] = run.compacted_run_ids
+
+        if run_compaction_map:
+            # Every run that appears in ANY compacted_run_ids list is compacted
+            for ids in run_compaction_map.values():
+                compacted_ids.update(ids)
+
+            # Transitively expand: if a run that performed compaction is itself compacted,
+            # then its compacted_run_ids are transitively compacted too.
+            changed = True
+            while changed:
+                changed = False
+                for rid in list(compacted_ids):
+                    if rid in run_compaction_map:
+                        for nested_id in run_compaction_map[rid]:
+                            if nested_id not in compacted_ids:
+                                compacted_ids.add(nested_id)
+                                changed = True
+
         if compacted_ids:
             session_runs = [r for r in session_runs if not (hasattr(r, "run_id") and r.run_id in compacted_ids)]
 

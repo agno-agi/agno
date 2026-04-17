@@ -340,7 +340,7 @@ if __name__ == "__main__":
     print(f"Model: {model.id} (context_window={model.context_window})")
     threshold = int(model.context_window * agent.compaction_manager.context_usage_threshold)
     print(f"Compaction threshold: {agent.compaction_manager.context_usage_threshold * 100}% (~{threshold} tokens)")
-    print(f"Messages log: tmp/compaction_messages.json")
+    print("Messages log: tmp/compaction_messages.json")
     print("=" * 80)
 
     benchmark_token_counting(model)
@@ -369,7 +369,7 @@ if __name__ == "__main__":
             print(f"  Tokens: input={run_response.metrics.input_tokens}, output={run_response.metrics.output_tokens}")
 
         if compacted:
-            print(f"  ** COMPACTION TRIGGERED **")
+            print("  ** COMPACTION TRIGGERED **")
             print(f"  Compacted run IDs: {compacted}")
             print(f"  Stats: {agent.compaction_manager.stats}")
 

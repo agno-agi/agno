@@ -84,15 +84,53 @@ DEFAULT_COMPACTION_PROMPT = dedent("""\
 
 
 def _find_compacted_run_ids(session: "AgentSession") -> Set[str]:
-    """Scan session runs (newest first) to find the latest compaction boundary.
+    """Scan session runs to find ALL run IDs that have been compacted.
 
-    Returns the set of run IDs that were compacted by the most recent
-    compaction operation.  Empty set if no compaction has occurred.
+    Compaction is chainable: Run C may compact [A, B], then Run E compacts
+    [C, D].  In that case, A, B, C and D are all compacted (their content
+    lives in progressively newer summaries).  We expand the full chain so
+    that ``load_history`` never loads a run whose content was already
+    summarised.
+
+    Returns:
+        Set of run IDs whose messages have been compacted.
     """
-    for run in reversed(session.runs or []):
-        if hasattr(run, "compacted_run_ids") and run.compacted_run_ids:
-            return set(run.compacted_run_ids)
-    return set()
+    if not session.runs:
+        return set()
+
+    # Build a map: run_id -> compacted_run_ids for every run in the session
+    run_compaction_map: Dict[str, List[str]] = {}
+    for run in session.runs:
+        if hasattr(run, "run_id") and hasattr(run, "compacted_run_ids") and run.compacted_run_ids:
+            run_compaction_map[run.run_id] = run.compacted_run_ids
+
+    if not run_compaction_map:
+        return set()
+
+    # Collect the IDs of runs that performed compaction (they ARE compacted
+    # by later compactions).  Start from every compacted_run_ids list and
+    # recursively expand.
+    compacted: Set[str] = set()
+
+    # Every run that appears in *any* compacted_run_ids list is compacted
+    for ids in run_compaction_map.values():
+        compacted.update(ids)
+
+    # Every run that *performed* a compaction and is itself in someone else's
+    # compacted_run_ids is also compacted (its content lives in a newer summary).
+    # We iteratively expand: if a run that performed compaction is compacted,
+    # then its compacted_run_ids are transitively compacted too.
+    changed = True
+    while changed:
+        changed = False
+        for rid in list(compacted):
+            if rid in run_compaction_map:
+                for nested_id in run_compaction_map[rid]:
+                    if nested_id not in compacted:
+                        compacted.add(nested_id)
+                        changed = True
+
+    return compacted
 
 
 # ---------------------------------------------------------------------------
