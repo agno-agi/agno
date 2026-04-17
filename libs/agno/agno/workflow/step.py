@@ -1001,8 +1001,10 @@ class Step:
                 if getattr(event, "step_name", None) is None:
                     event.step_name = self.name
         else:
-            # For nested events, set parent_step_id so consumers know which outer step contains them
-            if hasattr(event, "parent_step_id"):
+            # For nested events, set parent_step_id so consumers know which outer step contains them.
+            # Only set if not already set — the innermost enclosing step is the true host;
+            # outer layers must not overwrite it (breaks depth-2+ nesting).
+            if hasattr(event, "parent_step_id") and event.parent_step_id is None:
                 event.parent_step_id = self.step_id
         # Only set step_index if it's not already set (preserve parallel.py's tuples)
         if hasattr(event, "step_index") and step_index is not None:
