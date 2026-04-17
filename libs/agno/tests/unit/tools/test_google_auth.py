@@ -12,7 +12,8 @@ from agno.tools.google.gmail import GmailTools
 
 @pytest.fixture
 def google_auth():
-    return GoogleAuth(client_id="test-client-id")
+    # authenticate_google requires a state signing secret; provide a test-only value
+    return GoogleAuth(client_id="test-client-id", state_secret="test-state-secret")
 
 
 @pytest.fixture

@@ -1,4 +1,3 @@
-import base64
 import inspect
 import json
 import os
@@ -7,7 +6,8 @@ from typing import Any, Dict, List, Literal, Optional, Set
 from urllib.parse import urlencode
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.oauth_state import sign_state, verify_state
 
 
 def google_authenticate(service_name: str):
@@ -185,6 +185,8 @@ class GoogleAuth(Toolkit):
         client_secret: Optional[str] = None,
         redirect_uri: Optional[str] = None,
         db: Optional[Any] = None,
+        state_secret: Optional[str] = None,
+        state_ttl_seconds: int = 600,
         **kwargs: Any,
     ):
         super().__init__(
@@ -201,6 +203,9 @@ class GoogleAuth(Toolkit):
         # True once get_oauth_router() has mounted a callback handler — toolkits read this
         # to choose interface mode (raise, let LLM handle OAuth) vs cookbook mode (browser).
         self._callback_configured: bool = False
+        # Shared HMAC secret for signing the state JWT. Must match across workers.
+        self._state_secret = state_secret or os.getenv("GOOGLE_OAUTH_STATE_SECRET")
+        self._state_ttl_seconds = state_ttl_seconds
         self.register(self.authenticate_google)
 
     def register_service(self, service: str, scopes: List[str]) -> None:
@@ -227,10 +232,29 @@ class GoogleAuth(Toolkit):
         if not scopes:
             return json.dumps({"error": f"Unknown services. Available: {', '.join(self._services)}"})
 
-        # Encode user_id + services in state so the callback knows who authenticated
+        if not self._state_secret:
+            return json.dumps(
+                {
+                    "error": "GoogleAuth requires a state signing secret. Set state_secret= on "
+                    "construction or the GOOGLE_OAUTH_STATE_SECRET environment variable."
+                }
+            )
+
+        # Signed JWT carries user_id through the Google round-trip unforgeably.
         user_id = getattr(run_context, "user_id", None) if run_context else None
-        state_data = {"services": list(services), "user_id": user_id or ""}
-        state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode()
+        try:
+            state = sign_state(
+                {"user_id": user_id, "services": list(services)},
+                secret=self._state_secret,
+                ttl_seconds=self._state_ttl_seconds,
+            )
+        except ImportError:
+            return json.dumps(
+                {
+                    "error": "PyJWT is required for OAuth state signing. "
+                    "Install with `pip install PyJWT` or `pip install agno[os]`."
+                }
+            )
 
         params = {
             "client_id": self.client_id,
@@ -252,17 +276,26 @@ class GoogleAuth(Toolkit):
 
         Args:
             code: Authorization code from Google's redirect.
-            state: Base64-encoded JSON with user_id and services.
+            state: HMAC-signed JWT carrying user_id and services (see authenticate_google).
 
         Returns:
             Dict with status, user_id, and services that were authorized.
         """
         try:
-            state_data = json.loads(base64.urlsafe_b64decode(state))
-        except Exception:
-            return {"error": "Invalid state parameter"}
+            import jwt  # imported for the exception type
+        except ImportError:
+            return {
+                "error": "PyJWT is required for OAuth state verification. "
+                "Install with `pip install PyJWT` or `pip install agno[os]`."
+            }
 
-        user_id = state_data.get("user_id", "")
+        try:
+            state_data = verify_state(state, secret=self._state_secret)
+        except jwt.InvalidTokenError as e:
+            log_warning(f"Rejected OAuth callback: {e}")
+            return {"error": f"Invalid state: {e}"}
+
+        user_id = state_data.get("user_id")
         services = state_data.get("services", [])
 
         try:
@@ -328,6 +361,14 @@ class GoogleAuth(Toolkit):
             google_auth = GoogleAuth(client_id="...")
             app.include_router(google_auth.get_oauth_router())
         """
+        # Fail-closed at mount on config the agent can't recover (no db-wiring hook
+        # for the state secret). The db for token persistence is auto-wired at
+        # agent.run() time — don't require it this early.
+        if not self._state_secret:
+            raise RuntimeError(
+                "GoogleAuth.get_oauth_router() requires a state signing secret. "
+                "Set state_secret= or the GOOGLE_OAUTH_STATE_SECRET env var."
+            )
         self._callback_configured = True
         from html import escape
 
