@@ -2,12 +2,12 @@
 Manim Tools
 ===========
 
-Renders Manim Community Edition animations via an Agno agent. The rendered mp4
-is attached to the run response as a base64-inlined Video so any consumer of
-`RunOutput.videos` (AgentOS UI, WhatsApp interface, etc.) can play it directly.
+Renders Manim Community Edition animations via an Agno agent. Small renders
+come back as `Video(content=bytes)` (base64-inlined at serialization); larger
+renders come back as `Video(filepath=...)` so the SSE payload stays sane.
 
-This script also demonstrates how a consumer can decode the inlined base64
-payload back into an mp4 file on disk.
+This script demonstrates handling both delivery modes: it decodes inline
+bytes or copies the on-disk mp4 into `tmp/saved/<id>.mp4`.
 
 Prerequisites:
     pip install manim
@@ -18,6 +18,7 @@ Run:
 """
 
 import base64
+import shutil
 from pathlib import Path
 
 from agno.agent import Agent
@@ -38,7 +39,6 @@ manim_agent = Agent(
     tools=[
         ManimTools(
             output_dir=WORK_DIR,
-            timeout_seconds=180,
             quality="m",
         )
     ],
@@ -53,21 +53,41 @@ manim_agent = Agent(
 )
 
 
-def save_base64_video_to_disk(video: Video, dest_dir: Path) -> Path:
-    """Decode a Video's inlined base64 payload and write it to an mp4 file.
+def save_video_to_disk(video: Video, dest_dir: Path) -> Path:
+    """Persist a Video to `dest_dir/<id>.<ext>`, regardless of delivery mode.
 
-    `Video.content` holds raw bytes in-memory, but is serialized as base64
-    over the wire. `Video.to_base64()` produces that same base64 string,
-    which a client can decode and save exactly like this.
+    `ManimTools` returns `Video(content=bytes)` for small renders (base64-
+    inlined at serialization) and `Video(filepath=...)` for large renders
+    that exceed `max_inline_bytes`. Consumers should handle both.
+
+    Inline: decode `video.to_base64()` and write the bytes.
+    Filepath: copy the on-disk mp4 (it already lives under `output_dir`).
+    URL: fall back to `video.get_content_bytes()` which fetches remotely.
     """
-    b64 = video.to_base64()
-    if not b64:
-        raise ValueError("Video has no inlined content to save.")
-    raw_bytes = base64.b64decode(b64)
     suffix = video.format or "mp4"
     dest = dest_dir / f"{video.id}.{suffix}"
-    dest.write_bytes(raw_bytes)
+
+    if video.content is not None:
+        b64 = video.to_base64()
+        assert b64 is not None
+        dest.write_bytes(base64.b64decode(b64))
+        return dest
+
+    if video.filepath is not None:
+        shutil.copyfile(str(video.filepath), dest)
+        return dest
+
+    raw = video.get_content_bytes()
+    if raw is None:
+        raise ValueError(
+            f"Video {video.id!r} has no resolvable content (no content/filepath/url)."
+        )
+    dest.write_bytes(raw)
     return dest
+
+
+# Backwards-compat alias for downstream scripts that still import the old name.
+save_base64_video_to_disk = save_video_to_disk
 
 
 if __name__ == "__main__":
@@ -83,9 +103,15 @@ if __name__ == "__main__":
         print("  (none)")
     else:
         for v in response.videos:
-            inline_bytes = len(v.content) if v.content else 0
-            print(f"  id={v.id} format={v.format} inline_bytes={inline_bytes}")
-            saved_path = save_base64_video_to_disk(v, SAVED_DIR)
-            print(
-                f"  decoded base64 -> wrote {saved_path} ({saved_path.stat().st_size} bytes)"
+            delivery = (
+                "inline"
+                if v.content is not None
+                else ("filepath" if v.filepath else "url")
             )
+            inline_bytes = len(v.content) if v.content else 0
+            print(
+                f"  id={v.id} format={v.format} delivery={delivery} "
+                f"inline_bytes={inline_bytes} filepath={v.filepath}"
+            )
+            saved_path = save_video_to_disk(v, SAVED_DIR)
+            print(f"  saved -> {saved_path} ({saved_path.stat().st_size} bytes)")

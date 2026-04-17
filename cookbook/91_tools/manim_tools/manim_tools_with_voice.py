@@ -2,9 +2,9 @@
 Manim Tools with Voice (CLI + save-to-disk)
 ===========================================
 
-Like `manim_tools.py` but with `enable_voiceover=True`. Renders a very short
-narrated animation and writes the decoded mp4 to `tmp/saved/<id>.mp4` so you
-can play it locally.
+Like `manim_tools.py` but with `enable_voiceover=True`. Renders a short
+narrated animation and writes the mp4 to `tmp/saved/<id>.mp4` so you
+can play it locally. Handles both inline and filepath-backed Videos.
 
 Prerequisites:
     pip install manim
@@ -22,7 +22,7 @@ from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.manim import ManimTools
 
-from manim_tools import save_base64_video_to_disk
+from manim_tools import save_video_to_disk
 
 HERE = Path(__file__).parent
 TMP_DIR = HERE / "tmp"
@@ -37,7 +37,6 @@ manim_agent = Agent(
     tools=[
         ManimTools(
             output_dir=WORK_DIR,
-            timeout_seconds=180,
             quality="m",
             enable_voiceover=True,
         )
@@ -58,7 +57,7 @@ manim_agent = Agent(
 
 if __name__ == "__main__":
     response = manim_agent.run(
-           "Create a short animation of a blue circle fading in, then morphing into a green square with text hello world then orange triangle with the text Agno Agi and the speech of all the words"
+        "Create a short animation of a blue circle fading in, then morphing into a green square with text hello world then orange triangle with the text Agno Agi and the speech of all the words"
         "Keep it under 10 seconds. "
     )
     print("\n--- agent message ---")
@@ -69,9 +68,15 @@ if __name__ == "__main__":
         print("  (none)")
     else:
         for v in response.videos:
-            inline_bytes = len(v.content) if v.content else 0
-            print(f"  id={v.id} format={v.format} inline_bytes={inline_bytes}")
-            saved_path = save_base64_video_to_disk(v, SAVED_DIR)
-            print(
-                f"  decoded base64 -> wrote {saved_path} ({saved_path.stat().st_size} bytes)"
+            delivery = (
+                "inline"
+                if v.content is not None
+                else ("filepath" if v.filepath else "url")
             )
+            inline_bytes = len(v.content) if v.content else 0
+            print(
+                f"  id={v.id} format={v.format} delivery={delivery} "
+                f"inline_bytes={inline_bytes} filepath={v.filepath}"
+            )
+            saved_path = save_video_to_disk(v, SAVED_DIR)
+            print(f"  saved -> {saved_path} ({saved_path.stat().st_size} bytes)")

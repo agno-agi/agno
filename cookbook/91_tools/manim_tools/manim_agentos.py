@@ -28,7 +28,6 @@ manim_agent = Agent(
     tools=[
         ManimTools(
             output_dir=OUTPUT_DIR,
-            timeout_seconds=180,
             quality="h",
             enable_voiceover=True,
         ),
