@@ -12,21 +12,20 @@ if TYPE_CHECKING:
 
 
 def is_openai_reasoning_model(reasoning_model: Model) -> bool:
-    model_id = reasoning_model.id.lower()
-    is_openai_family = reasoning_model.__class__.__name__ in {"OpenAIChat", "OpenAIResponses", "AzureOpenAI"}
-    is_known_reasoning_model = (
-        model_id.startswith("o1")
-        or model_id.startswith("o3")
-        or model_id.startswith("o4")
-        or model_id.startswith("gpt-o1")
-        or model_id.startswith("gpt-o3")
-        or model_id.startswith("gpt-o4")
-        or model_id.startswith("gpt-5")
-    )
-
-    return (is_openai_family and is_known_reasoning_model) or (
-        isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in model_id
-    )
+    return (
+        (
+            reasoning_model.__class__.__name__ == "OpenAIChat"
+            or reasoning_model.__class__.__name__ == "OpenAIResponses"
+            or reasoning_model.__class__.__name__ == "AzureOpenAI"
+        )
+        and (
+            ("o4" in reasoning_model.id)
+            or ("o3" in reasoning_model.id)
+            or ("o1" in reasoning_model.id)
+            or ("5.1" in reasoning_model.id)
+            or ("5.2" in reasoning_model.id)
+        )
+    ) or (isinstance(reasoning_model, OpenAILike) and "deepseek-r1" in reasoning_model.id.lower())
 
 
 def get_openai_reasoning(
