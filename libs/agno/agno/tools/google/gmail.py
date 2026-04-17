@@ -67,6 +67,7 @@ import mimetypes
 import re
 import tempfile
 import textwrap
+import warnings
 from datetime import datetime, timedelta
 from os import getenv
 from pathlib import Path
@@ -140,6 +141,7 @@ class GmailTools(Toolkit):
         # Port 0 lets the OS pick a free port — supports parallel toolkit OAuth flows
         # and matches sheets/slides. Google's installed-app OAuth accepts any localhost port.
         oauth_port: int = 0,
+        port: Optional[int] = None,  # Deprecated alias for oauth_port; slated for removal in agno 2.6.
         login_hint: Optional[str] = None,
         include_html: bool = False,
         max_body_length: Optional[int] = None,
@@ -220,6 +222,17 @@ class GmailTools(Toolkit):
         self.delegated_user = delegated_user
         self.service = None
         self.scopes = scopes or self.DEFAULT_SCOPES
+        if port is not None:
+            warnings.warn(
+                "GmailTools(port=...) is deprecated; use oauth_port= instead. "
+                "Slated for removal in agno 2.6.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            # Legacy wins only when oauth_port is still the 0 default — if the caller
+            # passed both, treat oauth_port as the authoritative value.
+            if oauth_port == 0:
+                oauth_port = port
         self.oauth_port = oauth_port
         self.login_hint = login_hint
         self.include_html = include_html

@@ -26,6 +26,7 @@ import io
 import json
 import mimetypes
 import textwrap
+import warnings
 from os import getenv
 from pathlib import Path
 from typing import Any, List, Optional, Tuple, Union, cast
@@ -133,6 +134,7 @@ class GoogleDriveTools(Toolkit):
         store_token_in_db: bool = False,
         # Authentication
         oauth_port: Optional[int] = 5050,
+        auth_port: Optional[int] = None,  # Deprecated alias for oauth_port; slated for removal in agno 2.6.
         login_hint: Optional[str] = None,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         scopes: Optional[List[str]] = None,
@@ -184,6 +186,16 @@ class GoogleDriveTools(Toolkit):
         self.login_hint = login_hint
         self.quota_project_id = quota_project_id or getenv("GOOGLE_CLOUD_QUOTA_PROJECT_ID")
 
+        if auth_port is not None:
+            warnings.warn(
+                "GoogleDriveTools(auth_port=...) is deprecated; use oauth_port= instead. "
+                "Slated for removal in agno 2.6.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            # Legacy wins only if oauth_port is still the 5050 default.
+            if oauth_port == 5050:
+                oauth_port = auth_port
         self.oauth_port = oauth_port
 
         read_tools_enabled = any([list_files, search_files, read_file, download_file])
