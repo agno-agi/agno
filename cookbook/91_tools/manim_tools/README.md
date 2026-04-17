@@ -39,9 +39,19 @@ Renders Manim Community Edition animations with an Agno agent and attaches the m
 
 ## Delivery
 
-Every render is returned as `Video(content=bytes)`. Agno base64-encodes `content` at serialization time, so AgentOS and other interfaces receive a self-contained inlined video - no static file route required. Large scenes will make the SSE payload large; trim the runtime or quality if that becomes a problem.
+Renders under `max_inline_bytes` (default **25 MB**) come back as `Video(content=bytes)`. Agno base64-encodes `content` at serialization time, so AgentOS and other interfaces receive a self-contained inlined video - no static file route required.
+
+Renders over that cap are persisted to `output_dir` and returned as `Video(filepath=...)` instead. Consumers still get a `Video` artifact; they load bytes lazily from disk via `video.get_content_bytes()` / `aget_content_bytes()` (see `libs/agno/agno/media.py`). This avoids blowing up the SSE payload on a long 1080p render while keeping a uniform API.
 
 `manim_tools.py` also shows the opposite direction: take a returned `Video`, call `video.to_base64()`, decode it, and write it to disk as an mp4. See `save_base64_video_to_disk`.
+
+## Safety bounds
+
+| Param | Default | What it does |
+|---|---|---|
+| `timeout_seconds` | `900` (15 min) | Hard subprocess timeout for each render. Voiceover renders can be slow - bump higher if you're generating long narrated scenes. |
+| `max_duration_seconds` | `120.0` | Rejects renders whose output mp4 runs longer than this (probed via `ffprobe`). The error message tells the agent to shorten the scene and retry. If `ffprobe` isn't on PATH, the check is skipped with a warning. |
+| `max_inline_bytes` | `25 * 1024 * 1024` | Size threshold for inline-bytes vs. filepath delivery (see above). |
 
 ## Notes
 

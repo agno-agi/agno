@@ -58,8 +58,8 @@ manim_agent = Agent(
 
 if __name__ == "__main__":
     response = manim_agent.run(
-        "Create a tiny narrated animation: show a circle appearing, with the narration "
-        "'Hello from Agno'. Keep it under 10 seconds total."
+           "Create a short animation of a blue circle fading in, then morphing into a green square with text hello world then orange triangle with the text Agno Agi and the speech of all the words"
+        "Keep it under 10 seconds. "
     )
     print("\n--- agent message ---")
     print(response.content)

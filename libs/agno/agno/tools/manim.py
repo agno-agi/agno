@@ -1,15 +1,19 @@
 """Render Manim Community Edition scenes and attach the resulting mp4 to the run response.
 
-Requires `manim` and `ffmpeg` on the system. LaTeX is optional (only needed if
-your scenes use `MathTex` / `Tex`).
+Requires `manim` and `ffmpeg` on the system (ffprobe is used for the duration
+check). LaTeX is optional (only needed if your scenes use `MathTex` / `Tex`).
 
-The rendered mp4 is read into memory and attached as `Video(content=bytes)`.
-At serialization time Agno base64-encodes `content`, so any consumer of
-`RunOutput.videos` (AgentOS UI, Slack/WhatsApp interfaces, etc.) receives a
-self-contained, inlined video - no static file route required.
+Renders under `max_inline_bytes` (default 25 MB) come back as
+`Video(content=bytes)` and are base64-inlined at serialization time so any
+consumer of `RunOutput.videos` receives a self-contained video. Larger
+renders are persisted under `output_dir` and returned as
+`Video(filepath=...)` to avoid blowing up the SSE payload.
+
+Renders longer than `max_duration_seconds` (default 120 s) are rejected
+with an error so the agent can shorten the scene and retry.
 
 By default each render's scene `.py` and its `media_{run_id}/` subtree are
-deleted once the mp4 bytes have been read. Pass `delete_after_render=False`
+deleted once the mp4 has been handled. Pass `delete_after_render=False`
 if you want to inspect the render artifacts on disk.
 """
 
@@ -55,7 +59,9 @@ class ManimTools(Toolkit):
     def __init__(
         self,
         output_dir: Union[Path, str],
-        timeout_seconds: int = 180,
+        timeout_seconds: int = 900,
+        max_duration_seconds: float = 120.0,
+        max_inline_bytes: int = 25 * 1024 * 1024,
         quality: str = "m",
         python_executable: Optional[str] = None,
         delete_after_render: bool = True,
@@ -67,6 +73,10 @@ class ManimTools(Toolkit):
     ):
         if quality not in QUALITY_MAP:
             raise ValueError(f"quality must be one of {list(QUALITY_MAP.keys())}, got {quality!r}")
+        if max_duration_seconds <= 0:
+            raise ValueError(f"max_duration_seconds must be > 0, got {max_duration_seconds!r}")
+        if max_inline_bytes <= 0:
+            raise ValueError(f"max_inline_bytes must be > 0, got {max_inline_bytes!r}")
 
         if enable_voiceover:
             try:
@@ -90,6 +100,8 @@ class ManimTools(Toolkit):
         self.output_dir = Path(output_dir).resolve()
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.timeout_seconds = timeout_seconds
+        self.max_duration_seconds = max_duration_seconds
+        self.max_inline_bytes = max_inline_bytes
         self.default_quality = quality
         self.python_executable = python_executable or sys.executable
         self.delete_after_render = delete_after_render
@@ -120,6 +132,10 @@ class ManimTools(Toolkit):
             "-m",
             "manim",
             f"-{flag}",
+            "-v",
+            "WARNING",
+            "--progress_bar",
+            "none",
             "--format",
             "mp4",
             "--media_dir",
@@ -127,6 +143,29 @@ class ManimTools(Toolkit):
             str(scene_file),
             scene_name,
         ]
+
+    def _probe_duration_seconds(self, mp4_path: Path) -> Optional[float]:
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    str(mp4_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return float(result.stdout.strip())
+        except (subprocess.SubprocessError, ValueError, FileNotFoundError):
+            pass
+        return None
 
     def _locate_mp4(self, scene_file: Path, scene_name: str, quality: str, media_dir: Path) -> Optional[Path]:
         _, qfolder = QUALITY_MAP[quality]
@@ -218,26 +257,72 @@ class ManimTools(Toolkit):
                 content=f"Render reported success for '{scene_name}' but no mp4 was found under {media_dir}."
             )
 
-        mp4_bytes = mp4_path.read_bytes()
-        size_mb = len(mp4_bytes) / (1024 * 1024)
+        duration_seconds = self._probe_duration_seconds(mp4_path)
+        if duration_seconds is None:
+            log_warning(
+                f"Could not probe duration for '{scene_name}' (ffprobe missing or failed); "
+                f"skipping max_duration_seconds check."
+            )
+        elif duration_seconds > self.max_duration_seconds:
+            self._cleanup(scene_file, media_dir)
+            return ToolResult(
+                content=(
+                    f"Render rejected for '{scene_name}': duration {duration_seconds:.1f}s "
+                    f"exceeds max_duration_seconds={self.max_duration_seconds:.0f}s. "
+                    f"Shorten the scene (fewer animations, smaller self.wait() calls, or "
+                    f"reduced voiceover length) and retry."
+                )
+            )
+
+        size_bytes = mp4_path.stat().st_size
+        size_mb = size_bytes / (1024 * 1024)
 
         record: dict = {
             "scene_name": scene_name,
             "quality": q,
             "size_mb": round(size_mb, 2),
         }
-        if not self.delete_after_render:
-            record["filepath"] = str(mp4_path)
+        if duration_seconds is not None:
+            record["duration_seconds"] = round(duration_seconds, 2)
 
+        if size_bytes <= self.max_inline_bytes:
+            mp4_bytes = mp4_path.read_bytes()
+            if not self.delete_after_render:
+                record["filepath"] = str(mp4_path)
+            record["delivery"] = "inline"
+            self._rendered.append(record)
+            self._cleanup(scene_file, media_dir)
+            video = Video(content=mp4_bytes, format="mp4", mime_type="video/mp4")
+            return ToolResult(
+                content=(
+                    f"Rendered '{scene_name}' at quality '{q}' ({size_mb:.2f} MB). "
+                    f"The video is base64-inlined and attached to this response."
+                ),
+                videos=[video],
+            )
+
+        cap_mb = self.max_inline_bytes / (1024 * 1024)
+        log_warning(
+            f"Rendered mp4 is {size_mb:.1f} MB (> {cap_mb:.0f} MB cap); "
+            f"returning filepath reference instead of inlined bytes."
+        )
+        persistent_path = self.output_dir / f"{scene_name}_{run_id}.mp4"
+        shutil.move(str(mp4_path), str(persistent_path))
+        shutil.rmtree(media_dir, ignore_errors=True)
+        if self.delete_after_render:
+            try:
+                scene_file.unlink(missing_ok=True)
+            except OSError:
+                pass
+        record["filepath"] = str(persistent_path)
+        record["delivery"] = "filepath"
         self._rendered.append(record)
-
-        self._cleanup(scene_file, media_dir)
-
-        video = Video(content=mp4_bytes, format="mp4", mime_type="video/mp4")
+        video = Video(filepath=persistent_path, format="mp4", mime_type="video/mp4")
         return ToolResult(
             content=(
                 f"Rendered '{scene_name}' at quality '{q}' ({size_mb:.2f} MB). "
-                f"The video is base64-inlined and attached to this response."
+                f"Exceeded the {cap_mb:.0f} MB inline cap; video is attached by filepath "
+                f"at {persistent_path}."
             ),
             videos=[video],
         )
