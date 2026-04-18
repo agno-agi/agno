@@ -45,6 +45,7 @@ from agno.utils.log import (
     set_log_level_to_debug,
     set_log_level_to_info,
 )
+from agno.utils.message import get_conversation_text
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
@@ -470,7 +471,7 @@ class UserProfileStore(LearningStore):
                 return "No fields provided to update"
 
             except Exception as e:
-                log_warning(f"Error updating profile: {e}")
+                log_warning(f"Error updating profile: {str(e)}")
                 return f"Error: {e}"
 
         # Set the signature, docstring, and annotations
@@ -547,7 +548,7 @@ class UserProfileStore(LearningStore):
                 return "No fields provided to update"
 
             except Exception as e:
-                log_warning(f"Error updating profile: {e}")
+                log_warning(f"Error updating profile: {str(e)}")
                 return f"Error: {e}"
 
         # Set the signature, docstring, and annotations
@@ -864,6 +865,10 @@ class UserProfileStore(LearningStore):
 
         self.profile_updated = False
 
+        conversation_text = get_conversation_text(messages)
+        if not conversation_text.strip():
+            return "No updates needed"
+
         existing_profile = self.get(user_id=user_id)
 
         tools = self._get_extraction_tools(
@@ -877,7 +882,7 @@ class UserProfileStore(LearningStore):
 
         messages_for_model = [
             self._get_system_message(existing_profile=existing_profile),
-            *messages,
+            Message(role="user", content=conversation_text),
         ]
 
         model_copy = deepcopy(self.model)
@@ -919,6 +924,10 @@ class UserProfileStore(LearningStore):
 
         self.profile_updated = False
 
+        conversation_text = get_conversation_text(messages)
+        if not conversation_text.strip():
+            return "No updates needed"
+
         existing_profile = await self.aget(user_id=user_id)
 
         tools = await self._aget_extraction_tools(
@@ -932,7 +941,7 @@ class UserProfileStore(LearningStore):
 
         messages_for_model = [
             self._get_system_message(existing_profile=existing_profile),
-            *messages,
+            Message(role="user", content=conversation_text),
         ]
 
         model_copy = deepcopy(self.model)
@@ -1011,13 +1020,6 @@ class UserProfileStore(LearningStore):
         """Build a unique profile ID."""
         return f"user_profile_{user_id}"
 
-    def _messages_to_input_string(self, messages: List["Message"]) -> str:
-        """Convert messages to input string."""
-        if len(messages) == 1:
-            return messages[0].get_content_string()
-        else:
-            return "\n".join([f"{m.role}: {m.get_content_string()}" for m in messages if m.content])
-
     def _build_functions_for_model(self, tools: List[Callable]) -> List["Function"]:
         """Convert callables to Functions for model."""
         from agno.tools.function import Function
@@ -1037,7 +1039,7 @@ class UserProfileStore(LearningStore):
                 functions.append(func)
                 log_debug(f"Added function {func.name}")
             except Exception as e:
-                log_warning(f"Could not add function {tool}: {e}")
+                log_warning(f"Could not add function {tool}: {str(e)}")
 
         return functions
 

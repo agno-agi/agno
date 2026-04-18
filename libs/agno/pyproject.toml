@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.5.11"
+version = "2.5.17"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -134,6 +134,7 @@ parallel = ["parallel-web"]
 psycopg = ["psycopg-binary", "psycopg"]
 redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
+salesforce = ["simple-salesforce"]
 scrapegraph = ["scrapegraph-py"]
 todoist = ["todoist-api-python"]
 valyu = ["valyu"]
@@ -262,6 +263,7 @@ tools = [
   "agno[agentql]",
   "agno[opencv]",
   "agno[parallel]",
+  "agno[salesforce]",
   "agno[scrapegraph]",
   "agno[valyu]",
   "agno[yfinance]",
@@ -391,8 +393,9 @@ demo = [
 ]
 
 [project.urls]
-homepage = "https://agno.com"
-documentation = "https://docs.agno.com"
+Homepage = "https://agno.com"
+Documentation = "https://docs.agno.com"
+Repository = "https://github.com/agno-agi/agno"
 
 [build-system]
 requires = ["setuptools"]

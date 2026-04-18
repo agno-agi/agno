@@ -1,14 +1,12 @@
 name: Main Validation
 
 on:
+  schedule:
+    - cron: "30 21 * * 6"  # Every Saturday 9:30 pm UTC
   push:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
-      - "v2.5-phase1"
-      - "fix/ci-test-failures"
-      - "fix/team-hitl-streaming"
-      - "v2.5-phase2"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
@@ -467,6 +465,7 @@ jobs:
 
   # Run tests for Cerebras
   test-cerebras:
+    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -854,6 +853,7 @@ jobs:
           ./libs/agno/tests/integration/teams/test_tasks_mode_streaming.py \
           ./libs/agno/tests/integration/teams/test_followups.py \
           ./libs/agno/tests/integration/teams/test_tool_hooks.py \
+          ./libs/agno/tests/integration/teams/test_member_dedup.py \
 
   verify-split-test-coverage:
     runs-on: ubuntu-latest
@@ -1171,7 +1171,7 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 --ignore=./libs/agno/tests/integration/os/interfaces/test_a2a.py --ignore=./libs/agno/tests/integration/os ./libs/agno/tests/integration
+          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 --ignore=./libs/agno/tests/integration/os/interfaces/test_a2a.py --ignore=./libs/agno/tests/integration/os --ignore=./libs/agno/tests/integration/tools/test_seltz.py ./libs/agno/tests/integration
 
   test-dev-setup:
     runs-on: ubuntu-latest

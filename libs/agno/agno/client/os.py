@@ -395,12 +395,12 @@ class AgentOSClient:
                     event = event_parser(event_dict)
                     yield event
 
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse SSE JSON: {line[:100]}... | Error: {e}")
+                except json.JSONDecodeError:
+                    logger.exception(f"Failed to parse SSE JSON: {line[:100]}...")
                     continue  # Skip bad events, continue stream
 
-                except ValueError as e:
-                    logger.error(f"Unknown event type: {line[:100]}... | Error: {e}")
+                except ValueError:
+                    logger.exception(f"Unknown event type: {line[:100]}...")
                     continue  # Skip unknown events, continue stream
 
     # Discovery & Configuration Operations
@@ -2017,6 +2017,8 @@ class AgentOSClient:
         model_provider: Optional[str] = None,
         expected_output: Optional[str] = None,
         expected_tool_calls: Optional[List[str]] = None,
+        allow_additional_tool_calls: bool = False,
+        expected_tool_call_arguments: Optional[Dict[str, Union[Dict[str, Any], List[Dict[str, Any]]]]] = None,
         num_iterations: int = 1,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
@@ -2033,6 +2035,8 @@ class AgentOSClient:
             model_provider: Optional model provider to use
             expected_output: Expected output for accuracy evaluations
             expected_tool_calls: Expected tool calls for reliability evaluations
+            allow_additional_tool_calls: When True, extra tool calls beyond expected are allowed
+            expected_tool_call_arguments: Expected arguments for specific tool calls
             num_iterations: Number of iterations for performance evaluations
             db_id: Optional database ID to use
             table: Optional table name to use
@@ -2060,6 +2064,8 @@ class AgentOSClient:
             model_provider=model_provider,
             expected_output=expected_output,
             expected_tool_calls=expected_tool_calls,
+            allow_additional_tool_calls=allow_additional_tool_calls,
+            expected_tool_call_arguments=expected_tool_call_arguments,
             num_iterations=num_iterations,
         )
 

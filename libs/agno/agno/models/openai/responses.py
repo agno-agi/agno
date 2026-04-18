@@ -1,3 +1,4 @@
+import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
@@ -6,7 +7,7 @@ import httpx
 from pydantic import BaseModel
 from typing_extensions import Literal
 
-from agno.exceptions import ModelAuthenticationError, ModelProviderError
+from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
 from agno.media import File
 from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
@@ -14,7 +15,6 @@ from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
-from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.openai_responses import images_to_message
 from agno.utils.models.schema_utils import get_response_schema_for_provider
@@ -57,6 +57,13 @@ class OpenAIResponses(Model):
     user: Optional[str] = None
     service_tier: Optional[Literal["auto", "default", "flex", "priority"]] = None
     strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
+    background: Optional[bool] = (
+        None  # When True, enables background mode for long-running tasks. The API returns immediately and the response is polled until completion. Not supported for streaming.
+    )
+    background_poll_interval: float = (
+        2.0  # Interval in seconds between polling attempts when background mode is enabled.
+    )
+    background_max_wait: float = 600.0  # Maximum time in seconds to wait for a background response before cancelling it and raising an error. Defaults to 10 minutes, matching OpenAI's storage window.
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     extra_body: Optional[Any] = None
@@ -160,9 +167,9 @@ class OpenAIResponses(Model):
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client is not None:
             client_params["http_client"] = self.http_client
-        else:
-            # Use global sync client when no custom http_client is provided
-            client_params["http_client"] = get_default_sync_client()
+        # When no custom http_client is provided, let the OpenAI SDK use its own default client.
+        # The SDK defaults to HTTP/1.1 which avoids transient 400 errors caused by HTTP/2
+        # protocol edge cases with OpenAI's infrastructure.
 
         self.client = OpenAI(**client_params)
         return self.client
@@ -180,12 +187,66 @@ class OpenAIResponses(Model):
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
             client_params["http_client"] = self.http_client
-        else:
-            # Use global async client when no custom http_client is provided
-            client_params["http_client"] = get_default_async_client()
+        # When no custom http_client is provided, let the OpenAI SDK use its own default client.
+        # The SDK defaults to HTTP/1.1 which avoids transient 400 errors caused by HTTP/2
+        # protocol edge cases with OpenAI's infrastructure.
 
         self.async_client = AsyncOpenAI(**client_params)
         return self.async_client
+
+    def _poll_background_response(self, response_id: str) -> "Response":
+        """Poll for a background response until it reaches a terminal state.
+
+        If background_max_wait is exceeded, cancels the response and raises ModelProviderError.
+        """
+        client = self.get_client()
+        deadline = time.monotonic() + self.background_max_wait
+        while True:
+            response = client.responses.retrieve(response_id)
+            log_debug(f"Background response {response_id} status: {response.status}")
+            if response.status in ("completed", "failed", "incomplete", "cancelled"):
+                return response
+            if time.monotonic() >= deadline:
+                log_warning(
+                    f"Background response {response_id} exceeded max wait of {self.background_max_wait}s, cancelling."
+                )
+                try:
+                    client.responses.cancel(response_id)
+                except Exception as cancel_exc:
+                    log_warning(f"Failed to cancel background response {response_id}: {cancel_exc}")
+                raise ModelProviderError(
+                    message=f"Background response {response_id} exceeded max wait of {self.background_max_wait}s",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
+            time.sleep(self.background_poll_interval)
+
+    async def _apoll_background_response(self, response_id: str) -> "Response":
+        """Async poll for a background response until it reaches a terminal state.
+
+        If background_max_wait is exceeded, cancels the response and raises ModelProviderError.
+        """
+        client = self.get_async_client()
+        deadline = time.monotonic() + self.background_max_wait
+        while True:
+            response = await client.responses.retrieve(response_id)
+            log_debug(f"Background response {response_id} status: {response.status}")
+            if response.status in ("completed", "failed", "incomplete", "cancelled"):
+                return response
+            if time.monotonic() >= deadline:
+                log_warning(
+                    f"Background response {response_id} exceeded max wait of {self.background_max_wait}s, cancelling."
+                )
+                try:
+                    await client.responses.cancel(response_id)
+                except Exception as cancel_exc:
+                    log_warning(f"Failed to cancel background response {response_id}: {cancel_exc}")
+                raise ModelProviderError(
+                    message=f"Background response {response_id} exceeded max wait of {self.background_max_wait}s",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
+            await asyncio.sleep(self.background_poll_interval)
 
     def get_request_params(
         self,
@@ -200,14 +261,20 @@ class OpenAIResponses(Model):
         Returns:
             Dict[str, Any]: A dictionary of keyword arguments for API requests.
         """
+        # Background mode requires store=True
+        store = self.store
+        if self.background:
+            store = True
+
         # Define base request parameters
         base_params: Dict[str, Any] = {
+            "background": self.background,
             "include": self.include,
             "max_output_tokens": self.max_output_tokens,
             "max_tool_calls": self.max_tool_calls,
             "metadata": self.metadata,
             "parallel_tool_calls": self.parallel_tool_calls,
-            "store": self.store,
+            "store": store,
             "temperature": self.temperature,
             "top_p": self.top_p,
             "truncation": self.truncation,
@@ -271,7 +338,7 @@ class OpenAIResponses(Model):
 
         # Handle reasoning tools for o3 and o4-mini models
         if self._using_reasoning_model() and messages is not None:
-            if self.store is False:
+            if store is False:
                 request_params["store"] = False
 
                 # Add encrypted reasoning content to include if not already present
@@ -650,7 +717,7 @@ class OpenAIResponses(Model):
             )
             return response.input_tokens + count_schema_tokens(output_schema, self.id)
         except Exception as e:
-            log_warning(f"Failed to count tokens via API: {e}")
+            log_warning(f"Failed to count tokens via API: {str(e)}")
             return super().count_tokens(messages, tools, output_schema)
 
     async def acount_tokens(
@@ -672,7 +739,7 @@ class OpenAIResponses(Model):
             )
             return response.input_tokens + count_schema_tokens(output_schema, self.id)
         except Exception as e:
-            log_warning(f"Failed to count tokens via API: {e}")
+            log_warning(f"Failed to count tokens via API: {str(e)}")
             return await super().acount_tokens(messages, tools, output_schema)
 
     def invoke(
@@ -701,7 +768,30 @@ class OpenAIResponses(Model):
                 **request_params,
             )
 
+            # Stop the timer before polling so wall-clock polling wait is not counted as inference time.
+            # For background mode, the initial create() measures submission latency; the polling loop
+            # is then allowed to run without inflating time_to_first_token / total time metrics.
             assistant_message.metrics.stop_timer()
+
+            # Poll for completion if background mode is enabled
+            if self.background and provider_response.status in ("queued", "in_progress"):
+                log_debug(f"Background response submitted: {provider_response.id}, polling for completion...")
+                provider_response = self._poll_background_response(provider_response.id)
+
+            if provider_response.status == "failed":
+                error_msg = provider_response.error.message if provider_response.error else "Background response failed"
+                raise ModelProviderError(message=error_msg, model_name=self.name, model_id=self.id)
+            if provider_response.status == "cancelled":
+                raise ModelProviderError(
+                    message=f"Background response {provider_response.id} was cancelled",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
+            if provider_response.status == "incomplete":
+                log_warning(
+                    f"Background response {provider_response.id} completed with status 'incomplete': "
+                    f"{provider_response.incomplete_details}"
+                )
 
             model_response = self._parse_provider_response(provider_response, response_format=response_format)
 
@@ -709,7 +799,10 @@ class OpenAIResponses(Model):
 
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_message = exc.response.json().get("error", {})
+            except Exception:
+                error_message = exc.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -726,12 +819,21 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
             log_error(f"API status error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_body = exc.response.json().get("error", {})
+            except Exception:
+                error_body = exc.response.text
+            error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
+                error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
             )
+            if error_code == "context_length_exceeded":
+                raise ContextWindowExceededError(
+                    message=error_message,
+                    status_code=exc.response.status_code,
+                    model_name=self.name,
+                    model_id=self.id,
+                ) from exc
             raise ModelProviderError(
                 message=error_message,
                 status_code=exc.response.status_code,
@@ -771,7 +873,30 @@ class OpenAIResponses(Model):
                 **request_params,
             )
 
+            # Stop the timer before polling so wall-clock polling wait is not counted as inference time.
+            # For background mode, the initial create() measures submission latency; the polling loop
+            # is then allowed to run without inflating time_to_first_token / total time metrics.
             assistant_message.metrics.stop_timer()
+
+            # Poll for completion if background mode is enabled
+            if self.background and provider_response.status in ("queued", "in_progress"):
+                log_debug(f"Background response submitted: {provider_response.id}, polling for completion...")
+                provider_response = await self._apoll_background_response(provider_response.id)
+
+            if provider_response.status == "failed":
+                error_msg = provider_response.error.message if provider_response.error else "Background response failed"
+                raise ModelProviderError(message=error_msg, model_name=self.name, model_id=self.id)
+            if provider_response.status == "cancelled":
+                raise ModelProviderError(
+                    message=f"Background response {provider_response.id} was cancelled",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
+            if provider_response.status == "incomplete":
+                log_warning(
+                    f"Background response {provider_response.id} completed with status 'incomplete': "
+                    f"{provider_response.incomplete_details}"
+                )
 
             model_response = self._parse_provider_response(provider_response, response_format=response_format)
 
@@ -779,7 +904,10 @@ class OpenAIResponses(Model):
 
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_message = exc.response.json().get("error", {})
+            except Exception:
+                error_message = exc.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -796,12 +924,21 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
             log_error(f"API status error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_body = exc.response.json().get("error", {})
+            except Exception:
+                error_body = exc.response.text
+            error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
+                error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
             )
+            if error_code == "context_length_exceeded":
+                raise ContextWindowExceededError(
+                    message=error_message,
+                    status_code=exc.response.status_code,
+                    model_name=self.name,
+                    model_id=self.id,
+                ) from exc
             raise ModelProviderError(
                 message=error_message,
                 status_code=exc.response.status_code,
@@ -832,6 +969,9 @@ class OpenAIResponses(Model):
             request_params = self.get_request_params(
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
+            # Background mode is not supported for streaming. Strip the flag and warn.
+            if request_params.pop("background", None):
+                log_warning("Background mode is not supported for streaming requests. Ignoring `background=True`.")
             tool_use: Dict[str, Any] = {}
 
             assistant_message.metrics.start_timer()
@@ -853,7 +993,10 @@ class OpenAIResponses(Model):
 
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_message = exc.response.json().get("error", {})
+            except Exception:
+                error_message = exc.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -870,12 +1013,21 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
             log_error(f"API status error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_body = exc.response.json().get("error", {})
+            except Exception:
+                error_body = exc.response.text
+            error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
+                error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
             )
+            if error_code == "context_length_exceeded":
+                raise ContextWindowExceededError(
+                    message=error_message,
+                    status_code=exc.response.status_code,
+                    model_name=self.name,
+                    model_id=self.id,
+                ) from exc
             raise ModelProviderError(
                 message=error_message,
                 status_code=exc.response.status_code,
@@ -906,6 +1058,9 @@ class OpenAIResponses(Model):
             request_params = self.get_request_params(
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
+            # Background mode is not supported for streaming. Strip the flag and warn.
+            if request_params.pop("background", None):
+                log_warning("Background mode is not supported for streaming requests. Ignoring `background=True`.")
             tool_use: Dict[str, Any] = {}
 
             assistant_message.metrics.start_timer()
@@ -924,7 +1079,10 @@ class OpenAIResponses(Model):
 
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_message = exc.response.json().get("error", {})
+            except Exception:
+                error_message = exc.response.text
             error_message = (
                 error_message.get("message", "Unknown model error")
                 if isinstance(error_message, dict)
@@ -941,12 +1099,21 @@ class OpenAIResponses(Model):
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
         except APIStatusError as exc:
             log_error(f"API status error from OpenAI API: {exc}")
-            error_message = exc.response.json().get("error", {})
+            try:
+                error_body = exc.response.json().get("error", {})
+            except Exception:
+                error_body = exc.response.text
+            error_code = error_body.get("code") if isinstance(error_body, dict) else None
             error_message = (
-                error_message.get("message", "Unknown model error")
-                if isinstance(error_message, dict)
-                else error_message
+                error_body.get("message", "Unknown model error") if isinstance(error_body, dict) else error_body
             )
+            if error_code == "context_length_exceeded":
+                raise ContextWindowExceededError(
+                    message=error_message,
+                    status_code=exc.response.status_code,
+                    model_name=self.name,
+                    model_id=self.id,
+                ) from exc
             raise ModelProviderError(
                 message=error_message,
                 status_code=exc.response.status_code,
@@ -1126,6 +1293,10 @@ class OpenAIResponses(Model):
             if self.reasoning is not None and self.reasoning_summary is None:
                 model_response.reasoning_content = stream_event.delta
 
+        # 3.1 Stream reasoning summary deltas
+        elif stream_event.type == "response.reasoning_summary_text.delta":
+            model_response.reasoning_content = stream_event.delta
+
         # 4. Add tool calls information
 
         # 4.1 Add starting tool call
@@ -1161,29 +1332,14 @@ class OpenAIResponses(Model):
         elif stream_event.type == "response.completed":
             model_response = ModelResponse()
 
-            # Handle reasoning output items
-            if self.reasoning_summary is not None or self.store is False:
-                summary_text: str = ""
+            # Handle reasoning output items for ZDR mode (store=False)
+            if self.store is False:
                 for out in getattr(stream_event.response, "output", []) or []:
                     if getattr(out, "type", None) == "reasoning":
-                        # In ZDR mode (store=False), store reasoning data for next request
-                        if self.store is False and hasattr(out, "encrypted_content"):
+                        if hasattr(out, "encrypted_content"):
                             if model_response.provider_data is None:
                                 model_response.provider_data = {}
-                            # Store the complete output item
                             model_response.provider_data["reasoning_output"] = out.model_dump(exclude_none=True)
-                        if self.reasoning_summary is not None:
-                            summaries = getattr(out, "summary", None)
-                            if summaries:
-                                for s in summaries:
-                                    text_val = s.get("text") if isinstance(s, dict) else getattr(s, "text", None)
-                                    if text_val:
-                                        if summary_text:
-                                            summary_text += "\n\n"
-                                        summary_text += text_val
-
-                if summary_text:
-                    model_response.reasoning_content = summary_text
 
             # Add metrics
             if stream_event.response.usage is not None:
