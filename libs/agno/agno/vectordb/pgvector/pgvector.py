@@ -335,7 +335,11 @@ class PgVector(VectorDb):
                         batch_records = []
                         for doc in batch_docs:
                             try:
-                                batch_records.append(self._get_document_record(doc, filters, content_hash))
+                                record = self._get_document_record(doc, filters, content_hash)
+                                if record.get("embedding") is None:
+                                    log_warning(f"Skipping document '{doc.name}' with None embedding")
+                                    continue
+                                batch_records.append(record)
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
 
@@ -373,6 +377,10 @@ class PgVector(VectorDb):
                         batch_records = []
                         for doc in batch_docs:
                             try:
+                                if doc.embedding is None:
+                                    log_warning(f"Skipping document '{doc.name}' with None embedding")
+                                    continue
+
                                 cleaned_content = self._clean_content(doc.content)
                                 # Include content_hash in ID to ensure uniqueness across different content hashes
                                 # This allows the same URL/content to be inserted with different descriptions
@@ -645,18 +653,15 @@ class PgVector(VectorDb):
                         batch_records_dict = {}  # Use dict to deduplicate by ID
                         for idx, doc in enumerate(batch_docs):
                             try:
+                                if doc.embedding is None:
+                                    log_warning(f"Skipping document '{doc.name}' with None embedding")
+                                    continue
+
                                 cleaned_content = self._clean_content(doc.content)
                                 # Include content_hash in ID to ensure uniqueness across different content hashes
                                 # This allows the same URL/content to be inserted with different descriptions
                                 base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
                                 record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
-
-                                if (
-                                    doc.embedding is not None
-                                    and isinstance(doc.embedding, list)
-                                    and len(doc.embedding) == 0
-                                ):
-                                    log_warning(f"Document {idx} '{doc.name}' has empty embedding (length 0)")
 
                                 if (
                                     doc.embedding is not None
