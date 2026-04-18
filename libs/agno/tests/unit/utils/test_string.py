@@ -194,6 +194,94 @@ def test_parse_json_with_code_blocks_in_fields():
     assert result.description == "A function that prints hello"
 
 
+def test_parse_json_with_nested_json_code_blocks_in_field():
+    """Test parsing when a json code block contains nested json code blocks."""
+    content = """
+    ```json
+    {
+        "name": "test",
+        "value": "```json
+    {
+        "nested": true
+    }
+    ```",
+        "description": "Outer JSON remains parseable"
+    }
+    ```
+    """
+
+
+
+
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert '"nested": true' in result.value
+    assert result.description == "Outer JSON remains parseable"
+
+
+def test_parse_json_with_markdown_containing_code_block():
+    """Test parsing when JSON value contains markdown text with a nested code block."""
+    content = """Model output:
+    ```json
+    {
+        "name": "test",
+        "value": "### Notes
+    Use the following snippet:
+    ```python
+    def greet():
+        print('hello')
+    ```",
+        "description": "Markdown includes python code block"
+    }
+    ```
+    """
+
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert "### Notes" in result.value
+    assert "def greet()" in result.value
+    assert "print('hello')" in result.value
+    assert result.description == "Markdown includes python code block"
+
+
+def test_parse_complex_llm_output_with_multiple_sections():
+    """Test parsing realistic noisy LLM output containing multiple markdown sections."""
+    content = """I reviewed your request and prepared the response below.
+
+    Plan:
+    ```text
+    1. Analyze
+    2. Generate
+    3. Validate
+    ```
+
+    Final structured output:
+    ```json
+    {
+        "name": "test",
+        "value": "### Summary
+    - item one
+    - item two
+    Inline `code` and a \\"quoted\\" phrase.",
+        "description": "Complex LLM output remains parseable"
+    }
+    ```
+
+    Additional notes: let me know if you want alternatives.
+    """
+
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert "### Summary" in result.value
+    assert "- item one" in result.value
+    assert "Inline `code`" in result.value
+    assert '"quoted"' in result.value
+    assert result.description == "Complex LLM output remains parseable"
+
+
 def test_parse_complex_markdown():
     """Test parsing JSON embedded in complex markdown"""
     content = """# Title
