@@ -252,7 +252,7 @@ def test_condition_streaming(shared_db):
 
 
 def test_condition_error_handling(shared_db):
-    """Test condition error handling """
+    """Test condition error handling"""
 
     def failing_evaluator(_: StepInput) -> bool:
         raise ValueError("Evaluator failed")
@@ -260,7 +260,14 @@ def test_condition_error_handling(shared_db):
     workflow = Workflow(
         name="Error Condition",
         db=shared_db,
-        steps=[Condition(name="failing_check", evaluator=failing_evaluator, steps=[research_step])],
+        steps=[
+            Condition(
+                name="failing_check",
+                evaluator=failing_evaluator,
+                steps=[research_step],
+                on_error=OnError.fail,  # Ensure exception propagates
+            )
+        ],
     )
 
     with pytest.raises(ValueError):

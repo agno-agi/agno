@@ -17,7 +17,16 @@ from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_error, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_condition_evaluator, is_cel_expression
 from agno.workflow.step import Step
-from agno.workflow.types import ErrorRequirement, HumanReview, OnError, OnReject, StepInput, StepOutput, StepRequirement, StepType
+from agno.workflow.types import (
+    ErrorRequirement,
+    HumanReview,
+    OnError,
+    OnReject,
+    StepInput,
+    StepOutput,
+    StepRequirement,
+    StepType,
+)
 
 # Constants for condition branch identifiers
 CONDITION_BRANCH_IF = "if"
