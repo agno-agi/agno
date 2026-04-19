@@ -381,7 +381,7 @@ def _create_events_from_chunk(
         events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
         events_to_emit.append(
             ReasoningMessageStartEvent(
-                type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="reasoning"
+                type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="assistant"
             )
         )
 
@@ -392,7 +392,7 @@ def _create_events_from_chunk(
             events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
             events_to_emit.append(
                 ReasoningMessageStartEvent(
-                    type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="reasoning"
+                    type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="assistant"
                 )
             )
         if chunk.reasoning_content:
@@ -410,7 +410,7 @@ def _create_events_from_chunk(
             events_to_emit.append(ReasoningStartEvent(type=EventType.REASONING_START, message_id=reasoning_id))
             events_to_emit.append(
                 ReasoningMessageStartEvent(
-                    type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="reasoning"
+                    type=EventType.REASONING_MESSAGE_START, message_id=reasoning_id, role="assistant"
                 )
             )
         step_num = event_buffer.next_reasoning_step()
