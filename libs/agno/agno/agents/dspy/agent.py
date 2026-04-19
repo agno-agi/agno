@@ -56,7 +56,9 @@ class DSPyAgent(BaseExternalAgent):
     program_kwargs: Dict[str, Any] = field(default_factory=dict)
     framework: str = "dspy"
 
-    async def _arun_adapter(self, input: Any, **kwargs: Any) -> str:
+    async def _arun_adapter(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> str:
         """Non-streaming: run the DSPy program and return the output field."""
         try:
             import dspy
@@ -65,8 +67,6 @@ class DSPyAgent(BaseExternalAgent):
 
         if self.program is None:
             raise ValueError("No program provided to DSPyAgent")
-
-        history = kwargs.pop("history", None)
 
         # Build input kwargs with history prepended
         program_input = {self.input_field: build_input_with_history(input, history)}
@@ -89,7 +89,9 @@ class DSPyAgent(BaseExternalAgent):
             return str(result)
         return str(output)
 
-    async def _arun_adapter_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
+    async def _arun_adapter_stream(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> AsyncIterator[RunOutputEvent]:
         """Streaming: use dspy.streamify() for token-level streaming.
 
         dspy.streamify() yields three types:
@@ -107,7 +109,6 @@ class DSPyAgent(BaseExternalAgent):
             raise ValueError("No program provided to DSPyAgent")
 
         run_id = kwargs.get("run_id", str(uuid4()))
-        history = kwargs.pop("history", None)
 
         # Build input kwargs with history prepended
         program_input = {self.input_field: build_input_with_history(input, history)}

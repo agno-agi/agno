@@ -540,14 +540,15 @@ class BaseExternalAgent:
         session_id = kwargs.get("session_id") or str(uuid4())
         user_id = kwargs.get("user_id")
 
-        # Load session and provide history to the adapter
+        # Load session and extract history for the adapter
         session = None
+        history: Optional[List[Dict[str, Any]]] = None
         if self.db is not None:
             session = await self.aread_or_create_session(session_id, user_id)
-            kwargs["history"] = self._get_history_from_session(session)
+            history = self._get_history_from_session(session)
 
         try:
-            content = await self._arun_adapter(input, run_id=run_id, **kwargs)
+            content = await self._arun_adapter(input, history=history, run_id=run_id, **kwargs)
             run_output = self._build_run_output(
                 run_id=run_id,
                 session_id=session_id,
@@ -585,11 +586,12 @@ class BaseExternalAgent:
         session_id = kwargs.get("session_id") or str(uuid4())
         user_id = kwargs.get("user_id")
 
-        # Load session and provide history to the adapter
+        # Load session and extract history for the adapter
         session = None
+        history: Optional[List[Dict[str, Any]]] = None
         if self.db is not None:
             session = await self.aread_or_create_session(session_id, user_id)
-            kwargs["history"] = self._get_history_from_session(session)
+            history = self._get_history_from_session(session)
 
         yield RunStartedEvent(
             run_id=run_id,
@@ -604,7 +606,7 @@ class BaseExternalAgent:
             # Map tool_call_id -> ToolExecution for merging started+completed
             tool_map: Dict[str, ToolExecution] = {}
 
-            async for event in self._arun_adapter_stream(input, run_id=run_id, **kwargs):
+            async for event in self._arun_adapter_stream(input, history=history, run_id=run_id, **kwargs):
                 if isinstance(event, RunContentEvent):
                     accumulated_content += event.content or ""
                 elif isinstance(event, ToolCallStartedEvent) and event.tool:
@@ -688,11 +690,15 @@ class BaseExternalAgent:
     # Subclass hooks (must be implemented by adapters)
     # ---------------------------------------------------------------------------
 
-    async def _arun_adapter(self, input: Any, **kwargs: Any) -> Any:
+    async def _arun_adapter(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> Any:
         """Non-streaming execution. Return the response content."""
         raise NotImplementedError(f"{self.__class__.__name__} must implement _arun_adapter")
 
-    async def _arun_adapter_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
+    async def _arun_adapter_stream(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> AsyncIterator[RunOutputEvent]:
         """Streaming execution. Yield RunContentEvent, ToolCallStartedEvent, etc.
 
         Do NOT yield RunStartedEvent or RunCompletedEvent -- those are handled by the base class.

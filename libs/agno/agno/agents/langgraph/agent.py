@@ -61,17 +61,14 @@ class LangGraphAgent(BaseExternalAgent):
     config: Optional[Dict[str, Any]] = field(default=None)
     framework: str = "langgraph"
 
-    async def _arun_adapter(self, input: Any, **kwargs: Any) -> Any:
+    async def _arun_adapter(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> Any:
         """Non-streaming LangGraph invocation."""
         try:
             from langchain_core.messages import AIMessage
         except ImportError:
             raise ImportError("langchain-core is required: pip install langchain-core langgraph")
-
-        if self.graph is None:
-            raise ValueError("No graph provided to LangGraphAgent")
-
-        history = kwargs.pop("history", None)
         # None input means replay/fork from checkpoint
         if input is None:
             graph_input = None
@@ -88,13 +85,14 @@ class LangGraphAgent(BaseExternalAgent):
                 return msg.content
         return str(result)
 
-    async def _arun_adapter_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
+    async def _arun_adapter_stream(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> AsyncIterator[RunOutputEvent]:
         """Streaming LangGraph invocation with tool call visibility."""
         if self.graph is None:
             raise ValueError("No graph provided to LangGraphAgent")
 
         run_id = kwargs.get("run_id", str(uuid4()))
-        history = kwargs.pop("history", None)
         # None input means replay/fork from checkpoint
         if input is None:
             graph_input = None
