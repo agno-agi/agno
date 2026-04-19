@@ -48,7 +48,7 @@ def get_population(city: str) -> str:
 
 # ----- Build the LangGraph with tools -----
 tools = [get_weather, get_population]
-llm = ChatOpenAI(model="gpt-4o-mini").bind_tools(tools)
+llm = ChatOpenAI(model="gpt-5.4").bind_tools(tools)
 
 
 def chatbot(state: MessagesState):

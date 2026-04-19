@@ -1,5 +1,5 @@
 """
-Claude Agent SDK with session persistence via SQLite.
+Claude Agent SDK with session persistence.
 
 Demonstrates multi-turn conversations where chat history is persisted
 to Agno's DB. Each run is stored as a session with messages, so you

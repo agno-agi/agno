@@ -1,5 +1,5 @@
 """
-LangGraph agent with session persistence via SQLite.
+LangGraph agent with session persistence.
 
 Demonstrates multi-turn conversations where chat history is persisted
 to Agno's DB. Each run is stored as a session with messages, so you
@@ -18,7 +18,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.graph import MessagesState, StateGraph
 
 # ----- Build a simple LangGraph chatbot -----
-llm = ChatOpenAI(model="gpt-4o-mini")
+llm = ChatOpenAI(model="gpt-5.4")
 
 
 def chatbot(state: MessagesState):
