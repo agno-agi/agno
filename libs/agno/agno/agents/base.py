@@ -41,8 +41,8 @@ class BaseExternalAgent:
     - Session persistence via Agno's DB (when db is configured)
 
     Subclasses must implement:
-    - _arun_impl(input, **kwargs) -> str  (non-streaming)
-    - _arun_stream_impl(input, **kwargs) -> AsyncIterator[RunOutputEvent]  (streaming)
+    - _arun_adapter(input, **kwargs) -> str  (non-streaming)
+    - _arun_adapter_stream(input, **kwargs) -> AsyncIterator[RunOutputEvent]  (streaming)
     """
 
     agent_id: str
@@ -529,7 +529,7 @@ class BaseExternalAgent:
             kwargs["history"] = self._get_history_from_session(session)
 
         try:
-            content = await self._arun_impl(input, run_id=run_id, **kwargs)
+            content = await self._arun_adapter(input, run_id=run_id, **kwargs)
             run_output = self._build_run_output(
                 run_id=run_id,
                 session_id=session_id,
@@ -586,7 +586,7 @@ class BaseExternalAgent:
             # Map tool_call_id -> ToolExecution for merging started+completed
             tool_map: Dict[str, ToolExecution] = {}
 
-            async for event in self._arun_stream_impl(input, run_id=run_id, **kwargs):
+            async for event in self._arun_adapter_stream(input, run_id=run_id, **kwargs):
                 if isinstance(event, RunContentEvent):
                     accumulated_content += event.content or ""
                 elif isinstance(event, ToolCallStartedEvent) and event.tool:
@@ -670,14 +670,14 @@ class BaseExternalAgent:
     # Subclass hooks (must be implemented by adapters)
     # ---------------------------------------------------------------------------
 
-    async def _arun_impl(self, input: Any, **kwargs: Any) -> Any:
+    async def _arun_adapter(self, input: Any, **kwargs: Any) -> Any:
         """Non-streaming execution. Return the response content."""
-        raise NotImplementedError(f"{self.__class__.__name__} must implement _arun_impl")
+        raise NotImplementedError(f"{self.__class__.__name__} must implement _arun_adapter")
 
-    async def _arun_stream_impl(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
+    async def _arun_adapter_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
         """Streaming execution. Yield RunContentEvent, ToolCallStartedEvent, etc.
 
         Do NOT yield RunStartedEvent or RunCompletedEvent -- those are handled by the base class.
         """
-        raise NotImplementedError(f"{self.__class__.__name__} must implement _arun_stream_impl")
+        raise NotImplementedError(f"{self.__class__.__name__} must implement _arun_adapter_stream")
         yield  # type: ignore  # make this a generator

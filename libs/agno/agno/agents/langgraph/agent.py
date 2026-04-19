@@ -61,7 +61,7 @@ class LangGraphAgent(BaseExternalAgent):
     config: Optional[Dict[str, Any]] = field(default=None)
     framework: str = "langgraph"
 
-    async def _arun_impl(self, input: Any, **kwargs: Any) -> Any:
+    async def _arun_adapter(self, input: Any, **kwargs: Any) -> Any:
         """Non-streaming LangGraph invocation."""
         try:
             from langchain_core.messages import AIMessage
@@ -88,7 +88,7 @@ class LangGraphAgent(BaseExternalAgent):
                 return msg.content
         return str(result)
 
-    async def _arun_stream_impl(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
+    async def _arun_adapter_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
         """Streaming LangGraph invocation with tool call visibility."""
         if self.graph is None:
             raise ValueError("No graph provided to LangGraphAgent")

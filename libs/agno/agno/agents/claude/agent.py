@@ -110,7 +110,7 @@ class ClaudeAgentSDK(BaseExternalAgent):
         opts.update(self.options_kwargs)
         return ClaudeAgentOptions(**opts)
 
-    async def _arun_impl(self, input: Any, **kwargs: Any) -> str:
+    async def _arun_adapter(self, input: Any, **kwargs: Any) -> str:
         """Non-streaming: collect all messages and return final content."""
         try:
             from claude_agent_sdk import AssistantMessage, ResultMessage, SystemMessage, TextBlock, query
@@ -141,7 +141,7 @@ class ClaudeAgentSDK(BaseExternalAgent):
 
         return result_text
 
-    async def _arun_stream_impl(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
+    async def _arun_adapter_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
         """Streaming: yield token-level events using include_partial_messages.
 
         With include_partial_messages=True, the SDK yields StreamEvent objects

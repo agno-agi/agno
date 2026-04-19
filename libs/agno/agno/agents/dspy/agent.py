@@ -56,7 +56,7 @@ class DSPyAgent(BaseExternalAgent):
     program_kwargs: Dict[str, Any] = field(default_factory=dict)
     framework: str = "dspy"
 
-    async def _arun_impl(self, input: Any, **kwargs: Any) -> str:
+    async def _arun_adapter(self, input: Any, **kwargs: Any) -> str:
         """Non-streaming: run the DSPy program and return the output field."""
         try:
             import dspy
@@ -89,7 +89,7 @@ class DSPyAgent(BaseExternalAgent):
             return str(result)
         return str(output)
 
-    async def _arun_stream_impl(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
+    async def _arun_adapter_stream(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
         """Streaming: use dspy.streamify() for token-level streaming.
 
         dspy.streamify() yields three types:
