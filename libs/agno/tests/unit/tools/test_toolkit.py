@@ -795,3 +795,51 @@ def test_partial_async_get_async_functions():
     assert async_funcs["tool_a"].entrypoint == toolkit.atool_a
     # tool_b should still be sync version (no async variant)
     assert async_funcs["tool_b"].entrypoint == toolkit.tool_b
+
+
+def test_bound_method_preserves_metadata():
+    """Test that bound methods preserve __qualname__, __annotations__, __doc__, and __wrapped__."""
+
+    class MyToolkit(Toolkit):
+        def __init__(self):
+            super().__init__(name="test_toolkit", tools=[self.my_tool])
+
+        @tool()
+        def my_tool(self, x: int, y: str = "default") -> str:
+            """My tool docstring."""
+            return f"{x}-{y}"
+
+    toolkit = MyToolkit()
+    entrypoint = toolkit.functions["my_tool"].entrypoint
+
+    assert entrypoint.__name__ == "my_tool"
+    assert entrypoint.__doc__ == "My tool docstring."
+    assert "my_tool" in entrypoint.__qualname__
+    assert entrypoint.__annotations__ == {"x": int, "y": str, "return": str}
+    assert hasattr(entrypoint, "__wrapped__")
+
+    # Verify the tool still works correctly
+    result = entrypoint(5)
+    assert result == "5-default"
+
+
+def test_bound_async_method_preserves_metadata():
+    """Test that bound async methods preserve __qualname__, __annotations__, __doc__, and __wrapped__."""
+
+    class AsyncToolkit(Toolkit):
+        def __init__(self):
+            super().__init__(name="async_toolkit", tools=[self.async_tool])
+
+        @tool()
+        async def async_tool(self, x: int) -> int:
+            """Async tool docstring."""
+            return x * 2
+
+    toolkit = AsyncToolkit()
+    entrypoint = toolkit.async_functions["async_tool"].entrypoint
+
+    assert entrypoint.__name__ == "async_tool"
+    assert entrypoint.__doc__ == "Async tool docstring."
+    assert "async_tool" in entrypoint.__qualname__
+    assert entrypoint.__annotations__ == {"x": int, "return": int}
+    assert hasattr(entrypoint, "__wrapped__")
