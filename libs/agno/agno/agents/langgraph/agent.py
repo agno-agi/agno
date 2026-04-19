@@ -3,6 +3,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, cast
 from uuid import uuid4
 
 from agno.agents.base import BaseExternalAgent
+from agno.agents.langgraph.utils import build_messages_with_history
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     RunContentEvent,
@@ -60,46 +61,6 @@ class LangGraphAgent(BaseExternalAgent):
     config: Optional[Dict[str, Any]] = field(default=None)
     framework: str = "langgraph"
 
-    def _build_messages_with_history(self, input: Any, history: Optional[List[Dict[str, Any]]] = None) -> List[Any]:
-        """Build LangChain message list with conversation history prepended."""
-        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-
-        messages: List[Any] = []
-        if history:
-            for msg in history:
-                if msg["role"] == "user":
-                    messages.append(HumanMessage(content=msg["content"]))
-                elif msg["role"] == "assistant":
-                    tool_calls = msg.get("tool_calls")
-                    if tool_calls:
-                        # Convert from stored format {"type":"function","function":{"name","arguments"}}
-                        # to LangChain format {"id","name","args"}
-                        lc_tool_calls = []
-                        for tc in tool_calls:
-                            func = tc.get("function", {})
-                            args = func.get("arguments", "{}")
-                            if isinstance(args, str):
-                                import json
-
-                                try:
-                                    args = json.loads(args)
-                                except (json.JSONDecodeError, TypeError):
-                                    args = {"input": args}
-                            lc_tool_calls.append({
-                                "id": tc.get("id", ""),
-                                "name": func.get("name", ""),
-                                "args": args,
-                            })
-                        messages.append(AIMessage(content=msg.get("content", ""), tool_calls=lc_tool_calls))
-                    else:
-                        messages.append(AIMessage(content=msg["content"]))
-                elif msg["role"] == "tool":
-                    tool_call_id = msg.get("tool_call_id", "")
-                    messages.append(ToolMessage(content=msg["content"], tool_call_id=tool_call_id))
-        if input is not None:
-            messages.append(HumanMessage(content=str(input)))
-        return messages
-
     async def _arun_impl(self, input: Any, **kwargs: Any) -> Any:
         """Non-streaming LangGraph invocation."""
         try:
@@ -115,7 +76,7 @@ class LangGraphAgent(BaseExternalAgent):
         if input is None:
             graph_input = None
         else:
-            graph_input = {self.input_key: self._build_messages_with_history(input, history)}
+            graph_input = {self.input_key: build_messages_with_history(input, history)}
         config = self._build_config(kwargs)
 
         result = await self.graph.ainvoke(graph_input, config=config)
@@ -138,7 +99,7 @@ class LangGraphAgent(BaseExternalAgent):
         if input is None:
             graph_input = None
         else:
-            graph_input = {self.input_key: self._build_messages_with_history(input, history)}
+            graph_input = {self.input_key: build_messages_with_history(input, history)}
         config = self._build_config(kwargs)
 
         async for event in self.graph.astream_events(graph_input, config=config, version="v2"):

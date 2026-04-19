@@ -3,6 +3,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from uuid import uuid4
 
 from agno.agents.base import BaseExternalAgent
+from agno.agents.dspy.utils import build_input_with_history
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     RunContentEvent,
@@ -55,37 +56,6 @@ class DSPyAgent(BaseExternalAgent):
     program_kwargs: Dict[str, Any] = field(default_factory=dict)
     framework: str = "dspy"
 
-    def _configure_lm(self) -> None:
-        """Configure DSPy LM on the current thread if provided."""
-        if self.lm is not None:
-            import dspy
-
-            # Use dspy.configure only from the main thread (at init time).
-            # For cross-thread safety, callers should configure at module level
-            # or use dspy.context(lm=...) which is thread-safe.
-            try:
-                dspy.configure(lm=self.lm)
-            except Exception:
-                # Thread-safety error — LM was already configured on another thread.
-                # This is fine; the global config from the main thread will be used.
-                pass
-
-    def _build_input_with_history(self, input: Any, history: Optional[List[Dict[str, str]]] = None) -> str:
-        """Prepend conversation history to the input for multi-turn context."""
-        if not history:
-            return str(input)
-
-        parts: List[str] = []
-        for msg in history:
-            if msg["role"] == "user":
-                parts.append(f"User: {msg['content']}")
-            elif msg["role"] == "tool":
-                parts.append(f"Tool Result: {msg['content']}")
-            else:
-                parts.append(f"Assistant: {msg['content']}")
-        parts.append(f"User: {input}")
-        return "\n\n".join(parts)
-
     async def _arun_impl(self, input: Any, **kwargs: Any) -> str:
         """Non-streaming: run the DSPy program and return the output field."""
         try:
@@ -99,7 +69,7 @@ class DSPyAgent(BaseExternalAgent):
         history = kwargs.pop("history", None)
 
         # Build input kwargs with history prepended
-        program_input = {self.input_field: self._build_input_with_history(input, history)}
+        program_input = {self.input_field: build_input_with_history(input, history)}
         program_input.update(self.program_kwargs)
 
         # DSPy modules are sync by default — use asyncify
@@ -140,7 +110,7 @@ class DSPyAgent(BaseExternalAgent):
         history = kwargs.pop("history", None)
 
         # Build input kwargs with history prepended
-        program_input = {self.input_field: self._build_input_with_history(input, history)}
+        program_input = {self.input_field: build_input_with_history(input, history)}
         program_input.update(self.program_kwargs)
 
         # DSPy caches LLM responses by default. Cached results skip token-level
