@@ -176,6 +176,8 @@ class ClaudeAgentSDK(BaseExternalAgent):
         got_stream_events = False
         # Track tool call IDs already emitted via AssistantMessage to avoid duplicates
         emitted_tool_ids: set = set()
+        # Map tool_use_id -> (tool_name, tool_args) for carrying forward to ToolCallCompleted
+        tool_info_map: Dict[str, Dict[str, Any]] = {}
 
         async for message in query(prompt=str(input), options=options):
             if isinstance(message, StreamEvent):
@@ -222,6 +224,8 @@ class ClaudeAgentSDK(BaseExternalAgent):
                         tool_id = getattr(block, "id", str(uuid4()))
                         if tool_id not in emitted_tool_ids:
                             emitted_tool_ids.add(tool_id)
+                            tool_args = tool_input if isinstance(tool_input, dict) else {"input": tool_input}
+                            tool_info_map[tool_id] = {"name": tool_name, "args": tool_args}
                             yield ToolCallStartedEvent(
                                 run_id=run_id,
                                 agent_id=self.id,
@@ -229,7 +233,7 @@ class ClaudeAgentSDK(BaseExternalAgent):
                                 tool=ToolExecution(
                                     tool_call_id=tool_id,
                                     tool_name=tool_name,
-                                    tool_args=tool_input if isinstance(tool_input, dict) else {"input": tool_input},
+                                    tool_args=tool_args,
                                 ),
                             )
 
@@ -245,13 +249,16 @@ class ClaudeAgentSDK(BaseExternalAgent):
                                 result_str = " ".join(getattr(item, "text", str(item)) for item in result_content)
                             else:
                                 result_str = str(result_content) if result_content else ""
+                            # Look up tool name from the corresponding ToolCallStarted
+                            info = tool_info_map.get(tool_use_id, {})
                             yield ToolCallCompletedEvent(
                                 run_id=run_id,
                                 agent_id=self.id,
                                 agent_name=self.name or "",
                                 tool=ToolExecution(
                                     tool_call_id=tool_use_id,
-                                    tool_name="",
+                                    tool_name=info.get("name", ""),
+                                    tool_args=info.get("args"),
                                     result=result_str,
                                 ),
                             )
