@@ -4,68 +4,27 @@ import json
 import os
 from unittest.mock import Mock, patch
 
-import pytest
-
 from agno.tools.scrapegraph import ScrapeGraphTools
 
 
-@pytest.fixture
-def mock_scrapegraph_client():
-    """Create a mock ScrapeGraph client."""
-    mock_client = Mock()
-
-    # Simple mock responses
-    mock_client.scrape.return_value = {
-        "html": "<html><body>Test content</body></html>",
-        "request_id": "req_123",
-    }
-
-    mock_client.smartscraper.return_value = {
-        "result": "extracted data",
-        "request_id": "req_123",
-    }
-
-    mock_client.markdownify.return_value = {
-        "result": "# Test Page\n\nTest content",
-    }
-
-    mock_client.searchscraper.return_value = {"result": [{"title": "Test Result", "url": "https://example.com"}]}
-
-    mock_client.crawl.return_value = {"result": [{"page": "https://example.com", "data": {"title": "Test"}}]}
-
-    mock_client.agenticscraper.return_value = {
-        "result": {"content": "scraped content"},
-        "request_id": "req_123",
-    }
-
-    return mock_client
+def _make_api_result(data, status="success", error=None):
+    """Helper: build a minimal stand-in for scrapegraph_py.ApiResult."""
+    result = Mock()
+    result.status = status
+    result.data = data
+    result.error = error
+    result.elapsed_ms = 0
+    return result
 
 
-@pytest.fixture
-def scrapegraph_tools():
-    """Create ScrapeGraphTools instance with mocked client."""
-    with (
-        patch("agno.tools.scrapegraph.Client") as mock_client_class,
-        patch("agno.tools.scrapegraph.sgai_logger"),
-        patch.dict(os.environ, {"SGAI_API_KEY": "test_key"}),
-    ):
-        mock_client = Mock()
-        mock_client_class.return_value = mock_client
-
-        # Mock responses
-        mock_client.scrape.return_value = {"html": "test html", "request_id": "123"}
-        mock_client.smartscraper.return_value = {"result": "test data", "request_id": "123"}
-
-        tools = ScrapeGraphTools(enable_scrape=True)
-        return tools
+def _patch_client():
+    """Patch the SDK client and return (patched_env_ctx, mock_client_class, mock_client)."""
+    return patch("agno.tools.scrapegraph.ScrapeGraphAI")
 
 
 def test_init_with_api_key():
     """Test initialization with API key."""
-    with (
-        patch("agno.tools.scrapegraph.Client") as mock_client,
-        patch("agno.tools.scrapegraph.sgai_logger"),
-    ):
+    with _patch_client() as mock_client:
         tools = ScrapeGraphTools(api_key="test_key")
         assert tools.api_key == "test_key"
         mock_client.assert_called_once_with(api_key="test_key")
@@ -74,8 +33,7 @@ def test_init_with_api_key():
 def test_init_with_env_api_key():
     """Test initialization with environment API key."""
     with (
-        patch("agno.tools.scrapegraph.Client") as mock_client,
-        patch("agno.tools.scrapegraph.sgai_logger"),
+        _patch_client() as mock_client,
         patch.dict(os.environ, {"SGAI_API_KEY": "env_key"}),
     ):
         tools = ScrapeGraphTools()
@@ -86,62 +44,55 @@ def test_init_with_env_api_key():
 def test_scrape_basic_functionality():
     """Test basic scrape functionality."""
     with (
-        patch("agno.tools.scrapegraph.Client") as mock_client_class,
-        patch("agno.tools.scrapegraph.sgai_logger"),
+        _patch_client() as mock_client_class,
         patch.dict(os.environ, {"SGAI_API_KEY": "test_key"}),
     ):
         mock_client = Mock()
         mock_client_class.return_value = mock_client
-        mock_client.scrape.return_value = {
-            "html": "<html>test</html>",
-            "request_id": "req_123",
-        }
+        data = Mock()
+        data.model_dump_json.return_value = json.dumps({"results": {"html": {"data": "<html>test</html>"}}})
+        mock_client.scrape.return_value = _make_api_result(data)
 
         tools = ScrapeGraphTools(enable_scrape=True)
         result = tools.scrape("https://example.com")
 
-        result_data = json.loads(result)
-        assert result_data["html"] == "<html>test</html>"
-        assert result_data["request_id"] == "req_123"
-
-        mock_client.scrape.assert_called_once_with(
-            website_url="https://example.com",
-            headers=None,
-            render_heavy_js=False,
-        )
+        assert "<html>test</html>" in result
+        mock_client.scrape.assert_called_once()
+        call_args = mock_client.scrape.call_args[0][0]
+        assert str(call_args.url).rstrip("/") == "https://example.com"
+        assert call_args.fetch_config is None
+        assert call_args.formats[0].type == "html"
 
 
 def test_scrape_with_render_heavy_js():
     """Test scrape with render_heavy_js enabled."""
     with (
-        patch("agno.tools.scrapegraph.Client") as mock_client_class,
-        patch("agno.tools.scrapegraph.sgai_logger"),
+        _patch_client() as mock_client_class,
         patch.dict(os.environ, {"SGAI_API_KEY": "test_key"}),
     ):
         mock_client = Mock()
         mock_client_class.return_value = mock_client
-        mock_client.scrape.return_value = {"html": "js content", "request_id": "123"}
+        data = Mock()
+        data.model_dump_json.return_value = "{}"
+        mock_client.scrape.return_value = _make_api_result(data)
 
         tools = ScrapeGraphTools(enable_scrape=True, render_heavy_js=True)
         tools.scrape("https://spa-site.com")
 
-        mock_client.scrape.assert_called_once_with(
-            website_url="https://spa-site.com",
-            headers=None,
-            render_heavy_js=True,
-        )
+        call_args = mock_client.scrape.call_args[0][0]
+        assert call_args.fetch_config is not None
+        assert call_args.fetch_config.mode == "js"
 
 
 def test_scrape_error_handling():
-    """Test scrape error handling."""
+    """Test scrape error handling via ApiResult error status."""
     with (
-        patch("agno.tools.scrapegraph.Client") as mock_client_class,
-        patch("agno.tools.scrapegraph.sgai_logger"),
+        _patch_client() as mock_client_class,
         patch.dict(os.environ, {"SGAI_API_KEY": "test_key"}),
     ):
         mock_client = Mock()
         mock_client_class.return_value = mock_client
-        mock_client.scrape.side_effect = Exception("API Error")
+        mock_client.scrape.return_value = _make_api_result(data=None, status="error", error="API Error")
 
         tools = ScrapeGraphTools(enable_scrape=True)
         result = tools.scrape("https://example.com")
@@ -151,54 +102,57 @@ def test_scrape_error_handling():
 
 
 def test_smartscraper_basic():
-    """Test smartscraper basic functionality."""
+    """Test smartscraper basic functionality (now backed by SDK extract)."""
     with (
-        patch("agno.tools.scrapegraph.Client") as mock_client_class,
-        patch("agno.tools.scrapegraph.sgai_logger"),
+        _patch_client() as mock_client_class,
         patch.dict(os.environ, {"SGAI_API_KEY": "test_key"}),
     ):
         mock_client = Mock()
         mock_client_class.return_value = mock_client
-        mock_client.smartscraper.return_value = {"result": "extracted data"}
+        data = Mock()
+        data.json_data = {"title": "example"}
+        data.raw = None
+        mock_client.extract.return_value = _make_api_result(data)
 
         tools = ScrapeGraphTools(enable_smartscraper=True)
         result = tools.smartscraper("https://example.com", "extract title")
 
-        result_data = json.loads(result)
-        assert result_data == "extracted data"
-
-        mock_client.smartscraper.assert_called_once_with(website_url="https://example.com", user_prompt="extract title")
+        assert json.loads(result) == {"title": "example"}
+        mock_client.extract.assert_called_once()
+        call_args = mock_client.extract.call_args[0][0]
+        assert call_args.prompt == "extract title"
+        assert str(call_args.url).rstrip("/") == "https://example.com"
 
 
 def test_markdownify_basic():
-    """Test markdownify basic functionality."""
+    """Test markdownify basic functionality (now backed by SDK scrape+markdown)."""
     with (
-        patch("agno.tools.scrapegraph.Client") as mock_client_class,
-        patch("agno.tools.scrapegraph.sgai_logger"),
+        _patch_client() as mock_client_class,
         patch.dict(os.environ, {"SGAI_API_KEY": "test_key"}),
     ):
         mock_client = Mock()
         mock_client_class.return_value = mock_client
-        mock_client.markdownify.return_value = {"result": "# Title\n\nContent"}
+        data = Mock()
+        data.results = {"markdown": {"data": "# Title\n\nContent"}}
+        mock_client.scrape.return_value = _make_api_result(data)
 
         tools = ScrapeGraphTools(enable_markdownify=True)
         result = tools.markdownify("https://example.com")
 
         assert result == "# Title\n\nContent"
-        mock_client.markdownify.assert_called_once_with(website_url="https://example.com")
+        mock_client.scrape.assert_called_once()
+        call_args = mock_client.scrape.call_args[0][0]
+        assert call_args.formats[0].type == "markdown"
 
 
 def test_tool_selection():
     """Test that only selected tools are enabled."""
     with (
-        patch("agno.tools.scrapegraph.Client"),
-        patch("agno.tools.scrapegraph.sgai_logger"),
+        _patch_client(),
         patch.dict(os.environ, {"SGAI_API_KEY": "test_key"}),
     ):
-        # Test specific tool selection
         tools = ScrapeGraphTools(enable_scrape=True, enable_smartscraper=True, enable_markdownify=False)
 
         tool_names = [func.__name__ for func in tools.tools]
         assert "scrape" in tool_names
         assert "smartscraper" in tool_names
-        # When smartscraper=False, markdownify is auto-enabled, so we test with both enabled
