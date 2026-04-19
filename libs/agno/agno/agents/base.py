@@ -52,9 +52,6 @@ class BaseExternalAgent:
     markdown: bool = True
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
-    # Session cache to avoid repeated DB reads within a session
-    _session_cache: Optional[AgentSession] = field(default=None, init=False, repr=False)
-
     @property
     def id(self) -> str:
         return self.agent_id
@@ -389,9 +386,6 @@ class BaseExternalAgent:
 
     def read_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
         """Read a session from the DB, or create a new one."""
-        if self._session_cache and self._session_cache.session_id == session_id:
-            return self._session_cache
-
         session = None
         if self.db is not None and isinstance(self.db, BaseDb):
             session = self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
@@ -402,14 +396,10 @@ class BaseExternalAgent:
         if session is None or not isinstance(session, AgentSession):
             session = self._create_session(session_id, user_id)
 
-        self._session_cache = session
         return session
 
     async def aread_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
         """Async read a session from the DB, or create a new one."""
-        if self._session_cache and self._session_cache.session_id == session_id:
-            return self._session_cache
-
         session = None
         if self.db is not None:
             if isinstance(self.db, AsyncBaseDb):
@@ -423,7 +413,6 @@ class BaseExternalAgent:
         if session is None or not isinstance(session, AgentSession):
             session = self._create_session(session_id, user_id)
 
-        self._session_cache = session
         return session
 
     def upsert_session(self, session: AgentSession) -> None:
