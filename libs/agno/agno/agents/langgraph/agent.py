@@ -60,9 +60,9 @@ class LangGraphAgent(BaseExternalAgent):
     config: Optional[Dict[str, Any]] = field(default=None)
     framework: str = "langgraph"
 
-    def _build_messages_with_history(self, input: Any, history: Optional[List[Dict[str, str]]] = None) -> List[Any]:
+    def _build_messages_with_history(self, input: Any, history: Optional[List[Dict[str, Any]]] = None) -> List[Any]:
         """Build LangChain message list with conversation history prepended."""
-        from langchain_core.messages import AIMessage, HumanMessage
+        from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
         messages: List[Any] = []
         if history:
@@ -70,7 +70,32 @@ class LangGraphAgent(BaseExternalAgent):
                 if msg["role"] == "user":
                     messages.append(HumanMessage(content=msg["content"]))
                 elif msg["role"] == "assistant":
-                    messages.append(AIMessage(content=msg["content"]))
+                    tool_calls = msg.get("tool_calls")
+                    if tool_calls:
+                        # Convert from stored format {"type":"function","function":{"name","arguments"}}
+                        # to LangChain format {"id","name","args"}
+                        lc_tool_calls = []
+                        for tc in tool_calls:
+                            func = tc.get("function", {})
+                            args = func.get("arguments", "{}")
+                            if isinstance(args, str):
+                                import json
+
+                                try:
+                                    args = json.loads(args)
+                                except (json.JSONDecodeError, TypeError):
+                                    args = {"input": args}
+                            lc_tool_calls.append({
+                                "id": tc.get("id", ""),
+                                "name": func.get("name", ""),
+                                "args": args,
+                            })
+                        messages.append(AIMessage(content=msg.get("content", ""), tool_calls=lc_tool_calls))
+                    else:
+                        messages.append(AIMessage(content=msg["content"]))
+                elif msg["role"] == "tool":
+                    tool_call_id = msg.get("tool_call_id", "")
+                    messages.append(ToolMessage(content=msg["content"], tool_call_id=tool_call_id))
         if input is not None:
             messages.append(HumanMessage(content=str(input)))
         return messages

@@ -477,20 +477,39 @@ class BaseExternalAgent:
             created_at=now,
         )
 
-    def _get_history_from_session(self, session: AgentSession) -> List[Dict[str, str]]:
+    def _get_history_from_session(self, session: AgentSession) -> List[Dict[str, Any]]:
         """Extract conversation history from session runs for adapters to use.
 
         Includes user, assistant, and tool messages so adapters have full
         context of prior turns including tool call results.
+
+        Each entry has:
+        - role: "user", "assistant", or "tool"
+        - content: message text
+        - tool_calls: (assistant only) list of tool call dicts if present
+        - tool_call_id: (tool only) ID linking to the assistant's tool_call
         """
-        history: List[Dict[str, str]] = []
+        history: List[Dict[str, Any]] = []
         if not session.runs:
             return history
         for run in session.runs:
             if not isinstance(run, RunOutput) or not run.messages:
                 continue
             for msg in run.messages:
-                if msg.role in ("user", "assistant", "tool") and msg.content:
+                if msg.role == "assistant" and msg.tool_calls:
+                    # Assistant message with tool calls (no text content)
+                    history.append({
+                        "role": "assistant",
+                        "content": str(msg.content) if msg.content else "",
+                        "tool_calls": msg.tool_calls,
+                    })
+                elif msg.role == "tool" and msg.content:
+                    history.append({
+                        "role": "tool",
+                        "content": str(msg.content),
+                        "tool_call_id": msg.tool_call_id or "",
+                    })
+                elif msg.role in ("user", "assistant") and msg.content:
                     history.append({"role": msg.role, "content": str(msg.content)})
         return history
 
