@@ -374,8 +374,39 @@ class BaseExternalAgent:
     # Session persistence helpers
     # ---------------------------------------------------------------------------
 
-    async def _load_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
-        """Load an existing session from the DB, or create a new one."""
+    def _create_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
+        """Create a new AgentSession."""
+        return AgentSession(
+            session_id=session_id,
+            agent_id=self.id,
+            user_id=user_id,
+            session_data={},
+            agent_data={"agent_id": self.id, "agent_name": self.name, "framework": self.framework},
+            metadata={},
+            runs=[],
+            created_at=int(time()),
+        )
+
+    def read_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
+        """Read a session from the DB, or create a new one."""
+        if self._session_cache and self._session_cache.session_id == session_id:
+            return self._session_cache
+
+        session = None
+        if self.db is not None and isinstance(self.db, BaseDb):
+            session = self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+
+        if session is not None and isinstance(session, dict):
+            session = AgentSession.from_dict(session)
+
+        if session is None or not isinstance(session, AgentSession):
+            session = self._create_session(session_id, user_id)
+
+        self._session_cache = session
+        return session
+
+    async def aread_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> AgentSession:
+        """Async read a session from the DB, or create a new one."""
         if self._session_cache and self._session_cache.session_id == session_id:
             return self._session_cache
 
@@ -383,35 +414,33 @@ class BaseExternalAgent:
         if self.db is not None:
             if isinstance(self.db, AsyncBaseDb):
                 session = await self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
-            else:
+            elif isinstance(self.db, BaseDb):
                 session = self.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
 
         if session is not None and isinstance(session, dict):
             session = AgentSession.from_dict(session)
 
-        if session is None:
-            session = AgentSession(
-                session_id=session_id,
-                agent_id=self.id,
-                user_id=user_id,
-                session_data={},
-                agent_data={"agent_id": self.id, "agent_name": self.name, "framework": self.framework},
-                metadata={},
-                runs=[],
-                created_at=int(time()),
-            )
+        if session is None or not isinstance(session, AgentSession):
+            session = self._create_session(session_id, user_id)
 
-        self._session_cache = session  # type: ignore[assignment]
-        return session  # type: ignore[return-value]
+        self._session_cache = session
+        return session
 
-    async def _save_session(self, session: AgentSession) -> None:
-        """Persist a session to the DB."""
+    def upsert_session(self, session: AgentSession) -> None:
+        """Persist a session to the DB (sync)."""
+        if self.db is None or not isinstance(self.db, BaseDb):
+            return
+        session.updated_at = int(time())
+        self.db.upsert_session(session)
+
+    async def aupsert_session(self, session: AgentSession) -> None:
+        """Persist a session to the DB (async)."""
         if self.db is None:
             return
         session.updated_at = int(time())
         if isinstance(self.db, AsyncBaseDb):
             await self.db.upsert_session(session)
-        else:
+        elif isinstance(self.db, BaseDb):
             self.db.upsert_session(session)
 
     def _build_run_output(
@@ -525,7 +554,7 @@ class BaseExternalAgent:
         # Load session and provide history to the adapter
         session = None
         if self.db is not None:
-            session = await self._load_or_create_session(session_id, user_id)
+            session = await self.aread_or_create_session(session_id, user_id)
             kwargs["history"] = self._get_history_from_session(session)
 
         try:
@@ -554,7 +583,7 @@ class BaseExternalAgent:
             if session.runs is None:
                 session.runs = []
             session.runs.append(run_output)
-            await self._save_session(session)
+            await self.aupsert_session(session)
 
         return run_output
 
@@ -570,7 +599,7 @@ class BaseExternalAgent:
         # Load session and provide history to the adapter
         session = None
         if self.db is not None:
-            session = await self._load_or_create_session(session_id, user_id)
+            session = await self.aread_or_create_session(session_id, user_id)
             kwargs["history"] = self._get_history_from_session(session)
 
         yield RunStartedEvent(
@@ -620,7 +649,7 @@ class BaseExternalAgent:
                 if session.runs is None:
                     session.runs = []
                 session.runs.append(run_output)
-                await self._save_session(session)
+                await self.aupsert_session(session)
 
             yield RunCompletedEvent(
                 run_id=run_id,
