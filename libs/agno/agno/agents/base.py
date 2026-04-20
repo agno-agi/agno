@@ -1,5 +1,5 @@
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from time import time
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union
 from uuid import uuid4
