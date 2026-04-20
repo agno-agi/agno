@@ -559,14 +559,7 @@ class StudioTool(Toolkit):
                 "id": getattr(wf, "id", None),
                 "name": getattr(wf, "name", None),
                 "description": getattr(wf, "description", None),
-                "steps": [
-                    {
-                        "name": getattr(s, "name", None),
-                        "agent_id": getattr(getattr(s, "agent", None), "id", None),
-                        "team_id": getattr(getattr(s, "team", None), "id", None),
-                    }
-                    for s in (steps if isinstance(steps, list) else [])
-                ],
+                "steps": [_describe_step(s) for s in (steps if isinstance(steps, list) else [])],
             }
         )
 
@@ -588,11 +581,11 @@ class StudioTool(Toolkit):
         Args:
             name (str): Display name; also used as the id.
             instructions (str): System instructions for the agent.
-            model_id (str): Model id from the registry (see list_models).
-            tool_names (List[str]): Toolkit or function names from the registry
+            model_id (Optional[str]): Model id from the registry (see list_models).
+            tool_names (Optional[List[str]]): Toolkit or function names from the registry
                 (see list_tools). Include EVERY tool the user mentioned.
-            db_id (str): Database id from the registry. Uses the default if omitted.
-            description (str): Optional human-readable description.
+            db_id (Optional[str]): Database id from the registry. Uses the default if omitted.
+            description (Optional[str]): Optional human-readable description.
 
         Returns:
             str: JSON with {status, id, name, model_id, tools, db_version}.
@@ -648,9 +641,9 @@ class StudioTool(Toolkit):
             name (str): Display name; also used as the id.
             instructions (str): Instructions that steer the team leader.
             member_ids (List[str]): Ids of existing agents or teams (see list_agents/list_teams).
-            model_id (str): Model id for the team leader.
-            db_id (str): Database id from the registry.
-            description (str): Optional description.
+            model_id (Optional[str]): Model id for the team leader.
+            db_id (Optional[str]): Database id from the registry.
+            description (Optional[str]): Optional description.
 
         Returns:
             str: JSON with {status, id, name, model_id, member_ids, db_version}.
@@ -710,7 +703,7 @@ class StudioTool(Toolkit):
             description (str): What the workflow does.
             step_specs (List[dict]): Ordered steps. Each dict has 'name' and exactly
                 one of 'agent_id', 'team_id', or 'function_name'. Optional: 'description'.
-            db_id (str): Database id from the registry.
+            db_id (Optional[str]): Database id from the registry.
 
         Returns:
             str: JSON with {status, id, name, description, steps, db_version}.
@@ -769,10 +762,10 @@ class StudioTool(Toolkit):
 
         Args:
             agent_id (str): The id of the agent to edit.
-            instructions (str): New instructions. Omit to keep.
-            model_id (str): New model id from the registry. Omit to keep.
-            tool_names (List[str]): New tool list (replaces existing). Omit to keep.
-            description (str): New description. Omit to keep.
+            instructions (Optional[str]): New instructions. Omit to keep.
+            model_id (Optional[str]): New model id from the registry. Omit to keep.
+            tool_names (Optional[List[str]]): New tool list (replaces existing). Omit to keep.
+            description (Optional[str]): New description. Omit to keep.
         """
         if self.db is None:
             return _err("StudioTool has no db configured; cannot edit components.")
@@ -814,10 +807,10 @@ class StudioTool(Toolkit):
 
         Args:
             team_id (str): The id of the team to edit.
-            instructions (str): New instructions. Omit to keep.
-            model_id (str): New model id. Omit to keep.
-            member_ids (List[str]): New member ids (replaces existing). Omit to keep.
-            description (str): New description. Omit to keep.
+            instructions (Optional[str]): New instructions. Omit to keep.
+            model_id (Optional[str]): New model id. Omit to keep.
+            member_ids (Optional[List[str]]): New member ids (replaces existing). Omit to keep.
+            description (Optional[str]): New description. Omit to keep.
         """
         if self.db is None:
             return _err("StudioTool has no db configured; cannot edit components.")
@@ -862,8 +855,8 @@ class StudioTool(Toolkit):
 
         Args:
             workflow_id (str): The id of the workflow to edit.
-            description (str): New description. Omit to keep.
-            step_specs (List[dict]): New ordered steps (replaces existing). Omit to keep.
+            description (Optional[str]): New description. Omit to keep.
+            step_specs (Optional[List[dict]]): New ordered steps (replaces existing). Omit to keep.
                 Same shape as create_workflow.step_specs.
         """
         if self.db is None:
@@ -922,7 +915,7 @@ class StudioTool(Toolkit):
 
         Args:
             component_id (str): The component id.
-            version (int): Version number, or omit for the current version.
+            version (Optional[int]): Version number, or omit for the current version.
         """
         if self.db is None:
             return _err("StudioTool has no db configured.")
@@ -940,7 +933,7 @@ class StudioTool(Toolkit):
 
         Args:
             component_id (str): The component id.
-            version (int): The draft version to publish. If omitted, publishes the
+            version (Optional[int]): The draft version to publish. If omitted, publishes the
                 latest draft.
         """
         if self.db is None:
@@ -1080,18 +1073,18 @@ class StudioTool(Toolkit):
             logger.exception("Failed to run team")
             return _err(str(e))
 
-    def run_workflow(self, workflow_id: str, input: str) -> str:
+    def run_workflow(self, workflow_id: str, message: str) -> str:
         """Run a workflow and return its final content.
 
         Args:
             workflow_id (str): The id of the workflow to run.
-            input (str): Input to pass to the first step.
+            message (str): Input to pass to the first step.
         """
         wf = self._find_workflow(workflow_id)
         if wf is None:
             return _err(f"Workflow not found: {workflow_id}")
         try:
-            response = wf.run(input=input)
+            response = wf.run(input=message)
             return json.dumps({"id": workflow_id, "content": getattr(response, "content", str(response))})
         except Exception as e:
             logger.exception("Failed to run workflow")
@@ -1131,18 +1124,18 @@ class StudioTool(Toolkit):
             logger.exception("Failed to run team")
             return _err(str(e))
 
-    async def arun_workflow(self, workflow_id: str, input: str) -> str:
+    async def arun_workflow(self, workflow_id: str, message: str) -> str:
         """Async variant of run_workflow.
 
         Args:
             workflow_id (str): The id of the workflow to run.
-            input (str): Input to pass to the first step.
+            message (str): Input to pass to the first step.
         """
         wf = self._find_workflow(workflow_id)
         if wf is None:
             return _err(f"Workflow not found: {workflow_id}")
         try:
-            response = await wf.arun(input=input)
+            response = await wf.arun(input=message)
             return json.dumps({"id": workflow_id, "content": getattr(response, "content", str(response))})
         except Exception as e:
             logger.exception("Failed to run workflow")
@@ -1196,7 +1189,6 @@ class StudioTool(Toolkit):
         """Save a component as a draft. Updates the latest draft in place, else creates one."""
         if self.db is None:
             return None
-        from agno.db.base import ComponentType
 
         component_id = getattr(component, "id", None)
         if component_id is None:
@@ -1209,8 +1201,6 @@ class StudioTool(Toolkit):
             description=getattr(component, "description", None),
             metadata=getattr(component, "metadata", None),
         )
-        # Silence unused-import warning for ComponentType (used indirectly via _component_type).
-        _ = ComponentType
 
         # Reuse an existing draft if there is one; otherwise create a new draft version.
         configs = self.db.list_configs(component_id, include_config=False)
@@ -1244,6 +1234,20 @@ def _slugify(name: str) -> str:
     while "--" in slug:
         slug = slug.replace("--", "-")
     return slug.strip("-") or "component"
+
+
+def _describe_step(step: Any) -> Dict[str, Any]:
+    """Summarize a Step, picking the first non-None of agent / team / executor."""
+    agent_id = getattr(getattr(step, "agent", None), "id", None)
+    team_id = getattr(getattr(step, "team", None), "id", None)
+    executor = getattr(step, "executor", None)
+    function_name = getattr(executor, "name", None) or getattr(executor, "__name__", None) if executor else None
+    return {
+        "name": getattr(step, "name", None),
+        "agent_id": agent_id,
+        "team_id": team_id,
+        "function_name": function_name,
+    }
 
 
 def _summarize_tools(tools: Any) -> List[str]:

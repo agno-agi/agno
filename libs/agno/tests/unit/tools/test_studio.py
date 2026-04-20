@@ -160,9 +160,7 @@ class TestDiscovery:
     def test_list_workflows_includes_db_components(self, registry, db):
         tool = StudioTool(registry=registry, db=db, workflows=True)
         tool.create_agent(name="a1", instructions="i", model_id="gpt-4o-mini")
-        tool.create_workflow(
-            name="pipeline", description="d", step_specs=[{"name": "s1", "agent_id": "a1"}]
-        )
+        tool.create_workflow(name="pipeline", description="d", step_specs=[{"name": "s1", "agent_id": "a1"}])
 
         result = _loads(tool.list_workflows())
         ids = {w["id"]: w.get("source") for w in result["workflows"]}

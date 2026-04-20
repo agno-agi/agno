@@ -21,7 +21,7 @@ Usage:
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.registry import Registry
 from agno.tools.calculator import CalculatorTools
@@ -35,8 +35,7 @@ registry = Registry(
     name="Studio Registry",
     tools=[DuckDuckGoTools(), HackerNewsTools(), CalculatorTools()],
     models=[
-        OpenAIChat(id="gpt-4o-mini"),
-        OpenAIChat(id="gpt-5.4"),
+        OpenAIResponses(id="gpt-5.4"),
         Claude(id="claude-sonnet-4-5"),
     ],
     dbs=[db],
@@ -45,7 +44,7 @@ registry = Registry(
 greeter = Agent(
     id="greeter",
     name="Greeter",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions=["You are a friendly greeter."],
     db=db,
 )
@@ -53,12 +52,10 @@ greeter = Agent(
 reporter = Agent(
     id="reporter",
     name="Reporter",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions=["You summarize news headlines in 2-3 sentences."],
     db=db,
 )
-
-
 
 
 studio_agent = Agent(
@@ -69,8 +66,8 @@ studio_agent = Agent(
         StudioTool(
             registry=registry,
             db=db,
-            agents_list=[ greeter, reporter],
-            default_model_id="gpt-4o-mini",
+            agents_list=[greeter, reporter],
+            default_model_id="gpt-5.4",
         ),
     ],
     instructions=[

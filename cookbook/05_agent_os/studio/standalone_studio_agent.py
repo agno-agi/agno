@@ -11,7 +11,7 @@ Usage:
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.registry import Registry
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -22,14 +22,14 @@ db = SqliteDb(id="standalone-studio-db", db_file="tmp/standalone_studio.db")
 registry = Registry(
     name="Standalone Studio Registry",
     tools=[DuckDuckGoTools(), CalculatorTools()],
-    models=[OpenAIChat(id="gpt-4o-mini"), Claude(id="claude-sonnet-4-5")],
+    models=[OpenAIResponses(id="gpt-5.4"), Claude(id="claude-sonnet-4-5")],
     dbs=[db],
 )
 
 studio_agent = Agent(
     name="Studio",
     model=Claude(id="claude-sonnet-4-5"),
-    tools=[StudioTool(registry=registry, db=db, default_model_id="gpt-4o-mini")],
+    tools=[StudioTool(registry=registry, db=db, default_model_id="gpt-5.4")],
     instructions=[
         "You help the user compose agents, teams, and workflows from registry primitives.",
         "Before calling create_*, restate the exact tool names you plan to pass.",
