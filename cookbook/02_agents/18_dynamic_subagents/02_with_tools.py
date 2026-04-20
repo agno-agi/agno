@@ -9,7 +9,9 @@ the orchestrator only receives the final summary.
 
 Key concepts:
 - subagent_template defines the base agent cloned at spawn time
-- allowed_tools whitelists which parent tools may be delegated
+- allowed_tools whitelists which tool NAMES may appear on subagents. It
+  applies to both template toolkits and parent tools — toolkits contribute
+  only the Function objects whose names appear in the whitelist.
 - allow_tool_selection lets the LLM pick the right tools per task
 
 Prompts to try:

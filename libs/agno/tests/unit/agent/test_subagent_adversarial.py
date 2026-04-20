@@ -750,6 +750,97 @@ def test_no_additional_context_when_neither_template_nor_injection():
 
 
 # ---------------------------------------------------------------------------
+# allowed_tools applies to template tools too
+# ---------------------------------------------------------------------------
+
+
+def test_allowed_tools_filters_template_toolkit_functions():
+    """When both a template toolkit and an allowed_tools whitelist are set,
+    the whitelist must apply to the template's toolkit — otherwise the
+    subagent silently inherits every function of that toolkit, bypassing
+    the user's explicit whitelist."""
+    from agno.tools import Toolkit as _Toolkit
+    from agno.tools.function import Function
+
+    keep_fn = MagicMock(spec=Function)
+    keep_fn.name = "keep_me"
+    drop_fn = MagicMock(spec=Function)
+    drop_fn.name = "drop_me"
+    extra_fn = MagicMock(spec=Function)
+    extra_fn.name = "extra_fn"
+
+    class ThreeFn(_Toolkit):
+        def __init__(self):
+            super().__init__(name="threefn")
+            self.functions["keep_me"] = keep_fn
+            self.functions["drop_me"] = drop_fn
+            self.functions["extra_fn"] = extra_fn
+
+    tk_on_template = ThreeFn()
+    parent = _make_parent()
+    cfg = SubAgentConfig(allowed_tools=["keep_me"])
+    toolkit = SubAgentToolkit(parent=parent, config=cfg)
+
+    resolved = toolkit._resolve_tools(
+        tool_names=None,
+        template_tools=[tk_on_template],
+    )
+    # The whitelist must filter the template toolkit to just the permitted
+    # Function; the toolkit object itself must not be delegated.
+    assert resolved is not None
+    assert tk_on_template not in resolved
+    assert keep_fn in resolved
+    assert drop_fn not in resolved
+    assert extra_fn not in resolved
+
+
+def test_allowed_tools_none_lets_template_tools_through_unchanged():
+    """allowed_tools=None → no template filtering; the whole toolkit passes
+    through so the subagent keeps every tool the template had."""
+    from agno.tools import Toolkit as _Toolkit
+
+    class LooseToolkit(_Toolkit):
+        def __init__(self):
+            super().__init__(name="loose")
+
+    loose = LooseToolkit()
+    parent = _make_parent()
+    cfg = SubAgentConfig(allowed_tools=None)
+    toolkit = SubAgentToolkit(parent=parent, config=cfg)
+
+    resolved = toolkit._resolve_tools(
+        tool_names=None,
+        template_tools=[loose],
+    )
+    assert resolved == [loose]
+
+
+def test_allowed_tools_empty_list_blocks_template_tools_too():
+    """allowed_tools=[] — explicit empty whitelist — must block template
+    toolkits as well as parent tools."""
+    from agno.tools import Toolkit as _Toolkit
+    from agno.tools.function import Function
+
+    fn = MagicMock(spec=Function)
+    fn.name = "search"
+
+    class TK(_Toolkit):
+        def __init__(self):
+            super().__init__(name="tk")
+            self.functions["search"] = fn
+
+    tk = TK()
+    parent = _make_parent()
+    cfg = SubAgentConfig(allowed_tools=[], allow_tool_selection=True)
+    toolkit = SubAgentToolkit(parent=parent, config=cfg)
+
+    resolved = toolkit._resolve_tools(["search"], template_tools=[tk])
+    # Whitelist is empty → nothing passes through from either side.
+    assert resolved is None or fn not in resolved
+    assert resolved is None or tk not in resolved
+
+
+# ---------------------------------------------------------------------------
 # 17. Parent.tools is a callable factory — guidance still injected, but
 # toolkit NOT wired (code only warns). Verify the warning is emitted.
 # ---------------------------------------------------------------------------

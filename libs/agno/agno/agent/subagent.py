@@ -84,8 +84,19 @@ class SubAgentConfig(BaseModel):
     """Give every spawned subagent *all* tools the parent has."""
 
     allowed_tools: Optional[List[str]] = None
-    """Whitelist of parent-tool names the LLM may delegate.
-    ``None`` means all parent tools are eligible (subject to ``allow_tool_selection``)."""
+    """Whitelist of tool names permitted on spawned subagents.
+
+    Applied to **both** template tools and parent tools:
+
+    * When ``None`` (default), no whitelist — template tools pass through
+      unchanged and the LLM may delegate any parent tool (subject to
+      ``allow_tool_selection``).
+    * When set, the whitelist is enforced globally. Toolkits on the template
+      or parent contribute only the specific ``Function`` objects whose names
+      appear in the whitelist — the entire toolkit is never delegated.
+
+    Set to ``[]`` to expose zero tools to any subagent.
+    """
 
     allow_tool_selection: bool = True
     """Let the LLM choose which tools to give each subagent at spawn time."""
@@ -530,6 +541,35 @@ class SubAgentToolkit(Toolkit):
         # Fall through: template model → parent model
         return getattr(template, "model", None) or getattr(self._parent, "model", None)
 
+    @staticmethod
+    def _filter_tools_by_names(tools: Optional[List[Any]], permitted: set) -> List[Any]:
+        """Filter a tools list down to entries whose name is in ``permitted``.
+
+        * ``Toolkit`` → contributes each individually permitted ``Function``.
+        * ``Function`` → kept if ``tool.name`` is in ``permitted``.
+        * Plain callable → kept if ``__name__`` is in ``permitted``.
+        * ``SubAgentToolkit`` is always excluded (defence in depth).
+        """
+        from agno.tools import Toolkit as _Toolkit
+        from agno.tools.function import Function as _Function
+
+        result: List[Any] = []
+        for tool in tools or []:
+            if isinstance(tool, SubAgentToolkit):
+                continue
+            if isinstance(tool, _Toolkit):
+                for fn_name, fn_obj in tool.functions.items():
+                    if fn_name in permitted:
+                        result.append(fn_obj)
+            elif isinstance(tool, _Function):
+                if tool.name in permitted:
+                    result.append(tool)
+            elif callable(tool):
+                name = getattr(tool, "__name__", None)
+                if name and name in permitted:
+                    result.append(tool)
+        return result
+
     def _resolve_tools(
         self,
         tool_names: Optional[List[str]],
@@ -539,10 +579,15 @@ class SubAgentToolkit(Toolkit):
 
         Priority / composition:
         1. ``inherit_parent_tools=True`` → return parent's full tool list minus any
-           ``SubAgentToolkit`` instances (prevents recursive spawning)
-        2. Start from template's own tools as the base
-        3. ``allow_tool_selection=True`` + ``tool_names`` → append matching parent tools
-           (filtered against ``allowed_tools`` whitelist, ``SubAgentToolkit`` excluded)
+           ``SubAgentToolkit`` instances (prevents recursive spawning).
+        2. Start from template's own tools as the base. If ``allowed_tools`` is
+           set, the template tools are filtered function-by-function against
+           that whitelist too — not just parent tools. This prevents the
+           whitelist from being silently bypassed when the template carries a
+           toolkit.
+        3. ``allow_tool_selection=True`` + ``tool_names`` → append matching
+           parent tools (filtered against ``allowed_tools`` whitelist,
+           ``SubAgentToolkit`` excluded).
         """
         if self._config.inherit_parent_tools:
             parent_tools_raw = getattr(self._parent, "tools", None)
@@ -558,41 +603,30 @@ class SubAgentToolkit(Toolkit):
             # tools the caller explicitly filtered out.
             return self._strip_subagent_toolkits(parent_tools_raw)
 
-        # Base: template tools
-        result: List[Any] = list(template_tools or [])
-
-        if not tool_names or not self._config.allow_tool_selection:
-            return result or None
-
-        parent_tools: List[Any] = list(getattr(self._parent, "tools", None) or [])
         # Use `is not None` rather than truthiness so that allowed_tools=[]
         # correctly means "empty whitelist, block everything" instead of being
         # treated as the "no whitelist" sentinel (allowed_tools=None).
         allowed = set(self._config.allowed_tools) if self._config.allowed_tools is not None else None
+
+        # Base: template tools, whitelist-filtered when a whitelist is set.
+        # When no whitelist is configured the template tools pass through
+        # unchanged. When a whitelist IS set, it applies to every tool source
+        # — template included — otherwise users who configured both a
+        # subagent_template (with a toolkit) and an allowed_tools list would
+        # have the whitelist silently bypassed by the template toolkit.
+        if allowed is not None:
+            result: List[Any] = self._filter_tools_by_names(template_tools, allowed)
+        else:
+            result = list(template_tools or [])
+
+        if not tool_names or not self._config.allow_tool_selection:
+            return result or None
+
+        parent_tools_raw = getattr(self._parent, "tools", None) or []
         requested = set(tool_names)
         permitted = (allowed & requested) if allowed is not None else requested
 
-        from agno.tools import Toolkit as _Toolkit
-        from agno.tools.function import Function as _Function
-
-        for tool in parent_tools:
-            # Defense in depth: never delegate the spawn toolkit, regardless of name match
-            if isinstance(tool, SubAgentToolkit):
-                continue
-            if isinstance(tool, _Toolkit):
-                # Extract only the individually-permitted Function objects.
-                # Never delegate the entire toolkit — that would bypass the whitelist
-                # by giving the subagent functions the caller never requested.
-                for fn_name, fn_obj in tool.functions.items():
-                    if fn_name in permitted:
-                        result.append(fn_obj)
-            elif isinstance(tool, _Function):
-                if tool.name in permitted:
-                    result.append(tool)
-            elif callable(tool):
-                name = getattr(tool, "__name__", None)
-                if name and name in permitted:
-                    result.append(tool)
+        result.extend(self._filter_tools_by_names(parent_tools_raw, permitted))
 
         return result or None
 
