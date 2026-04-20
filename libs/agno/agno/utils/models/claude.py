@@ -6,11 +6,6 @@ from agno.media import File, Image
 from agno.models.message import Message
 from agno.utils.log import log_error, log_info, log_warning
 
-# NB: ``anthropic`` is NOT imported at module top level. It is only required by
-# ``format_messages()`` (see the inline imports there alongside ``ThinkingBlock``
-# and ``RedactedThinkingBlock``). Keeping ``anthropic`` off the top of this module
-# allows non-Anthropic callers of ``supports_prefill()`` below — LiteLLM, Bedrock —
-# to import this file without installing the Anthropic SDK.
 
 
 # Models that support assistant message prefill. This is a closed set —
