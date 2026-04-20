@@ -17,7 +17,7 @@ Prompts to try:
 """
 
 from agno.agent import Agent, SubAgentConfig
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 
@@ -26,14 +26,14 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 # ---------------------------------------------------------------------------
 researcher = Agent(
     name="researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4-mini"),
     tools=[DuckDuckGoTools()],
     instructions="Search the web and return factual results.",
 )
 
 writer = Agent(
     name="writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4-mini"),
     instructions="Write clear, well-structured prose.",
 )
 
@@ -41,7 +41,7 @@ writer = Agent(
 # Create Subagent Template
 # ---------------------------------------------------------------------------
 subagent_template = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4-mini"),
     tools=[DuckDuckGoTools()],
 )
 
@@ -51,7 +51,7 @@ subagent_template = Agent(
 team = Team(
     name="content_team",
     members=[researcher, writer],
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     enable_dynamic_subagents=True,
     subagent_template=subagent_template,
     subagent_config=SubAgentConfig(

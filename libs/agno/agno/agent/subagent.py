@@ -57,10 +57,10 @@ class SubAgentConfig(BaseModel):
     Example::
 
         from agno.agent import Agent, SubAgentConfig
-        from agno.models.openai import OpenAIChat
+        from agno.models.openai import OpenAIResponses
 
         template = Agent(
-            model=OpenAIChat(id="gpt-4o-mini"),
+            model=OpenAIResponses(id="gpt-5.4-mini"),
             markdown=True,
         )
 
@@ -70,7 +70,7 @@ class SubAgentConfig(BaseModel):
             subagent_template=template,
             subagent_config=SubAgentConfig(
                 context_heavy_tools=["query_db", "read_file"],
-                model_tiers={"fast": "gpt-4o-mini", "standard": "gpt-4o"},
+                model_tiers={"fast": "gpt-5.4-mini", "standard": "gpt-5.4"},
                 allow_model_tier_selection=True,
                 max_concurrent=3,
             ),
@@ -112,8 +112,8 @@ class SubAgentConfig(BaseModel):
     Example::
 
         model_tiers={
-            "fast":     "gpt-4o-mini",
-            "standard": "gpt-4o",
+            "fast":     "gpt-5.4-mini",
+            "standard": "gpt-5.4",
             "powerful": "o3",
         }
     """

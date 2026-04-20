@@ -51,11 +51,11 @@ You can use both simultaneously: enable `compress_tool_results=True` on your orc
 
 ```python
 from agno.agent.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 
 agent = Agent(
     name="orchestrator",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     enable_dynamic_subagents=True,
 )
 
@@ -94,7 +94,7 @@ SubAgentConfig(
     context_heavy_tools=None,     # tool names → injected as "ALWAYS route via spawn_agent"
 
     # ── Model tier selection ─────────────────────────────────────────
-    model_tiers=None,             # {"fast": "gpt-4o-mini", "standard": "gpt-4o", ...}
+    model_tiers=None,             # {"fast": "gpt-5.4-mini", "standard": "gpt-5.4", ...}
     allow_model_tier_selection=False,  # expose model_tier param to the LLM
     tier_hints=None,              # {tier_label: usage hint} shown to LLM; merged with defaults
 
@@ -154,15 +154,15 @@ Define tiers once at setup. The LLM picks labels, never raw model strings — no
 ```python
 SubAgentConfig(
     model_tiers={
-        "fast":     "gpt-4o-mini",   # extraction, formatting, classification
-        "standard": "gpt-4o",         # summarisation, code, analysis
-        "powerful": "o3-mini",        # complex reasoning, research synthesis
+        "fast":     "gpt-5.4-mini",   # extraction, formatting, classification
+        "standard": "gpt-5.4",        # summarisation, code, analysis
+        "powerful": "o3",             # complex reasoning, research synthesis
     },
     allow_model_tier_selection=True,
 )
 ```
 
-**Cost impact:** If 40% of your production subagent calls are "fast" tier on GPT-4o-mini instead of GPT-4o, you reduce those calls' cost by ~33x. At 10,000 requests/day this is material.
+**Cost impact:** If 40% of your production subagent calls are "fast" tier on the mini variant instead of the standard model, you reduce those calls' cost by 20–30x. At 10,000 requests/day this is material.
 
 ---
 
@@ -207,7 +207,7 @@ ALWAYS route these tools through spawn_agent (they produce large outputs):
   - query_orders_db
   ...
 Model tier selection (use the model_tier parameter):
-  - 'fast' → gpt-4o-mini  (best for: extraction, formatting, classification)
+  - 'fast' → gpt-5.4-mini  (best for: extraction, formatting, classification)
   ...
 --- End Subagent Guidance ---
 ```

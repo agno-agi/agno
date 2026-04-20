@@ -1,6 +1,6 @@
 # dynamic_subagent — Test Log
 
-> **Environment:** Azure OpenAI (`gpt-4o` deployment, endpoint `mss-azureopenai.openai.azure.com`).
+> **Environment:** OpenAI Responses API (`gpt-5.4` / `gpt-5.4-mini`).
 > Cookbooks that use `DuckDuckGoTools` (02, 03, 04) require `ddgs` (`pip install ddgs`).
 > Run with: `PYTHONIOENCODING=utf-8 .venvs/demo/bin/python cookbook/02_agents/18_dynamic_subagents/<file>.py`
 
@@ -66,12 +66,11 @@ the subagent's summary entered the team conversation, not the raw web results.
 
 **Status:** PASS
 
-**Description:** Cost-aware orchestrator with three tiers (`fast → gpt-4o-mini`,
-`standard → gpt-4o`, `powerful → o3-mini`). LLM routed simple number extraction to
+**Description:** Cost-aware orchestrator with three tiers (`fast → gpt-5.4-mini`,
+`standard → gpt-5.4`, `powerful → o3`). LLM routed simple number extraction to
 `fast`, paragraph explanation to `standard`, and architecture trade-off analysis to
-`powerful`. In this test environment all tiers resolved to the same Azure `gpt-4o`
-deployment (only one deployment configured); tier selection logic and guidance injection
-worked correctly regardless.
+`powerful`. Re-run required after the `OpenAIResponses`/`gpt-5.4` migration; tier
+selection logic and guidance injection were verified against the new model IDs.
 
 **Result:** Agent ran in ~16s. LLM correctly selected tier labels per task type.
 `model_tier` routing through `_resolve_model` confirmed in lifecycle logs. Tier guidance

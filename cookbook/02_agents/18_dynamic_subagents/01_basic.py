@@ -18,14 +18,14 @@ Prompts to try:
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
     name="orchestrator",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     enable_dynamic_subagents=True,
     instructions=(
         "You are a helpful assistant. When a task benefits from specialist focus "

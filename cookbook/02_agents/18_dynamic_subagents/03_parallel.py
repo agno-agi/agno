@@ -19,14 +19,14 @@ Prompts to try:
 import asyncio
 
 from agno.agent import Agent, SubAgentConfig
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # ---------------------------------------------------------------------------
 # Create Subagent Template
 # ---------------------------------------------------------------------------
 subagent_template = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4-mini"),
     tools=[DuckDuckGoTools()],
     markdown=True,
 )
@@ -36,7 +36,7 @@ subagent_template = Agent(
 # ---------------------------------------------------------------------------
 agent = Agent(
     name="parallel_orchestrator",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     enable_dynamic_subagents=True,
     subagent_template=subagent_template,
     subagent_config=SubAgentConfig(

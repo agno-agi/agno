@@ -9,9 +9,9 @@ so there is no hallucination risk and models can be rotated without
 touching LLM behavior.
 
 Cost impact:
-An orchestrator on GPT-4o spawning a "fast" subagent for simple extraction
-uses GPT-4o-mini for that subtask (~33x cheaper per token). At production
-scale this compounds significantly.
+An orchestrator on the standard tier spawning a "fast" subagent for simple
+extraction uses the mini variant for that subtask (~20-30x cheaper per
+token). At production scale this compounds significantly.
 
 Prompts to try:
 - "Extract the numbers from 'Revenue was $4.2M, up 18%'. Then explain transformer attention in 3 paragraphs."
@@ -21,13 +21,13 @@ Prompts to try:
 import asyncio
 
 from agno.agent import Agent, SubAgentConfig
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
 # Create Subagent Template
 # ---------------------------------------------------------------------------
 subagent_template = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     markdown=True,
 )
 
@@ -36,14 +36,14 @@ subagent_template = Agent(
 # ---------------------------------------------------------------------------
 agent = Agent(
     name="cost_aware_orchestrator",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     enable_dynamic_subagents=True,
     subagent_template=subagent_template,
     subagent_config=SubAgentConfig(
         model_tiers={
-            "fast": "gpt-4o-mini",
-            "standard": "gpt-4o",
-            "powerful": "o3-mini",
+            "fast": "gpt-5.4-mini",
+            "standard": "gpt-5.4",
+            "powerful": "o3",
         },
         allow_model_tier_selection=True,
         max_concurrent=3,

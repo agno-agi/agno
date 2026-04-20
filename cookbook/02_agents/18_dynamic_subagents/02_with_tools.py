@@ -20,7 +20,7 @@ Prompts to try:
 """
 
 from agno.agent import Agent, SubAgentConfig
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # ---------------------------------------------------------------------------
@@ -29,7 +29,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 # The template is deep-copied at each spawn. The LLM sets role, instructions,
 # and task dynamically; the template provides the base model and tools.
 subagent_template = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4-mini"),
     tools=[DuckDuckGoTools()],
     markdown=True,
 )
@@ -39,11 +39,14 @@ subagent_template = Agent(
 # ---------------------------------------------------------------------------
 agent = Agent(
     name="research_orchestrator",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     enable_dynamic_subagents=True,
     subagent_template=subagent_template,
     subagent_config=SubAgentConfig(
         allow_tool_selection=True,
+        # allowed_tools applies to template and parent tools alike —
+        # DuckDuckGoTools on the template will contribute only these two
+        # functions even though the toolkit exposes more.
         allowed_tools=["duckduckgo_search", "duckduckgo_news"],
         max_concurrent=2,
     ),
