@@ -142,3 +142,40 @@ def test_format_sse_event_defaults_missing_event_type():
     """Events without an `event` attribute fall back to 'message'."""
     frame = format_sse_event(_EventMissingType())  # type: ignore[arg-type]
     assert frame.startswith("event: message\ndata: ")
+
+
+def test_format_sse_event_preserves_team_error_family():
+    """Team event serialization failures must surface as TeamRunError.
+
+    Downstream parsers branch on the event name. If a team stream emits a
+    RunError (the agent name) on serialization failure, team terminal-error
+    handling is skipped.
+    """
+    from agno.run.team import BaseTeamRunEvent
+
+    class _BadTeamEvent(BaseTeamRunEvent):
+        event = "TeamRunContent"
+
+        def to_json(self, **kwargs):
+            raise TypeError("unserializable field")
+
+    frame = format_sse_event(_BadTeamEvent())  # type: ignore[arg-type]
+    assert frame.startswith("event: TeamRunError\ndata: ")
+    body = json.loads(frame.split("\n")[1][len("data: ") :])
+    assert body["event"] == "TeamRunError"
+
+
+def test_format_sse_event_preserves_workflow_error_family():
+    """Workflow event serialization failures must surface as WorkflowError."""
+    from agno.run.workflow import BaseWorkflowRunOutputEvent
+
+    class _BadWorkflowEvent(BaseWorkflowRunOutputEvent):
+        event = "StepStarted"
+
+        def to_json(self, **kwargs):
+            raise TypeError("unserializable field")
+
+    frame = format_sse_event(_BadWorkflowEvent())  # type: ignore[arg-type]
+    assert frame.startswith("event: WorkflowError\ndata: ")
+    body = json.loads(frame.split("\n")[1][len("data: ") :])
+    assert body["event"] == "WorkflowError"

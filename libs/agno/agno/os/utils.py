@@ -196,14 +196,33 @@ def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRu
         # offending event class is visible in production logs, then emit a
         # valid SSE error frame so the ASGI response completes cleanly.
         log_error(f"Failed to serialize SSE event {type(event).__name__} (event_type={event_type}): {e}")
+        error_event_name = _fallback_error_event_name(event)
         fallback = json.dumps(
             {
-                "event": "RunError",
+                "event": error_event_name,
                 "content": f"Failed to serialize {type(event).__name__}: {e}",
             },
             separators=(",", ":"),
         )
-        return f"event: RunError\ndata: {fallback}\n\n"
+        return f"event: {error_event_name}\ndata: {fallback}\n\n"
+
+
+def _fallback_error_event_name(event: Any) -> str:
+    """Derive the terminal-error event name for a stream family.
+
+    Downstream parsers branch on the event name (e.g. team and workflow runners
+    have their own terminal-error contracts), so a serialization failure in a
+    team or workflow stream must still surface under that family's error name
+    rather than the agent default.
+    """
+    from agno.run.team import BaseTeamRunEvent
+    from agno.run.workflow import BaseWorkflowRunOutputEvent
+
+    if isinstance(event, BaseWorkflowRunOutputEvent):
+        return "WorkflowError"
+    if isinstance(event, BaseTeamRunEvent):
+        return "TeamRunError"
+    return "RunError"
 
 
 async def get_db(
