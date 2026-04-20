@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, cast
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import load_token, save_token, google_authenticate
+from agno.tools.google.auth import get_token_db, google_authenticate, load_token, save_token
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
@@ -196,7 +196,7 @@ class GoogleCalendarTools(Toolkit):
     def _build_service(self):
         return build("calendar", "v3", credentials=self.creds)
 
-    def _auth(self, user_id=None) -> None:
+    def _auth(self, user_id=None, agent=None) -> None:
         """Authenticate with Google Calendar API using service account (priority) or OAuth flow."""
         if self.creds and self.creds.valid:
             return
@@ -217,9 +217,9 @@ class GoogleCalendarTools(Toolkit):
             self.creds = sa_creds
             return
 
-        if load_token(self, self.scopes, user_id=user_id):
+        if load_token(self, self.scopes, user_id=user_id, agent=agent):
             return
-        if self.google_auth and self.google_auth._db and self.google_auth._callback_configured:
+        if self.google_auth and self.google_auth._callback_configured and get_token_db(self, agent=agent):
             raise PermissionError("Calendar not authenticated — user must complete OAuth via authenticate_google")
 
         # OAuth flow
@@ -243,9 +243,7 @@ class GoogleCalendarTools(Toolkit):
         if not self.creds or not self.creds.valid:
             # Coordinator mode: request the union of all registered scopes in one consent flow
             if self.google_auth is not None and self.google_auth._services:
-                consent_scopes = sorted(
-                    {s for scope_list in self.google_auth._services.values() for s in scope_list}
-                )
+                consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
             else:
                 consent_scopes = self.scopes
             client_config = {
@@ -272,7 +270,7 @@ class GoogleCalendarTools(Toolkit):
 
         # Save the credentials for future use
         if self.creds and self.creds.valid:
-            if save_token(self, self.creds, user_id=user_id):
+            if save_token(self, self.creds, user_id=user_id, agent=agent):
                 log_debug("Calendar credentials saved to DB")
             else:
                 token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]

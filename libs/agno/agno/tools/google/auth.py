@@ -2,7 +2,8 @@ import inspect
 import json
 import os
 from functools import wraps
-from typing import Any, Dict, List, Literal, Optional, Set
+from time import monotonic
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 from urllib.parse import urlencode
 
 from agno.tools import Toolkit
@@ -24,25 +25,24 @@ def google_authenticate(service_name: str):
     """
 
     def decorator(func):
-        # Expose original typed params + run_context in the signature so the framework:
-        # (1) builds the correct LLM tool schema from the original params
-        # (2) injects run_context (which carries user_id) at call time
-        # run_context is stripped from the LLM schema at function.py:660-671
+        # Expose hidden framework params (run_context, agent) so the framework:
+        # (1) builds the LLM tool schema from the original typed params (hidden ones stripped)
+        # (2) injects run_context (user_id) and agent (agent.db for token storage) at call time
+        # See function.py excluded_params and _build_entrypoint_args for the injection path.
         sig = inspect.signature(func)
-        if "run_context" not in sig.parameters:
-            params = list(sig.parameters.values())
-            params.append(inspect.Parameter("run_context", inspect.Parameter.KEYWORD_ONLY, default=None))
-            exposed_sig = sig.replace(parameters=params)
-        else:
-            exposed_sig = sig
+        params = list(sig.parameters.values())
+        for name in ("run_context", "agent"):
+            if name not in sig.parameters:
+                params.append(inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, default=None))
+        exposed_sig = sig.replace(parameters=params)
 
         @wraps(func)
-        def wrapper(self, *args, run_context=None, **kwargs):
+        def wrapper(self, *args, run_context=None, agent=None, **kwargs):
             user_id = getattr(run_context, "user_id", None) if run_context else None
 
             if not self.creds or not self.creds.valid:
                 try:
-                    self._auth(user_id=user_id)
+                    self._auth(user_id=user_id, agent=agent)
                 except Exception as e:
                     log_error(f"{service_name.title()} authentication failed: {str(e)}")
                     return json.dumps({"error": f"{service_name.title()} authentication failed: {e}"})
@@ -98,19 +98,80 @@ def _persist_google_token(
         return False
 
 
-def get_token_db(toolkit: Any) -> Any:
-    """Resolve the DB to use for token storage. Returns None if no DB available."""
-    ga = getattr(toolkit, "google_auth", None)
-    if ga and ga._db:
-        return ga._db
-    if getattr(toolkit, "store_token_in_db", False):
-        return getattr(toolkit, "_db", None)
+def _valid_auth_token_db(db: Any) -> Any:
+    """Return db if it supports auth token CRUD, else None.
+
+    Gates the sync BaseDb subclass that overrides get_auth_token — an AsyncBaseDb
+    would return unawaited coroutines to sync callers.
+    """
+    if db is None:
+        return None
+
+    from agno.db.base import BaseDb
+
+    if isinstance(db, BaseDb) and type(db).get_auth_token is not BaseDb.get_auth_token:
+        return db
     return None
 
 
-def load_token(toolkit: Any, scopes: list, user_id: Optional[str] = None) -> bool:
+def get_token_db(toolkit: Any, agent: Optional[Any] = None) -> Any:
+    """Resolve the DB to use for token storage. Returns None if no DB available.
+
+    Lookup order:
+      1. Explicit db on the toolkit's GoogleAuth coordinator or opt-in toolkit _db
+      2. agent.db injected at call time by the framework (tool-call path)
+
+    No toolkit state mutation — agent is read fresh per call.
+    """
+    ga = getattr(toolkit, "google_auth", None)
+    agent_db = _valid_auth_token_db(getattr(agent, "db", None))
+
+    if ga is not None:
+        return _valid_auth_token_db(getattr(ga, "_db", None)) or agent_db
+    if getattr(toolkit, "store_token_in_db", False):
+        return _valid_auth_token_db(getattr(toolkit, "_db", None)) or agent_db
+    return None
+
+
+# Registry that bridges the OAuth signed-state to a DB handle for the callback.
+# authenticate_google() writes state -> agent.db here; handle_oauth_callback reads
+# it back. Process-local — multi-worker deployments must set GoogleAuth(db=...).
+# No lock: dict item ops (get/setitem/pop) and dict.copy() are atomic under the
+# GIL; iterating over a copy is safe from concurrent mutation on the original.
+_OAUTH_STATE_DBS: Dict[str, Tuple[float, Any]] = {}
+
+
+def _remember_oauth_state_db(state: str, db: Any, ttl_seconds: int) -> None:
+    db = _valid_auth_token_db(db)
+    if db is None:
+        return
+    now = monotonic()
+    # Opportunistic sweep via atomic dict.copy() snapshot.
+    for key, (expiry, _) in _OAUTH_STATE_DBS.copy().items():
+        if expiry <= now:
+            _OAUTH_STATE_DBS.pop(key, None)
+    _OAUTH_STATE_DBS[state] = (now + ttl_seconds, db)
+
+
+def _get_oauth_state_db(state: str) -> Any:
+    entry = _OAUTH_STATE_DBS.get(state)
+    if entry is None:
+        return None
+    expires_at, db = entry
+    if expires_at <= monotonic():
+        _OAUTH_STATE_DBS.pop(state, None)
+        return None
+    return db
+
+
+def load_token(
+    toolkit: Any,
+    scopes: list,
+    user_id: Optional[str] = None,
+    agent: Optional[Any] = None,
+) -> bool:
     """Fetch credentials from DB, refresh if expired, set toolkit.creds. Returns True on success."""
-    db = get_token_db(toolkit)
+    db = get_token_db(toolkit, agent=agent)
     if db is None:
         return False
     try:
@@ -138,7 +199,7 @@ def load_token(toolkit: Any, scopes: list, user_id: Optional[str] = None) -> boo
     if creds.expired and creds.refresh_token:
         try:
             creds.refresh(Request())
-            save_token(toolkit, creds, user_id=user_id)
+            save_token(toolkit, creds, user_id=user_id, agent=agent)
         except Exception as e:
             log_debug(f"Token refresh failed: {e}")
             return False
@@ -150,11 +211,16 @@ def load_token(toolkit: Any, scopes: list, user_id: Optional[str] = None) -> boo
     return True
 
 
-def save_token(toolkit: Any, creds: Any, user_id: Optional[str] = None) -> bool:
+def save_token(
+    toolkit: Any,
+    creds: Any,
+    user_id: Optional[str] = None,
+    agent: Optional[Any] = None,
+) -> bool:
     """Persist credentials to DB. Returns True on success."""
     ga = getattr(toolkit, "google_auth", None)
     return _persist_google_token(
-        db=get_token_db(toolkit),
+        db=get_token_db(toolkit, agent=agent),
         creds=creds,
         user_id=user_id,
         services_registry=ga._services if ga else None,
@@ -176,7 +242,7 @@ class GoogleAuth(Toolkit):
         google_auth = GoogleAuth(client_id="...")
         gmail = GmailTools(google_auth=google_auth)
         agent = Agent(db=PgDb(...), tools=[google_auth, gmail])
-        # auto-wiring sets google_auth._db = agent.db
+        # agent.db is read per-call via framework injection (no toolkit mutation)
     """
 
     def __init__(
@@ -220,6 +286,7 @@ class GoogleAuth(Toolkit):
         self,
         services: List[Literal["gmail", "calendar", "drive", "sheets", "slides"]],
         run_context: Optional[Any] = None,
+        agent: Optional[Any] = None,
     ) -> str:
         """
         Get the Google OAuth URL for the user to authenticate their Google account.
@@ -260,6 +327,10 @@ class GoogleAuth(Toolkit):
                     "Install with `pip install PyJWT` or `pip install agno[os]`."
                 }
             )
+
+        # Bridge agent.db to the callback (which runs outside agent.run()) via the
+        # signed state. Expires with the state JWT; no-op if agent.db is absent.
+        _remember_oauth_state_db(state, getattr(agent, "db", None), self._state_ttl_seconds)
 
         params = {
             "client_id": self.client_id,
@@ -348,9 +419,11 @@ class GoogleAuth(Toolkit):
             log_error(f"OAuth token exchange failed: {e}")
             return {"error": f"Token exchange failed: {e}"}
 
-        # Store one consolidated token row — all Google services share it
+        # Store one consolidated token row — all Google services share it.
+        # Prefer explicit GoogleAuth(db=) then fall back to the registry entry keyed
+        # by signed state (populated by authenticate_google from agent.db).
         stored = _persist_google_token(
-            db=self._db,
+            db=_valid_auth_token_db(self._db) or _get_oauth_state_db(state),
             creds=creds,
             user_id=user_id,
             services_registry=self._services,
@@ -377,9 +450,9 @@ class GoogleAuth(Toolkit):
             google_auth = GoogleAuth(client_id="...")
             app.include_router(google_auth.get_oauth_router())
         """
-        # Fail-closed at mount on config the agent can't recover (no db-wiring hook
-        # for the state secret). The db for token persistence is auto-wired at
-        # agent.run() time — don't require it this early.
+        # Fail-closed at mount on config the agent can't recover. The db for token
+        # persistence is resolved per-flow via the signed-state registry (populated
+        # when authenticate_google is called with agent injected) or explicit db=.
         if not self._state_secret:
             raise RuntimeError(
                 "GoogleAuth.get_oauth_router() requires a state signing secret. "

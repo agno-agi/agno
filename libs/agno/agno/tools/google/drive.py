@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Tuple, Union, cast
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import load_token, save_token, google_authenticate
+from agno.tools.google.auth import get_token_db, google_authenticate, load_token, save_token
 from agno.utils.log import log_debug, log_error
 
 try:
@@ -248,7 +248,7 @@ class GoogleDriveTools(Toolkit):
         if self.google_auth:
             self.google_auth.register_service("drive", self.scopes)
 
-    def _auth(self, user_id=None) -> None:
+    def _auth(self, user_id=None, agent=None) -> None:
         """Authenticate with Google Drive API using service account or OAuth."""
         if self.creds and self.creds.valid:
             return
@@ -267,9 +267,9 @@ class GoogleDriveTools(Toolkit):
             self.creds.refresh(Request())
             return
 
-        if load_token(self, self.scopes, user_id=user_id):
+        if load_token(self, self.scopes, user_id=user_id, agent=agent):
             return
-        if self.google_auth and self.google_auth._db and self.google_auth._callback_configured:
+        if self.google_auth and self.google_auth._callback_configured and get_token_db(self, agent=agent):
             raise PermissionError("Drive not authenticated — user must complete OAuth via authenticate_google")
 
         # OAuth flow
@@ -315,7 +315,7 @@ class GoogleDriveTools(Toolkit):
             self.creds = flow.run_local_server(**run_kwargs)
 
         if self.creds and self.creds.valid:
-            if save_token(self, self.creds, user_id=user_id):
+            if save_token(self, self.creds, user_id=user_id, agent=agent):
                 log_debug("Drive credentials saved to DB")
             else:
                 token_file.write_text(self.creds.to_json())

@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import load_token, save_token, google_authenticate
+from agno.tools.google.auth import get_token_db, google_authenticate, load_token, save_token
 from agno.utils.log import log_debug
 
 try:
@@ -184,7 +184,7 @@ class GoogleSheetsTools(Toolkit):
     def _build_service(self):
         return build("sheets", "v4", credentials=self.creds)
 
-    def _auth(self, user_id=None) -> None:
+    def _auth(self, user_id=None, agent=None) -> None:
         """
         Authenticate with Google Sheets API
         """
@@ -202,9 +202,9 @@ class GoogleSheetsTools(Toolkit):
                 self.creds.refresh(Request())
             return
 
-        if load_token(self, self.scopes, user_id=user_id):
+        if load_token(self, self.scopes, user_id=user_id, agent=agent):
             return
-        if self.google_auth and self.google_auth._db and self.google_auth._callback_configured:
+        if self.google_auth and self.google_auth._callback_configured and get_token_db(self, agent=agent):
             raise PermissionError("Sheets not authenticated — user must complete OAuth via authenticate_google")
 
         token_file = Path(self.token_path or "token.json")
@@ -225,9 +225,7 @@ class GoogleSheetsTools(Toolkit):
         if not self.creds or not self.creds.valid:
             # Coordinator mode: request the union of all registered scopes in one consent flow
             if self.google_auth is not None and self.google_auth._services:
-                consent_scopes = sorted(
-                    {s for scope_list in self.google_auth._services.values() for s in scope_list}
-                )
+                consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
             else:
                 consent_scopes = self.scopes
             client_config = {
@@ -248,7 +246,7 @@ class GoogleSheetsTools(Toolkit):
             self.creds = flow.run_local_server(port=self.oauth_port, prompt="consent")
 
         if self.creds and self.creds.valid:
-            if save_token(self, self.creds, user_id=user_id):
+            if save_token(self, self.creds, user_id=user_id, agent=agent):
                 log_debug("Sheets credentials saved to DB")
             else:
                 token_file.write_text(self.creds.to_json())  # type: ignore

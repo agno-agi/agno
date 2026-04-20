@@ -73,7 +73,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import load_token, save_token, google_authenticate
+from agno.tools.google.auth import get_token_db, google_authenticate, load_token, save_token
 from agno.utils.log import log_debug, log_error
 
 try:
@@ -372,7 +372,7 @@ class GmailTools(Toolkit):
     def _build_service(self):
         return build("gmail", "v1", credentials=self.creds)
 
-    def _auth(self, user_id=None) -> None:
+    def _auth(self, user_id=None, agent=None) -> None:
         if self.creds and self.creds.valid:
             return
 
@@ -395,9 +395,9 @@ class GmailTools(Toolkit):
             return
 
         # Try loading token from DB
-        if load_token(self, self.scopes, user_id=user_id):
+        if load_token(self, self.scopes, user_id=user_id, agent=agent):
             return
-        if self.google_auth and self.google_auth._db and self.google_auth._callback_configured:
+        if self.google_auth and self.google_auth._callback_configured and get_token_db(self, agent=agent):
             raise PermissionError("Gmail not authenticated — user must complete OAuth via authenticate_google")
 
         # File-based OAuth flow
@@ -444,7 +444,7 @@ class GmailTools(Toolkit):
             self.creds = flow.run_local_server(port=self.oauth_port, **oauth_kwargs)
 
         if self.creds and self.creds.valid:
-            if save_token(self, self.creds, user_id=user_id):
+            if save_token(self, self.creds, user_id=user_id, agent=agent):
                 log_debug("Gmail credentials saved to DB")
             else:
                 token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
