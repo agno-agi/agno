@@ -12,7 +12,7 @@ import dspy
 from agno.agents.dspy import DSPyAgent
 
 # ----- Configure DSPy LM (must be set on the main thread) -----
-lm = dspy.LM("openai/gpt-4o-mini")
+lm = dspy.LM("openai/gpt-5.4")
 dspy.configure(lm=lm)
 
 # ----- Basic Q&A with ChainOfThought -----

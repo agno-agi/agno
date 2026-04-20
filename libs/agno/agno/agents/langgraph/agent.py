@@ -3,6 +3,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, cast
 from uuid import uuid4
 
 from agno.agents.base import BaseExternalAgent
+from agno.agents.langgraph.utils import build_messages_with_history
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     RunContentEvent,
@@ -60,18 +61,19 @@ class LangGraphAgent(BaseExternalAgent):
     config: Optional[Dict[str, Any]] = field(default=None)
     framework: str = "langgraph"
 
-    async def _arun_impl(self, input: Any, **kwargs: Any) -> Any:
+    async def _arun_adapter(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> Any:
         """Non-streaming LangGraph invocation."""
         try:
-            from langchain_core.messages import AIMessage, HumanMessage
+            from langchain_core.messages import AIMessage
         except ImportError:
             raise ImportError("langchain-core is required: pip install langchain-core langgraph")
-
-        if self.graph is None:
-            raise ValueError("No graph provided to LangGraphAgent")
-
         # None input means replay/fork from checkpoint
-        graph_input = None if input is None else {self.input_key: [HumanMessage(content=str(input))]}
+        if input is None:
+            graph_input = None
+        else:
+            graph_input = {self.input_key: build_messages_with_history(input, history)}
         config = self._build_config(kwargs)
 
         result = await self.graph.ainvoke(graph_input, config=config)
@@ -83,19 +85,19 @@ class LangGraphAgent(BaseExternalAgent):
                 return msg.content
         return str(result)
 
-    async def _arun_stream_impl(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
+    async def _arun_adapter_stream(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> AsyncIterator[RunOutputEvent]:
         """Streaming LangGraph invocation with tool call visibility."""
-        try:
-            from langchain_core.messages import HumanMessage
-        except ImportError:
-            raise ImportError("langchain-core is required: pip install langchain-core langgraph")
-
         if self.graph is None:
             raise ValueError("No graph provided to LangGraphAgent")
 
         run_id = kwargs.get("run_id", str(uuid4()))
         # None input means replay/fork from checkpoint
-        graph_input = None if input is None else {self.input_key: [HumanMessage(content=str(input))]}
+        if input is None:
+            graph_input = None
+        else:
+            graph_input = {self.input_key: build_messages_with_history(input, history)}
         config = self._build_config(kwargs)
 
         async for event in self.graph.astream_events(graph_input, config=config, version="v2"):

@@ -36,7 +36,7 @@ from agno.os.app import AgentOS
 # ---------------------------------------------------------------------------
 # Configure DSPy LM (must be set on the main thread)
 # ---------------------------------------------------------------------------
-dspy.configure(lm=dspy.LM("openai/gpt-4o-mini"))
+dspy.configure(lm=dspy.LM("openai/gpt-5.4"))
 
 # ---------------------------------------------------------------------------
 # Create the DSPy agent

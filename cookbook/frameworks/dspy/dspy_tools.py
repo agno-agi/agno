@@ -33,7 +33,7 @@ def search_web(query: str) -> str:
 
 
 # ----- Configure DSPy (must be set on the main thread) -----
-lm = dspy.LM("openai/gpt-4o-mini")
+lm = dspy.LM("openai/gpt-5.4")
 dspy.configure(lm=lm)
 
 # ----- ReAct agent with tools -----

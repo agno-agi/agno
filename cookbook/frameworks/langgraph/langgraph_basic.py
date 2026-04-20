@@ -15,7 +15,7 @@ from langgraph.graph import MessagesState, StateGraph
 
 # ----- Build a LangGraph agent -----
 def chatbot(state: MessagesState):
-    return {"messages": [ChatOpenAI(model="gpt-4o-mini").invoke(state["messages"])]}
+    return {"messages": [ChatOpenAI(model="gpt-5.4").invoke(state["messages"])]}
 
 
 graph = StateGraph(MessagesState)

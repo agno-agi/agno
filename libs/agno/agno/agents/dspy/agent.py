@@ -1,8 +1,9 @@
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, List
+from typing import Any, AsyncIterator, Dict, List, Optional
 from uuid import uuid4
 
 from agno.agents.base import BaseExternalAgent
+from agno.agents.dspy.utils import build_input_with_history
 from agno.models.response import ToolExecution
 from agno.run.agent import (
     RunContentEvent,
@@ -55,22 +56,9 @@ class DSPyAgent(BaseExternalAgent):
     program_kwargs: Dict[str, Any] = field(default_factory=dict)
     framework: str = "dspy"
 
-    def _configure_lm(self) -> None:
-        """Configure DSPy LM on the current thread if provided."""
-        if self.lm is not None:
-            import dspy
-
-            # Use dspy.configure only from the main thread (at init time).
-            # For cross-thread safety, callers should configure at module level
-            # or use dspy.context(lm=...) which is thread-safe.
-            try:
-                dspy.configure(lm=self.lm)
-            except Exception:
-                # Thread-safety error — LM was already configured on another thread.
-                # This is fine; the global config from the main thread will be used.
-                pass
-
-    async def _arun_impl(self, input: Any, **kwargs: Any) -> str:
+    async def _arun_adapter(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> str:
         """Non-streaming: run the DSPy program and return the output field."""
         try:
             import dspy
@@ -80,8 +68,8 @@ class DSPyAgent(BaseExternalAgent):
         if self.program is None:
             raise ValueError("No program provided to DSPyAgent")
 
-        # Build input kwargs
-        program_input = {self.input_field: str(input)}
+        # Build input kwargs with history prepended
+        program_input = {self.input_field: build_input_with_history(input, history)}
         program_input.update(self.program_kwargs)
 
         # DSPy modules are sync by default — use asyncify
@@ -101,7 +89,9 @@ class DSPyAgent(BaseExternalAgent):
             return str(result)
         return str(output)
 
-    async def _arun_stream_impl(self, input: Any, **kwargs: Any) -> AsyncIterator[RunOutputEvent]:
+    async def _arun_adapter_stream(
+        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+    ) -> AsyncIterator[RunOutputEvent]:
         """Streaming: use dspy.streamify() for token-level streaming.
 
         dspy.streamify() yields three types:
@@ -120,8 +110,8 @@ class DSPyAgent(BaseExternalAgent):
 
         run_id = kwargs.get("run_id", str(uuid4()))
 
-        # Build input kwargs
-        program_input = {self.input_field: str(input)}
+        # Build input kwargs with history prepended
+        program_input = {self.input_field: build_input_with_history(input, history)}
         program_input.update(self.program_kwargs)
 
         # DSPy caches LLM responses by default. Cached results skip token-level
