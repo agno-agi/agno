@@ -55,7 +55,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 # 1. Native Agno Agent
 # ---------------------------------------------------------------------------
 agno_agent = Agent(
-    agent_id="agno-assistant",
+    id="agno-assistant",
     name="Agno Assistant",
     description="A native Agno agent",
     model=OpenAIResponses(id="gpt-5.4"),
