@@ -25,7 +25,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import json_serializer
+from agno.db.utils import json_serializer, sanitize_jsonb_value
 from agno.run.base import RunStatus
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -982,21 +982,26 @@ class PostgresDb(BaseDb):
                 return None
 
             session_dict = session.to_dict()
-            # Sanitize JSON/dict fields to remove null bytes from nested strings
+            # Sanitize JSONB fields: convert non-serializable types (datetime, UUID, etc.)
+            # and remove null bytes from nested strings
             if session_dict.get("agent_data"):
-                session_dict["agent_data"] = sanitize_postgres_strings(session_dict["agent_data"])
+                session_dict["agent_data"] = sanitize_postgres_strings(sanitize_jsonb_value(session_dict["agent_data"]))
             if session_dict.get("team_data"):
-                session_dict["team_data"] = sanitize_postgres_strings(session_dict["team_data"])
+                session_dict["team_data"] = sanitize_postgres_strings(sanitize_jsonb_value(session_dict["team_data"]))
             if session_dict.get("workflow_data"):
-                session_dict["workflow_data"] = sanitize_postgres_strings(session_dict["workflow_data"])
+                session_dict["workflow_data"] = sanitize_postgres_strings(
+                    sanitize_jsonb_value(session_dict["workflow_data"])
+                )
             if session_dict.get("session_data"):
-                session_dict["session_data"] = sanitize_postgres_strings(session_dict["session_data"])
+                session_dict["session_data"] = sanitize_postgres_strings(
+                    sanitize_jsonb_value(session_dict["session_data"])
+                )
             if session_dict.get("summary"):
-                session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
+                session_dict["summary"] = sanitize_postgres_strings(sanitize_jsonb_value(session_dict["summary"]))
             if session_dict.get("metadata"):
-                session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
+                session_dict["metadata"] = sanitize_postgres_strings(sanitize_jsonb_value(session_dict["metadata"]))
             if session_dict.get("runs"):
-                session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
+                session_dict["runs"] = sanitize_postgres_strings(sanitize_jsonb_value(session_dict["runs"]))
 
             if isinstance(session, AgentSession):
                 with self.Session() as sess, sess.begin():
