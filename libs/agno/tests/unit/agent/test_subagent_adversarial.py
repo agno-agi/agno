@@ -594,6 +594,72 @@ def test_inherit_parent_tools_subagent_can_spawn_recursively():
     )
 
 
+def test_template_prewired_subagent_toolkit_is_stripped():
+    """If the user supplies a template that was itself initialized with
+    enable_dynamic_subagents=True, the template carries a SubAgentToolkit
+    in its tools. The subagent must NOT inherit that toolkit — otherwise
+    the recursion guard is bypassed because the tool entrypoint remains
+    reachable in the subagent's function schema.
+    """
+    # Template initialized as a spawn-capable agent → carries the toolkit
+    template = Agent(name="tmpl", enable_dynamic_subagents=True)
+    template.initialize_agent()
+    assert any(isinstance(t, SubAgentToolkit) for t in template.tools)
+
+    parent = Agent(
+        name="p",
+        enable_dynamic_subagents=True,
+        subagent_template=template,
+    )
+    parent.initialize_agent()
+    toolkit = next(t for t in parent.tools if isinstance(t, SubAgentToolkit))
+
+    sub = toolkit._build_subagent("role", "ins", None, None, None, "task")
+    leaked = [t for t in (sub.tools or []) if isinstance(t, SubAgentToolkit)]
+    assert not leaked, (
+        "Template's pre-wired SubAgentToolkit leaked into subagent.tools — "
+        f"recursion guard bypassed. Leaked: {leaked}"
+    )
+
+
+def test_template_with_only_subagent_toolkit_ends_with_empty_tools():
+    """Template whose tools list contains ONLY a SubAgentToolkit should
+    result in a subagent with an empty tools list (not None, not the
+    original list with the toolkit preserved)."""
+    template = Agent(name="tmpl", enable_dynamic_subagents=True)
+    template.initialize_agent()
+    # Template.tools contains exactly one item: the SubAgentToolkit
+    assert all(isinstance(t, SubAgentToolkit) for t in template.tools)
+
+    parent = Agent(name="p", enable_dynamic_subagents=True, subagent_template=template)
+    parent.initialize_agent()
+    toolkit = next(t for t in parent.tools if isinstance(t, SubAgentToolkit))
+
+    sub = toolkit._build_subagent("role", "ins", None, None, None, "task")
+    # After stripping the only toolkit there should be nothing left.
+    remaining = [t for t in (sub.tools or []) if isinstance(t, SubAgentToolkit)]
+    assert remaining == []
+
+
+def test_strip_subagent_toolkits_helper_preserves_other_tools():
+    """_strip_subagent_toolkits must only remove SubAgentToolkit instances."""
+    from agno.tools import Toolkit as _Toolkit
+
+    class HarmlessTool(_Toolkit):
+        def __init__(self):
+            super().__init__(name="harmless")
+
+    harmless = HarmlessTool()
+    parent = _make_parent()
+    tk = SubAgentToolkit(parent=parent, config=SubAgentConfig())
+
+    mixed = [harmless, tk, harmless]
+    stripped = SubAgentToolkit._strip_subagent_toolkits(mixed)
+    assert stripped == [harmless, harmless]
+    assert SubAgentToolkit._strip_subagent_toolkits(None) is None
+    assert SubAgentToolkit._strip_subagent_toolkits([]) == []
+
+
 # ---------------------------------------------------------------------------
 # 16. Config pydantic rejects unexpected fields?
 # ---------------------------------------------------------------------------

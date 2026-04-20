@@ -362,6 +362,21 @@ class SubAgentToolkit(Toolkit):
     # Internal helpers
     # ──────────────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _strip_subagent_toolkits(tools: Optional[List[Any]]) -> Optional[List[Any]]:
+        """Return ``tools`` with any ``SubAgentToolkit`` instances removed.
+
+        Invariant: a spawned subagent must never carry a ``SubAgentToolkit``
+        in its tools, otherwise ``spawn_agent`` would be reachable despite
+        ``enable_dynamic_subagents=False`` on the subagent.
+
+        Returns ``None`` if the input is ``None`` so callers can distinguish
+        "no tools configured" from "tools explicitly empty after filtering".
+        """
+        if tools is None:
+            return None
+        return [t for t in tools if not isinstance(t, SubAgentToolkit)]
+
     async def _get_async_semaphore(self) -> asyncio.Semaphore:
         """Lazily create the async semaphore inside the running event loop.
 
@@ -400,7 +415,17 @@ class SubAgentToolkit(Toolkit):
 
         # ── Per-spawn overrides ───────────────────────────────────────────────
         model = self._resolve_model(model_tier, template)
-        resolved_tools = self._resolve_tools(tool_names, getattr(template, "tools", None))
+        # Invariant: a spawned subagent must NEVER carry a SubAgentToolkit in
+        # its tools, regardless of how the template was configured. A template
+        # that was itself initialized with enable_dynamic_subagents=True will
+        # have a SubAgentToolkit wired into its .tools; deep-copying it would
+        # leak spawn_agent back to the child and bypass the recursion guard.
+        template_tools_raw = getattr(template, "tools", None)
+        template_tools_sanitized = self._strip_subagent_toolkits(template_tools_raw)
+        template_leaked_toolkit = template_tools_raw is not None and (
+            len(template_tools_sanitized or []) != len(template_tools_raw)
+        )
+        resolved_tools = self._resolve_tools(tool_names, template_tools_sanitized)
         additional_context = self._build_additional_context()
 
         # ── Lineage metadata ──────────────────────────────────────────────────
@@ -457,10 +482,14 @@ class SubAgentToolkit(Toolkit):
                     f"({_template_value!r} -> {_ephemeral_value!r}) "
                     f"because subagents are ephemeral."
                 )
-        # Only override tools when we have an explicit resolution.
-        # None means "keep whatever the template already has configured".
+        # Override tools when we have an explicit resolution, OR when the
+        # template carried a SubAgentToolkit that we had to strip. Without the
+        # second branch, deep_copy would copy the original (unsanitised) tools
+        # list and re-attach the toolkit to the subagent.
         if resolved_tools is not None:
             update["tools"] = resolved_tools
+        elif template_leaked_toolkit:
+            update["tools"] = template_tools_sanitized
         subagent = template.deep_copy(update=update)
         # Set team_id after construction — it is a dataclass field that is
         # assigned externally, not accepted by Agent.__init__.
@@ -523,7 +552,7 @@ class SubAgentToolkit(Toolkit):
             # to None. An empty list means "explicit override: no tools" — collapsing
             # to None would fall back to the template's tools, which could re-leak
             # tools the caller explicitly filtered out.
-            return [t for t in parent_tools_raw if not isinstance(t, SubAgentToolkit)]
+            return self._strip_subagent_toolkits(parent_tools_raw)
 
         # Base: template tools
         result: List[Any] = list(template_tools or [])
