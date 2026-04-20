@@ -541,9 +541,10 @@ def get_agent_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        if session_id is None or session_id == "":
-            log_warning(
-                "Continuing run without session_id. This might lead to unexpected behavior if session context is important."
+        if (session_id is None or session_id == "") and not isinstance(agent, RemoteAgent):
+            raise HTTPException(
+                status_code=400,
+                detail="session_id is required to continue a run",
             )
 
         # Fetch existing run once for validation and potential approval resolution
