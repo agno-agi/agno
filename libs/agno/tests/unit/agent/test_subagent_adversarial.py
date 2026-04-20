@@ -605,6 +605,24 @@ def test_subagent_config_rejects_unknown_fields():
         SubAgentConfig(bogus_field=True)  # type: ignore
 
 
+def test_subagent_config_rejects_zero_max_concurrent():
+    """max_concurrent=0 would create a Semaphore(0) that blocks forever on
+    first acquire. Pydantic must reject it at config time."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        SubAgentConfig(max_concurrent=0)
+
+
+def test_subagent_config_rejects_negative_max_concurrent():
+    """max_concurrent<0 is a bug; threading.Semaphore would raise at init
+    time. Catch it earlier at config validation."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        SubAgentConfig(max_concurrent=-1)
+
+
 # ---------------------------------------------------------------------------
 # 17. Parent.tools is a callable factory — guidance still injected, but
 # toolkit NOT wired (code only warns). Verify the warning is emitted.

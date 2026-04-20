@@ -29,7 +29,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, log_warning
@@ -129,8 +129,8 @@ class SubAgentConfig(BaseModel):
     ``additional_context``.  The subagent sees the state but cannot write back."""
 
     # ── Concurrency ──────────────────────────────────────────────────────────
-    max_concurrent: int = 5
-    """Maximum number of subagents running simultaneously.
+    max_concurrent: int = Field(default=5, ge=1)
+    """Maximum number of subagents running simultaneously (must be >= 1).
     Enforced via a ``threading.Semaphore`` (sync) and ``asyncio.Semaphore`` (async)."""
 
     # ── Observability ─────────────────────────────────────────────────────────
