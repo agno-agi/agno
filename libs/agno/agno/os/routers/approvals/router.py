@@ -14,7 +14,6 @@ from agno.os.routers.approvals.schema import (
 )
 from agno.os.schema import PaginatedResponse, PaginationInfo
 
-
 def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
     """Factory that creates and returns the approval router.
 
@@ -154,6 +153,7 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
                 status_code=409,
                 detail=f"Approval is already '{existing.get('status')}' and cannot be resolved",
             )
+
         return result
 
     @router.delete("/approvals/{approval_id}", status_code=204)

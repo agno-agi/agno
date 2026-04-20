@@ -146,3 +146,56 @@ def test_create_team_run_with_kwargs(test_os_client, test_team: Team):
         call_args = mock_arun.call_args
         assert call_args.kwargs["extra_field"] == "foo"
         assert call_args.kwargs["extra_field_two"] == "bar"
+
+
+def test_continue_team_run_route_requires_approval_resolution_dependency(test_os_client):
+    route = next(
+        route
+        for route in test_os_client.app.routes
+        if getattr(route, "path", None) == "/teams/{team_id}/runs/{run_id}/continue"
+    )
+
+    dependency_qualnames = [getattr(dep.call, "__qualname__", "") for dep in route.dependant.dependencies]
+    assert any("require_approval_resolved" in qualname for qualname in dependency_qualnames)
+
+
+def test_continue_team_run_requires_session_id_for_local_teams(test_os_client, test_team: Team):
+    response = test_os_client.post(
+        f"/teams/{test_team.id}/runs/run-123/continue",
+        data={"requirements": "[]", "stream": "false"},
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "session_id is required to continue a run"
+
+
+def test_continue_team_run_allows_empty_requirements_payload(test_os_client, test_team: Team):
+    class MockRunOutput:
+        def to_dict(self):
+            return {"run_id": "run-123"}
+
+    with (
+        patch.object(test_team, "deep_copy", return_value=test_team),
+        patch.object(test_team, "aget_run_output", new_callable=AsyncMock) as mock_get_run_output,
+        patch.object(test_team, "acontinue_run", new_callable=AsyncMock) as mock_continue_run,
+    ):
+        mock_get_run_output.return_value = None
+        mock_continue_run.return_value = MockRunOutput()
+
+        response = test_os_client.post(
+            f"/teams/{test_team.id}/runs/run-123/continue",
+            data={
+                "requirements": "",
+                "session_id": "session-123",
+                "stream": "false",
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["run_id"] == "run-123"
+    # Empty requirements string is normalized to [] (not None) so that RemoteTeam
+    # type signatures are satisfied.  The continue_run dispatch treats [] as "no
+    # client-provided requirements" via a truthy check (`if requirements:`).
+    assert mock_continue_run.call_args.kwargs["requirements"] == []
