@@ -171,10 +171,20 @@ class SubAgentToolkit(Toolkit):
     def __init__(self, parent: Union["Agent", "Team"], config: SubAgentConfig) -> None:
         self._parent = parent
         self._config = config
-        # Semaphores are created lazily to respect event-loop lifecycle for async
+        # Sync semaphore can be constructed at init — threading.Semaphore has
+        # no event-loop affinity.
         self._sync_semaphore = threading.Semaphore(config.max_concurrent)
+        # Async primitives are created lazily inside the running event loop.
+        # ``asyncio.Lock`` itself is kept lazy too so that constructing the
+        # toolkit at module import time (no running loop) and then using it
+        # across multiple event loops (e.g. pytest-asyncio tests, worker
+        # reuse) does not bind the lock to a stale loop.
         self._async_semaphore: Optional[asyncio.Semaphore] = None
-        self._async_semaphore_lock: asyncio.Lock = asyncio.Lock()
+        self._async_semaphore_lock: Optional[asyncio.Lock] = None
+        # Guard the creation of the async Lock itself with a thread-safe
+        # primitive — first-ever access to _get_async_semaphore could race
+        # between coroutines scheduled on different threads.
+        self._async_init_thread_lock = threading.Lock()
 
         super().__init__(
             name="subagent",
@@ -391,10 +401,21 @@ class SubAgentToolkit(Toolkit):
     async def _get_async_semaphore(self) -> asyncio.Semaphore:
         """Lazily create the async semaphore inside the running event loop.
 
+        The ``asyncio.Lock`` used to guard semaphore creation is itself
+        created lazily (under a thread-safe primitive) so that constructing
+        the toolkit at module-import time — before any event loop exists —
+        does not bind the Lock to a stale loop.
+
         Uses double-checked locking to be safe when multiple coroutines
         enter aspawn_agent concurrently before the semaphore is initialized.
         """
         if self._async_semaphore is None:
+            # First-access guard for the Lock itself. threading.Lock is safe
+            # to use from multiple event loops on different threads.
+            if self._async_semaphore_lock is None:
+                with self._async_init_thread_lock:
+                    if self._async_semaphore_lock is None:
+                        self._async_semaphore_lock = asyncio.Lock()
             async with self._async_semaphore_lock:
                 if self._async_semaphore is None:
                     self._async_semaphore = asyncio.Semaphore(self._config.max_concurrent)

@@ -113,12 +113,41 @@ def test_inherit_parent_tools_leaks_subagent_toolkit():
 
 
 def test_toolkit_constructs_without_running_event_loop():
-    """SubAgentToolkit.__init__ constructs an asyncio.Lock(). Python 3.10+
-    allows this outside a loop, but verify it doesn't raise at import/construct time.
-    Agents are typically instantiated at module level (no loop)."""
+    """SubAgentToolkit.__init__ does NOT create an asyncio.Lock. Constructing
+    a Lock outside a running loop would bind it to whichever loop first
+    acquires it, breaking cross-loop reuse (pytest-asyncio, worker pools).
+
+    Instead the Lock is deferred to first async-spawn access. Verify the
+    toolkit constructs cleanly and that the Lock stays unset until then."""
     parent = _make_parent()
     tk = SubAgentToolkit(parent=parent, config=SubAgentConfig())
-    assert tk._async_semaphore_lock is not None
+    assert tk._async_semaphore is None
+    assert tk._async_semaphore_lock is None, (
+        "Lock should be lazy-initialised inside a running event loop, not at __init__ time"
+    )
+
+
+def test_async_semaphore_survives_cross_event_loop_reuse():
+    """Construct the toolkit once, then use it from two successive
+    asyncio loops. The lazy-lock pattern must not leak loop affinity."""
+    mock = _mock_agent()
+    parent = _make_parent(template=mock)
+    tk = SubAgentToolkit(parent=parent, config=SubAgentConfig(max_concurrent=1, log_subagent_runs=False))
+
+    async def _spawn_once() -> str:
+        return await tk.aspawn_agent(role="r", instructions="i", task="t")
+
+    for _ in range(2):
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(_spawn_once())
+            assert result == "ok"
+        finally:
+            # Fresh loop on next iteration — simulates new test / worker pool.
+            # Reset the async primitives so the next loop rebinds them.
+            tk._async_semaphore = None
+            tk._async_semaphore_lock = None
+            loop.close()
 
 
 # ---------------------------------------------------------------------------
