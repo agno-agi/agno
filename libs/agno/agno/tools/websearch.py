@@ -2,7 +2,7 @@ import json
 from typing import Any, List, Literal, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug
+from agno.utils.log import log_debug, logger
 
 try:
     from ddgs import DDGS
@@ -94,10 +94,13 @@ class WebSearchTools(Toolkit):
             search_kwargs["timelimit"] = self.timelimit
         if self.region is not None:
             search_kwargs["region"] = self.region
-        with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
-            results = ddgs.text(**search_kwargs)
-
-        return json.dumps(results, indent=2)
+        try:
+            with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
+                results = ddgs.text(**search_kwargs)
+            return json.dumps(results, indent=2)
+        except Exception as e:
+            logger.warning(f"Web search failed for query '{query}': {e}")
+            return json.dumps({"error": f"Web search failed: {e}"})
 
     def search_news(self, query: str, max_results: int = 5) -> str:
         """Use this function to get the latest news from the web.
@@ -121,7 +124,10 @@ class WebSearchTools(Toolkit):
             search_kwargs["timelimit"] = self.timelimit
         if self.region is not None:
             search_kwargs["region"] = self.region
-        with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
-            results = ddgs.news(**search_kwargs)
-
-        return json.dumps(results, indent=2)
+        try:
+            with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
+                results = ddgs.news(**search_kwargs)
+            return json.dumps(results, indent=2)
+        except Exception as e:
+            logger.warning(f"News search failed for query '{query}': {e}")
+            return json.dumps({"error": f"News search failed: {e}"})

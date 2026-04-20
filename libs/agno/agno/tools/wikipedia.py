@@ -45,14 +45,18 @@ class WikipediaTools(Toolkit):
         if self.knowledge is None:
             return "Knowledge not provided"
 
-        log_debug(f"Adding to knowledge: {topic}")
-        self.knowledge.insert(
-            topics=[topic],
-            reader=WikipediaReader(auto_suggest=self.auto_suggest),
-        )
-        log_debug(f"Searching knowledge: {topic}")
-        relevant_docs: List[Document] = self.knowledge.search(query=topic)
-        return json.dumps([doc.to_dict() for doc in relevant_docs])
+        try:
+            log_debug(f"Adding to knowledge: {topic}")
+            self.knowledge.insert(
+                topics=[topic],
+                reader=WikipediaReader(auto_suggest=self.auto_suggest),
+            )
+            log_debug(f"Searching knowledge: {topic}")
+            relevant_docs: List[Document] = self.knowledge.search(query=topic)
+            return json.dumps([doc.to_dict() for doc in relevant_docs])
+        except Exception as e:
+            log_error(f"Wikipedia knowledge search failed for topic '{topic}': {e}")
+            return f"Could not search Wikipedia for '{topic}'. Error: {e}"
 
     def search_wikipedia(self, query: str) -> str:
         """Searches Wikipedia for a query.
