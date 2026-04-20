@@ -25,7 +25,7 @@ import os
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIResponses
 from agno.tools.manim import ManimTools
 
 from manim_tools import save_video_to_disk
@@ -46,7 +46,8 @@ SAVED_DIR.mkdir(parents=True, exist_ok=True)
 
 manim_agent = Agent(
     name="Manim Narrator (ElevenLabs)",
-    model=Claude(id="claude-opus-4-7"),
+    model=OpenAIResponses(id="gpt-5.4"),
+    send_media_to_model=False,
     tools=[
         ManimTools(
             output_dir=WORK_DIR,

@@ -51,6 +51,7 @@ manim_agent = Agent(
     name="Manim Animator",
     model=Claude(id="claude-opus-4-7"),
     db=db,
+    send_media_to_model=False,
     tools=[
         ManimTools(
             output_dir=OUTPUT_DIR,

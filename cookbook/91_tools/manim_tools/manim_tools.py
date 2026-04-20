@@ -17,14 +17,13 @@ Run:
     .venvs/demo/bin/python cookbook/91_tools/manim_tools/manim_tools.py
 """
 
-import base64
-import shutil
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.media import Video
 from agno.models.openai import OpenAIResponses
 from agno.tools.manim import ManimTools
+from agno.utils.media import save_base64_data
 
 HERE = Path(__file__).parent
 TMP_DIR = HERE / "tmp"
@@ -36,6 +35,7 @@ SAVED_DIR.mkdir(parents=True, exist_ok=True)
 manim_agent = Agent(
     name="Manim Animator",
     model=OpenAIResponses(id="gpt-5.4"),
+    send_media_to_model=False,
     tools=[
         ManimTools(
             output_dir=WORK_DIR,
@@ -54,40 +54,15 @@ manim_agent = Agent(
 
 
 def save_video_to_disk(video: Video, dest_dir: Path) -> Path:
-    """Persist a Video to `dest_dir/<id>.<ext>`, regardless of delivery mode.
-
-    `ManimTools` returns `Video(content=bytes)` for small renders (base64-
-    inlined at serialization) and `Video(filepath=...)` for large renders
-    that exceed `max_inline_bytes`. Consumers should handle both.
-
-    Inline: decode `video.to_base64()` and write the bytes.
-    Filepath: copy the on-disk mp4 (it already lives under `output_dir`).
-    URL: fall back to `video.get_content_bytes()` which fetches remotely.
-    """
-    suffix = video.format or "mp4"
-    dest = dest_dir / f"{video.id}.{suffix}"
-
-    if video.content is not None:
-        b64 = video.to_base64()
-        assert b64 is not None
-        dest.write_bytes(base64.b64decode(b64))
-        return dest
-
-    if video.filepath is not None:
-        shutil.copyfile(str(video.filepath), dest)
-        return dest
-
-    raw = video.get_content_bytes()
-    if raw is None:
+    """Persist a Video to `dest_dir/<id>.<ext>`, regardless of delivery mode."""
+    dest = dest_dir / f"{video.id}.{video.format or 'mp4'}"
+    b64 = video.to_base64()
+    if b64 is None:
         raise ValueError(
             f"Video {video.id!r} has no resolvable content (no content/filepath/url)."
         )
-    dest.write_bytes(raw)
+    save_base64_data(b64, str(dest))
     return dest
-
-
-# Backwards-compat alias for downstream scripts that still import the old name.
-save_base64_video_to_disk = save_video_to_disk
 
 
 if __name__ == "__main__":
