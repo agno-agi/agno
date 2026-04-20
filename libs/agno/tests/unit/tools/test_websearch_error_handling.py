@@ -5,7 +5,6 @@ string instead of raising unhandled exceptions when the underlying API fails.
 """
 
 import json
-import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
