@@ -4,10 +4,10 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from agno.run import RunStatus
-from agno.run.team import TeamRunOutput
 from agno.models.response import ToolExecution
+from agno.run import RunStatus
 from agno.run.requirement import RunRequirement
+from agno.run.team import TeamRunOutput
 
 # ---------------------------------------------------------------------------
 # Helpers

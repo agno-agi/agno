@@ -195,4 +195,7 @@ def test_continue_team_run_allows_empty_requirements_payload(test_os_client, tes
 
     assert response.status_code == 200
     assert response.json()["run_id"] == "run-123"
-    assert mock_continue_run.call_args.kwargs["requirements"] is None
+    # Empty requirements string is normalized to [] (not None) so that RemoteTeam
+    # type signatures are satisfied.  The continue_run dispatch treats [] as "no
+    # client-provided requirements" via a truthy check (`if requirements:`).
+    assert mock_continue_run.call_args.kwargs["requirements"] == []

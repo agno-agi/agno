@@ -139,7 +139,7 @@ async def team_continue_response_streamer(
 
         continue_response = team.acontinue_run(
             run_id=run_id,
-            requirements=requirements,
+            requirements=requirements or [],
             session_id=session_id,
             user_id=user_id,
             stream=True,
@@ -579,7 +579,7 @@ def get_team_router(
             try:
                 run_response_obj = await team.acontinue_run(  # type: ignore
                     run_id=run_id,
-                    requirements=updated_requirements,
+                    requirements=updated_requirements or [],
                     session_id=session_id,
                     user_id=user_id,
                     stream=False,
