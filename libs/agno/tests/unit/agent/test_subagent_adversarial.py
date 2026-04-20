@@ -690,6 +690,66 @@ def test_subagent_config_rejects_negative_max_concurrent():
 
 
 # ---------------------------------------------------------------------------
+# additional_context preservation
+# ---------------------------------------------------------------------------
+
+
+def test_template_additional_context_preserved_when_inject_disabled():
+    """Template.additional_context must survive a spawn when
+    inject_session_state=False — otherwise the default path silently
+    clobbers user-configured context with None."""
+    template = Agent(name="tmpl", additional_context="TEMPLATE_CONTEXT_KEEP_ME")
+    parent = Agent(
+        name="p",
+        enable_dynamic_subagents=True,
+        subagent_template=template,
+        subagent_config=SubAgentConfig(inject_session_state=False),
+    )
+    parent.initialize_agent()
+    toolkit = next(t for t in parent.tools if isinstance(t, SubAgentToolkit))
+
+    sub = toolkit._build_subagent("r", "i", None, None, None, "t")
+    assert sub.additional_context == "TEMPLATE_CONTEXT_KEEP_ME"
+
+
+def test_inject_session_state_overrides_template_additional_context():
+    """When inject_session_state=True AND the template has its own
+    additional_context, the injected state takes precedence. This documents
+    the override semantics — the alternative would be ambiguous merging."""
+    template = Agent(name="tmpl", additional_context="TEMPLATE_CTX")
+    parent = Agent(
+        name="p",
+        enable_dynamic_subagents=True,
+        subagent_template=template,
+        session_state={"user": "alice"},
+        subagent_config=SubAgentConfig(inject_session_state=True),
+    )
+    parent.initialize_agent()
+    toolkit = next(t for t in parent.tools if isinstance(t, SubAgentToolkit))
+
+    sub = toolkit._build_subagent("r", "i", None, None, None, "t")
+    # The template context is replaced, not merged.
+    assert sub.additional_context is not None
+    assert "alice" in sub.additional_context
+    assert "TEMPLATE_CTX" not in sub.additional_context
+
+
+def test_no_additional_context_when_neither_template_nor_injection():
+    """No template context + inject_session_state=False → subagent has
+    additional_context=None (neither source sets it)."""
+    template = Agent(name="tmpl")
+    parent = Agent(
+        name="p",
+        enable_dynamic_subagents=True,
+        subagent_template=template,
+    )
+    parent.initialize_agent()
+    toolkit = next(t for t in parent.tools if isinstance(t, SubAgentToolkit))
+    sub = toolkit._build_subagent("r", "i", None, None, None, "t")
+    assert sub.additional_context is None
+
+
+# ---------------------------------------------------------------------------
 # 17. Parent.tools is a callable factory — guidance still injected, but
 # toolkit NOT wired (code only warns). Verify the warning is emitted.
 # ---------------------------------------------------------------------------

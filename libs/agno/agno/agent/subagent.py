@@ -446,7 +446,6 @@ class SubAgentToolkit(Toolkit):
             "description": f"Ephemeral subagent: {role}",
             "instructions": instructions,
             "expected_output": expected_output,
-            "additional_context": additional_context,
             "model": model,
             # Ephemeral: no persistence, no telemetry, no history bleed
             "db": None,
@@ -490,6 +489,11 @@ class SubAgentToolkit(Toolkit):
             update["tools"] = resolved_tools
         elif template_leaked_toolkit:
             update["tools"] = template_tools_sanitized
+        # Only override additional_context when we actually have a value.
+        # Passing None in the update dict would clobber the template's own
+        # additional_context field during deep_copy.
+        if additional_context is not None:
+            update["additional_context"] = additional_context
         subagent = template.deep_copy(update=update)
         # Set team_id after construction — it is a dataclass field that is
         # assigned externally, not accepted by Agent.__init__.
