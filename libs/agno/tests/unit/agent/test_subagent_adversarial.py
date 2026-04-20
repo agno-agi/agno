@@ -617,8 +617,7 @@ def test_template_prewired_subagent_toolkit_is_stripped():
     sub = toolkit._build_subagent("role", "ins", None, None, None, "task")
     leaked = [t for t in (sub.tools or []) if isinstance(t, SubAgentToolkit)]
     assert not leaked, (
-        "Template's pre-wired SubAgentToolkit leaked into subagent.tools — "
-        f"recursion guard bypassed. Leaked: {leaked}"
+        f"Template's pre-wired SubAgentToolkit leaked into subagent.tools — recursion guard bypassed. Leaked: {leaked}"
     )
 
 

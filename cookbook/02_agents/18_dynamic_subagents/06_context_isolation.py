@@ -88,9 +88,11 @@ class KnowledgeBaseTools(Toolkit):
             + "Section 1: Eligibility\n"
             + "Customers may return items within 30 days of delivery. " * 10
             + "\n\nSection 2: Process\n"
-            + "To initiate a return, contact support@example.com with your order ID. " * 8
+            + "To initiate a return, contact support@example.com with your order ID. "
+            * 8
             + "\n\nSection 3: Refund timeline\n"
-            + "Refunds are processed within 5-7 business days after the returned item is received. " * 6
+            + "Refunds are processed within 5-7 business days after the returned item is received. "
+            * 6
             + "\n\nSection 4: Exceptions\n"
             + "Digital goods, perishables, and custom orders are non-refundable. " * 5
         )
