@@ -3,7 +3,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agno.tools.mcp import MCPTools, MultiMCPTools
-from agno.tools.mcp.params import StreamableHTTPClientParams
+from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
+
+
+class _AsyncContextManager:
+    def __init__(self, value):
+        self.value = value
+
+    async def __aenter__(self):
+        return self.value
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
+class _AsyncExitStackStub:
+    async def enter_async_context(self, context):
+        return await context.__aenter__()
 
 
 @pytest.mark.asyncio
@@ -179,6 +195,146 @@ def test_call_header_provider_with_team():
     tools = MCPTools(url="http://localhost:8080/mcp", header_provider=provider)
     result = tools._call_header_provider(run_context=run_context, agent=agent, team=team)
     assert result == {"X-Agent": "member-agent", "X-Team": "test-team"}
+
+
+@pytest.mark.asyncio
+async def test_connect_merges_init_headers_when_streamable_http_headers_default_to_none():
+    tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
+        transport="streamable-http",
+        header_provider=lambda: {"Authorization": "Bearer token"},
+    )
+
+    with (
+        patch(
+            "agno.tools.mcp.mcp.streamablehttp_client",
+            return_value=_AsyncContextManager(("read", "write")),
+        ) as streamable_http_mock,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    assert streamable_http_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer token"}
+
+
+@pytest.mark.asyncio
+async def test_connect_merges_init_headers_when_sse_headers_default_to_none():
+    tools = MCPTools(
+        server_params=SSEClientParams(url="http://localhost:8080/sse"),
+        transport="sse",
+        header_provider=lambda: {"Authorization": "Bearer token"},
+    )
+
+    with (
+        patch("agno.tools.mcp.mcp.sse_client", return_value=_AsyncContextManager(("read", "write"))) as sse_client_mock,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    assert sse_client_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer token"}
+
+
+@pytest.mark.asyncio
+async def test_multimcp_connect_merges_init_headers_when_streamable_http_headers_default_to_none():
+    tools = MultiMCPTools(
+        server_params_list=[StreamableHTTPClientParams(url="http://localhost:8080/mcp")],
+        header_provider=lambda: {"Authorization": "Bearer token"},
+    )
+    tools._async_exit_stack = _AsyncExitStackStub()
+
+    with (
+        patch(
+            "agno.tools.mcp.multi_mcp.streamablehttp_client",
+            return_value=_AsyncContextManager(("read", "write")),
+        ) as streamable_http_mock,
+        patch("agno.tools.mcp.multi_mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MultiMCPTools, "initialize", new=AsyncMock()),
+        patch.object(MultiMCPTools, "build_tools", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    assert streamable_http_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer token"}
+
+
+@pytest.mark.asyncio
+async def test_multimcp_connect_merges_init_headers_when_sse_headers_default_to_none():
+    tools = MultiMCPTools(
+        server_params_list=[SSEClientParams(url="http://localhost:8080/sse")],
+        header_provider=lambda: {"Authorization": "Bearer token"},
+    )
+    tools._async_exit_stack = _AsyncExitStackStub()
+
+    with (
+        patch("agno.tools.mcp.multi_mcp.sse_client", return_value=_AsyncContextManager(("read", "write"))) as sse_client_mock,
+        patch("agno.tools.mcp.multi_mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MultiMCPTools, "initialize", new=AsyncMock()),
+        patch.object(MultiMCPTools, "build_tools", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    assert sse_client_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer token"}
+
+
+@pytest.mark.asyncio
+async def test_get_session_for_run_merges_headers_when_sse_headers_default_to_none():
+    tools = MCPTools(
+        server_params=SSEClientParams(url="http://localhost:8080/sse"),
+        transport="sse",
+        header_provider=lambda run_context: {"Authorization": "Bearer token"},
+    )
+    # Provide a default session so the fast-path check passes
+    tools.session = MagicMock()
+
+    run_context = MagicMock()
+    run_context.run_id = "run-sse-none-headers"
+
+    with (
+        patch("agno.tools.mcp.mcp.sse_client", return_value=_AsyncContextManager(("read", "write"))) as sse_mock,
+        patch("agno.tools.mcp.mcp.ClientSession") as mock_session_cls,
+    ):
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session_context = AsyncMock()
+        mock_session_context.__aenter__.return_value = mock_session
+        mock_session_cls.return_value = mock_session_context
+
+        session = await tools.get_session_for_run(run_context=run_context)
+
+    assert sse_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer token"}
+    assert session is mock_session
+
+
+@pytest.mark.asyncio
+async def test_get_session_for_run_merges_headers_when_streamable_http_headers_default_to_none():
+    tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
+        transport="streamable-http",
+        header_provider=lambda run_context: {"Authorization": "Bearer token"},
+    )
+    tools.session = MagicMock()
+
+    run_context = MagicMock()
+    run_context.run_id = "run-http-none-headers"
+
+    with (
+        patch(
+            "agno.tools.mcp.mcp.streamablehttp_client",
+            return_value=_AsyncContextManager(("read", "write")),
+        ) as streamable_mock,
+        patch("agno.tools.mcp.mcp.ClientSession") as mock_session_cls,
+    ):
+        mock_session = AsyncMock()
+        mock_session.initialize = AsyncMock()
+        mock_session_context = AsyncMock()
+        mock_session_context.__aenter__.return_value = mock_session
+        mock_session_cls.return_value = mock_session_context
+
+        session = await tools.get_session_for_run(run_context=run_context)
+
+    assert streamable_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer token"}
+    assert session is mock_session
 
 
 # =============================================================================

@@ -483,6 +483,13 @@ class MultiMCPTools(Toolkit):
 
         server_connection_errors = []
 
+        # If header_provider is set, generate initial headers for the connection.
+        # This ensures MCP servers that require auth headers for tool discovery
+        # receive them during initialization, not just during per-run sessions.
+        init_headers: dict[str, Any] = {}
+        if self.header_provider:
+            init_headers = self._call_header_provider()
+
         for server_idx, server_params in enumerate(self.server_params_list):
             try:
                 # Handle stdio connections
@@ -497,9 +504,11 @@ class MultiMCPTools(Toolkit):
 
                 # Handle SSE connections
                 elif isinstance(server_params, SSEClientParams):
-                    client_connection = await self._async_exit_stack.enter_async_context(
-                        sse_client(**asdict(server_params))
-                    )
+                    sse_params = asdict(server_params)
+                    if init_headers:
+                        existing_headers = sse_params.get("headers") or {}
+                        sse_params["headers"] = {**existing_headers, **init_headers}
+                    client_connection = await self._async_exit_stack.enter_async_context(sse_client(**sse_params))
                     read, write = client_connection
                     session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
                     await self.initialize(session, server_idx)
@@ -507,8 +516,12 @@ class MultiMCPTools(Toolkit):
 
                 # Handle Streamable HTTP connections
                 elif isinstance(server_params, StreamableHTTPClientParams):
+                    streamable_http_params = asdict(server_params)
+                    if init_headers:
+                        existing_headers = streamable_http_params.get("headers") or {}
+                        streamable_http_params["headers"] = {**existing_headers, **init_headers}
                     client_connection = await self._async_exit_stack.enter_async_context(
-                        streamablehttp_client(**asdict(server_params))
+                        streamablehttp_client(**streamable_http_params)
                     )
                     read, write = client_connection[0:2]
                     session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
