@@ -6,13 +6,11 @@ from agno.media import File, Image
 from agno.models.message import Message
 from agno.utils.log import log_error, log_info, log_warning
 
-try:
-    from anthropic.types import (
-        TextBlock,
-        ToolUseBlock,
-    )
-except ImportError:
-    raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")
+# NB: ``anthropic`` is NOT imported at module top level. It is only required by
+# ``format_messages()`` (see the inline imports there alongside ``ThinkingBlock``
+# and ``RedactedThinkingBlock``). Keeping ``anthropic`` off the top of this module
+# allows non-Anthropic callers of ``supports_prefill()`` below — LiteLLM, Bedrock —
+# to import this file without installing the Anthropic SDK.
 
 
 # Models that support assistant message prefill. This is a closed set —
@@ -394,6 +392,8 @@ def format_messages(
                 log_warning("Video input is currently unsupported.")
 
         elif message.role == "assistant":
+            from anthropic.types import TextBlock, ToolUseBlock
+
             content = []
 
             if message.reasoning_content is not None and message.provider_data is not None:
