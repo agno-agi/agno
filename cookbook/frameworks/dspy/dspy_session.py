@@ -18,7 +18,7 @@ from agno.agents.dspy import DSPyAgent
 from agno.db.postgres import PostgresDb
 
 # ----- Configure DSPy -----
-lm = dspy.LM("openai/gpt-4o-mini")
+lm = dspy.LM("openai/gpt-5.4")
 dspy.configure(lm=lm)
 
 # ----- Create agent with SQLite persistence -----

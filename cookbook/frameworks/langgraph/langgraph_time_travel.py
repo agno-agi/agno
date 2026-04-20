@@ -20,7 +20,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import MessagesState, StateGraph
 
 # ----- Build a LangGraph with checkpointer -----
-llm = ChatOpenAI(model="gpt-4o-mini")
+llm = ChatOpenAI(model="gpt-5.4")
 
 
 def chatbot(state: MessagesState):

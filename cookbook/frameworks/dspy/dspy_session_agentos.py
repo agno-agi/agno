@@ -45,7 +45,7 @@ def search_web(query: str) -> str:
 
 
 # ----- Configure DSPy (must be set on the main thread) -----
-dspy.configure(lm=dspy.LM("openai/gpt-4o-mini"))
+dspy.configure(lm=dspy.LM("openai/gpt-5.4"))
 
 # ----- Create the DSPy ReAct agent with search + persistence -----
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
