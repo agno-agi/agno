@@ -997,6 +997,135 @@ def test_build_subagent_logs_when_template_overrides_conflict():
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Streaming: verify subagent is always invoked with stream=False regardless
+# of parent's streaming mode (both sync and async spawn paths).
+# ---------------------------------------------------------------------------
+
+
+def test_sync_spawn_forces_stream_false_on_subagent_run():
+    """Parent may run in stream=True mode, but the subagent must always be
+    invoked with stream=False — streaming a subagent's chunks into a
+    synchronous caller would be pointless (the caller only gets a string
+    back) and would defeat context isolation."""
+    captured: dict = {}
+
+    def fake_run(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        r = MagicMock()
+        r.content = "ok"
+        r.metrics = None
+        return r
+
+    mock_agent = MagicMock()
+    mock_agent.run = fake_run
+    mock_agent.deep_copy = MagicMock(return_value=mock_agent)
+
+    parent = _make_parent(template=mock_agent)
+    toolkit = SubAgentToolkit(parent=parent, config=SubAgentConfig(log_subagent_runs=False))
+    toolkit.spawn_agent(role="r", instructions="i", task="task_a")
+
+    assert captured.get("stream") is False
+    assert captured.get("input") == "task_a"
+
+
+@pytest.mark.asyncio
+async def test_async_spawn_forces_stream_false_on_subagent_arun():
+    """Same invariant for the async path — aspawn_agent must pass stream=False
+    to subagent.arun regardless of how the parent is streaming."""
+    captured: dict = {}
+    result_mock = MagicMock()
+    result_mock.content = "ok"
+    result_mock.metrics = None
+
+    async def fake_arun(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        return result_mock
+
+    mock_agent = MagicMock()
+    mock_agent.arun = fake_arun
+    mock_agent.deep_copy = MagicMock(return_value=mock_agent)
+
+    parent = _make_parent(template=mock_agent)
+    toolkit = SubAgentToolkit(parent=parent, config=SubAgentConfig(log_subagent_runs=False))
+    await toolkit.aspawn_agent(role="r", instructions="i", task="task_a")
+
+    assert captured.get("stream") is False
+    assert captured.get("input") == "task_a"
+
+
+# ---------------------------------------------------------------------------
+# build_guidance edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_build_guidance_empty_model_tiers_omits_section():
+    """model_tiers={} with allow_model_tier_selection=True is a degenerate
+    config — the guidance must not emit a dangling 'Model tier selection'
+    section with zero tiers listed."""
+    parent = _make_parent()
+    cfg = SubAgentConfig(model_tiers={}, allow_model_tier_selection=True)
+    tk = SubAgentToolkit(parent=parent, config=cfg)
+
+    guidance = tk.build_guidance()
+    assert "Model tier selection" not in guidance
+
+
+# ---------------------------------------------------------------------------
+# Edge-case input shapes
+# ---------------------------------------------------------------------------
+
+
+def test_session_state_as_non_dict_string_does_not_crash():
+    """session_state is typed Dict in Agent, but defensively handle the case
+    where a user set it to a scalar or string value."""
+    parent = _make_parent()
+    parent.session_state = "I am a string"
+    cfg = SubAgentConfig(inject_session_state=True)
+    tk = SubAgentToolkit(parent=parent, config=cfg)
+    ctx = tk._build_additional_context()
+    # json.dumps of a string is the quoted literal — any non-None return is OK.
+    assert ctx is not None
+
+
+def test_template_knowledge_persists_to_subagent():
+    """knowledge is a heavy resource shared across deep_copy (see _utils.py) —
+    the subagent should carry the same KnowledgeProtocol instance."""
+    mock_knowledge = MagicMock()
+    mock_knowledge.name = "fake_kb"
+
+    template = Agent(name="tmpl", knowledge=mock_knowledge)
+    parent = Agent(
+        name="p",
+        enable_dynamic_subagents=True,
+        subagent_template=template,
+    )
+    parent.initialize_agent()
+    toolkit = next(t for t in parent.tools if isinstance(t, SubAgentToolkit))
+
+    sub = toolkit._build_subagent("role", "ins", None, None, None, "task")
+    assert sub.knowledge is mock_knowledge
+
+
+def test_multiple_spawns_produce_independent_metadata_dicts():
+    """Each spawn must get a fresh metadata dict — otherwise two subagents
+    in a single parent run would share (and mutate) the same object."""
+    template = Agent(name="tmpl")
+    parent = Agent(
+        name="p",
+        enable_dynamic_subagents=True,
+        subagent_template=template,
+    )
+    parent.initialize_agent()
+    toolkit = next(t for t in parent.tools if isinstance(t, SubAgentToolkit))
+
+    s1 = toolkit._build_subagent("r1", "i", None, None, None, "t1")
+    s2 = toolkit._build_subagent("r2", "i", None, None, None, "t2")
+    assert s1.metadata is not s2.metadata
+    s1.metadata["leak"] = "from_s1"
+    assert "leak" not in (s2.metadata or {})
+
+
 def test_sync_spawn_log_emitted_after_semaphore_acquire():
     """The 'Spawning subagent' log must fire AFTER the sync semaphore is
     acquired, so log timestamps reflect real start time under concurrency."""
