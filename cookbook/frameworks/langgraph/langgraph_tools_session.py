@@ -66,7 +66,9 @@ graph = StateGraph(MessagesState)
 graph.add_node("chatbot", chatbot)
 graph.add_node("tools", ToolNode(tools))
 graph.set_entry_point("chatbot")
-graph.add_conditional_edges("chatbot", should_continue, {"tools": "tools", "end": "__end__"})
+graph.add_conditional_edges(
+    "chatbot", should_continue, {"tools": "tools", "end": "__end__"}
+)
 graph.add_edge("tools", "chatbot")
 compiled = graph.compile()
 

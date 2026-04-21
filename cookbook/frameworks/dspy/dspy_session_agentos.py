@@ -28,11 +28,10 @@ Then call the API:
 """
 
 import dspy
-from ddgs import DDGS
-
 from agno.agents.dspy import DSPyAgent
 from agno.db.postgres import PostgresDb
 from agno.os.app import AgentOS
+from ddgs import DDGS
 
 
 # ----- Define a live web search tool -----

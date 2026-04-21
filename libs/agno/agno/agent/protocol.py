@@ -18,6 +18,7 @@ class AgentProtocol(Protocol):
     @property
     def name(self) -> Optional[str]: ...
 
+    # def (not async def) because arun returns either a coroutine or an async iterator.
     def arun(
         self,
         input: Any,

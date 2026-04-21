@@ -107,7 +107,7 @@ class BaseExternalAgent:
         user_id: Optional[str] = None,
         **kwargs: Any,
     ) -> Union[RunOutput, Iterator[RunOutputEvent]]:
-        """Synchronous run. Returns RunOutput (non-streaming) or Iterator[RunOutputEvent] (streaming)."""
+        """Synchronous run. Dispatches to the async internals."""
         if stream:
             return self._run_stream(input, session_id=session_id, user_id=user_id, **kwargs)
         else:
@@ -432,6 +432,30 @@ class BaseExternalAgent:
         elif isinstance(self.db, BaseDb):
             self.db.upsert_session(session)
 
+    # Run inspection (used by AgentOS /agents/{id}/runs/{run_id} for external agents)
+
+    @staticmethod
+    def _find_run_in_session(session: AgentSession, run_id: str) -> Optional[RunOutput]:
+        """Find a persisted run by id within the given session."""
+        for run in session.runs or []:
+            if isinstance(run, RunOutput) and run.run_id == run_id:
+                return run
+        return None
+
+    def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
+        """Get a persisted RunOutput for this adapter."""
+        if not session_id:
+            return None
+        session = self.read_or_create_session(session_id)
+        return self._find_run_in_session(session, run_id)
+
+    async def aget_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
+        """Get a persisted RunOutput for this adapter."""
+        if not session_id:
+            return None
+        session = await self.aread_or_create_session(session_id)
+        return self._find_run_in_session(session, run_id)
+
     def _build_run_output(
         self,
         run_id: str,
@@ -516,17 +540,21 @@ class BaseExternalAgent:
             for msg in run.messages:
                 if msg.role == "assistant" and msg.tool_calls:
                     # Assistant message with tool calls (no text content)
-                    history.append({
-                        "role": "assistant",
-                        "content": str(msg.content) if msg.content else "",
-                        "tool_calls": msg.tool_calls,
-                    })
+                    history.append(
+                        {
+                            "role": "assistant",
+                            "content": str(msg.content) if msg.content else "",
+                            "tool_calls": msg.tool_calls,
+                        }
+                    )
                 elif msg.role == "tool" and msg.content:
-                    history.append({
-                        "role": "tool",
-                        "content": str(msg.content),
-                        "tool_call_id": msg.tool_call_id or "",
-                    })
+                    history.append(
+                        {
+                            "role": "tool",
+                            "content": str(msg.content),
+                            "tool_call_id": msg.tool_call_id or "",
+                        }
+                    )
                 elif msg.role in ("user", "assistant") and msg.content:
                     history.append({"role": msg.role, "content": str(msg.content)})
         return history
@@ -660,7 +688,7 @@ class BaseExternalAgent:
             )
 
     def _run_stream(self, input: Any, **kwargs: Any) -> Iterator[RunOutputEvent]:
-        """Sync streaming wrapper that yields events in real-time using a background thread."""
+        """Sync streaming wrapper. Runs the async stream on a background thread."""
         import queue
         import threading
 
@@ -690,9 +718,7 @@ class BaseExternalAgent:
     # Subclass hooks (must be implemented by adapters)
     # ---------------------------------------------------------------------------
 
-    async def _arun_adapter(
-        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
-    ) -> Any:
+    async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> Any:
         """Non-streaming execution. Return the response content."""
         raise NotImplementedError(f"{self.__class__.__name__} must implement _arun_adapter")
 

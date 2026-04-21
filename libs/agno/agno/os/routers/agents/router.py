@@ -56,6 +56,12 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
+def _require_capability(agent: Any, method: str, feature: str) -> None:
+    """Raise 501 if the agent does not expose the given method."""
+    if not callable(getattr(agent, method, None)):
+        raise HTTPException(status_code=501, detail=f"This agent does not support {feature}")
+
+
 async def agent_response_streamer(
     agent: Union[Agent, RemoteAgent, AgentProtocol],
     message: str,
@@ -475,9 +481,7 @@ def get_agent_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        # External framework agents do not support cancel_run
-        if not hasattr(agent, "acancel_run"):
-            raise HTTPException(status_code=501, detail="This agent does not support cancel_run")
+        _require_capability(agent, "acancel_run", "cancel_run")
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
@@ -548,9 +552,7 @@ def get_agent_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        # External framework agents do not support continue_run
-        if not isinstance(agent, (Agent, RemoteAgent)) and not hasattr(agent, "acontinue_run"):
-            raise HTTPException(status_code=501, detail="This agent does not support continue_run")
+        _require_capability(agent, "acontinue_run", "continue_run")
 
         if session_id is None or session_id == "":
             log_warning(
@@ -689,25 +691,24 @@ def get_agent_router(
             accessible_agents = os.agents or []
 
         agents: List[AgentResponse] = []
-        if accessible_agents:
-            for agent in accessible_agents:
-                if isinstance(agent, RemoteAgent):
-                    agents.append(await agent.get_agent_config())
-                elif isinstance(agent, Agent):
-                    agent_response = await AgentResponse.from_agent(agent=agent, is_component=False)
-                    agents.append(agent_response)
-                else:
-                    # External framework agent -- create minimal response
-                    agent_db = getattr(agent, "db", None)
-                    agents.append(
-                        AgentResponse(
-                            id=agent.id,
-                            name=agent.name,
-                            description=getattr(agent, "description", None),
-                            db_id=agent_db.id if agent_db else None,
-                            metadata={"framework": getattr(agent, "framework", "external")},
-                        )
-                    )
+        for agent in accessible_agents or []:
+            if isinstance(agent, RemoteAgent):
+                agents.append(await agent.get_agent_config())
+                continue
+            if isinstance(agent, Agent):
+                agents.append(await AgentResponse.from_agent(agent=agent, is_component=False))
+                continue
+            # External framework adapter: build a minimal response
+            agent_db = getattr(agent, "db", None)
+            agents.append(
+                AgentResponse(
+                    id=agent.id,
+                    name=agent.name,
+                    description=getattr(agent, "description", None),
+                    db_id=agent_db.id if agent_db else None,
+                    metadata={"framework": getattr(agent, "framework", "external")},
+                )
+            )
 
         if os.db and isinstance(os.db, BaseDb):
             from agno.agent.agent import get_agents
@@ -804,8 +805,7 @@ def get_agent_router(
             raise HTTPException(status_code=404, detail="Agent not found")
         if isinstance(agent, RemoteAgent):
             raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
-        if not hasattr(agent, "aget_run_output"):
-            raise HTTPException(status_code=501, detail="This agent does not support run polling")
+        _require_capability(agent, "aget_run_output", "run polling")
 
         run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
         if run_output is None:
@@ -840,13 +840,16 @@ def get_agent_router(
             raise HTTPException(status_code=404, detail="Agent not found")
         if isinstance(agent, RemoteAgent):
             raise HTTPException(status_code=400, detail="Run listing is not supported for remote agents")
-        if not isinstance(agent, Agent):
+
+        # Load session: native Agent uses the storage helper, external adapters have their own method.
+        if isinstance(agent, Agent):
+            from agno.agent._storage import aread_or_create_session
+
+            session = await aread_or_create_session(agent, session_id=session_id)
+        elif hasattr(agent, "aread_or_create_session"):
+            session = await agent.aread_or_create_session(session_id=session_id)
+        else:
             raise HTTPException(status_code=501, detail="This agent does not support run listing")
-
-        # Load the session to get its runs
-        from agno.agent._storage import aread_or_create_session
-
-        session = await aread_or_create_session(agent, session_id=session_id)
         runs = session.runs or []
 
         # Convert to dicts and optionally filter by status

@@ -1,3 +1,3 @@
-from agno.agents.claude.agent import ClaudeAgentSDK
+from agno.agents.claude.agent import ClaudeAgent
 
-__all__ = ["ClaudeAgentSDK"]
+__all__ = ["ClaudeAgent"]

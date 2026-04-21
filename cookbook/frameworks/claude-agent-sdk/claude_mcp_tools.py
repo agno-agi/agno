@@ -1,5 +1,5 @@
 """
-Claude Agent SDK with custom MCP tools, wrapped in Agno's ClaudeAgentSDK.
+Claude Agent SDK with custom MCP tools, wrapped in Agno's ClaudeAgent.
 
 Shows how to add custom tools via in-process MCP servers — the Claude Agent SDK
 pattern for user-defined tools.
@@ -11,7 +11,7 @@ Usage:
     .venvs/demo/bin/python cookbook/frameworks/claude_mcp_tools.py
 """
 
-from agno.agents.claude import ClaudeAgentSDK
+from agno.agents.claude import ClaudeAgent
 
 # ----- Define custom tools via MCP server -----
 # The Claude Agent SDK uses MCP servers for custom tools.
@@ -49,7 +49,7 @@ try:
     )
 
     # ----- Agent with custom MCP tools -----
-    agent = ClaudeAgentSDK(
+    agent = ClaudeAgent(
         agent_id="claude-city-agent",
         agent_name="Claude City Agent",
         model="claude-sonnet-4-20250514",

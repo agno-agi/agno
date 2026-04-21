@@ -56,9 +56,7 @@ class DSPyAgent(BaseExternalAgent):
     program_kwargs: Dict[str, Any] = field(default_factory=dict)
     framework: str = "dspy"
 
-    async def _arun_adapter(
-        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
-    ) -> str:
+    async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> str:
         """Non-streaming: run the DSPy program and return the output field."""
         try:
             import dspy
@@ -190,6 +188,6 @@ class DSPyAgent(BaseExternalAgent):
 
                 # StatusMessage — skip (internal DSPy execution status)
 
-        # Flush any remaining tool events (e.g., if no text was streamed)
+        # Flush any tool events on the cache-hit path (no StreamResponse was yielded).
         for evt in tool_events:
             yield evt

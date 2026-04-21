@@ -6,8 +6,6 @@ from agno.media import File, Image
 from agno.models.message import Message
 from agno.utils.log import log_error, log_info, log_warning
 
-
-
 # Models that support assistant message prefill. This is a closed set —
 # prefill was deprecated starting with Claude 4.6 and all future models
 # are expected to reject it.

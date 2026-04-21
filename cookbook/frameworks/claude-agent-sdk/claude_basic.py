@@ -8,10 +8,10 @@ Usage:
     .venvs/demo/bin/python cookbook/frameworks/claude_basic.py
 """
 
-from agno.agents.claude import ClaudeAgentSDK
+from agno.agents.claude import ClaudeAgent
 
 # ----- Wrap Claude Agent SDK for Agno -----
-agent = ClaudeAgentSDK(
+agent = ClaudeAgent(
     agent_id="claude-assistant",
     agent_name="Claude Assistant",
     model="claude-sonnet-4-20250514",
