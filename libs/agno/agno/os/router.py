@@ -1,5 +1,5 @@
 import json
-from typing import TYPE_CHECKING, List, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 from fastapi import (
     APIRouter,
@@ -266,6 +266,11 @@ def get_websocket_router(
     """
     Create WebSocket router without HTTP authentication dependencies.
     WebSocket endpoints handle authentication internally via message-based auth.
+
+    Supports both JWT and legacy (os_security_key) authentication.
+    When JWT is configured (via authorization=True on AgentOS), tokens are
+    validated using the JWTValidator stored on app.state. Scopes from the
+    JWT are enforced before workflow execution.
     """
     ws_router = APIRouter()
 
@@ -275,8 +280,19 @@ def get_websocket_router(
     )
     async def workflow_websocket_endpoint(websocket: WebSocket):
         """WebSocket endpoint for receiving real-time workflow events"""
-        requires_auth = bool(settings.os_security_key)
+        from agno.os.middleware.jwt import JWTValidator
+
+        # Check if JWT validator is configured (set by AgentOS when authorization=True)
+        jwt_validator: Optional[JWTValidator] = getattr(websocket.app.state, "jwt_validator", None)
+        jwt_auth_enabled = jwt_validator is not None
+
+        # Determine auth requirements - JWT takes precedence over legacy
+        requires_auth = jwt_auth_enabled or bool(settings.os_security_key)
+
         await websocket_manager.connect(websocket, requires_auth=requires_auth)
+
+        # Store user context from JWT auth
+        websocket_user_context: Dict[str, Any] = {}
 
         try:
             while True:
@@ -291,19 +307,49 @@ def get_websocket_router(
                         await websocket.send_text(json.dumps({"event": "auth_error", "error": "Token is required"}))
                         continue
 
-                    if validate_websocket_token(token, settings):
+                    if jwt_auth_enabled and jwt_validator:
+                        # Use JWT validator for token validation
+                        try:
+                            payload = jwt_validator.validate_token(token)
+                            claims = jwt_validator.extract_claims(payload)
+                            await websocket_manager.authenticate_websocket(websocket)
+
+                            # Store user context from JWT
+                            websocket_user_context["user_id"] = claims["user_id"]
+                            websocket_user_context["scopes"] = claims["scopes"]
+                            websocket_user_context["payload"] = payload
+
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "event": "authenticated",
+                                        "message": "JWT authentication successful.",
+                                        "user_id": claims["user_id"],
+                                    }
+                                )
+                            )
+                        except Exception as e:
+                            error_msg = str(e) if str(e) else "Invalid token"
+                            error_type = "expired" if "expired" in error_msg.lower() else "invalid_token"
+                            await websocket.send_text(
+                                json.dumps({"event": "auth_error", "error": error_msg, "error_type": error_type})
+                            )
+                        continue
+                    elif validate_websocket_token(token, settings):
+                        # Legacy os_security_key authentication
                         await websocket_manager.authenticate_websocket(websocket)
                     else:
                         await websocket.send_text(json.dumps({"event": "auth_error", "error": "Invalid token"}))
-                        continue
+                    continue
 
                 # Check authentication for all other actions (only when required)
                 elif requires_auth and not websocket_manager.is_authenticated(websocket):
+                    auth_type = "JWT" if jwt_auth_enabled else "bearer token"
                     await websocket.send_text(
                         json.dumps(
                             {
                                 "event": "auth_required",
-                                "error": "Authentication required. Send authenticate action with valid token.",
+                                "error": f"Authentication required. Send authenticate action with valid {auth_type}.",
                             }
                         )
                     )
@@ -314,10 +360,32 @@ def get_websocket_router(
                     await websocket.send_text(json.dumps({"event": "pong"}))
 
                 elif action == "start-workflow":
+                    # Check workflow-level scope enforcement
+                    workflow_id = message.get("workflow_id")
+                    user_scopes = websocket_user_context.get("scopes", [])
+                    if user_scopes and workflow_id:
+                        from agno.os.scopes import has_required_scopes
+
+                        if not has_required_scopes(
+                            user_scopes, ["workflows:run"], resource_type="workflows", resource_id=workflow_id
+                        ):
+                            await websocket.send_text(
+                                json.dumps({"event": "error", "error": "Insufficient permissions to run this workflow"})
+                            )
+                            continue
+
+                    # Add user context to message if available from JWT auth
+                    if websocket_user_context:
+                        if "user_id" not in message and websocket_user_context.get("user_id"):
+                            message["user_id"] = websocket_user_context["user_id"]
                     # Handle workflow execution directly via WebSocket
                     await handle_workflow_via_websocket(websocket, message, os)
 
                 elif action == "reconnect":
+                    # Add user_id context for scoped session lookup on reconnect
+                    if websocket_user_context:
+                        if "user_id" not in message and websocket_user_context.get("user_id"):
+                            message["user_id"] = websocket_user_context["user_id"]
                     # Subscribe/reconnect to an existing workflow run
                     await handle_workflow_subscription(websocket, message, os)
 
