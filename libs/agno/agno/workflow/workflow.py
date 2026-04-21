@@ -128,7 +128,21 @@ STEP_TYPE_MAPPING = {
 }
 
 # Any step-like component that can appear in a workflow (top-level or nested).
-WorkflowStep = Union[Step, Steps, Loop, Parallel, Condition, Router]
+# Matches what callers iterate over in ``Workflow.steps`` (see ``WorkflowSteps``
+# below): Step + composite step types + nested Workflow + callable step.
+WorkflowStep = Union[
+    Step,
+    Steps,
+    Loop,
+    Parallel,
+    Condition,
+    Router,
+    "Workflow",
+    Callable[
+        [StepInput],
+        Union[StepOutput, Awaitable[StepOutput], Iterator[StepOutput], AsyncIterator[StepOutput]],
+    ],
+]
 
 
 def _find_inner_step_by_executor(
@@ -6234,7 +6248,9 @@ class Workflow:
                                 workflow_run_response,
                                 collected_step_outputs,
                             )
-                            yield create_executor_paused_event(new_req, _inner, i, step_name, workflow_run_response)
+                            yield create_executor_paused_event(
+                                new_req, _router_inner, i, step_name, workflow_run_response
+                            )
                             save_paused_session(self, session, workflow_run_response)
                             return
 
@@ -7769,7 +7785,9 @@ class Workflow:
                                 workflow_run_response,
                                 collected_step_outputs,
                             )
-                            yield create_executor_paused_event(new_req, _inner, i, step_name, workflow_run_response)
+                            yield create_executor_paused_event(
+                                new_req, _router_inner, i, step_name, workflow_run_response
+                            )
                             save_paused_session(self, session, workflow_run_response)
                             return
 
