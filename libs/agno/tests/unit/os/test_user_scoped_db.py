@@ -1,10 +1,11 @@
-"""Tests for UserScopedDb and AsyncUserScopedDb wrappers."""
+"""Tests for UserScopedDb, AsyncUserScopedDb wrappers, and get_scoped_user_id."""
 
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from agno.db.base import SessionType
+from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.user_scoped_db import AsyncUserScopedDb, UserScopedDb
 
 
@@ -194,3 +195,51 @@ class TestAsyncUserScopedDb:
         scoped = AsyncUserScopedDb(mock_async_db, user_id="user-123")
         await scoped.get_knowledge_contents(limit=10)
         mock_async_db.get_knowledge_contents.assert_called_once_with(limit=10)
+
+
+class TestGetScopedUserId:
+    """Test get_scoped_user_id admin bypass logic."""
+
+    def _make_request(self, user_id=None, scopes=None):
+        request = MagicMock()
+        request.state = MagicMock()
+        if user_id is not None:
+            request.state.user_id = user_id
+        else:
+            # Simulate missing attribute
+            del request.state.user_id
+        if scopes is not None:
+            request.state.scopes = scopes
+        else:
+            del request.state.scopes
+        return request
+
+    def test_regular_user_returns_user_id(self):
+        request = self._make_request(user_id="user-123", scopes=["agents:read"])
+        assert get_scoped_user_id(request) == "user-123"
+
+    def test_admin_returns_none(self):
+        """Admin users should bypass scoping (see all data)."""
+        request = self._make_request(user_id="admin-user", scopes=["agent_os:admin"])
+        assert get_scoped_user_id(request) is None
+
+    def test_admin_with_other_scopes_returns_none(self):
+        """Admin scope overrides regardless of other scopes present."""
+        request = self._make_request(
+            user_id="admin-user", scopes=["agents:read", "agent_os:admin", "sessions:read"]
+        )
+        assert get_scoped_user_id(request) is None
+
+    def test_no_user_id_returns_none(self):
+        """No JWT user_id means no scoping."""
+        request = self._make_request(user_id=None, scopes=[])
+        assert get_scoped_user_id(request) is None
+
+    def test_no_scopes_returns_user_id(self):
+        """User with user_id but no scopes is still scoped (not admin)."""
+        request = self._make_request(user_id="user-123", scopes=None)
+        assert get_scoped_user_id(request) == "user-123"
+
+    def test_empty_scopes_returns_user_id(self):
+        request = self._make_request(user_id="user-123", scopes=[])
+        assert get_scoped_user_id(request) == "user-123"

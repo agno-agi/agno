@@ -774,7 +774,9 @@ def get_agent_router(
         if isinstance(agent, RemoteAgent):
             raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
 
-        user_id = getattr(request.state, "user_id", None)
+        from agno.os.middleware.user_scope import get_scoped_user_id
+
+        user_id = get_scoped_user_id(request)
         run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
@@ -813,7 +815,9 @@ def get_agent_router(
         # Load the session to get its runs
         from agno.agent._storage import aread_or_create_session
 
-        user_id = getattr(request.state, "user_id", None)
+        from agno.os.middleware.user_scope import get_scoped_user_id
+
+        user_id = get_scoped_user_id(request)
         session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
         runs = session.runs or []
 

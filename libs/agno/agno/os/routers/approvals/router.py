@@ -66,10 +66,12 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         page: int = Query(1, ge=1),
         _: bool = Depends(auth_dependency),
     ) -> PaginatedResponse[ApprovalResponse]:
-        # Enforce user_id from JWT if present
-        jwt_user_id = getattr(request.state, "user_id", None)
-        if jwt_user_id:
-            user_id = jwt_user_id
+        # Enforce user_id from JWT if present (admins bypass — see all)
+        from agno.os.middleware.user_scope import get_scoped_user_id
+
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id:
+            user_id = scoped_user_id
 
         approvals, total_count = await _db_call(
             "get_approvals",
@@ -103,10 +105,12 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         user_id: Optional[str] = Query(None),
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, int]:
-        # Enforce user_id from JWT if present
-        jwt_user_id = getattr(request.state, "user_id", None)
-        if jwt_user_id:
-            user_id = jwt_user_id
+        # Enforce user_id from JWT if present (admins bypass — see all)
+        from agno.os.middleware.user_scope import get_scoped_user_id
+
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id:
+            user_id = scoped_user_id
 
         count = await _db_call("get_pending_approval_count", user_id=user_id)
         return {"count": count}
