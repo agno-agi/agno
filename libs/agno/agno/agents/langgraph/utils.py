@@ -32,11 +32,13 @@ def build_messages_with_history(input: Any, history: Optional[List[Dict[str, Any
                                 args = json.loads(args)
                             except (json.JSONDecodeError, TypeError):
                                 args = {"input": args}
-                        lc_tool_calls.append({
-                            "id": tc.get("id", ""),
-                            "name": func.get("name", ""),
-                            "args": args,
-                        })
+                        lc_tool_calls.append(
+                            {
+                                "id": tc.get("id", ""),
+                                "name": func.get("name", ""),
+                                "args": args,
+                            }
+                        )
                     messages.append(AIMessage(content=msg.get("content", ""), tool_calls=lc_tool_calls))
                 else:
                     messages.append(AIMessage(content=msg["content"]))

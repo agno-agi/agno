@@ -8454,7 +8454,9 @@ class Workflow:
             if step.team:
                 step_kwargs["team"] = step.team.deep_copy() if hasattr(step.team, "deep_copy") else step.team
             if step.workflow:
-                step_kwargs["workflow"] = step.workflow.deep_copy() if hasattr(step.workflow, "deep_copy") else step.workflow
+                step_kwargs["workflow"] = (
+                    step.workflow.deep_copy() if hasattr(step.workflow, "deep_copy") else step.workflow
+                )
             # Copy Step configuration attributes
             for attr in [
                 "max_retries",

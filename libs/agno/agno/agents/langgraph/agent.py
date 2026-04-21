@@ -61,9 +61,7 @@ class LangGraphAgent(BaseExternalAgent):
     config: Optional[Dict[str, Any]] = field(default=None)
     framework: str = "langgraph"
 
-    async def _arun_adapter(
-        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
-    ) -> Any:
+    async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> Any:
         """Non-streaming LangGraph invocation."""
         try:
             from langchain_core.messages import AIMessage
@@ -196,17 +194,11 @@ class LangGraphAgent(BaseExternalAgent):
         replay_config = self._build_config({"session_id": session_id})
         replay_config.setdefault("configurable", {})["checkpoint_id"] = checkpoint_id
 
-        # Set config for the duration of the run (must persist through streaming)
-        original_config = self.config
-        self.config = replay_config
-        try:
-            result = self.run(None, stream=stream, session_id=session_id, **kwargs)
-            if stream:
-                # Consume the iterator before restoring config
-                return list(cast(Iterator, result))
-            return result
-        finally:
-            self.config = original_config
+        # Pass config through kwargs; self.config stays untouched.
+        result = self.run(None, stream=stream, session_id=session_id, _lg_config_override=replay_config, **kwargs)
+        if stream:
+            return list(cast(Iterator, result))
+        return result
 
     def print_replay(
         self,
@@ -219,13 +211,7 @@ class LangGraphAgent(BaseExternalAgent):
         """Replay from a checkpoint and print the response with Rich formatting."""
         replay_config = self._build_config({"session_id": session_id})
         replay_config.setdefault("configurable", {})["checkpoint_id"] = checkpoint_id
-
-        original_config = self.config
-        self.config = replay_config
-        try:
-            self.print_response(None, stream=stream, session_id=session_id, **kwargs)
-        finally:
-            self.config = original_config
+        self.print_response(None, stream=stream, session_id=session_id, _lg_config_override=replay_config, **kwargs)
 
     def fork(
         self,
@@ -253,15 +239,11 @@ class LangGraphAgent(BaseExternalAgent):
             update_kwargs["as_node"] = as_node
         new_config = self.graph.update_state(fork_config_base, **update_kwargs)
 
-        original_config = self.config
-        self.config = new_config
-        try:
-            result = self.run(None, stream=stream, session_id=session_id, **kwargs)
-            if stream:
-                return list(cast(Iterator, result))
-            return result
-        finally:
-            self.config = original_config
+        # Pass config through kwargs; self.config stays untouched.
+        result = self.run(None, stream=stream, session_id=session_id, _lg_config_override=new_config, **kwargs)
+        if stream:
+            return list(cast(Iterator, result))
+        return result
 
     def print_fork(
         self,
@@ -281,20 +263,19 @@ class LangGraphAgent(BaseExternalAgent):
         if as_node:
             update_kwargs["as_node"] = as_node
         new_config = self.graph.update_state(fork_config_base, **update_kwargs)
-
-        original_config = self.config
-        self.config = new_config
-        try:
-            self.print_response(None, stream=stream, session_id=session_id, **kwargs)
-        finally:
-            self.config = original_config
+        self.print_response(None, stream=stream, session_id=session_id, _lg_config_override=new_config, **kwargs)
 
     def _build_config(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
-        """Build LangGraph config, mapping session_id to thread_id."""
-        config: Dict[str, Any] = dict(self.config or {})
+        """Build a LangGraph config mapping session_id to thread_id."""
+        # Replay/fork pass a prebuilt config via _lg_config_override so self.config stays untouched.
+        override = kwargs.pop("_lg_config_override", None)
+        base = override if override is not None else self.config
+        config: Dict[str, Any] = dict(base or {})
+        # Rebuild the configurable subdict so mutations don't leak back into self.config.
+        config["configurable"] = dict(config.get("configurable") or {})
         session_id = kwargs.get("session_id")
         if session_id:
-            configurable = config.setdefault("configurable", {})
+            configurable = config["configurable"]
             configurable["thread_id"] = session_id
             configurable.setdefault("checkpoint_ns", "")
         return config

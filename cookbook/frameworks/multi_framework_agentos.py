@@ -35,16 +35,15 @@ Or call them via API:
 """
 
 import dspy
-from langchain_openai import ChatOpenAI
-from langgraph.graph import MessagesState, StateGraph
-
 from agno.agent import Agent
-from agno.agents.claude import ClaudeAgentSDK
+from agno.agents.claude import ClaudeAgent
 from agno.agents.dspy import DSPyAgent
 from agno.agents.langgraph import LangGraphAgent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from agno.os.app import AgentOS
+from langchain_openai import ChatOpenAI
+from langgraph.graph import MessagesState, StateGraph
 
 # ---------------------------------------------------------------------------
 # Shared database for session persistence
@@ -66,7 +65,7 @@ agno_agent = Agent(
 # ---------------------------------------------------------------------------
 # 2. Claude Agent SDK
 # ---------------------------------------------------------------------------
-claude_agent = ClaudeAgentSDK(
+claude_agent = ClaudeAgent(
     agent_id="claude-assistant",
     agent_name="Claude Assistant",
     description="A Claude-powered assistant with web search",

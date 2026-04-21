@@ -1,5 +1,5 @@
 """
-Claude Agent SDK with built-in tool calls, wrapped in Agno's ClaudeAgentSDK.
+Claude Agent SDK with built-in tool calls, wrapped in Agno's ClaudeAgent.
 
 The Claude Agent SDK has built-in tools (Read, Edit, Bash, Glob, Grep, WebSearch, etc.)
 that are executed internally by the SDK. You just specify which tools to allow.
@@ -11,10 +11,10 @@ Usage:
     .venvs/demo/bin/python cookbook/frameworks/claude_tools.py
 """
 
-from agno.agents.claude import ClaudeAgentSDK
+from agno.agents.claude import ClaudeAgent
 
 # ----- Agent with built-in tools -----
-agent = ClaudeAgentSDK(
+agent = ClaudeAgent(
     agent_id="claude-coder",
     agent_name="Claude Coder",
     model="claude-sonnet-4-20250514",

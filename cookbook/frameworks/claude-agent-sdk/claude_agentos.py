@@ -30,13 +30,13 @@ Then call the API:
         -F "stream=false"
 """
 
-from agno.agents.claude import ClaudeAgentSDK
+from agno.agents.claude import ClaudeAgent
 from agno.os.app import AgentOS
 
 # ---------------------------------------------------------------------------
 # Create the Claude Agent SDK agent
 # ---------------------------------------------------------------------------
-claude_agent = ClaudeAgentSDK(
+claude_agent = ClaudeAgent(
     agent_id="claude-assistant",
     agent_name="Claude Assistant",
     description="A Claude-powered assistant served through AgentOS",

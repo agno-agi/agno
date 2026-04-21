@@ -12,8 +12,18 @@ from agno.run.agent import (
 )
 
 
+def _sdk() -> Any:
+    """Lazy-import the claude_agent_sdk module."""
+    try:
+        import claude_agent_sdk  # type: ignore
+
+        return claude_agent_sdk
+    except ImportError as e:
+        raise ImportError("claude-agent-sdk is required: pip install claude-agent-sdk") from e
+
+
 @dataclass
-class ClaudeAgentSDK(BaseExternalAgent):
+class ClaudeAgent(BaseExternalAgent):
     """Adapter for the Claude Agent SDK (claude-agent-sdk).
 
     Wraps the Claude Agent SDK's query() function so it can be used with AgentOS
@@ -25,7 +35,7 @@ class ClaudeAgentSDK(BaseExternalAgent):
     Args:
         agent_id: Unique identifier for this agent.
         agent_name: Display name for this agent.
-        prompt: Optional system prompt for the agent.
+        system_prompt: Optional system prompt for the agent.
         model: Model to use (e.g. "claude-sonnet-4-20250514"). Defaults to SDK default.
         allowed_tools: List of tools the agent can use (e.g. ["Read", "Bash", "WebSearch"]).
         disallowed_tools: List of tools to block.
@@ -37,9 +47,9 @@ class ClaudeAgentSDK(BaseExternalAgent):
         options_kwargs: Additional kwargs passed to ClaudeAgentOptions.
 
     Example:
-        from agno.agents.claude import ClaudeAgentSDK
+        from agno.agents.claude import ClaudeAgent
 
-        agent = ClaudeAgentSDK(
+        agent = ClaudeAgent(
             agent_id="claude-coder",
             agent_name="Claude Coder",
             allowed_tools=["Read", "Edit", "Bash"],
@@ -55,7 +65,7 @@ class ClaudeAgentSDK(BaseExternalAgent):
         AgentOS(agents=[agent])
     """
 
-    prompt: Optional[str] = None
+    system_prompt: Optional[str] = None
     model: Optional[str] = None
     allowed_tools: Optional[List[str]] = None
     disallowed_tools: Optional[List[str]] = None
@@ -67,20 +77,17 @@ class ClaudeAgentSDK(BaseExternalAgent):
     options_kwargs: Dict[str, Any] = field(default_factory=dict)
     framework: str = "claude-agent-sdk"
 
-    # Session tracking: last session_id from the SDK
-    _last_session_id: Optional[str] = field(default=None, init=False, repr=False)
+    # Maps Agno session_id -> SDK session id. Keyed per session to avoid cross-session bleed.
+    _sdk_session_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     def _build_options(self, *, streaming: bool = False, **kwargs: Any) -> Any:
         """Build ClaudeAgentOptions from agent config."""
-        try:
-            from claude_agent_sdk import ClaudeAgentOptions
-        except ImportError:
-            raise ImportError("claude-agent-sdk is required: pip install claude-agent-sdk")
+        sdk = _sdk()
 
         opts: Dict[str, Any] = {}
 
-        if self.prompt:
-            opts["system_prompt"] = self.prompt
+        if self.system_prompt:
+            opts["system_prompt"] = self.system_prompt
         if self.model:
             opts["model"] = self.model
         if self.allowed_tools:
@@ -102,41 +109,39 @@ class ClaudeAgentSDK(BaseExternalAgent):
         if streaming:
             opts["include_partial_messages"] = True
 
-        # Resume session if session_id provided
+        # Resume only the SDK session tied to this Agno session_id.
         session_id = kwargs.get("session_id")
-        if session_id and self._last_session_id:
-            opts["resume"] = self._last_session_id
+        if session_id:
+            sdk_session_id = self._sdk_session_ids.get(session_id)
+            if sdk_session_id:
+                opts["resume"] = sdk_session_id
 
         opts.update(self.options_kwargs)
-        return ClaudeAgentOptions(**opts)
+        return sdk.ClaudeAgentOptions(**opts)
 
-    async def _arun_adapter(
-        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
-    ) -> str:
+    async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> str:
         """Non-streaming: collect all messages and return final content."""
-        try:
-            from claude_agent_sdk import AssistantMessage, ResultMessage, SystemMessage, TextBlock, query
-        except ImportError:
-            raise ImportError("claude-agent-sdk is required: pip install claude-agent-sdk")
+        sdk = _sdk()
 
         options = self._build_options(**kwargs)
+        agno_session_id = kwargs.get("session_id")
         result_text = ""
 
-        async for message in query(prompt=str(input), options=options):
-            if isinstance(message, SystemMessage):
+        async for message in sdk.query(prompt=str(input), options=options):
+            if isinstance(message, sdk.SystemMessage):
                 if hasattr(message, "subtype") and message.subtype == "init":
                     data = getattr(message, "data", {}) or {}
-                    if "session_id" in data:
-                        self._last_session_id = data["session_id"]
+                    if "session_id" in data and agno_session_id:
+                        self._sdk_session_ids[agno_session_id] = data["session_id"]
 
-            elif isinstance(message, AssistantMessage):
+            elif isinstance(message, sdk.AssistantMessage):
                 for block in message.content:
-                    if isinstance(block, TextBlock):
+                    if isinstance(block, sdk.TextBlock):
                         result_text = block.text
 
-            elif isinstance(message, ResultMessage):
-                if hasattr(message, "session_id") and message.session_id:
-                    self._last_session_id = message.session_id
+            elif isinstance(message, sdk.ResultMessage):
+                if hasattr(message, "session_id") and message.session_id and agno_session_id:
+                    self._sdk_session_ids[agno_session_id] = message.session_id
                 # Use result text if available
                 if hasattr(message, "result") and message.result:
                     result_text = str(message.result)
@@ -154,22 +159,10 @@ class ClaudeAgentSDK(BaseExternalAgent):
         streaming and tool call tracking, while still handling complete messages
         for tool results and session management.
         """
-        try:
-            from claude_agent_sdk import (
-                AssistantMessage,
-                ResultMessage,
-                StreamEvent,
-                SystemMessage,
-                TextBlock,
-                ToolResultBlock,
-                ToolUseBlock,
-                UserMessage,
-                query,
-            )
-        except ImportError:
-            raise ImportError("claude-agent-sdk is required: pip install claude-agent-sdk")
+        sdk = _sdk()
 
         run_id = kwargs.get("run_id", str(uuid4()))
+        agno_session_id = kwargs.get("session_id")
         options = self._build_options(streaming=True, **kwargs)
 
         # Track whether we got any StreamEvents (token-level streaming)
@@ -179,8 +172,8 @@ class ClaudeAgentSDK(BaseExternalAgent):
         # Map tool_use_id -> (tool_name, tool_args) for carrying forward to ToolCallCompleted
         tool_info_map: Dict[str, Dict[str, Any]] = {}
 
-        async for message in query(prompt=str(input), options=options):
-            if isinstance(message, StreamEvent):
+        async for message in sdk.query(prompt=str(input), options=options):
+            if isinstance(message, sdk.StreamEvent):
                 got_stream_events = True
                 event = message.event
                 event_type = event.get("type", "")
@@ -200,17 +193,17 @@ class ClaudeAgentSDK(BaseExternalAgent):
                                 content=text,
                             )
 
-            elif isinstance(message, SystemMessage):
+            elif isinstance(message, sdk.SystemMessage):
                 if hasattr(message, "subtype") and message.subtype == "init":
                     data = getattr(message, "data", {}) or {}
-                    if "session_id" in data:
-                        self._last_session_id = data["session_id"]
+                    if "session_id" in data and agno_session_id:
+                        self._sdk_session_ids[agno_session_id] = data["session_id"]
 
-            elif isinstance(message, AssistantMessage):
+            elif isinstance(message, sdk.AssistantMessage):
                 # Always extract tool calls from complete AssistantMessage
                 # (has full name + args). For text, only use if no StreamEvents.
                 for block in message.content:
-                    if isinstance(block, TextBlock):
+                    if isinstance(block, sdk.TextBlock):
                         if not got_stream_events and block.text:
                             yield RunContentEvent(
                                 run_id=run_id,
@@ -218,7 +211,7 @@ class ClaudeAgentSDK(BaseExternalAgent):
                                 agent_name=self.name or "",
                                 content=block.text,
                             )
-                    elif isinstance(block, ToolUseBlock):
+                    elif isinstance(block, sdk.ToolUseBlock):
                         tool_name = getattr(block, "name", "unknown")
                         tool_input = getattr(block, "input", {})
                         tool_id = getattr(block, "id", str(uuid4()))
@@ -237,12 +230,12 @@ class ClaudeAgentSDK(BaseExternalAgent):
                                 ),
                             )
 
-            elif isinstance(message, UserMessage):
+            elif isinstance(message, sdk.UserMessage):
                 # Tool results arrive as ToolResultBlock inside UserMessage
                 content = message.content
                 if isinstance(content, list):
                     for block in content:
-                        if isinstance(block, ToolResultBlock):
+                        if isinstance(block, sdk.ToolResultBlock):
                             tool_use_id = getattr(block, "tool_use_id", str(uuid4()))
                             result_content = getattr(block, "content", "")
                             if isinstance(result_content, list):
@@ -263,6 +256,6 @@ class ClaudeAgentSDK(BaseExternalAgent):
                                 ),
                             )
 
-            elif isinstance(message, ResultMessage):
-                if hasattr(message, "session_id") and message.session_id:
-                    self._last_session_id = message.session_id
+            elif isinstance(message, sdk.ResultMessage):
+                if hasattr(message, "session_id") and message.session_id and agno_session_id:
+                    self._sdk_session_ids[agno_session_id] = message.session_id
