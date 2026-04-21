@@ -559,7 +559,10 @@ def scrub_history_messages_from_run_output(run_response: Union[RunOutput, TeamRu
 
 
 def get_run_output_util(
-    entity: Union["Agent", "Team"], run_id: str, session_id: Optional[str] = None
+    entity: Union["Agent", "Team"],
+    run_id: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[
     Union[
         RunOutput,
@@ -572,12 +575,13 @@ def get_run_output_util(
     Args:
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     """
     if session_id is not None:
         if _has_async_db(entity):
             raise ValueError("Async database not supported for sync functions")
 
-        session = entity.get_session(session_id=session_id)
+        session = entity.get_session(session_id=session_id, user_id=user_id)
         if session is not None:
             run_response = session.get_run(run_id=run_id)
             if run_response is not None:
@@ -595,7 +599,10 @@ def get_run_output_util(
 
 
 async def aget_run_output_util(
-    entity: Union["Agent", "Team"], run_id: str, session_id: Optional[str] = None
+    entity: Union["Agent", "Team"],
+    run_id: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
 ) -> Optional[Union[RunOutput, TeamRunOutput]]:
     """
     Get a RunOutput from the database.
@@ -603,9 +610,10 @@ async def aget_run_output_util(
     Args:
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     """
     if session_id is not None:
-        session = await entity.aget_session(session_id=session_id)
+        session = await entity.aget_session(session_id=session_id, user_id=user_id)
         if session is not None:
             run_response = session.get_run(run_id=run_id)
             if run_response is not None:

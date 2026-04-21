@@ -613,6 +613,7 @@ def get_team_router(
         dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
     )
     async def get_team_run(
+        request: Request,
         team_id: str,
         run_id: str,
         session_id: str = Query(..., description="Session ID for the run"),
@@ -623,7 +624,8 @@ def get_team_router(
         if isinstance(team, RemoteTeam):
             raise HTTPException(status_code=400, detail="Run polling is not supported for remote teams")
 
-        run_output = await team.aget_run_output(run_id=run_id, session_id=session_id)
+        user_id = getattr(request.state, "user_id", None)
+        run_output = await team.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
 
@@ -645,6 +647,7 @@ def get_team_router(
         dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
     )
     async def list_team_runs(
+        request: Request,
         team_id: str,
         session_id: str = Query(..., description="Session ID to list runs for"),
         status: Optional[str] = Query(None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR)"),
@@ -658,7 +661,8 @@ def get_team_router(
         if isinstance(team, RemoteTeam):
             raise HTTPException(status_code=400, detail="Run listing is not supported for remote teams")
 
-        session = await _aread_or_create_session(team, session_id=session_id)
+        user_id = getattr(request.state, "user_id", None)
+        session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
         runs = session.runs or []
 
         result = []

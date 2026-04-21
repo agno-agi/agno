@@ -763,6 +763,7 @@ def get_agent_router(
         dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
     )
     async def get_agent_run(
+        request: Request,
         agent_id: str,
         run_id: str,
         session_id: str = Query(..., description="Session ID for the run"),
@@ -773,7 +774,8 @@ def get_agent_router(
         if isinstance(agent, RemoteAgent):
             raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
 
-        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+        user_id = getattr(request.state, "user_id", None)
+        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
 
@@ -795,6 +797,7 @@ def get_agent_router(
         dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
     )
     async def list_agent_runs(
+        request: Request,
         agent_id: str,
         session_id: str = Query(..., description="Session ID to list runs for"),
         status: Optional[str] = Query(None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR)"),
@@ -810,7 +813,8 @@ def get_agent_router(
         # Load the session to get its runs
         from agno.agent._storage import aread_or_create_session
 
-        session = await aread_or_create_session(agent, session_id=session_id)
+        user_id = getattr(request.state, "user_id", None)
+        session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
         runs = session.runs or []
 
         # Convert to dicts and optionally filter by status

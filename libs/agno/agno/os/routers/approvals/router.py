@@ -4,7 +4,7 @@ import asyncio
 import time
 from typing import Any, Dict, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agno.os.routers.approvals.schema import (
     ApprovalCountResponse,
@@ -51,6 +51,7 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
 
     @router.get("/approvals", response_model=PaginatedResponse[ApprovalResponse])
     async def list_approvals(
+        request: Request,
         status: Optional[Literal["pending", "approved", "rejected", "expired", "cancelled"]] = Query(None),
         source_type: Optional[str] = Query(None),
         approval_type: Optional[Literal["required", "audit"]] = Query(None),
@@ -65,6 +66,11 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         page: int = Query(1, ge=1),
         _: bool = Depends(auth_dependency),
     ) -> PaginatedResponse[ApprovalResponse]:
+        # Enforce user_id from JWT if present
+        jwt_user_id = getattr(request.state, "user_id", None)
+        if jwt_user_id:
+            user_id = jwt_user_id
+
         approvals, total_count = await _db_call(
             "get_approvals",
             status=status,
@@ -93,9 +99,15 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
 
     @router.get("/approvals/count", response_model=ApprovalCountResponse)
     async def get_approval_count(
+        request: Request,
         user_id: Optional[str] = Query(None),
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, int]:
+        # Enforce user_id from JWT if present
+        jwt_user_id = getattr(request.state, "user_id", None)
+        if jwt_user_id:
+            user_id = jwt_user_id
+
         count = await _db_call("get_pending_approval_count", user_id=user_id)
         return {"count": count}
 
@@ -127,14 +139,21 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
 
     @router.post("/approvals/{approval_id}/resolve", response_model=ApprovalResponse)
     async def resolve_approval(
+        request: Request,
         approval_id: str,
         body: ApprovalResolve,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
         now = int(time.time())
+        # Use JWT user_id as resolved_by when available (prevents spoofing)
+        resolved_by = body.resolved_by
+        jwt_user_id = getattr(request.state, "user_id", None)
+        if jwt_user_id:
+            resolved_by = jwt_user_id
+
         update_kwargs: Dict[str, Any] = {
             "status": body.status,
-            "resolved_by": body.resolved_by,
+            "resolved_by": resolved_by,
             "resolved_at": now,
         }
         if body.resolution_data is not None:

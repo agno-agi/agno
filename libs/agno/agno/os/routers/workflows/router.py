@@ -787,6 +787,7 @@ def get_workflow_router(
         dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
     )
     async def get_workflow_run(
+        request: Request,
         workflow_id: str,
         run_id: str,
         session_id: str = Query(..., description="Session ID for the run"),
@@ -799,7 +800,8 @@ def get_workflow_router(
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Run polling is not supported for remote workflows")
 
-        run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id)
+        user_id = getattr(request.state, "user_id", None)
+        run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
 

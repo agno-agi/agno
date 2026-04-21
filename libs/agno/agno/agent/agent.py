@@ -923,11 +923,15 @@ class Agent:
     ) -> bool:
         return _storage.delete(self, db=db, hard_delete=hard_delete)
 
-    def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
-        return _storage.get_run_output(self, run_id=run_id, session_id=session_id)
+    def get_run_output(
+        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> Optional[RunOutput]:
+        return _storage.get_run_output(self, run_id=run_id, session_id=session_id, user_id=user_id)
 
-    async def aget_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
-        return await _storage.aget_run_output(self, run_id=run_id, session_id=session_id)
+    async def aget_run_output(
+        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> Optional[RunOutput]:
+        return await _storage.aget_run_output(self, run_id=run_id, session_id=session_id, user_id=user_id)
 
     def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[RunOutput]:
         return _storage.get_last_run_output(self, session_id=session_id)
