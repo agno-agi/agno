@@ -465,6 +465,19 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "GET /approvals/*/status": ["approvals:read"],
         "POST /approvals/*/resolve": ["approvals:write"],
         "DELETE /approvals/*": ["approvals:delete"],
+        # Component endpoints (Studio)
+        "GET /components": ["components:read"],
+        "GET /components/*": ["components:read"],
+        "POST /components": ["components:write"],
+        "PATCH /components/*": ["components:write"],
+        "DELETE /components/*": ["components:delete"],
+        "GET /components/*/configs": ["components:read"],
+        "GET /components/*/configs/*": ["components:read"],
+        "GET /components/*/configs/current": ["components:read"],
+        "POST /components/*/configs": ["components:write"],
+        "PATCH /components/*/configs/*": ["components:write"],
+        "DELETE /components/*/configs/*": ["components:delete"],
+        "POST /components/*/configs/*/set-current": ["components:write"],
     }
 
 
