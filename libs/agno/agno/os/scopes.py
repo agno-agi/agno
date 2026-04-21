@@ -300,6 +300,7 @@ def get_accessible_resource_ids(
     user_scopes: List[str],
     resource_type: str,
     admin_scope: Optional[str] = None,
+    action: Optional[str] = None,
 ) -> Set[str]:
     """
     Get the set of resource IDs the user has access to.
@@ -308,6 +309,8 @@ def get_accessible_resource_ids(
         user_scopes: List of scope strings the user has
         resource_type: Type of resource ("agents", "teams", "workflows")
         admin_scope: The scope string that grants admin access (default: "agent_os:admin")
+        action: If provided, only consider scopes matching this action (e.g. "run", "read").
+                If None, considers scopes with any action (backwards compatible for list filtering).
 
     Returns:
         Set of resource IDs the user can access. Returns {"*"} for wildcard access.
@@ -327,7 +330,17 @@ def get_accessible_resource_ids(
 
         >>> get_accessible_resource_ids(["admin"], "agents")
         {'*'}
+
+        >>> get_accessible_resource_ids(
+        ...     ["agents:agent-1:read"],
+        ...     "agents",
+        ...     action="run"
+        ... )
+        set()
     """
+    # Actions to match — if action is specified, only match that; otherwise match read/run (legacy)
+    allowed_actions = [action] if action else ["read", "run"]
+
     parsed_scopes = [parse_scope(scope, admin_scope=admin_scope) for scope in user_scopes]
 
     # Check for admin or global wildcard access
@@ -338,10 +351,10 @@ def get_accessible_resource_ids(
         # Check if resource type matches
         if scope.resource == resource_type:
             # Global resource scope (no resource_id) grants access to all
-            if not scope.resource_id and scope.action in ["read", "run"]:
+            if not scope.resource_id and scope.action in allowed_actions:
                 return {"*"}
             # Wildcard resource scope grants access to all
-            if scope.is_wildcard_resource and scope.action in ["read", "run"]:
+            if scope.is_wildcard_resource and scope.action in allowed_actions:
                 return {"*"}
 
     # Collect specific resource IDs
@@ -350,7 +363,7 @@ def get_accessible_resource_ids(
         # Check if resource type matches
         if scope.resource == resource_type:
             # Specific resource ID
-            if scope.resource_id and not scope.is_wildcard_resource and scope.action in ["read", "run"]:
+            if scope.resource_id and not scope.is_wildcard_resource and scope.action in allowed_actions:
                 accessible_ids.add(scope.resource_id)
 
     return accessible_ids

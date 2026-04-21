@@ -236,7 +236,7 @@ def filter_resources_by_access(request: Request, resources: List, resource_type:
 
 def check_resource_access(request: Request, resource_id: str, resource_type: str, action: str = "read") -> bool:
     """
-    Check if user has access to a specific resource.
+    Check if user has access to a specific resource for a specific action.
 
     Args:
         request: The FastAPI request object
@@ -252,14 +252,16 @@ def check_resource_access(request: Request, resource_id: str, resource_type: str
             raise HTTPException(status_code=403, detail="Access denied")
 
     Examples:
-        >>> # Token scopes: ["agent-os:my-os:agents:my-agent:read", "agent-os:my-os:agents:my-agent:run"]
+        >>> # Token scopes: ["agents:my-agent:read", "agents:my-agent:run"]
         >>> check_resource_access(request, "my-agent", "agents", "run")
         True
 
-        >>> check_resource_access(request, "other-agent", "agents", "run")
+        >>> # Token scopes: ["agents:my-agent:read"] (no run scope)
+        >>> check_resource_access(request, "my-agent", "agents", "run")
         False
     """
-    accessible_ids = get_accessible_resources(request, resource_type)
+    user_scopes = getattr(request.state, "scopes", [])
+    accessible_ids = get_accessible_resource_ids(user_scopes=user_scopes, resource_type=resource_type, action=action)
 
     # Wildcard access grants all permissions
     if "*" in accessible_ids:
