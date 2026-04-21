@@ -131,7 +131,7 @@ if __name__ == "__main__":
             console.print(
                 f"\n[bold yellow]StepExecutorPausedEvent:[/]\n"
                 f"  Step: {event.step_name}\n"
-                f"  Executor: {event.executor_agent_name} ({event.executor_type})\n"
+                f"  Executor: {event.executor_name} ({event.executor_type})\n"
                 f"  Requirements: {len(event.executor_requirements or [])}"
             )
         elif isinstance(event, WorkflowCompletedEvent):
@@ -153,7 +153,7 @@ if __name__ == "__main__":
         for step_req in paused_response.step_requirements or []:
             if step_req.requires_executor_input:
                 console.print(
-                    f"  Agent: {step_req.executor_agent_name} ({step_req.executor_type})"
+                    f"  Agent: {step_req.executor_name} ({step_req.executor_type})"
                 )
                 for executor_req in step_req.executor_requirements or []:
                     tool_exec = (

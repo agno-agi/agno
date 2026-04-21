@@ -113,7 +113,7 @@ class TestAgentConfirmationFlow:
         req = response.step_requirements[0]
         assert req.requires_executor_input is True
         assert req.executor_type == "agent"
-        assert req.executor_agent_name == "Weather Agent"
+        assert req.executor_name == "Weather Agent"
         assert req.executor_requirements is not None
         assert len(req.executor_requirements) >= 1
 
@@ -210,7 +210,7 @@ class TestAgentConfirmationStreaming:
 
         paused_event = paused_events[0]
         assert paused_event.executor_type == "agent"
-        assert paused_event.executor_agent_name == "Weather Agent"
+        assert paused_event.executor_name == "Weather Agent"
         assert paused_event.executor_requirements is not None
 
         # The last event should be the WorkflowRunOutput in paused state
@@ -349,7 +349,7 @@ class TestTeamInStepHITL:
         req = response.step_requirements[0]
         assert req.requires_executor_input is True
         assert req.executor_type == "team"
-        assert req.executor_agent_name == "Weather Team"
+        assert req.executor_name == "Weather Team"
 
     def test_team_in_step_continue_after_confirm(self, shared_db):
         """Team-in-step: pause -> confirm -> continue_run completes."""

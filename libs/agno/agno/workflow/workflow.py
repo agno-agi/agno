@@ -54,7 +54,9 @@ from agno.run.cancel import (
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
 from agno.run.workflow import (
+    StepContinuedEvent,
     StepErrorEvent,
+    StepExecutorContinuedEvent,
     StepOutputEvent,
     StepOutputReviewEvent,
     WorkflowCancelledEvent,
@@ -147,15 +149,15 @@ WorkflowStep = Union[
 
 def _find_inner_step_by_executor(
     step: WorkflowStep,
-    executor_agent_id: Optional[str] = None,
-    executor_agent_name: Optional[str] = None,
+    executor_id: Optional[str] = None,
+    executor_name: Optional[str] = None,
 ) -> Optional[Step]:
     """Find an inner Step within a composite step (Condition, Loop, etc.) by executor identity.
 
     Used to locate the actual Step with the agent/team when the workflow's top-level
     step is a composite type. Searches recursively through inner steps.
 
-    If no executor_agent_id or executor_agent_name is provided, returns the first
+    If no executor_id or executor_name is provided, returns the first
     inner Step that has an agent or team executor.
     """
     # Base case: if this is a Step with an agent/team, return it
@@ -171,7 +173,7 @@ def _find_inner_step_by_executor(
     for attr in ("steps", "else_steps", "choices"):
         inner_steps.extend(getattr(step, attr, None) or [])
 
-    has_filter = bool(executor_agent_id or executor_agent_name)
+    has_filter = bool(executor_id or executor_name)
 
     for inner in inner_steps:
         if isinstance(inner, Step):
@@ -182,13 +184,13 @@ def _find_inner_step_by_executor(
                     return inner
                 eid = getattr(executor, "id", None) or getattr(executor, "agent_id", None)
                 ename = getattr(executor, "name", None)
-                if (executor_agent_id and eid == executor_agent_id) or (
-                    executor_agent_name and ename == executor_agent_name
+                if (executor_id and eid == executor_id) or (
+                    executor_name and ename == executor_name
                 ):
                     return inner
         else:
             # Recurse into nested composite steps (not plain Steps without executors)
-            found = _find_inner_step_by_executor(inner, executor_agent_id, executor_agent_name)
+            found = _find_inner_step_by_executor(inner, executor_id, executor_name)
             if found is not None:
                 return found
 
@@ -5230,6 +5232,20 @@ class Workflow:
                 # Handle executor HITL - route requirements back to paused agent/team
                 executor_step_req = kwargs.get("executor_step_requirement")
                 if i == start_step_index and executor_step_req and executor_step_req.requires_executor_input:
+                    # Store StepExecutorContinuedEvent before routing back
+                    self._handle_event(
+                        StepExecutorContinuedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            executor_name=executor_step_req.executor_name,
+                            executor_type=executor_step_req.executor_type,
+                        ),
+                        workflow_run_response,
+                    )
                     step_output = self._route_executor_requirements(
                         step=step,
                         step_req=executor_step_req,
@@ -5470,6 +5486,19 @@ class Workflow:
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
                 # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
                 hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                if i == hitl_resolved_index and not kwargs.get("executor_step_requirement"):
+                    # Step-level HITL was just resolved — store StepContinuedEvent
+                    self._handle_event(
+                        StepContinuedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                        ),
+                        workflow_run_response,
+                    )
                 if i != hitl_resolved_index:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
                     pause_result = step_pause_status(step, i, step_input, step_type)
@@ -5663,8 +5692,8 @@ class Workflow:
             if isinstance(step, Step)
             else _find_inner_step_by_executor(
                 step,
-                executor_agent_id=step_req.executor_agent_id,
-                executor_agent_name=step_req.executor_agent_name,
+                executor_id=step_req.executor_id,
+                executor_name=step_req.executor_name,
             )
         )
         if inner_step is None:
@@ -5724,8 +5753,8 @@ class Workflow:
             if isinstance(step, Step)
             else _find_inner_step_by_executor(
                 step,
-                executor_agent_id=step_req.executor_agent_id,
-                executor_agent_name=step_req.executor_agent_name,
+                executor_id=step_req.executor_id,
+                executor_name=step_req.executor_name,
             )
         )
         if inner_step is None:
@@ -5796,8 +5825,8 @@ class Workflow:
             if isinstance(step, Step)
             else _find_inner_step_by_executor(
                 step,
-                executor_agent_id=step_req.executor_agent_id,
-                executor_agent_name=step_req.executor_agent_name,
+                executor_id=step_req.executor_id,
+                executor_name=step_req.executor_name,
             )
         )
         if inner_step is None:
@@ -5862,8 +5891,8 @@ class Workflow:
             if isinstance(step, Step)
             else _find_inner_step_by_executor(
                 step,
-                executor_agent_id=step_req.executor_agent_id,
-                executor_agent_name=step_req.executor_agent_name,
+                executor_id=step_req.executor_id,
+                executor_name=step_req.executor_name,
             )
         )
         if inner_step is None:
@@ -5982,6 +6011,20 @@ class Workflow:
                 # Handle executor HITL - route requirements back to paused agent/team (streaming)
                 executor_step_req = kwargs.get("executor_step_requirement")
                 if i == start_step_index and executor_step_req and executor_step_req.requires_executor_input:
+                    # Emit StepExecutorContinuedEvent before routing back
+                    yield self._handle_event(
+                        StepExecutorContinuedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            executor_name=executor_step_req.executor_name,
+                            executor_type=executor_step_req.executor_type,
+                        ),
+                        workflow_run_response,
+                    )
                     step_output = None
                     for event in self._route_executor_requirements_stream(
                         step=step,
@@ -6304,6 +6347,19 @@ class Workflow:
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
                 # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
                 hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                if i == hitl_resolved_index and not kwargs.get("executor_step_requirement"):
+                    # Step-level HITL was just resolved — emit StepContinuedEvent
+                    yield self._handle_event(
+                        StepContinuedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                        ),
+                        workflow_run_response,
+                    )
                 if i != hitl_resolved_index:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
                     pause_result = step_pause_status(step, i, step_input, step_type)
@@ -7049,6 +7105,20 @@ class Workflow:
                 # Handle executor HITL - route requirements back to paused agent/team (async)
                 executor_step_req = kwargs.get("executor_step_requirement")
                 if i == start_step_index and executor_step_req and executor_step_req.requires_executor_input:
+                    # Store StepExecutorContinuedEvent before routing back (async)
+                    self._handle_event(
+                        StepExecutorContinuedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            executor_name=executor_step_req.executor_name,
+                            executor_type=executor_step_req.executor_type,
+                        ),
+                        workflow_run_response,
+                    )
                     step_output = await self._aroute_executor_requirements(
                         step=step,
                         step_req=executor_step_req,
@@ -7276,6 +7346,19 @@ class Workflow:
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
                 # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
                 hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                if i == hitl_resolved_index and not kwargs.get("executor_step_requirement"):
+                    # Step-level HITL was just resolved — store StepContinuedEvent
+                    self._handle_event(
+                        StepContinuedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                        ),
+                        workflow_run_response,
+                    )
                 if i != hitl_resolved_index:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
                     pause_result = step_pause_status(step, i, step_input, step_type)
@@ -7519,6 +7602,20 @@ class Workflow:
                 # Handle executor HITL - route requirements back to paused agent/team (async streaming)
                 executor_step_req = kwargs.get("executor_step_requirement")
                 if i == start_step_index and executor_step_req and executor_step_req.requires_executor_input:
+                    # Emit StepExecutorContinuedEvent before routing back
+                    yield self._handle_event(
+                        StepExecutorContinuedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                            executor_name=executor_step_req.executor_name,
+                            executor_type=executor_step_req.executor_type,
+                        ),
+                        workflow_run_response,
+                    )
                     step_output = None
                     async for event in self._aroute_executor_requirements_stream(
                         step=step,
@@ -7841,6 +7938,19 @@ class Workflow:
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
                 # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
                 hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                if i == hitl_resolved_index and not kwargs.get("executor_step_requirement"):
+                    # Step-level HITL was just resolved — emit StepContinuedEvent
+                    yield self._handle_event(
+                        StepContinuedEvent(
+                            run_id=workflow_run_response.run_id or "",
+                            workflow_id=self.id,
+                            workflow_name=self.name,
+                            session_id=workflow_run_response.session_id,
+                            step_name=step_name,
+                            step_index=i,
+                        ),
+                        workflow_run_response,
+                    )
                 if i != hitl_resolved_index:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
                     pause_result = step_pause_status(step, i, step_input, step_type)

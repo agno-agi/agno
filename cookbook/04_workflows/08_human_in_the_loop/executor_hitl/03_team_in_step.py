@@ -83,7 +83,7 @@ if __name__ == "__main__":
             if step_req.requires_executor_input:
                 console.print(
                     f"[bold yellow]Workflow paused at step '{step_req.step_name}'[/]\n"
-                    f"Executor: [bold cyan]{step_req.executor_agent_name}[/] "
+                    f"Executor: [bold cyan]{step_req.executor_name}[/] "
                     f"(type: {step_req.executor_type})"
                 )
 

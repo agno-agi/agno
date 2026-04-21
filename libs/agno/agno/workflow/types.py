@@ -851,8 +851,8 @@ class StepRequirement:
     # Executor HITL fields (for agent/team tool-level pauses within a step)
     requires_executor_input: bool = False
     executor_requirements: Optional[List[Any]] = None  # List of RunRequirement dicts
-    executor_agent_id: Optional[str] = None
-    executor_agent_name: Optional[str] = None
+    executor_id: Optional[str] = None
+    executor_name: Optional[str] = None
     executor_run_id: Optional[str] = None
     executor_type: Optional[Union[ExecutorType, str]] = None  # "agent" or "team"
     # Session ID for the executor's session (needed for DB-based continue_run)
@@ -1129,8 +1129,8 @@ class StepRequirement:
         if self.requires_executor_input:
             result["requires_executor_input"] = self.requires_executor_input
             result["executor_requirements"] = self.executor_requirements
-            result["executor_agent_id"] = self.executor_agent_id
-            result["executor_agent_name"] = self.executor_agent_name
+            result["executor_id"] = self.executor_id
+            result["executor_name"] = self.executor_name
             result["executor_run_id"] = self.executor_run_id
             result["executor_type"] = (
                 self.executor_type.value if isinstance(self.executor_type, ExecutorType) else self.executor_type
@@ -1191,8 +1191,8 @@ class StepRequirement:
             step_input=step_input,
             requires_executor_input=data.get("requires_executor_input", False),
             executor_requirements=data.get("executor_requirements"),
-            executor_agent_id=data.get("executor_agent_id"),
-            executor_agent_name=data.get("executor_agent_name"),
+            executor_id=data.get("executor_id"),
+            executor_name=data.get("executor_name"),
             executor_run_id=data.get("executor_run_id"),
             executor_type=data.get("executor_type"),
             executor_session_id=data.get("executor_session_id"),

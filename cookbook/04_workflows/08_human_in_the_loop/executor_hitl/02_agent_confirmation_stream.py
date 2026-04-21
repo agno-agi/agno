@@ -72,7 +72,7 @@ if __name__ == "__main__":
             console.print(
                 f"\n[bold yellow]StepExecutorPausedEvent received![/]\n"
                 f"  Step: {event.step_name}\n"
-                f"  Executor: {event.executor_agent_name} ({event.executor_type})\n"
+                f"  Executor: {event.executor_name} ({event.executor_type})\n"
                 f"  Requirements: {len(event.executor_requirements or [])}"
             )
         elif isinstance(event, WorkflowCompletedEvent):
@@ -91,7 +91,7 @@ if __name__ == "__main__":
             if step_req.requires_executor_input:
                 answer = (
                     Prompt.ask(
-                        f"Approve tool call from {step_req.executor_agent_name}?",
+                        f"Approve tool call from {step_req.executor_name}?",
                         choices=["y", "n"],
                         default="y",
                     )

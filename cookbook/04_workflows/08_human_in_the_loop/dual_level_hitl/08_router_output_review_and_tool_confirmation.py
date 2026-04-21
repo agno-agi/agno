@@ -100,7 +100,7 @@ workflow = Workflow(
 def resolve_executor_pause(run_output):
     for req in run_output.step_requirements or []:
         if req.requires_executor_input:
-            console.print(f"  Executor: [cyan]{req.executor_agent_name}[/]")
+            console.print(f"  Executor: [cyan]{req.executor_name}[/]")
             for executor_req in req.executor_requirements or []:
                 tool_exec = (
                     executor_req.get("tool_execution", {})
@@ -170,7 +170,7 @@ if __name__ == "__main__":
         if isinstance(event, StepPausedEvent):
             console.print(f"\n[yellow]Paused: {event.step_name}[/]")
         elif isinstance(event, StepExecutorPausedEvent):
-            console.print(f"\n[yellow]Executor paused: {event.executor_agent_name}[/]")
+            console.print(f"\n[yellow]Executor paused: {event.executor_name}[/]")
         elif isinstance(event, WorkflowCompletedEvent):
             console.print("\n[green]Workflow completed![/]")
         elif hasattr(event, "content") and event.content:
@@ -218,7 +218,7 @@ if __name__ == "__main__":
                 console.print(f"\n[yellow]Paused: {event.step_name}[/]")
             elif isinstance(event, StepExecutorPausedEvent):
                 console.print(
-                    f"\n[yellow]Executor paused: {event.executor_agent_name}[/]"
+                    f"\n[yellow]Executor paused: {event.executor_name}[/]"
                 )
             elif isinstance(event, WorkflowCompletedEvent):
                 console.print("\n[green]Workflow completed![/]")

@@ -50,7 +50,9 @@ class WorkflowRunEvent(str, Enum):
     step_started = "StepStarted"
     step_completed = "StepCompleted"
     step_paused = "StepPaused"
+    step_continued = "StepContinued"
     step_executor_paused = "StepExecutorPaused"
+    step_executor_continued = "StepExecutorContinued"
     step_output_review = "StepOutputReview"
     step_error = "StepError"
 
@@ -265,6 +267,16 @@ class StepPausedEvent(BaseWorkflowRunOutputEvent):
 
 
 @dataclass
+class StepContinuedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when a paused step resumes execution after step-level HITL is resolved"""
+
+    event: str = WorkflowRunEvent.step_continued.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    step_id: Optional[str] = None
+
+
+@dataclass
 class StepExecutorPausedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when a step's executor (agent/team) is paused for tool-level HITL"""
 
@@ -274,11 +286,27 @@ class StepExecutorPausedEvent(BaseWorkflowRunOutputEvent):
     step_id: Optional[str] = None
 
     # Executor context
-    executor_agent_id: Optional[str] = None
-    executor_agent_name: Optional[str] = None
+    executor_id: Optional[str] = None
+    executor_name: Optional[str] = None
     executor_run_id: Optional[str] = None
     executor_type: Optional[Union[ExecutorType, str]] = None  # "agent" or "team"
     executor_requirements: Optional[List[Any]] = None
+
+
+@dataclass
+class StepExecutorContinuedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when a paused executor resumes after executor-level HITL is resolved"""
+
+    event: str = WorkflowRunEvent.step_executor_continued.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    step_id: Optional[str] = None
+
+    # Executor context
+    executor_id: Optional[str] = None
+    executor_name: Optional[str] = None
+    executor_run_id: Optional[str] = None
+    executor_type: Optional[Union[ExecutorType, str]] = None  # "agent" or "team"
 
 
 @dataclass
@@ -560,7 +588,9 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.step_started.value: StepStartedEvent,
     WorkflowRunEvent.step_completed.value: StepCompletedEvent,
     WorkflowRunEvent.step_paused.value: StepPausedEvent,
+    WorkflowRunEvent.step_continued.value: StepContinuedEvent,
     WorkflowRunEvent.step_executor_paused.value: StepExecutorPausedEvent,
+    WorkflowRunEvent.step_executor_continued.value: StepExecutorContinuedEvent,
     WorkflowRunEvent.step_output_review.value: StepOutputReviewEvent,
     WorkflowRunEvent.step_error.value: StepErrorEvent,
     WorkflowRunEvent.loop_execution_started.value: LoopExecutionStartedEvent,

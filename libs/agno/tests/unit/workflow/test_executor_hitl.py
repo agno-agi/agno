@@ -92,8 +92,8 @@ class TestStepRequirementExecutorFields:
         )
         assert req.requires_executor_input is False
         assert req.executor_requirements is None
-        assert req.executor_agent_id is None
-        assert req.executor_agent_name is None
+        assert req.executor_id is None
+        assert req.executor_name is None
         assert req.executor_run_id is None
         assert req.executor_type is None
 
@@ -105,15 +105,15 @@ class TestStepRequirementExecutorFields:
             step_index=0,
             requires_executor_input=True,
             executor_requirements=[{"id": "r1", "tool_execution": {}}],
-            executor_agent_id="agent-1",
-            executor_agent_name="TestAgent",
+            executor_id="agent-1",
+            executor_name="TestAgent",
             executor_run_id="run-1",
             executor_type="agent",
         )
         assert req.requires_executor_input is True
         assert req.executor_requirements == [{"id": "r1", "tool_execution": {}}]
-        assert req.executor_agent_id == "agent-1"
-        assert req.executor_agent_name == "TestAgent"
+        assert req.executor_id == "agent-1"
+        assert req.executor_name == "TestAgent"
         assert req.executor_run_id == "run-1"
         assert req.executor_type == "agent"
 
@@ -179,16 +179,16 @@ class TestStepRequirementExecutorFields:
             step_type=StepType.STEP,
             requires_executor_input=True,
             executor_requirements=[{"id": "r1", "confirmation": True}],
-            executor_agent_id="agent-1",
-            executor_agent_name="TestAgent",
+            executor_id="agent-1",
+            executor_name="TestAgent",
             executor_run_id="run-1",
             executor_type="agent",
         )
         d = req.to_dict()
         assert d["requires_executor_input"] is True
         assert d["executor_requirements"] == [{"id": "r1", "confirmation": True}]
-        assert d["executor_agent_id"] == "agent-1"
-        assert d["executor_agent_name"] == "TestAgent"
+        assert d["executor_id"] == "agent-1"
+        assert d["executor_name"] == "TestAgent"
         assert d["executor_run_id"] == "run-1"
         assert d["executor_type"] == "agent"
         assert "_executor_run_response" not in d
@@ -212,16 +212,16 @@ class TestStepRequirementExecutorFields:
             "step_type": "Step",
             "requires_executor_input": True,
             "executor_requirements": [{"id": "r1"}],
-            "executor_agent_id": "agent-1",
-            "executor_agent_name": "TestAgent",
+            "executor_id": "agent-1",
+            "executor_name": "TestAgent",
             "executor_run_id": "run-1",
             "executor_type": "agent",
         }
         req = StepRequirement.from_dict(d)
         assert req.requires_executor_input is True
         assert req.executor_requirements == [{"id": "r1"}]
-        assert req.executor_agent_id == "agent-1"
-        assert req.executor_agent_name == "TestAgent"
+        assert req.executor_id == "agent-1"
+        assert req.executor_name == "TestAgent"
         assert req.executor_run_id == "run-1"
         assert req.executor_type == "agent"
 
@@ -235,7 +235,7 @@ class TestStepRequirementExecutorFields:
         req = StepRequirement.from_dict(d)
         assert req.requires_executor_input is False
         assert req.executor_requirements is None
-        assert req.executor_agent_id is None
+        assert req.executor_id is None
 
     def test_roundtrip_serialization(self):
         """Executor fields survive to_dict() -> from_dict() roundtrip."""
@@ -246,16 +246,16 @@ class TestStepRequirementExecutorFields:
             step_type=StepType.STEP,
             requires_executor_input=True,
             executor_requirements=[{"id": "r1", "confirmation": True}],
-            executor_agent_id="agent-abc",
-            executor_agent_name="MyAgent",
+            executor_id="agent-abc",
+            executor_name="MyAgent",
             executor_run_id="run-xyz",
             executor_type="team",
         )
         restored = StepRequirement.from_dict(original.to_dict())
         assert restored.requires_executor_input == original.requires_executor_input
         assert restored.executor_requirements == original.executor_requirements
-        assert restored.executor_agent_id == original.executor_agent_id
-        assert restored.executor_agent_name == original.executor_agent_name
+        assert restored.executor_id == original.executor_id
+        assert restored.executor_name == original.executor_name
         assert restored.executor_run_id == original.executor_run_id
         assert restored.executor_type == original.executor_type
 
@@ -293,8 +293,8 @@ class TestCreateExecutorStepRequirement:
         assert req.step_type == StepType.STEP
         assert req.requires_executor_input is True
         assert req.executor_requirements == [{"id": "r1", "confirmation": True}]
-        assert req.executor_agent_id == "agent-123"
-        assert req.executor_agent_name == "TestAgent"
+        assert req.executor_id == "agent-123"
+        assert req.executor_name == "TestAgent"
         assert req.executor_run_id == "run-789"
         assert req.executor_type == "agent"
 
@@ -316,8 +316,8 @@ class TestCreateExecutorStepRequirement:
         req = step._create_executor_step_requirement(step_index=0, executor_response=mock_response)
 
         assert req.executor_type == "team"
-        assert req.executor_agent_id == "team-123"
-        assert req.executor_agent_name == "TestTeam"
+        assert req.executor_id == "team-123"
+        assert req.executor_name == "TestTeam"
         assert req.executor_requirements == []
 
     def test_handles_none_requirements(self):
@@ -428,15 +428,15 @@ class TestStepExecutorPausedEvent:
             step_name="my_step",
             step_index=2,
             step_id="step-abc",
-            executor_agent_id="agent-1",
-            executor_agent_name="TestAgent",
+            executor_id="agent-1",
+            executor_name="TestAgent",
             executor_run_id="run-xyz",
             executor_type="agent",
             executor_requirements=[{"id": "r1"}],
         )
         assert event.step_name == "my_step"
         assert event.step_index == 2
-        assert event.executor_agent_id == "agent-1"
+        assert event.executor_id == "agent-1"
         assert event.executor_type == "agent"
         assert event.executor_requirements == [{"id": "r1"}]
 
@@ -453,11 +453,11 @@ class TestStepExecutorPausedEvent:
             workflow_name="wf",
             workflow_id="wf-1",
             session_id="s1",
-            executor_agent_name="TestAgent",
+            executor_name="TestAgent",
         )
         d = event.to_dict()
         assert d["event"] == "StepExecutorPaused"
-        assert d["executor_agent_name"] == "TestAgent"
+        assert d["executor_name"] == "TestAgent"
 
 
 # =============================================================================
