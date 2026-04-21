@@ -1048,8 +1048,27 @@ class StepRequirement:
 
     @property
     def needs_executor_resolution(self) -> bool:
-        """Check if this requirement needs executor (agent/team) HITL resolution"""
-        return self.requires_executor_input and self.executor_requirements is not None
+        """Check if this requirement needs executor (agent/team) HITL resolution.
+
+        True while any of the underlying RunRequirements are still unresolved.
+        """
+        if not self.requires_executor_input or not self.executor_requirements:
+            return False
+        # Local import to avoid circulars (agno.run.requirement imports from workflow types indirectly).
+        from agno.run.requirement import RunRequirement
+
+        for req in self.executor_requirements:
+            if isinstance(req, dict):
+                parsed = RunRequirement.from_dict(req)
+                if not parsed.is_resolved():
+                    return True
+            elif isinstance(req, RunRequirement):
+                if not req.is_resolved():
+                    return True
+            else:
+                # Unknown shape — treat conservatively as unresolved.
+                return True
+        return False
 
     @property
     def is_resolved(self) -> bool:
@@ -1062,8 +1081,8 @@ class StepRequirement:
             return False
         if self.requires_route_selection and self.needs_route_selection:
             return False
-        # Executor HITL requirements are resolved externally via continue_run routing
-        # so we don't check them here - they are always "pending" until routed back
+        if self.requires_executor_input and self.needs_executor_resolution:
+            return False
         return True
 
     def to_dict(self) -> Dict[str, Any]:

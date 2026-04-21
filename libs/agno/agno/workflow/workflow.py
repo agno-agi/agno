@@ -112,7 +112,6 @@ from agno.workflow.utils import (
     create_router_paused_event,
     create_step_paused_event,
     finalize_workflow_completion,
-    get_last_executor_run,
     is_executor_pause,
     resolve_executor_pause,
     save_paused_session,
