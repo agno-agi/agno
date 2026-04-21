@@ -59,8 +59,8 @@ scan_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[run_deep_scan],
     instructions=(
-        "You perform security scans. "
-        "Always use the run_deep_scan tool with the target from the input."
+        "You perform security scans. You MUST always call the run_deep_scan tool "
+        "exactly once with the target from the input. Never ask for clarification."
     ),
     db=db,
     telemetry=False,
@@ -76,7 +76,8 @@ def gather_data(step_input: StepInput) -> StepOutput:
 
 
 def preprocess(step_input: StepInput) -> StepOutput:
-    return StepOutput(content="Preprocessing complete: targets identified")
+    prev = step_input.previous_step_content or "unknown-target"
+    return StepOutput(content=f"Preprocessing complete. Target to scan: {prev}")
 
 
 def postprocess(step_input: StepInput) -> StepOutput:

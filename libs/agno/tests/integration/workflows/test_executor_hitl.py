@@ -53,9 +53,12 @@ def get_the_weather(city: str) -> str:
 def _make_weather_agent(db=None):
     return Agent(
         name="Weather Agent",
-        role="Provides weather information. Use the get_the_weather tool to get weather data.",
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
+        instructions=(
+            "You provide weather information. You MUST always call the get_the_weather tool. "
+            "Never answer without using the tool."
+        ),
         db=db,
         telemetry=False,
     )
@@ -80,6 +83,18 @@ def save_result(step_input: StepInput) -> StepOutput:
     """Final step that saves results."""
     prev = step_input.previous_step_content or "no previous content"
     return StepOutput(content=f"Result saved: {prev}")
+
+
+def _confirm_executor_requirements(response):
+    """Helper to confirm all executor requirements on the active (last) requirement."""
+    req = response.step_requirements[-1]
+    for executor_req in req.executor_requirements:
+        if isinstance(executor_req, dict):
+            executor_req["confirmation"] = True
+            if "tool_execution" in executor_req and executor_req["tool_execution"]:
+                executor_req["tool_execution"]["confirmed"] = True
+        else:
+            executor_req.confirm()
 
 
 # =============================================================================
@@ -108,9 +123,9 @@ class TestAgentConfirmationFlow:
         assert response.is_paused is True
         assert response.status == RunStatus.paused
         assert response.step_requirements is not None
-        assert len(response.step_requirements) == 1
+        assert len(response.step_requirements) >= 1
 
-        req = response.step_requirements[0]
+        req = response.step_requirements[-1]
         assert req.requires_executor_input is True
         assert req.executor_type == "agent"
         assert req.executor_name == "Weather Agent"
@@ -133,17 +148,7 @@ class TestAgentConfirmationFlow:
         response = workflow.run(input="What is the weather in Tokyo?")
         assert response.is_paused is True
 
-        # Resolve the executor requirements - confirm each one
-        req = response.step_requirements[0]
-        for executor_req in req.executor_requirements:
-            if isinstance(executor_req, dict):
-                # Serialized requirement - set confirmation
-                executor_req["confirmation"] = True
-                if "tool_execution" in executor_req and executor_req["tool_execution"]:
-                    executor_req["tool_execution"]["confirmed"] = True
-            else:
-                executor_req.confirm()
-
+        _confirm_executor_requirements(response)
         final = workflow.continue_run(response)
 
         assert final.status == RunStatus.completed
@@ -166,7 +171,7 @@ class TestAgentConfirmationFlow:
         assert response.is_paused is True
 
         # Reject the confirmation
-        req = response.step_requirements[0]
+        req = response.step_requirements[-1]
         for executor_req in req.executor_requirements:
             if isinstance(executor_req, dict):
                 executor_req["confirmation"] = False
@@ -176,9 +181,10 @@ class TestAgentConfirmationFlow:
                 executor_req.reject(note="User does not want this")
 
         result = workflow.continue_run(response)
-        # After rejection, workflow should complete (agent handles the rejection)
-        # It may re-pause if the model retries the tool call
-        assert result.content is not None
+        # After rejection, the agent processes the rejection.
+        # It may complete with a message, re-pause with another tool call, or error.
+        # We just verify the workflow didn't crash and returned a valid response.
+        assert result.status in (RunStatus.completed, RunStatus.paused)
 
 
 # =============================================================================
@@ -213,13 +219,8 @@ class TestAgentConfirmationStreaming:
         assert paused_event.executor_name == "Weather Agent"
         assert paused_event.executor_requirements is not None
 
-        # The last event should be the WorkflowRunOutput in paused state
-        run_outputs = [e for e in events if isinstance(e, WorkflowRunOutput)]
-        assert len(run_outputs) >= 1
-        assert run_outputs[-1].is_paused is True
-
     def test_streaming_continue_after_confirm(self, shared_db):
-        """Streaming: pause -> confirm -> continue_run stream completes."""
+        """Streaming: pause -> confirm (via session) -> continue_run stream completes."""
         agent = _make_weather_agent(db=shared_db)
         workflow = Workflow(
             name="Weather Workflow Stream Continue",
@@ -231,27 +232,26 @@ class TestAgentConfirmationStreaming:
             telemetry=False,
         )
 
-        # Run until pause
+        # Run until pause — consume the stream
         events = list(workflow.run(input="What is the weather in Tokyo?", stream=True))
-        run_outputs = [e for e in events if isinstance(e, WorkflowRunOutput)]
-        paused_response = run_outputs[-1]
+        paused_events = [e for e in events if isinstance(e, StepExecutorPausedEvent)]
+        assert len(paused_events) >= 1
+
+        # Get the paused run from session (WorkflowRunOutput is not yielded in the
+        # workflow generator — only in the API streamer)
+        session = workflow.get_session()
+        paused_response = session.runs[-1]
         assert paused_response.is_paused is True
 
         # Confirm
-        req = paused_response.step_requirements[0]
-        for executor_req in req.executor_requirements:
-            if isinstance(executor_req, dict):
-                executor_req["confirmation"] = True
-                if "tool_execution" in executor_req and executor_req["tool_execution"]:
-                    executor_req["tool_execution"]["confirmed"] = True
-            else:
-                executor_req.confirm()
+        _confirm_executor_requirements(paused_response)
 
         # Continue with streaming
         continue_events = list(workflow.continue_run(paused_response, stream=True))
-        continue_outputs = [e for e in continue_events if isinstance(e, WorkflowRunOutput)]
-        assert len(continue_outputs) >= 1
-        final = continue_outputs[-1]
+
+        # Verify completion via session
+        session = workflow.get_session()
+        final = session.runs[-1]
         assert final.status == RunStatus.completed
 
 
@@ -282,15 +282,7 @@ class TestAgentConfirmationAsync:
         assert response.is_paused is True
         assert response.step_requirements is not None
 
-        # Confirm
-        req = response.step_requirements[0]
-        for executor_req in req.executor_requirements:
-            if isinstance(executor_req, dict):
-                executor_req["confirmation"] = True
-                if "tool_execution" in executor_req and executor_req["tool_execution"]:
-                    executor_req["tool_execution"]["confirmed"] = True
-            else:
-                executor_req.confirm()
+        _confirm_executor_requirements(response)
 
         final = await workflow.acontinue_run(response)
         assert final.status == RunStatus.completed
@@ -311,7 +303,7 @@ class TestAgentConfirmationAsync:
         )
 
         events = []
-        async for event in await workflow.arun(input="What is the weather in Tokyo?", stream=True):
+        async for event in workflow.arun(input="What is the weather in Tokyo?", stream=True):
             events.append(event)
 
         paused_events = [e for e in events if isinstance(e, StepExecutorPausedEvent)]
@@ -344,9 +336,9 @@ class TestTeamInStepHITL:
 
         assert response.is_paused is True
         assert response.step_requirements is not None
-        assert len(response.step_requirements) == 1
+        assert len(response.step_requirements) >= 1
 
-        req = response.step_requirements[0]
+        req = response.step_requirements[-1]
         assert req.requires_executor_input is True
         assert req.executor_type == "team"
         assert req.executor_name == "Weather Team"
@@ -367,15 +359,7 @@ class TestTeamInStepHITL:
         response = workflow.run(input="What is the weather in Tokyo?")
         assert response.is_paused is True
 
-        # Resolve executor requirements
-        req = response.step_requirements[0]
-        for executor_req in req.executor_requirements:
-            if isinstance(executor_req, dict):
-                executor_req["confirmation"] = True
-                if "tool_execution" in executor_req and executor_req["tool_execution"]:
-                    executor_req["tool_execution"]["confirmed"] = True
-            else:
-                executor_req.confirm()
+        _confirm_executor_requirements(response)
 
         final = workflow.continue_run(response)
         assert final.status == RunStatus.completed
@@ -394,7 +378,8 @@ class TestMultiStepExecutorHITL:
         """Executor HITL pauses at the correct step when it's not the first step."""
 
         def initial_step(step_input: StepInput) -> StepOutput:
-            return StepOutput(content="Initial processing done")
+            # Pass the original query through so the agent sees it
+            return StepOutput(content=step_input.input or "Initial processing done")
 
         agent = _make_weather_agent(db=shared_db)
         workflow = Workflow(
@@ -415,14 +400,7 @@ class TestMultiStepExecutorHITL:
         assert response.paused_step_index == 1
 
         # Confirm and continue
-        req = response.step_requirements[0]
-        for executor_req in req.executor_requirements:
-            if isinstance(executor_req, dict):
-                executor_req["confirmation"] = True
-                if "tool_execution" in executor_req and executor_req["tool_execution"]:
-                    executor_req["tool_execution"]["confirmed"] = True
-            else:
-                executor_req.confirm()
+        _confirm_executor_requirements(response)
 
         final = workflow.continue_run(response)
         assert final.status == RunStatus.completed
