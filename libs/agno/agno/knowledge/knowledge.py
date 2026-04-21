@@ -2177,7 +2177,7 @@ class Knowledge(RemoteKnowledge):
             branch = remote_content.branch or ""
             return f"github:{scope}@{branch}:{in_scope}"
 
-        if isinstance(remote_content, S3Content):
+        elif isinstance(remote_content, S3Content):
             scope = remote_content.bucket_name or (
                 remote_content.bucket.name if remote_content.bucket is not None else ""
             )
@@ -2188,19 +2188,19 @@ class Knowledge(RemoteKnowledge):
             )
             return f"s3:{scope}:{in_scope}"
 
-        if isinstance(remote_content, GCSContent):
+        elif isinstance(remote_content, GCSContent):
             scope = remote_content.bucket_name or (
                 remote_content.bucket.name if remote_content.bucket is not None else ""
             )
             in_scope = remote_content.blob_name or remote_content.prefix or ""
             return f"gcs:{scope}:{in_scope}"
 
-        if isinstance(remote_content, SharePointContent):
+        elif isinstance(remote_content, SharePointContent):
             scope = f"{remote_content.site_path or ''}/{remote_content.drive_id or ''}"
             in_scope = remote_content.file_path or remote_content.folder_path or ""
             return f"sharepoint:{remote_content.config_id}:{scope}:{in_scope}"
 
-        if isinstance(remote_content, AzureBlobContent):
+        elif isinstance(remote_content, AzureBlobContent):
             in_scope = remote_content.blob_name or remote_content.prefix or ""
             return f"azureblob:{remote_content.config_id}:{in_scope}"
 
