@@ -1,5 +1,5 @@
-import json
 import asyncio
+import json
 from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union
 from uuid import uuid4
 
@@ -20,7 +20,12 @@ from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.os.auth import get_auth_token_from_request, get_authentication_dependency, require_resource_access
+from agno.os.auth import (
+    get_auth_token_from_request,
+    get_authentication_dependency,
+    require_approval_resolved,
+    require_resource_access,
+)
 from agno.os.managers import event_buffer, sse_subscriber_manager
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.schema import (
@@ -335,6 +340,56 @@ async def _resume_stream_generator(
         sse_subscriber_manager.unsubscribe(run_id, queue)
 
 
+async def team_continue_response_streamer(
+    team: Union[Team, RemoteTeam],
+    run_id: str,
+    requirements: List,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
+    auth_token: Optional[str] = None,
+) -> AsyncGenerator:
+    """Continue a paused team run and yield streaming response."""
+    try:
+        # Build kwargs for remote team auth
+        extra_kwargs: dict = {}
+        if auth_token and isinstance(team, RemoteTeam):
+            extra_kwargs["auth_token"] = auth_token
+
+        continue_response = team.acontinue_run(
+            run_id=run_id,
+            requirements=requirements or [],
+            session_id=session_id,
+            user_id=user_id,
+            stream=True,
+            stream_events=True,
+            background_tasks=background_tasks,
+            **extra_kwargs,
+        )
+        async for run_response_chunk in continue_response:
+            yield format_sse_event(run_response_chunk)  # type: ignore
+    except (InputCheckError, OutputCheckError) as e:
+        error_response = TeamRunErrorEvent(
+            content=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+            additional_data=e.additional_data,
+        )
+        yield format_sse_event(error_response)
+
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        error_response = TeamRunErrorEvent(
+            content=str(e),
+            error_type=e.type if hasattr(e, "type") else None,
+            error_id=e.error_id if hasattr(e, "error_id") else None,
+        )
+        yield format_sse_event(error_response)
+        return
+
+
 def get_team_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -435,6 +490,11 @@ def get_team_router(
         )
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
+
+        # Member HITL needs member runs embedded on the team run (member_responses).
+        # Without this, API continue cannot reliably reload member tool state from the DB.
+        if not isinstance(team, RemoteTeam):
+            team.store_member_responses = True
 
         if session_id is not None and session_id != "":
             logger.debug(f"Continuing session: {session_id}")
@@ -672,6 +732,150 @@ def get_team_router(
             _resume_stream_generator(team, run_id, last_event_index, session_id),
             media_type="text/event-stream",
         )
+
+    @router.post(
+        "/teams/{team_id}/runs/{run_id}/continue",
+        tags=["Teams"],
+        operation_id="continue_team_run",
+        response_model_exclude_none=True,
+        summary="Continue Team Run",
+        description=(
+            "Continue a paused or incomplete team run with updated requirements.\n\n"
+            "**Use Cases:**\n"
+            "- Resume execution after tool approval/rejection\n"
+            "- Provide manual tool execution results\n"
+            "- Resume after admin approval (requirements can be empty; resolution fetched from DB)\n\n"
+            "**Requirements Parameter:**\n"
+            "JSON string containing array of requirement objects with tool execution results.\n"
+            "Can be empty when an admin-required approval has been resolved."
+        ),
+        responses={
+            200: {
+                "description": "Team run continued successfully",
+                "content": {
+                    "text/event-stream": {
+                        "example": 'event: RunContent\ndata: {"created_at": 1757348314, "run_id": "123..."}\n\n'
+                    },
+                },
+            },
+            400: {
+                "description": "Invalid JSON in requirements field or invalid requirement structure",
+                "model": BadRequestResponse,
+            },
+            403: {"description": "Run has a pending admin approval and cannot be continued by the user yet."},
+            404: {"description": "Team not found", "model": NotFoundResponse},
+            409: {
+                "description": "Run is not paused (e.g. run is already running, continued, or errored). Only PAUSED runs can be continued.",
+            },
+        },
+        dependencies=[
+            Depends(require_resource_access("teams", "run", "team_id")),
+            Depends(require_approval_resolved(os.db)),
+        ],
+    )
+    async def continue_team_run(
+        team_id: str,
+        run_id: str,
+        request: Request,
+        background_tasks: BackgroundTasks,
+        requirements: str = Form(""),  # optional when admin approval resolved
+        session_id: Optional[str] = Form(None),
+        user_id: Optional[str] = Form(None),
+        stream: bool = Form(True),
+    ):
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            session_id = request.state.session_id
+
+        # Parse the JSON string manually
+        try:
+            requirements_data = json.loads(requirements) if requirements else None
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON in requirements field")
+
+        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        if not isinstance(team, RemoteTeam):
+            team.store_member_responses = True
+
+        if (session_id is None or session_id == "") and not isinstance(team, RemoteTeam):
+            raise HTTPException(
+                status_code=400,
+                detail="session_id is required to continue a run",
+            )
+
+        # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
+        if session_id and not isinstance(team, RemoteTeam):
+            existing_run = await team.aget_run_output(run_id=run_id, session_id=session_id)
+            if existing_run is not None:
+                is_paused = getattr(existing_run, "is_paused", False)
+                if not is_paused:
+                    status = getattr(existing_run, "status", None)
+                    _status_to_detail = {
+                        RunStatus.running: "run is already running",
+                        RunStatus.completed: "run is already continued",
+                        RunStatus.error: "run is already errored",
+                        RunStatus.cancelled: "run is already cancelled",
+                        RunStatus.pending: "run is already pending",
+                    }
+                    detail = _status_to_detail.get(
+                        status,  # type: ignore[arg-type]
+                        f"run is not paused (status={getattr(status, 'value', status)})",
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail=detail,
+                    )
+
+        # Convert requirements dict to RunRequirement objects if provided
+        updated_requirements = None
+        if requirements_data:
+            try:
+                from agno.run.requirement import RunRequirement
+
+                updated_requirements = [RunRequirement.from_dict(req) for req in requirements_data]
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid structure or content for requirements: {str(e)}")
+
+        # Extract auth token for remote teams
+        auth_token = get_auth_token_from_request(request)
+
+        if stream:
+            return StreamingResponse(
+                team_continue_response_streamer(
+                    team,
+                    run_id=run_id,
+                    requirements=updated_requirements or [],
+                    session_id=session_id,
+                    user_id=user_id,
+                    background_tasks=background_tasks,
+                    auth_token=auth_token,
+                ),
+                media_type="text/event-stream",
+            )
+        else:
+            # Build extra kwargs for remote team auth
+            extra_kwargs: dict = {}
+            if auth_token and isinstance(team, RemoteTeam):
+                extra_kwargs["auth_token"] = auth_token
+
+            try:
+                run_response_obj = await team.acontinue_run(  # type: ignore
+                    run_id=run_id,
+                    requirements=updated_requirements or [],
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream=False,
+                    background_tasks=background_tasks,
+                    **extra_kwargs,
+                )
+                return run_response_obj.to_dict()
+
+            except (InputCheckError, ValueError) as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
     @router.get(
         "/teams",

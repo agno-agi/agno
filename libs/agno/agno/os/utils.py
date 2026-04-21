@@ -1065,14 +1065,11 @@ def timestamp_to_datetime(datetime_str: str, param_name: str = "datetime") -> "d
     Raises:
         HTTPException: If the datetime string is invalid
     """
+    from agno.utils.dttm import parse_datetime_utc
+
     try:
-        dt = datetime.fromisoformat(datetime_str.replace("Z", "+00:00"))
-        # Convert to UTC if timezone-aware, otherwise assume UTC
-        if dt.tzinfo is not None:
-            return dt.astimezone(timezone.utc)
-        else:
-            return dt.replace(tzinfo=timezone.utc)
-    except ValueError as e:
+        return parse_datetime_utc(datetime_str)
+    except (TypeError, ValueError) as e:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid {param_name} format. Use ISO 8601 format (e.g., '2025-11-19T10:00:00Z' or '2025-11-19T10:00:00+05:30'): {e}",
