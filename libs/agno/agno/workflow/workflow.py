@@ -184,9 +184,7 @@ def _find_inner_step_by_executor(
                     return inner
                 eid = getattr(executor, "id", None) or getattr(executor, "agent_id", None)
                 ename = getattr(executor, "name", None)
-                if (executor_id and eid == executor_id) or (
-                    executor_name and ename == executor_name
-                ):
+                if (executor_id and eid == executor_id) or (executor_name and ename == executor_name):
                     return inner
         else:
             # Recurse into nested composite steps (not plain Steps without executors)
@@ -6087,10 +6085,21 @@ class Workflow:
                                 step_output,
                                 previous_step_outputs=previous_step_outputs,
                             )
-                            paused_event = create_step_paused_event(
-                                workflow_run_response, step, step_name, i, review_result
+                            review_event = StepOutputReviewEvent(
+                                run_id=workflow_run_response.run_id or "",
+                                workflow_name=workflow_run_response.workflow_name,
+                                workflow_id=workflow_run_response.workflow_id,
+                                session_id=workflow_run_response.session_id,
+                                step_name=step_name,
+                                step_index=i,
+                                step_id=getattr(step, "step_id", None),
+                                output_review_message=getattr(
+                                    review_result.step_requirement, "output_review_message", None
+                                )
+                                if review_result.step_requirement
+                                else None,
                             )
-                            yield self._handle_event(paused_event, workflow_run_response)
+                            yield self._handle_event(review_event, workflow_run_response)
                             save_paused_session(self, session, workflow_run_response)
                             return
 
@@ -7677,10 +7686,21 @@ class Workflow:
                                 step_output,
                                 previous_step_outputs=previous_step_outputs,
                             )
-                            paused_event = create_step_paused_event(
-                                workflow_run_response, step, step_name, i, review_result
+                            review_event = StepOutputReviewEvent(
+                                run_id=workflow_run_response.run_id or "",
+                                workflow_name=workflow_run_response.workflow_name,
+                                workflow_id=workflow_run_response.workflow_id,
+                                session_id=workflow_run_response.session_id,
+                                step_name=step_name,
+                                step_index=i,
+                                step_id=getattr(step, "step_id", None),
+                                output_review_message=getattr(
+                                    review_result.step_requirement, "output_review_message", None
+                                )
+                                if review_result.step_requirement
+                                else None,
                             )
-                            yield self._handle_event(paused_event, workflow_run_response)
+                            yield self._handle_event(review_event, workflow_run_response)
                             await asave_paused_session(self, session, workflow_run_response)
                             return
 

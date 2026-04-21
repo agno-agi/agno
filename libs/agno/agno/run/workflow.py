@@ -787,9 +787,7 @@ class WorkflowRunOutput:
             # Local import to avoid circular import at module load
             from agno.workflow.types import PauseKind as _PauseKind
 
-            _dict["pause_kind"] = (
-                self.pause_kind.value if isinstance(self.pause_kind, _PauseKind) else self.pause_kind
-            )
+            _dict["pause_kind"] = self.pause_kind.value if isinstance(self.pause_kind, _PauseKind) else self.pause_kind
 
         if self.metadata is not None:
             _dict["metadata"] = self.metadata

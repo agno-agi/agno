@@ -1269,7 +1269,7 @@ class AgentOSClient:
                 serialized.append(req)
             else:
                 serialized.append(req)
-        data: Dict[str, Any] = {"requirements": json.dumps(serialized), "stream": "false"}
+        data: Dict[str, Any] = {"step_requirements": json.dumps(serialized), "stream": "false"}
         if session_id is not None:
             data["session_id"] = session_id
         if user_id is not None:
@@ -1319,7 +1319,7 @@ class AgentOSClient:
                 serialized.append(req)
             else:
                 serialized.append(req)
-        data: Dict[str, Any] = {"requirements": json.dumps(serialized), "stream": "true"}
+        data: Dict[str, Any] = {"step_requirements": json.dumps(serialized), "stream": "true"}
         if session_id is not None:
             data["session_id"] = session_id
         if user_id is not None:

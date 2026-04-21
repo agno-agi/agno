@@ -94,8 +94,14 @@ if __name__ == "__main__":
     if run_output and run_output.is_paused:
         for req in run_output.step_requirements or []:
             if req.requires_confirmation:
-                console.print(f"\n[yellow]Paused at '{req.step_name}': {req.confirmation_message}[/]")
-                answer = Prompt.ask("Confirm?", choices=["y", "n"], default="y").strip().lower()
+                console.print(
+                    f"\n[yellow]Paused at '{req.step_name}': {req.confirmation_message}[/]"
+                )
+                answer = (
+                    Prompt.ask("Confirm?", choices=["y", "n"], default="y")
+                    .strip()
+                    .lower()
+                )
                 if answer == "y":
                     req.confirm()
                 else:
@@ -103,9 +109,13 @@ if __name__ == "__main__":
 
         # Continue — StepContinuedEvent should appear here
         console.print("\n[bold]--- Continue run ---[/]")
-        process_events(workflow.continue_run(run_output, stream=True, stream_events=True))
+        process_events(
+            workflow.continue_run(run_output, stream=True, stream_events=True)
+        )
 
         session = workflow.get_session()
         run_output = session.runs[-1] if session and session.runs else None
 
-    console.print(f"\n[bold green]Final: {run_output.content if run_output else 'N/A'}[/]")
+    console.print(
+        f"\n[bold green]Final: {run_output.content if run_output else 'N/A'}[/]"
+    )

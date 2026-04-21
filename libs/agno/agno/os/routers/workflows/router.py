@@ -345,15 +345,28 @@ async def handle_workflow_continue_via_websocket(websocket: WebSocket, message: 
                 )
                 return
 
-        # Continue the workflow with streaming via WebSocket
-        await workflow.acontinue_run(  # type: ignore
-            run_response=existing_run,
-            session_id=session_id,
-            stream=True,
-            stream_events=True,
-            background=True,
-            websocket=websocket,
-        )
+        # Continue the workflow with streaming and send events over WebSocket.
+        # Unlike arun(), acontinue_run() has no background/websocket handling,
+        # so we iterate the async stream ourselves in a background task.
+        async def _drive_continue_stream():
+            try:
+                response_stream = await workflow.acontinue_run(  # type: ignore
+                    run_response=existing_run,
+                    session_id=session_id,
+                    stream=True,
+                    stream_events=True,
+                )
+                async for event in response_stream:
+                    event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
+                    await websocket.send_text(json.dumps(event_dict, default=json_serializer))
+            except Exception as e:
+                logger.error(f"Error in continue stream: {e}")
+                try:
+                    await websocket.send_text(json.dumps({"event": "error", "error": str(e)}))
+                except Exception:
+                    pass
+
+        asyncio.create_task(_drive_continue_stream())
 
     except (InputCheckError, OutputCheckError) as e:
         await websocket.send_text(

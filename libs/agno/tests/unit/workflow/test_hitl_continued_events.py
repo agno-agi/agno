@@ -22,7 +22,6 @@ from agno.workflow.types import (
     StepRequirement,
 )
 
-
 # =============================================================================
 # StepContinuedEvent Tests
 # =============================================================================
@@ -161,7 +160,10 @@ class TestStepExecutorContinuedEvent:
     def test_event_registered_in_event_type_map(self):
         """Test that StepExecutorContinuedEvent is registered in WORKFLOW_RUN_EVENT_TYPE_REGISTRY."""
         assert WorkflowRunEvent.step_executor_continued.value in WORKFLOW_RUN_EVENT_TYPE_REGISTRY
-        assert WORKFLOW_RUN_EVENT_TYPE_REGISTRY[WorkflowRunEvent.step_executor_continued.value] == StepExecutorContinuedEvent
+        assert (
+            WORKFLOW_RUN_EVENT_TYPE_REGISTRY[WorkflowRunEvent.step_executor_continued.value]
+            == StepExecutorContinuedEvent
+        )
 
     def test_event_is_counterpart_to_paused(self):
         """Test that StepExecutorContinuedEvent mirrors StepExecutorPausedEvent fields."""
@@ -220,8 +222,12 @@ class TestEventEnumCompleteness:
             (WorkflowRunEvent.step_executor_paused, WorkflowRunEvent.step_executor_continued),
         ]
         for paused_event, continued_event in pairs:
-            assert paused_event.value in WORKFLOW_RUN_EVENT_TYPE_REGISTRY, f"{paused_event.value} missing from WORKFLOW_RUN_EVENT_TYPE_REGISTRY"
-            assert continued_event.value in WORKFLOW_RUN_EVENT_TYPE_REGISTRY, f"{continued_event.value} missing from WORKFLOW_RUN_EVENT_TYPE_REGISTRY"
+            assert paused_event.value in WORKFLOW_RUN_EVENT_TYPE_REGISTRY, (
+                f"{paused_event.value} missing from WORKFLOW_RUN_EVENT_TYPE_REGISTRY"
+            )
+            assert continued_event.value in WORKFLOW_RUN_EVENT_TYPE_REGISTRY, (
+                f"{continued_event.value} missing from WORKFLOW_RUN_EVENT_TYPE_REGISTRY"
+            )
 
 
 # =============================================================================
