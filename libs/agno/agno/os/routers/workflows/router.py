@@ -41,8 +41,10 @@ from agno.os.utils import (
     format_sse_event,
     get_request_kwargs,
     get_workflow_by_id,
+    get_workflow_by_id_async,
     resolve_workflow,
 )
+from agno.workflow.factory import WorkflowFactory
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowErrorEvent
 from agno.utils.log import log_debug, log_warning, logger
@@ -61,21 +63,40 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
         session_id = message.get("session_id")
         user_message = message.get("message", "")
         user_id = message.get("user_id")
+        factory_input = message.get("factory_input")
 
         if not workflow_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
             return
 
-        # Get workflow from OS
-        try:
-            workflow = get_workflow_by_id(
-                workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+        # Get workflow from OS — supports both prototypes and factories
+        is_factory = os.workflows and any(
+            isinstance(w, WorkflowFactory) and w.id == workflow_id for w in (os.workflows or [])
+        )
+        if is_factory:
+            from agno.factory import RequestContext
+
+            ctx = RequestContext(
+                user_id=user_id,
+                session_id=session_id,
+                input=factory_input,
             )
-        except FactoryContextRequired:
-            await websocket.send_text(
-                json.dumps({"event": "error", "error": "Workflow factories are not supported via WebSocket"})
-            )
-            return
+            try:
+                workflow = await get_workflow_by_id_async(
+                    workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry,
+                    create_fresh=True, ctx=ctx,
+                )
+            except Exception as e:
+                await websocket.send_text(json.dumps({"event": "error", "error": f"Factory error: {e}"}))
+                return
+        else:
+            try:
+                workflow = get_workflow_by_id(
+                    workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+                )
+            except Exception as e:
+                await websocket.send_text(json.dumps({"event": "error", "error": f"Error resolving workflow: {e}"}))
+                return
         if not workflow:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
             return

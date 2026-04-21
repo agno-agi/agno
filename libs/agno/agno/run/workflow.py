@@ -83,6 +83,7 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
     # Workflow-specific fields
     workflow_id: Optional[str] = None
     workflow_name: Optional[str] = None
+    factory_id: Optional[str] = None  # Set when workflow was produced by a factory
     session_id: Optional[str] = None
     run_id: Optional[str] = None
     step_id: Optional[str] = None
@@ -582,6 +583,7 @@ class WorkflowRunOutput:
     # Workflow-specific fields
     workflow_id: Optional[str] = None
     workflow_name: Optional[str] = None
+    factory_id: Optional[str] = None  # Set when workflow was produced by a factory
 
     run_id: Optional[str] = None
     session_id: Optional[str] = None

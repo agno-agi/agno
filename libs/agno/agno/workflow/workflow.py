@@ -1473,6 +1473,11 @@ class Workflow:
         if isinstance(event, (RunOutput, TeamRunOutput)):
             return event
 
+        # Propagate factory_id from workflow_run_response to events
+        factory_id = getattr(workflow_run_response, "factory_id", None)
+        if factory_id and hasattr(event, "factory_id"):
+            event.factory_id = factory_id  # type: ignore
+
         if self.store_events:
             # Check if this event type should be skipped
             if self.events_to_skip:
@@ -3493,6 +3498,7 @@ class Workflow:
             user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
+            factory_id=getattr(self, "factory_id", None),
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
         )
@@ -3630,6 +3636,7 @@ class Workflow:
             user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
+            factory_id=getattr(self, "factory_id", None),
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
         )
@@ -3890,6 +3897,7 @@ class Workflow:
             user_id=session.user_id,
             workflow_id=self.id,
             workflow_name=self.name,
+            factory_id=getattr(self, "factory_id", None),
             created_at=int(datetime.now().timestamp()),
         )
 
@@ -4278,6 +4286,7 @@ class Workflow:
             user_id=session.user_id,
             workflow_id=self.id,
             workflow_name=self.name,
+            factory_id=getattr(self, "factory_id", None),
             created_at=int(datetime.now().timestamp()),
         )
 

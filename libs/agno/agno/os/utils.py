@@ -614,19 +614,7 @@ def get_agent_by_id(
                             f"Agent '{agent_id}' is a factory and requires a RequestContext. "
                             "Pass ctx= when calling get_agent_by_id from a request handler."
                         )
-                    from dataclasses import replace
-
-                    validated_input = agent.validate_input(ctx.input)
-                    ctx_with_input = replace(ctx, input=validated_input)
-                    result = agent.invoke(ctx_with_input)
-                    if not isinstance(result, Agent):
-                        raise FactoryError(
-                            f"AgentFactory '{agent_id}' returned {type(result).__name__}, expected Agent."
-                        )
-                    # Override the produced agent's ID with the factory's registration ID
-                    # so that SSE events (which use agent.id) match the FE's selected agent ID.
-                    result.id = agent_id
-                    return result
+                    return agent.resolve(ctx, expected_type=Agent)
                 # RemoteAgent or other
                 return agent
 
@@ -675,19 +663,7 @@ async def get_agent_by_id_async(
                             f"Agent '{agent_id}' is a factory and requires a RequestContext. "
                             "Pass ctx= when calling get_agent_by_id_async from a request handler."
                         )
-                    from dataclasses import replace
-
-                    validated_input = agent.validate_input(ctx.input)
-                    ctx_with_input = replace(ctx, input=validated_input)
-                    result = await agent.invoke_async(ctx_with_input)
-                    if not isinstance(result, Agent):
-                        raise FactoryError(
-                            f"AgentFactory '{agent_id}' returned {type(result).__name__}, expected Agent."
-                        )
-                    # Override the produced agent's ID with the factory's registration ID
-                    # so that SSE events (which use agent.id) match the FE's selected agent ID.
-                    result.id = agent_id
-                    return result
+                    return await agent.resolve_async(ctx, expected_type=Agent)
                 # RemoteAgent or other
                 return agent
 
@@ -743,16 +719,7 @@ def get_team_by_id(
                 if isinstance(team, TeamFactory):
                     if ctx is None:
                         raise FactoryContextRequired(f"Team '{team_id}' is a factory and requires a RequestContext.")
-                    from dataclasses import replace
-
-                    validated_input = team.validate_input(ctx.input)
-                    ctx_with_input = replace(ctx, input=validated_input)
-                    result = team.invoke(ctx_with_input)
-                    if not isinstance(result, Team):
-                        raise FactoryError(f"TeamFactory '{team_id}' returned {type(result).__name__}, expected Team.")
-                    # Override with factory's registration ID for FE matching
-                    result.id = team_id
-                    return result
+                    return team.resolve(ctx, expected_type=Team)
                 return team
 
     if db and isinstance(db, BaseDb):
@@ -791,16 +758,7 @@ async def get_team_by_id_async(
                 if isinstance(team, TeamFactory):
                     if ctx is None:
                         raise FactoryContextRequired(f"Team '{team_id}' is a factory and requires a RequestContext.")
-                    from dataclasses import replace
-
-                    validated_input = team.validate_input(ctx.input)
-                    ctx_with_input = replace(ctx, input=validated_input)
-                    result = await team.invoke_async(ctx_with_input)
-                    if not isinstance(result, Team):
-                        raise FactoryError(f"TeamFactory '{team_id}' returned {type(result).__name__}, expected Team.")
-                    # Override with factory's registration ID for FE matching
-                    result.id = team_id
-                    return result
+                    return await team.resolve_async(ctx, expected_type=Team)
                 return team
 
     if db and isinstance(db, BaseDb):
@@ -860,18 +818,7 @@ def get_workflow_by_id(
                         raise FactoryContextRequired(
                             f"Workflow '{workflow_id}' is a factory and requires a RequestContext."
                         )
-                    from dataclasses import replace
-
-                    validated_input = workflow.validate_input(ctx.input)
-                    ctx_with_input = replace(ctx, input=validated_input)
-                    result = workflow.invoke(ctx_with_input)
-                    if not isinstance(result, Workflow):
-                        raise FactoryError(
-                            f"WorkflowFactory '{workflow_id}' returned {type(result).__name__}, expected Workflow."
-                        )
-                    # Override with factory's registration ID for FE matching
-                    result.id = workflow_id
-                    return result
+                    return workflow.resolve(ctx, expected_type=Workflow)
                 return workflow
 
     if db and isinstance(db, BaseDb):
@@ -912,18 +859,7 @@ async def get_workflow_by_id_async(
                         raise FactoryContextRequired(
                             f"Workflow '{workflow_id}' is a factory and requires a RequestContext."
                         )
-                    from dataclasses import replace
-
-                    validated_input = workflow.validate_input(ctx.input)
-                    ctx_with_input = replace(ctx, input=validated_input)
-                    result = await workflow.invoke_async(ctx_with_input)
-                    if not isinstance(result, Workflow):
-                        raise FactoryError(
-                            f"WorkflowFactory '{workflow_id}' returned {type(result).__name__}, expected Workflow."
-                        )
-                    # Override with factory's registration ID for FE matching
-                    result.id = workflow_id
-                    return result
+                    return await workflow.resolve_async(ctx, expected_type=Workflow)
                 return workflow
 
     if db and isinstance(db, BaseDb):
