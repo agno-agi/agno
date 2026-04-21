@@ -738,16 +738,21 @@ class StepType(str, Enum):
 
 
 class ExecutorType(str, Enum):
-    """Type of executor that runs inside a Step.
+    """Type of executor that raises executor-level HITL pauses inside a Step.
 
-    Used for `StepOutput.executor_type`, `StepMetrics.executor_type`,
-    `StepRequirement.executor_type`, and `StepExecutorPausedEvent.executor_type`.
+    Only agent/team executors can bubble tool-level HITL up to the workflow;
+    nested workflows and plain functions are not covered by this enum.
     """
 
     AGENT = "agent"
     TEAM = "team"
-    WORKFLOW = "workflow"
-    FUNCTION = "function"
+
+
+class PauseKind(str, Enum):
+    """Kind of HITL pause currently active on a WorkflowRunOutput."""
+
+    STEP = "step"
+    EXECUTOR = "executor"
 
 
 @dataclass

@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from agno.workflow.types import (
         ErrorRequirement,
         ExecutorType,
+        PauseKind,
         StepOutput,
         StepRequirement,
         WorkflowMetrics,
@@ -32,6 +33,7 @@ else:
     ErrorRequirement = Any
     WorkflowMetrics = Any
     ExecutorType = Any
+    PauseKind = Any
 
 
 class WorkflowRunEvent(str, Enum):
@@ -652,6 +654,9 @@ class WorkflowRunOutput:
     paused_step_index: Optional[int] = None
     paused_step_name: Optional[str] = None
 
+    # Kind of pause currently active: "step" or "executor". None when not paused.
+    pause_kind: Optional[Union[PauseKind, str]] = None
+
     @property
     def is_paused(self) -> bool:
         """Check if the workflow is paused waiting for step confirmation or router selection"""
@@ -747,6 +752,14 @@ class WorkflowRunOutput:
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
+
+        if self.pause_kind is not None:
+            # Local import to avoid circular import at module load
+            from agno.workflow.types import PauseKind as _PauseKind
+
+            _dict["pause_kind"] = (
+                self.pause_kind.value if isinstance(self.pause_kind, _PauseKind) else self.pause_kind
+            )
 
         if self.metadata is not None:
             _dict["metadata"] = self.metadata

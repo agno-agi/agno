@@ -127,12 +127,15 @@ STEP_TYPE_MAPPING = {
     Router: StepType.ROUTER,
 }
 
+# Any step-like component that can appear in a workflow (top-level or nested).
+WorkflowStep = Union[Step, Steps, Loop, Parallel, Condition, Router]
+
 
 def _find_inner_step_by_executor(
-    step: Any,
+    step: WorkflowStep,
     executor_agent_id: Optional[str] = None,
     executor_agent_name: Optional[str] = None,
-) -> Optional["Step"]:
+) -> Optional[Step]:
     """Find an inner Step within a composite step (Condition, Loop, etc.) by executor identity.
 
     Used to locate the actual Step with the agent/team when the workflow's top-level

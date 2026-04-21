@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 
 from agno.run.base import RunStatus
 from agno.utils.log import log_debug
-from agno.workflow.types import StepOutput
+from agno.workflow.types import PauseKind, StepOutput
 
 if TYPE_CHECKING:
     from agno.media import Audio, File, Image, Video
@@ -175,6 +175,7 @@ def apply_pause_state(
     workflow_run_response.status = RunStatus.paused
     workflow_run_response.paused_step_index = step_index
     workflow_run_response.paused_step_name = step_name
+    workflow_run_response.pause_kind = PauseKind.STEP
     workflow_run_response.step_results = collected_step_outputs
 
     if pause_result.step_requirement:
@@ -328,6 +329,7 @@ def apply_post_execution_pause_state(
     workflow_run_response.status = RunStatus.paused
     workflow_run_response.paused_step_index = step_index
     workflow_run_response.paused_step_name = step_name
+    workflow_run_response.pause_kind = PauseKind.STEP
     workflow_run_response.step_results = collected_step_outputs
 
     if pause_result.step_requirement:
@@ -435,6 +437,7 @@ def finalize_workflow_completion(
     workflow_run_response.status = RunStatus.completed
     workflow_run_response.paused_step_index = None
     workflow_run_response.paused_step_name = None
+    workflow_run_response.pause_kind = None
 
 
 # -------------------------------------------------------------------------
@@ -498,6 +501,7 @@ def apply_executor_pause(
     workflow_run_response.status = RunStatus.paused
     workflow_run_response.paused_step_index = step_index
     workflow_run_response.paused_step_name = step_name
+    workflow_run_response.pause_kind = PauseKind.EXECUTOR
     workflow_run_response.step_requirements = [step_req]
     workflow_run_response.step_results = collected_step_outputs
     return step_req
