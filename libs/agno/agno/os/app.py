@@ -396,8 +396,8 @@ class AgentOS:
             get_memory_router(dbs=self.dbs),
             get_eval_router(
                 dbs=self.dbs,
-                agents=self._agents or None,
-                teams=self._teams or None,
+                agents=self._agents or None,  # type: ignore[arg-type]
+                teams=self._teams or None,  # type: ignore[arg-type]
             ),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
@@ -470,9 +470,9 @@ class AgentOS:
             from agno.os.interfaces.a2a import A2A
 
             a2a_interface = A2A(
-                agents=self._agents or None,
-                teams=self._teams or None,
-                workflows=self._workflows or None,
+                agents=self._agents or None,  # type: ignore[arg-type]
+                teams=self._teams or None,  # type: ignore[arg-type]
+                workflows=self._workflows or None,  # type: ignore[arg-type]
             )
             self.interfaces.append(a2a_interface)
             self._add_router(app, a2a_interface.get_router())
@@ -756,8 +756,8 @@ class AgentOS:
             get_memory_router(dbs=self.dbs),
             get_eval_router(
                 dbs=self.dbs,
-                agents=self._agents or None,
-                teams=self._teams or None,
+                agents=self._agents or None,  # type: ignore[arg-type]
+                teams=self._teams or None,  # type: ignore[arg-type]
             ),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),

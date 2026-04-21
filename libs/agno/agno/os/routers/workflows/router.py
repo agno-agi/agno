@@ -37,6 +37,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
     get_workflow_by_id,
@@ -635,15 +636,18 @@ def get_workflow_router(
     ) -> WorkflowResponse:
         try:
             workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
+        except FactoryContextRequired:
+            factory = find_factory_by_id(workflow_id, os.workflows)
+            if factory:
+                return WorkflowResponse.from_factory(factory)
+            raise HTTPException(status_code=404, detail="Workflow not found")
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        if isinstance(workflow, WorkflowFactory):
-            return WorkflowResponse.from_factory(workflow)
-        elif isinstance(workflow, RemoteWorkflow):
+        if isinstance(workflow, RemoteWorkflow):
             return await workflow.get_workflow_config()
         else:
             return await WorkflowResponse.from_workflow(workflow=workflow)
@@ -802,17 +806,15 @@ def get_workflow_router(
     async def cancel_workflow_run(workflow_id: str, run_id: str):
         try:
             workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
+        except FactoryContextRequired:
+            from agno.run.cancel import acancel_run
+            await acancel_run(run_id)
+            return JSONResponse(content={}, status_code=200)
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
-
-        # Factory workflows: call static cancel directly
-        if isinstance(workflow, WorkflowFactory):
-            from agno.run.cancel import acancel_run
-            await acancel_run(run_id)
-            return JSONResponse(content={}, status_code=200)
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
@@ -841,15 +843,15 @@ def get_workflow_router(
     ):
         try:
             workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
+        except FactoryContextRequired:
+            if not os.db:
+                raise HTTPException(status_code=400, detail="Factory workflow run polling requires a database on AgentOS")
+            workflow = Workflow(id=workflow_id, db=os.db)
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
-        if isinstance(workflow, WorkflowFactory):
-            if not os.db:
-                raise HTTPException(status_code=400, detail="Factory workflow run polling requires a database on AgentOS")
-            workflow = Workflow(id=workflow_id, db=os.db)
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Run polling is not supported for remote workflows")
 

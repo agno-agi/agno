@@ -553,6 +553,20 @@ def build_request_context(
 
 
 
+def find_factory_by_id(
+    component_id: str,
+    components: Optional[Sequence[Any]],
+) -> Optional[Any]:
+    """Find a factory entry by ID from a list of components."""
+    if not components:
+        return None
+    from agno.factory.base import BaseFactory
+
+    for component in components:
+        if isinstance(component, BaseFactory) and component.id == component_id:
+            return component
+    return None
+
 
 def get_agent_by_id(
     agent_id: str,
@@ -562,7 +576,7 @@ def get_agent_by_id(
     version: Optional[int] = None,
     create_fresh: bool = False,
     ctx: Optional[RequestContext] = None,
-) -> Optional[Union[Agent, RemoteAgent, AgentFactory]]:
+) -> Optional[Union[Agent, RemoteAgent]]:
     """Get an agent by ID, optionally creating a fresh instance for request isolation.
 
     When create_fresh=True, creates a new agent instance using deep_copy() to prevent
@@ -599,8 +613,9 @@ def get_agent_by_id(
                 # Factory path
                 if isinstance(agent, AgentFactory):
                     if ctx is None:
-                        # No RequestContext — return the factory itself for config/discovery
-                        return agent
+                        raise FactoryContextRequired(
+                            f"Agent '{agent_id}' is a factory and requires a RequestContext."
+                        )
                     return agent.resolve(ctx, expected_type=Agent)
                 # RemoteAgent or other
                 return agent
@@ -676,7 +691,7 @@ def get_team_by_id(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
-) -> Optional[Union[Team, RemoteTeam, TeamFactory]]:
+) -> Optional[Union[Team, RemoteTeam]]:
     """Get a team by ID, optionally creating a fresh instance for request isolation.
 
     When create_fresh=True, creates a new team instance using deep_copy() to prevent
@@ -706,8 +721,9 @@ def get_team_by_id(
                     return team
                 if isinstance(team, TeamFactory):
                     if ctx is None:
-                        # No RequestContext — return the factory itself for config/discovery
-                        return team
+                        raise FactoryContextRequired(
+                            f"Team '{team_id}' is a factory and requires a RequestContext."
+                        )
                     result = team.resolve(ctx, expected_type=Team)
                     return result
                 return team
@@ -733,7 +749,7 @@ async def get_team_by_id_async(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
-) -> Optional[Union[Team, RemoteTeam, TeamFactory]]:
+) -> Optional[Union[Team, RemoteTeam]]:
     """Async variant of get_team_by_id that supports async factories."""
     if team_id is None:
         return None
@@ -747,8 +763,9 @@ async def get_team_by_id_async(
                     return team
                 if isinstance(team, TeamFactory):
                     if ctx is None:
-                        # No RequestContext — return the factory itself for config/discovery
-                        return team
+                        raise FactoryContextRequired(
+                            f"Team '{team_id}' is a factory and requires a RequestContext."
+                        )
                     result = await team.resolve_async(ctx, expected_type=Team)
                     return result
                 return team
@@ -774,7 +791,7 @@ def get_workflow_by_id(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
-) -> Optional[Union[Workflow, RemoteWorkflow, WorkflowFactory]]:
+) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Get a workflow by ID, optionally creating a fresh instance for request isolation.
 
     When create_fresh=True, creates a new workflow instance using deep_copy() to prevent
@@ -807,8 +824,9 @@ def get_workflow_by_id(
                     return workflow
                 if isinstance(workflow, WorkflowFactory):
                     if ctx is None:
-                        # No RequestContext — return the factory itself for config/discovery
-                        return workflow
+                        raise FactoryContextRequired(
+                            f"Workflow '{workflow_id}' is a factory and requires a RequestContext."
+                        )
                     result = workflow.resolve(ctx, expected_type=Workflow)
                     return result
                 return workflow
@@ -834,7 +852,7 @@ async def get_workflow_by_id_async(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
-) -> Optional[Union[Workflow, RemoteWorkflow, WorkflowFactory]]:
+) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Async variant of get_workflow_by_id that supports async factories."""
     if workflow_id is None:
         return None
@@ -848,8 +866,9 @@ async def get_workflow_by_id_async(
                     return workflow
                 if isinstance(workflow, WorkflowFactory):
                     if ctx is None:
-                        # No RequestContext — return the factory itself for config/discovery
-                        return workflow
+                        raise FactoryContextRequired(
+                            f"Workflow '{workflow_id}' is a factory and requires a RequestContext."
+                        )
                     result = await workflow.resolve_async(ctx, expected_type=Workflow)
                     return result
                 return workflow
