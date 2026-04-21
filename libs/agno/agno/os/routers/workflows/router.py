@@ -377,16 +377,38 @@ async def workflow_resumable_response_streamer(
     if auth_token and isinstance(workflow, RemoteWorkflow):
         kwargs["auth_token"] = auth_token
 
-    async for sse_data in workflow.arun(  # type: ignore
-        input=input,
-        session_id=session_id,
-        user_id=user_id,
-        stream=True,
-        stream_events=stream_events,
-        background=True,
-        **kwargs,
-    ):
-        yield sse_data
+    try:
+        async for sse_data in workflow.arun(  # type: ignore
+            input=input,
+            session_id=session_id,
+            user_id=user_id,
+            stream=True,
+            stream_events=stream_events,
+            background=True,
+            **kwargs,
+        ):
+            yield sse_data
+    except (InputCheckError, OutputCheckError) as e:
+        error_response = WorkflowErrorEvent(
+            error=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+            additional_data=e.additional_data,
+        )
+        yield format_sse_event(error_response)
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        error_response = WorkflowErrorEvent(
+            error=str(e),
+            error_type=e.type if hasattr(e, "type") else None,
+            error_id=e.error_id if hasattr(e, "error_id") else None,
+        )
+        yield format_sse_event(error_response)
+        return
 
 
 async def _resume_stream_generator(
