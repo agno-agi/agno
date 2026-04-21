@@ -15,6 +15,7 @@ from agno.workflow.utils.hitl import (
     finalize_workflow_completion,
     get_last_executor_run,
     is_executor_pause,
+    resolve_executor_pause,
     save_paused_session,
     step_pause_status,
 )
@@ -34,6 +35,7 @@ __all__ = [
     "finalize_workflow_completion",
     "get_last_executor_run",
     "is_executor_pause",
+    "resolve_executor_pause",
     "save_paused_session",
     "step_pause_status",
 ]

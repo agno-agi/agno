@@ -472,6 +472,45 @@ def get_last_executor_run(workflow_run_response: "WorkflowRunOutput") -> Any:
     return None
 
 
+def resolve_executor_pause(
+    step: Any,
+    workflow_run_response: "WorkflowRunOutput",
+    *,
+    force_find_inner: bool = False,
+) -> Optional[tuple]:
+    """Resolve the inner Step and paused executor run for an executor-level pause.
+
+    Centralizes the "how do we find the inner step + executor run" logic so all
+    callers (sync/async x streaming/non-streaming, plain/router branches) stay
+    consistent. Returns None when the pause cannot be resolved.
+
+    Args:
+        step: The top-level workflow component that paused. May be a Step or a
+            composite (Condition/Loop/Router/Steps).
+        workflow_run_response: The workflow run output (used to locate the
+            paused executor's RunOutput).
+        force_find_inner: If True (router branches), skip the ``isinstance(step, Step)``
+            short-circuit and always search via ``_find_inner_step_by_executor``,
+            falling back to ``step`` itself. Matches existing router behavior.
+
+    Returns:
+        Tuple of (inner_step, executor_run) when the pause is resolvable, else None.
+    """
+    # Local imports to avoid a circular import (workflow.py imports from this module).
+    from agno.workflow.step import Step
+    from agno.workflow.workflow import _find_inner_step_by_executor
+
+    if force_find_inner:
+        inner = _find_inner_step_by_executor(step) or step
+    else:
+        inner = step if isinstance(step, Step) else _find_inner_step_by_executor(step)
+
+    executor_run = get_last_executor_run(workflow_run_response)
+    if not inner or not executor_run:
+        return None
+    return inner, executor_run
+
+
 def apply_executor_pause(
     inner_step: Any,
     step_index: int,
