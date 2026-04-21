@@ -396,8 +396,8 @@ class AgentOS:
             get_memory_router(dbs=self.dbs),
             get_eval_router(
                 dbs=self.dbs,
-                agents=[a for a in self.agents if not isinstance(a, AgentFactory)] if self.agents else None,
-                teams=[t for t in self.teams if not isinstance(t, TeamFactory)] if self.teams else None,
+                agents=self._prototype_agents or None,
+                teams=self._prototype_teams or None,
             ),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
@@ -470,9 +470,9 @@ class AgentOS:
             from agno.os.interfaces.a2a import A2A
 
             a2a_interface = A2A(
-                agents=[a for a in self.agents if not isinstance(a, AgentFactory)] if self.agents else None,
-                teams=[t for t in self.teams if not isinstance(t, TeamFactory)] if self.teams else None,
-                workflows=[w for w in self.workflows if not isinstance(w, WorkflowFactory)] if self.workflows else None,
+                agents=self._prototype_agents or None,
+                teams=self._prototype_teams or None,
+                workflows=self._prototype_workflows or None,
             )
             self.interfaces.append(a2a_interface)
             self._add_router(app, a2a_interface.get_router())
@@ -502,6 +502,21 @@ class AgentOS:
         if duplicate_ids:
             raise ValueError(f"Duplicate IDs found in AgentOS: {', '.join(repr(id_) for id_ in duplicate_ids)}")
 
+    @property
+    def _prototype_agents(self) -> List[Union[Agent, RemoteAgent]]:
+        """Agents excluding factories — for init, tracing, registry, DB discovery."""
+        return [a for a in (self.agents or []) if not isinstance(a, AgentFactory)]
+
+    @property
+    def _prototype_teams(self) -> List[Union[Team, RemoteTeam]]:
+        """Teams excluding factories."""
+        return [t for t in (self.teams or []) if not isinstance(t, TeamFactory)]
+
+    @property
+    def _prototype_workflows(self) -> List[Union[Workflow, RemoteWorkflow]]:
+        """Workflows excluding factories."""
+        return [w for w in (self.workflows or []) if not isinstance(w, WorkflowFactory)]
+
     def _make_app(self, lifespan: Optional[Any] = None) -> FastAPI:
         return FastAPI(
             title=self.name or "Agno AgentOS",
@@ -515,10 +530,10 @@ class AgentOS:
 
     def _initialize_agents(self) -> None:
         """Initialize and configure all agents for AgentOS usage."""
-        if not self.agents:
+        if not self._prototype_agents:
             return
-        for agent in self.agents:
-            if isinstance(agent, (RemoteAgent, AgentFactory)):
+        for agent in self._prototype_agents:
+            if isinstance(agent, RemoteAgent):
                 continue
             # Set the default db to agents without their own
             if self.db is not None and agent.db is None:
@@ -543,11 +558,11 @@ class AgentOS:
 
     def _initialize_teams(self) -> None:
         """Initialize and configure all teams for AgentOS usage."""
-        if not self.teams:
+        if not self._prototype_teams:
             return
 
-        for team in self.teams:
-            if isinstance(team, (RemoteTeam, TeamFactory)):
+        for team in self._prototype_teams:
+            if isinstance(team, RemoteTeam):
                 continue
 
             # Set the default db to teams without their own
@@ -575,11 +590,11 @@ class AgentOS:
 
     def _initialize_workflows(self) -> None:
         """Initialize and configure all workflows for AgentOS usage."""
-        if not self.workflows:
+        if not self._prototype_workflows:
             return
 
-        for workflow in self.workflows:
-            if isinstance(workflow, (RemoteWorkflow, WorkflowFactory)):
+        for workflow in self._prototype_workflows:
+            if isinstance(workflow, RemoteWorkflow):
                 continue
             # Set the default db to workflows without their own
             if self.db is not None and workflow.db is None:
@@ -606,25 +621,24 @@ class AgentOS:
         if self.registry is None:
             self.registry = Registry()
 
-        if self.agents:
+        if self._prototype_agents:
             existing_agent_ids = {getattr(a, "id", None) for a in self.registry.agents}
-            for agent in self.agents:
+            for agent in self._prototype_agents:
+                if isinstance(agent, RemoteAgent):
+                    continue
                 agent_id = getattr(agent, "id", None)
-                if (
-                    not isinstance(agent, (RemoteAgent, AgentFactory))
-                    and agent_id is not None
-                    and agent_id not in existing_agent_ids
-                ):
+                if agent_id is not None and agent_id not in existing_agent_ids:
                     self.registry.agents.append(agent)
                     existing_agent_ids.add(agent_id)
 
-        if self.teams:
+        if self._prototype_teams:
             existing_team_ids = {getattr(t, "id", None) for t in self.registry.teams}
-            for team in self.teams:
+            for team in self._prototype_teams:
+                if isinstance(team, RemoteTeam):
+                    continue
                 team_id = getattr(team, "id", None)
                 if (
-                    not isinstance(team, (RemoteTeam, TeamFactory))
-                    and team_id is not None
+                    team_id is not None
                     and team_id not in existing_team_ids
                 ):
                     self.registry.teams.append(team)
@@ -644,25 +658,19 @@ class AgentOS:
         # Fall back to finding the first available database
         db: Optional[Union[BaseDb, AsyncBaseDb, RemoteDb]] = None
 
-        for agent in self.agents or []:
-            if isinstance(agent, AgentFactory):
-                continue
+        for agent in self._prototype_agents:
             if agent.db:
                 db = agent.db
                 break
 
         if db is None:
-            for team in self.teams or []:
-                if isinstance(team, TeamFactory):
-                    continue
+            for team in self._prototype_teams:
                 if team.db:
                     db = team.db
                     break
 
         if db is None:
-            for workflow in self.workflows or []:
-                if isinstance(workflow, WorkflowFactory):
-                    continue
+            for workflow in self._prototype_workflows:
                 if workflow.db:
                     db = workflow.db
                     break
@@ -762,8 +770,8 @@ class AgentOS:
             get_memory_router(dbs=self.dbs),
             get_eval_router(
                 dbs=self.dbs,
-                agents=[a for a in self.agents if not isinstance(a, AgentFactory)] if self.agents else None,
-                teams=[t for t in self.teams if not isinstance(t, TeamFactory)] if self.teams else None,
+                agents=self._prototype_agents or None,
+                teams=self._prototype_teams or None,
             ),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
@@ -1027,27 +1035,21 @@ class AgentOS:
             str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]
         ] = {}  # Track databases specifically used for knowledge
 
-        for agent in self.agents or []:
-            if isinstance(agent, AgentFactory):
-                continue
+        for agent in self._prototype_agents:
             if agent.db:
                 self._register_db_with_validation(dbs, agent.db)
             agent_contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
             if agent_contents_db:
                 self._register_db_with_validation(knowledge_dbs, agent_contents_db)
 
-        for team in self.teams or []:
-            if isinstance(team, TeamFactory):
-                continue
+        for team in self._prototype_teams:
             if team.db:
                 self._register_db_with_validation(dbs, team.db)
             team_contents_db = getattr(team.knowledge, "contents_db", None) if team.knowledge else None
             if team_contents_db:
                 self._register_db_with_validation(knowledge_dbs, team_contents_db)
 
-        for workflow in self.workflows or []:
-            if isinstance(workflow, WorkflowFactory):
-                continue
+        for workflow in self._prototype_workflows:
             if workflow.db:
                 self._register_db_with_validation(dbs, workflow.db)
 
@@ -1187,15 +1189,11 @@ class AgentOS:
             if isinstance(knowledge, (Knowledge, RemoteKnowledge)):
                 knowledge_instances.append(knowledge)
 
-        for agent in self.agents or []:
-            if isinstance(agent, AgentFactory):
-                continue
+        for agent in self._prototype_agents:
             if agent.knowledge:
                 _add_knowledge_if_not_duplicate(agent.knowledge)
 
-        for team in self.teams or []:
-            if isinstance(team, TeamFactory):
-                continue
+        for team in self._prototype_teams:
             if team.knowledge:
                 _add_knowledge_if_not_duplicate(team.knowledge)
 
