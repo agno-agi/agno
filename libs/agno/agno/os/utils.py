@@ -599,16 +599,24 @@ def get_agent_by_id(
     if agents:
         for agent in agents:
             if agent.id == agent_id:
-                # Factory path — invoke to produce a fresh Agent
+                # Base Agent — most common path, early exit
+                if isinstance(agent, Agent):
+                    if create_fresh:
+                        fresh_agent = agent.deep_copy()
+                        fresh_agent.team_id = None
+                        fresh_agent.workflow_id = None
+                        return fresh_agent
+                    return agent
+                # Factory path
                 if isinstance(agent, AgentFactory):
                     if ctx is None:
                         raise FactoryContextRequired(
                             f"Agent '{agent_id}' is a factory and requires a RequestContext. "
                             "Pass ctx= when calling get_agent_by_id from a request handler."
                         )
-                    validated_input = agent.validate_input(ctx.input)
                     from dataclasses import replace
 
+                    validated_input = agent.validate_input(ctx.input)
                     ctx_with_input = replace(ctx, input=validated_input)
                     result = agent.invoke(ctx_with_input)
                     if not isinstance(result, Agent):
@@ -619,13 +627,7 @@ def get_agent_by_id(
                     # so that SSE events (which use agent.id) match the FE's selected agent ID.
                     result.id = agent_id
                     return result
-                # Prototype path — unchanged
-                if create_fresh and isinstance(agent, Agent):
-                    fresh_agent = agent.deep_copy()
-                    # Clear team/workflow context — this is a standalone agent copy
-                    fresh_agent.team_id = None
-                    fresh_agent.workflow_id = None
-                    return fresh_agent
+                # RemoteAgent or other
                 return agent
 
     # Try to get the agent from the database
@@ -658,15 +660,24 @@ async def get_agent_by_id_async(
     if agents:
         for agent in agents:
             if agent.id == agent_id:
+                # Base Agent — most common path, early exit
+                if isinstance(agent, Agent):
+                    if create_fresh:
+                        fresh_agent = agent.deep_copy()
+                        fresh_agent.team_id = None
+                        fresh_agent.workflow_id = None
+                        return fresh_agent
+                    return agent
+                # Factory path
                 if isinstance(agent, AgentFactory):
                     if ctx is None:
                         raise FactoryContextRequired(
                             f"Agent '{agent_id}' is a factory and requires a RequestContext. "
                             "Pass ctx= when calling get_agent_by_id_async from a request handler."
                         )
-                    validated_input = agent.validate_input(ctx.input)
                     from dataclasses import replace
 
+                    validated_input = agent.validate_input(ctx.input)
                     ctx_with_input = replace(ctx, input=validated_input)
                     result = await agent.invoke_async(ctx_with_input)
                     if not isinstance(result, Agent):
@@ -677,11 +688,7 @@ async def get_agent_by_id_async(
                     # so that SSE events (which use agent.id) match the FE's selected agent ID.
                     result.id = agent_id
                     return result
-                if create_fresh and isinstance(agent, Agent):
-                    fresh_agent = agent.deep_copy()
-                    fresh_agent.team_id = None
-                    fresh_agent.workflow_id = None
-                    return fresh_agent
+                # RemoteAgent or other
                 return agent
 
     if db and isinstance(db, BaseDb):
@@ -729,20 +736,23 @@ def get_team_by_id(
     if teams:
         for team in teams:
             if team.id == team_id:
+                if isinstance(team, Team):
+                    if create_fresh:
+                        return team.deep_copy()
+                    return team
                 if isinstance(team, TeamFactory):
                     if ctx is None:
                         raise FactoryContextRequired(f"Team '{team_id}' is a factory and requires a RequestContext.")
-                    validated_input = team.validate_input(ctx.input)
                     from dataclasses import replace
 
+                    validated_input = team.validate_input(ctx.input)
                     ctx_with_input = replace(ctx, input=validated_input)
                     result = team.invoke(ctx_with_input)
                     if not isinstance(result, Team):
                         raise FactoryError(f"TeamFactory '{team_id}' returned {type(result).__name__}, expected Team.")
+                    # Override with factory's registration ID for FE matching
                     result.id = team_id
                     return result
-                if create_fresh and isinstance(team, Team):
-                    return team.deep_copy()
                 return team
 
     if db and isinstance(db, BaseDb):
@@ -774,20 +784,23 @@ async def get_team_by_id_async(
     if teams:
         for team in teams:
             if team.id == team_id:
+                if isinstance(team, Team):
+                    if create_fresh:
+                        return team.deep_copy()
+                    return team
                 if isinstance(team, TeamFactory):
                     if ctx is None:
                         raise FactoryContextRequired(f"Team '{team_id}' is a factory and requires a RequestContext.")
-                    validated_input = team.validate_input(ctx.input)
                     from dataclasses import replace
 
+                    validated_input = team.validate_input(ctx.input)
                     ctx_with_input = replace(ctx, input=validated_input)
                     result = await team.invoke_async(ctx_with_input)
                     if not isinstance(result, Team):
                         raise FactoryError(f"TeamFactory '{team_id}' returned {type(result).__name__}, expected Team.")
+                    # Override with factory's registration ID for FE matching
                     result.id = team_id
                     return result
-                if create_fresh and isinstance(team, Team):
-                    return team.deep_copy()
                 return team
 
     if db and isinstance(db, BaseDb):
@@ -838,24 +851,27 @@ def get_workflow_by_id(
     if workflows:
         for workflow in workflows:
             if workflow.id == workflow_id:
+                if isinstance(workflow, Workflow):
+                    if create_fresh:
+                        return workflow.deep_copy()
+                    return workflow
                 if isinstance(workflow, WorkflowFactory):
                     if ctx is None:
                         raise FactoryContextRequired(
                             f"Workflow '{workflow_id}' is a factory and requires a RequestContext."
                         )
-                    validated_input = workflow.validate_input(ctx.input)
                     from dataclasses import replace
 
+                    validated_input = workflow.validate_input(ctx.input)
                     ctx_with_input = replace(ctx, input=validated_input)
                     result = workflow.invoke(ctx_with_input)
                     if not isinstance(result, Workflow):
                         raise FactoryError(
                             f"WorkflowFactory '{workflow_id}' returned {type(result).__name__}, expected Workflow."
                         )
+                    # Override with factory's registration ID for FE matching
                     result.id = workflow_id
                     return result
-                if create_fresh and isinstance(workflow, Workflow):
-                    return workflow.deep_copy()
                 return workflow
 
     if db and isinstance(db, BaseDb):
@@ -887,24 +903,27 @@ async def get_workflow_by_id_async(
     if workflows:
         for workflow in workflows:
             if workflow.id == workflow_id:
+                if isinstance(workflow, Workflow):
+                    if create_fresh:
+                        return workflow.deep_copy()
+                    return workflow
                 if isinstance(workflow, WorkflowFactory):
                     if ctx is None:
                         raise FactoryContextRequired(
                             f"Workflow '{workflow_id}' is a factory and requires a RequestContext."
                         )
-                    validated_input = workflow.validate_input(ctx.input)
                     from dataclasses import replace
 
+                    validated_input = workflow.validate_input(ctx.input)
                     ctx_with_input = replace(ctx, input=validated_input)
                     result = await workflow.invoke_async(ctx_with_input)
                     if not isinstance(result, Workflow):
                         raise FactoryError(
                             f"WorkflowFactory '{workflow_id}' returned {type(result).__name__}, expected Workflow."
                         )
+                    # Override with factory's registration ID for FE matching
                     result.id = workflow_id
                     return result
-                if create_fresh and isinstance(workflow, Workflow):
-                    return workflow.deep_copy()
                 return workflow
 
     if db and isinstance(db, BaseDb):
