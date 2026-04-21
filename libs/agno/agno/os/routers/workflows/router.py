@@ -56,7 +56,9 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
-async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os: "AgentOS"):
+async def handle_workflow_via_websocket(
+    websocket: WebSocket, message: dict, os: "AgentOS", ws_user_context: Optional[Dict[str, Any]] = None
+):
     """Handle workflow execution directly via WebSocket"""
     try:
         workflow_id = message.get("workflow_id")
@@ -74,12 +76,22 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             isinstance(w, WorkflowFactory) and w.id == workflow_id for w in (os.workflows or [])
         )
         if is_factory:
-            from agno.factory import RequestContext
+            from agno.factory import RequestContext, TrustedContext
+
+            # Build trusted context from JWT claims if available (via websocket auth)
+            trusted = TrustedContext()
+            if ws_user_context:
+                claims = ws_user_context.get("payload", {})
+                scopes = ws_user_context.get("scopes", frozenset())
+                if isinstance(scopes, (list, set)):
+                    scopes = frozenset(scopes)
+                trusted = TrustedContext(claims=claims, scopes=scopes)
 
             ctx = RequestContext(
                 user_id=user_id,
                 session_id=session_id,
                 input=factory_input,
+                trusted=trusted,
             )
             try:
                 workflow = await get_workflow_by_id_async(
@@ -503,7 +515,7 @@ def get_websocket_router(
                         if "user_id" not in message and websocket_user_context.get("user_id"):
                             message["user_id"] = websocket_user_context["user_id"]
                     # Handle workflow execution directly via WebSocket
-                    await handle_workflow_via_websocket(websocket, message, os)
+                    await handle_workflow_via_websocket(websocket, message, os, ws_user_context=websocket_user_context)
 
                 elif action == "reconnect":
                     # Subscribe/reconnect to an existing workflow run
