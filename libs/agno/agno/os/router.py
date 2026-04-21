@@ -360,12 +360,13 @@ def get_websocket_router(
                     await websocket.send_text(json.dumps({"event": "pong"}))
 
                 elif action == "start-workflow":
-                    # Check workflow-level scope enforcement
+                    # Enforce workflow-level RBAC whenever JWT auth is enabled.
+                    # Missing/empty scopes must deny, matching HTTP middleware semantics.
                     workflow_id = message.get("workflow_id")
-                    user_scopes = websocket_user_context.get("scopes", [])
-                    if user_scopes and workflow_id:
+                    if jwt_auth_enabled and workflow_id:
                         from agno.os.scopes import has_required_scopes
 
+                        user_scopes = websocket_user_context.get("scopes", [])
                         if not has_required_scopes(
                             user_scopes, ["workflows:run"], resource_type="workflows", resource_id=workflow_id
                         ):
@@ -374,19 +375,33 @@ def get_websocket_router(
                             )
                             continue
 
-                    # Add user context to message if available from JWT auth
-                    if websocket_user_context:
-                        if "user_id" not in message and websocket_user_context.get("user_id"):
-                            message["user_id"] = websocket_user_context["user_id"]
-                    # Handle workflow execution directly via WebSocket
+                    # Force user_id from JWT for non-admin callers so the client
+                    # cannot attribute a run to another user by spoofing the field.
+                    jwt_user_id = websocket_user_context.get("user_id")
+                    if jwt_user_id:
+                        from agno.os.scopes import AgentOSScope
+
+                        admin_scope = getattr(websocket.app.state, "admin_scope", None) or AgentOSScope.ADMIN.value
+                        is_admin = admin_scope in websocket_user_context.get("scopes", [])
+                        if is_admin:
+                            message.setdefault("user_id", jwt_user_id)
+                        else:
+                            message["user_id"] = jwt_user_id
                     await handle_workflow_via_websocket(websocket, message, os)
 
                 elif action == "reconnect":
-                    # Add user_id context for scoped session lookup on reconnect
-                    if websocket_user_context:
-                        if "user_id" not in message and websocket_user_context.get("user_id"):
-                            message["user_id"] = websocket_user_context["user_id"]
-                    # Subscribe/reconnect to an existing workflow run
+                    # Force user_id from JWT for non-admins so reconnecting
+                    # cannot read another user's run events by swapping user_id.
+                    jwt_user_id = websocket_user_context.get("user_id")
+                    if jwt_user_id:
+                        from agno.os.scopes import AgentOSScope
+
+                        admin_scope = getattr(websocket.app.state, "admin_scope", None) or AgentOSScope.ADMIN.value
+                        is_admin = admin_scope in websocket_user_context.get("scopes", [])
+                        if is_admin:
+                            message.setdefault("user_id", jwt_user_id)
+                        else:
+                            message["user_id"] = jwt_user_id
                     await handle_workflow_subscription(websocket, message, os)
 
                 else:

@@ -45,6 +45,23 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         except NotImplementedError:
             raise HTTPException(status_code=503, detail="Approvals not supported by the configured database")
 
+    async def _load_approval_for_user(approval_id: str, request: Request) -> Dict[str, Any]:
+        """Fetch an approval and enforce per-user ownership.
+
+        Non-admin callers only see approvals whose user_id matches the JWT sub;
+        a mismatch is reported as 404 (same shape as a missing approval) so the
+        existence of other users' approvals is not leaked.
+        """
+        from agno.os.middleware.user_scope import get_scoped_user_id
+
+        approval = await _db_call("get_approval", approval_id)
+        if approval is None:
+            raise HTTPException(status_code=404, detail="Approval not found")
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None and approval.get("user_id") != scoped_user_id:
+            raise HTTPException(status_code=404, detail="Approval not found")
+        return approval
+
     # ------------------------------------------------------------------
     # Endpoints
     # ------------------------------------------------------------------
@@ -117,12 +134,11 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
 
     @router.get("/approvals/{approval_id}/status", response_model=ApprovalStatusResponse)
     async def get_approval_status(
+        request: Request,
         approval_id: str,
         _: bool = Depends(auth_dependency),
     ) -> ApprovalStatusResponse:
-        approval = await _db_call("get_approval", approval_id)
-        if approval is None:
-            raise HTTPException(status_code=404, detail="Approval not found")
+        approval = await _load_approval_for_user(approval_id, request)
         return ApprovalStatusResponse(
             approval_id=approval_id,
             status=approval.get("status", "unknown"),
@@ -133,13 +149,11 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
 
     @router.get("/approvals/{approval_id}", response_model=ApprovalResponse)
     async def get_approval(
+        request: Request,
         approval_id: str,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
-        approval = await _db_call("get_approval", approval_id)
-        if approval is None:
-            raise HTTPException(status_code=404, detail="Approval not found")
-        return approval
+        return await _load_approval_for_user(approval_id, request)
 
     @router.post("/approvals/{approval_id}/resolve", response_model=ApprovalResponse)
     async def resolve_approval(
@@ -148,6 +162,10 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         body: ApprovalResolve,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
+        # Owner check — non-admin callers cannot resolve other users' approvals.
+        # _load_approval_for_user raises 404 if the approval doesn't belong to them.
+        await _load_approval_for_user(approval_id, request)
+
         now = int(time.time())
         # Use JWT user_id as resolved_by when available (prevents spoofing)
         resolved_by = body.resolved_by
@@ -181,12 +199,12 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
 
     @router.delete("/approvals/{approval_id}", status_code=204)
     async def delete_approval(
+        request: Request,
         approval_id: str,
         _: bool = Depends(auth_dependency),
     ) -> None:
-        existing = await _db_call("get_approval", approval_id)
-        if existing is None:
-            raise HTTPException(status_code=404, detail="Approval not found")
+        # Owner check — non-admin callers cannot delete other users' approvals.
+        await _load_approval_for_user(approval_id, request)
         deleted = await _db_call("delete_approval", approval_id)
         if not deleted:
             raise HTTPException(status_code=500, detail="Failed to delete approval")

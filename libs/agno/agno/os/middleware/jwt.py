@@ -669,6 +669,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
         # (app.add_middleware(JWTMiddleware, ...)) setup paths.
         if not getattr(request.app.state, "jwt_validator", None):
             request.app.state.jwt_validator = self.validator
+        # Expose the configured admin_scope so WebSocket endpoints (which bypass
+        # this middleware) can honour custom admin-scope strings when deciding
+        # whether a caller is an admin.
+        if not getattr(request.app.state, "admin_scope", None):
+            request.app.state.admin_scope = self.admin_scope
 
         path = request.url.path
         method = request.method
@@ -703,6 +708,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             internal_scopes = list(INTERNAL_SERVICE_SCOPES)
             request.state.scopes = internal_scopes
             request.state.authorization_enabled = self.authorization or False
+            request.state.admin_scope = self.admin_scope
 
             # Enforce RBAC for internal token (do not skip scope checks)
             if self.authorization:
@@ -749,6 +755,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.scopes = scopes
             request.state.audience = audience
             request.state.authorization_enabled = self.authorization or False
+            request.state.admin_scope = self.admin_scope
 
             # Extract dependencies claims
             dependencies = {}

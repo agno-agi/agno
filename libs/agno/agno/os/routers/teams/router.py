@@ -20,6 +20,7 @@ from agno.exceptions import InputCheckError, OutputCheckError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency, require_resource_access
+from agno.os.middleware.user_scope import resolve_owned_team
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -373,13 +374,9 @@ def get_team_router(
         dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
     )
     async def cancel_team_run(
-        team_id: str,
         run_id: str,
+        team=Depends(resolve_owned_team(os)),
     ):
-        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
-        if team is None:
-            raise HTTPException(status_code=404, detail="Team not found")
-
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
         await team.acancel_run(run_id=run_id)

@@ -1,12 +1,13 @@
 import logging
 import time
-from typing import Any, List, Optional, Union, cast
+from typing import Any, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
+from agno.os.middleware.user_scope import get_user_scoped_db
 from agno.os.schema import (
     AgentSessionDetailSchema,
     BadRequestResponse,
@@ -27,8 +28,8 @@ from agno.os.schema import (
     WorkflowRunSchema,
     WorkflowSessionDetailSchema,
 )
-from agno.os.middleware.user_scope import get_user_scoped_db
 from agno.os.settings import AgnoAPISettings
+from agno.os.user_scoped_db import AsyncUserScopedDb, UserScopedDb
 from agno.remote.base import RemoteDb
 from agno.session import AgentSession, TeamSession, WorkflowSession
 
@@ -603,13 +604,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            session = await db.get_session(
-                session_id=session_id, session_type=session_type, deserialize=False
-            )
+            session = await db.get_session(session_id=session_id, session_type=session_type, deserialize=False)
         else:
-            session = db.get_session(
-                session_id=session_id, session_type=session_type, deserialize=False
-            )
+            session = db.get_session(session_id=session_id, session_type=session_type, deserialize=False)
 
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
@@ -725,13 +722,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            session = await db.get_session(
-                session_id=session_id, session_type=session_type, deserialize=False
-            )
+            session = await db.get_session(session_id=session_id, session_type=session_type, deserialize=False)
         else:
-            session = db.get_session(
-                session_id=session_id, session_type=session_type, deserialize=False
-            )
+            session = db.get_session(session_id=session_id, session_type=session_type, deserialize=False)
 
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
@@ -788,11 +781,17 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             await db.delete_session(session_id=session_id, db_id=db_id, table=table, headers=headers, user_id=user_id)
             return
 
+        # When no scoped wrapper is active (admin or no JWT), honour the query
+        # param user_id so operators can still target a specific user.
+        local_kwargs: Dict[str, Any] = {"session_id": session_id}
+        if not isinstance(db, (UserScopedDb, AsyncUserScopedDb)):
+            local_kwargs["user_id"] = user_id
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            await db.delete_session(session_id=session_id)
+            await db.delete_session(**local_kwargs)
         else:
-            db.delete_session(session_id=session_id)
+            db.delete_session(**local_kwargs)
 
     @router.delete(
         "/sessions",
@@ -837,11 +836,16 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             )
             return
 
+        # Same pattern as delete_session above for admin / no-JWT callers.
+        local_kwargs: Dict[str, Any] = {"session_ids": request.session_ids}
+        if not isinstance(db, (UserScopedDb, AsyncUserScopedDb)):
+            local_kwargs["user_id"] = user_id
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            await db.delete_sessions(session_ids=request.session_ids)
+            await db.delete_sessions(**local_kwargs)
         else:
-            db.delete_sessions(session_ids=request.session_ids)
+            db.delete_sessions(**local_kwargs)
 
     @router.post(
         "/sessions/{session_id}/rename",
@@ -957,15 +961,22 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 user_id=user_id,
             )
 
+        # Honour query-param user_id when the caller isn't bound to a scoped
+        # wrapper (admins and unauthenticated flows). Scoped wrappers inject
+        # the JWT user_id and ignore this.
+        local_kwargs: Dict[str, Any] = {
+            "session_id": session_id,
+            "session_type": session_type,
+            "session_name": session_name,
+        }
+        if not isinstance(db, (UserScopedDb, AsyncUserScopedDb)):
+            local_kwargs["user_id"] = user_id
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            session = await db.rename_session(
-                session_id=session_id, session_type=session_type, session_name=session_name
-            )
+            session = await db.rename_session(**local_kwargs)
         else:
-            session = db.rename_session(
-                session_id=session_id, session_type=session_type, session_name=session_name
-            )
+            session = db.rename_session(**local_kwargs)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
 
@@ -1065,13 +1076,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         # Get the existing session
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            existing_session = await db.get_session(
-                session_id=session_id, session_type=session_type, deserialize=True
-            )
+            existing_session = await db.get_session(session_id=session_id, session_type=session_type, deserialize=True)
         else:
-            existing_session = db.get_session(
-                session_id=session_id, session_type=session_type, deserialize=True
-            )
+            existing_session = db.get_session(session_id=session_id, session_type=session_type, deserialize=True)
 
         if not existing_session:
             raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")

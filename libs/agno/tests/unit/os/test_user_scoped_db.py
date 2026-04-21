@@ -47,27 +47,31 @@ class TestUserScopedDb:
     def test_user_id_injected_into_get_sessions(self, mock_db):
         scoped = UserScopedDb(mock_db, user_id="user-123")
         scoped.get_sessions(SessionType.AGENT, limit=10)
-        mock_db.get_sessions.assert_called_once_with(SessionType.AGENT, limit=10, user_id="user-123")
+        mock_db.get_sessions.assert_called_once_with(session_type=SessionType.AGENT, limit=10, user_id="user-123")
 
     def test_user_id_injected_into_get_session(self, mock_db):
         scoped = UserScopedDb(mock_db, user_id="user-123")
         scoped.get_session("sess-1", SessionType.AGENT)
-        mock_db.get_session.assert_called_once_with("sess-1", SessionType.AGENT, user_id="user-123")
+        mock_db.get_session.assert_called_once_with(
+            session_id="sess-1", session_type=SessionType.AGENT, user_id="user-123"
+        )
 
     def test_user_id_injected_into_delete_session(self, mock_db):
         scoped = UserScopedDb(mock_db, user_id="user-123")
         scoped.delete_session("sess-1")
-        mock_db.delete_session.assert_called_once_with("sess-1", user_id="user-123")
+        mock_db.delete_session.assert_called_once_with(session_id="sess-1", user_id="user-123")
 
     def test_user_id_injected_into_delete_sessions(self, mock_db):
         scoped = UserScopedDb(mock_db, user_id="user-123")
         scoped.delete_sessions(["sess-1", "sess-2"])
-        mock_db.delete_sessions.assert_called_once_with(["sess-1", "sess-2"], user_id="user-123")
+        mock_db.delete_sessions.assert_called_once_with(session_ids=["sess-1", "sess-2"], user_id="user-123")
 
     def test_user_id_injected_into_rename_session(self, mock_db):
         scoped = UserScopedDb(mock_db, user_id="user-123")
         scoped.rename_session("sess-1", SessionType.AGENT, "new-name")
-        mock_db.rename_session.assert_called_once_with("sess-1", SessionType.AGENT, "new-name", user_id="user-123")
+        mock_db.rename_session.assert_called_once_with(
+            session_id="sess-1", session_type=SessionType.AGENT, session_name="new-name", user_id="user-123"
+        )
 
     def test_user_id_injected_into_get_traces(self, mock_db):
         scoped = UserScopedDb(mock_db, user_id="user-123")
@@ -75,9 +79,17 @@ class TestUserScopedDb:
         mock_db.get_traces.assert_called_once_with(agent_id="agent-1", limit=20, user_id="user-123")
 
     def test_user_id_injected_into_get_trace(self, mock_db):
+        # Return a lightweight object with the matching user_id so the wrapper's
+        # post-filter returns it. (On backends without user_id support the wrapper
+        # falls back to this check to enforce isolation.)
+        class Trace:
+            def __init__(self, uid):
+                self.user_id = uid
+
+        mock_db.get_trace.return_value = Trace("user-123")
         scoped = UserScopedDb(mock_db, user_id="user-123")
         scoped.get_trace(trace_id="trace-1")
-        mock_db.get_trace.assert_called_once_with(trace_id="trace-1", user_id="user-123")
+        mock_db.get_trace.assert_called_once_with(user_id="user-123", trace_id="trace-1")
 
     def test_user_id_injected_into_get_trace_stats(self, mock_db):
         scoped = UserScopedDb(mock_db, user_id="user-123")
@@ -92,12 +104,12 @@ class TestUserScopedDb:
     def test_user_id_injected_into_get_user_memory(self, mock_db):
         scoped = UserScopedDb(mock_db, user_id="user-123")
         scoped.get_user_memory("mem-1")
-        mock_db.get_user_memory.assert_called_once_with("mem-1", user_id="user-123")
+        mock_db.get_user_memory.assert_called_once_with(memory_id="mem-1", user_id="user-123")
 
     def test_user_id_injected_into_delete_user_memory(self, mock_db):
         scoped = UserScopedDb(mock_db, user_id="user-123")
         scoped.delete_user_memory("mem-1")
-        mock_db.delete_user_memory.assert_called_once_with("mem-1", user_id="user-123")
+        mock_db.delete_user_memory.assert_called_once_with(memory_id="mem-1", user_id="user-123")
 
     def test_user_id_injected_into_get_memory_topics(self, mock_db):
         scoped = UserScopedDb(mock_db, user_id="user-123")
@@ -127,6 +139,38 @@ class TestUserScopedDb:
         scoped = UserScopedDb(mock_db, user_id="user-123")
         scoped.upsert_session(session)
         mock_db.upsert_session.assert_called_once_with(session)
+
+    def test_upsert_session_coerces_mismatched_user_id(self, mock_db):
+        """A session carrying a foreign user_id must be rewritten before the write."""
+
+        class Sess:
+            user_id = "user-EVIL"
+
+        session = Sess()
+        scoped = UserScopedDb(mock_db, user_id="user-123")
+        scoped.upsert_session(session)
+        assert session.user_id == "user-123"
+        mock_db.upsert_session.assert_called_once_with(session)
+
+    def test_upsert_user_memory_coerces_mismatched_user_id(self, mock_db):
+        class Mem:
+            user_id = "user-EVIL"
+
+        memory = Mem()
+        scoped = UserScopedDb(mock_db, user_id="user-123")
+        scoped.upsert_user_memory(memory)
+        assert memory.user_id == "user-123"
+        mock_db.upsert_user_memory.assert_called_once_with(memory)
+
+    def test_upsert_memories_coerces_each_entry(self, mock_db):
+        class Mem:
+            def __init__(self, uid):
+                self.user_id = uid
+
+        memories = [Mem("user-EVIL"), Mem(None), Mem("user-123")]
+        scoped = UserScopedDb(mock_db, user_id="user-123")
+        scoped.upsert_memories(memories)
+        assert [m.user_id for m in memories] == ["user-123", "user-123", "user-123"]
 
     def test_passthrough_for_knowledge(self, mock_db):
         """Knowledge methods are not user-scoped — should pass through via __getattr__."""
@@ -163,7 +207,7 @@ class TestAsyncUserScopedDb:
     async def test_user_id_injected_into_get_sessions(self, mock_async_db):
         scoped = AsyncUserScopedDb(mock_async_db, user_id="user-123")
         await scoped.get_sessions(SessionType.AGENT, limit=10)
-        mock_async_db.get_sessions.assert_called_once_with(SessionType.AGENT, limit=10, user_id="user-123")
+        mock_async_db.get_sessions.assert_called_once_with(session_type=SessionType.AGENT, limit=10, user_id="user-123")
 
     @pytest.mark.asyncio
     async def test_user_id_injected_into_get_traces(self, mock_async_db):
@@ -200,7 +244,7 @@ class TestAsyncUserScopedDb:
 class TestGetScopedUserId:
     """Test get_scoped_user_id admin bypass logic."""
 
-    def _make_request(self, user_id=None, scopes=None):
+    def _make_request(self, user_id=None, scopes=None, admin_scope=None):
         request = MagicMock()
         request.state = MagicMock()
         if user_id is not None:
@@ -212,6 +256,13 @@ class TestGetScopedUserId:
             request.state.scopes = scopes
         else:
             del request.state.scopes
+        if admin_scope is not None:
+            request.state.admin_scope = admin_scope
+        else:
+            # Simulate the attribute being absent so the helper falls back
+            # to the default AgentOSScope.ADMIN value rather than picking up
+            # MagicMock's auto-generated attribute.
+            del request.state.admin_scope
         return request
 
     def test_regular_user_returns_user_id(self):
@@ -225,9 +276,7 @@ class TestGetScopedUserId:
 
     def test_admin_with_other_scopes_returns_none(self):
         """Admin scope overrides regardless of other scopes present."""
-        request = self._make_request(
-            user_id="admin-user", scopes=["agents:read", "agent_os:admin", "sessions:read"]
-        )
+        request = self._make_request(user_id="admin-user", scopes=["agents:read", "agent_os:admin", "sessions:read"])
         assert get_scoped_user_id(request) is None
 
     def test_no_user_id_returns_none(self):
@@ -242,4 +291,22 @@ class TestGetScopedUserId:
 
     def test_empty_scopes_returns_user_id(self):
         request = self._make_request(user_id="user-123", scopes=[])
+        assert get_scoped_user_id(request) == "user-123"
+
+    def test_custom_admin_scope_honoured(self):
+        """When JWTMiddleware is configured with a custom admin_scope, it must win."""
+        request = self._make_request(
+            user_id="admin-user",
+            scopes=["custom:admin"],
+            admin_scope="custom:admin",
+        )
+        assert get_scoped_user_id(request) is None
+
+    def test_default_admin_scope_ignored_when_custom_configured(self):
+        """The default agent_os:admin must NOT grant bypass once a custom one is set."""
+        request = self._make_request(
+            user_id="user-123",
+            scopes=["agent_os:admin"],
+            admin_scope="custom:admin",
+        )
         assert get_scoped_user_id(request) == "user-123"

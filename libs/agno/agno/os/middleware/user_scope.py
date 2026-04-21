@@ -20,9 +20,9 @@ Usage in a router:
     # Returns None for admins (no filtering), user_id for regular users
 """
 
-from typing import List, Optional, Union
+from typing import TYPE_CHECKING, Callable, List, Optional, Union
 
-from fastapi import Request
+from fastapi import HTTPException, Query, Request
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.scopes import AgentOSScope
@@ -31,10 +31,20 @@ from agno.os.utils import get_db
 from agno.remote.base import RemoteDb
 from agno.utils.log import log_debug
 
+if TYPE_CHECKING:
+    from agno.agent import Agent, RemoteAgent
+    from agno.os.app import AgentOS
+    from agno.team import RemoteTeam, Team
+    from agno.workflow import RemoteWorkflow, Workflow
 
-def _has_admin_scope(scopes: List[str]) -> bool:
-    """Check if the user's scopes include admin access."""
-    return AgentOSScope.ADMIN.value in scopes
+
+def _has_admin_scope(scopes: List[str], admin_scope: Optional[str] = None) -> bool:
+    """Check if the user's scopes include admin access.
+
+    Honours the configured ``admin_scope`` (set by JWTMiddleware via
+    request.state.admin_scope) and falls back to the default ``agent_os:admin``.
+    """
+    return (admin_scope or AgentOSScope.ADMIN.value) in scopes
 
 
 def get_scoped_user_id(request: Request) -> Optional[str]:
@@ -48,13 +58,17 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
 
     Use this in endpoints that thread user_id through internal method calls
     (e.g. agent.aget_run_output, aread_or_create_session).
+
+    If the operator configured a custom ``admin_scope`` on JWTMiddleware, that
+    value is honoured here too (read from ``request.state.admin_scope``).
     """
     user_id = getattr(request.state, "user_id", None)
     if not user_id:
         return None
 
     scopes: List[str] = getattr(request.state, "scopes", [])
-    if _has_admin_scope(scopes):
+    admin_scope: Optional[str] = getattr(request.state, "admin_scope", None)
+    if _has_admin_scope(scopes, admin_scope=admin_scope):
         return None
 
     return user_id
@@ -102,3 +116,133 @@ async def get_user_scoped_db(
 
     log_debug(f"Creating user-scoped DB wrapper for user_id={user_id}")
     return UserScopedDb(db, user_id)
+
+
+# ----------------------------------------------------------------------------
+# Run-ownership dependencies
+#
+# For endpoints keyed solely by run_id (cancel, continue) the cancellation
+# manager has no user_id column, so ownership has to be verified at the router
+# layer: load the session for {user_id, session_id} and ensure it contains the
+# run. The three factories below return a FastAPI dependency that fetches the
+# agent / team / workflow, enforces ownership for non-admin JWT callers, and
+# returns the entity so the route body doesn't re-resolve it.
+# ----------------------------------------------------------------------------
+
+
+async def _verify_run_in_session(entity, session_id: str, run_id: str, user_id: str) -> None:
+    """Raise 404 if ``run_id`` isn't in a session owned by ``user_id``."""
+    session = await entity.aget_session(session_id=session_id, user_id=user_id)
+    if session is None or session.get_run(run_id=run_id) is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+
+def resolve_owned_agent(os: "AgentOS") -> Callable:
+    """Return a FastAPI dependency yielding the Agent for a run the caller owns.
+
+    For non-admin JWT callers the dependency also requires ``session_id`` as a
+    query param and checks the run belongs to the caller's session; mismatches
+    raise 404 so the existence of another user's run isn't leaked. Admins and
+    unauthenticated callers bypass the ownership check entirely.
+    """
+    from agno.os.utils import get_agent_by_id
+
+    async def dependency(
+        request: Request,
+        agent_id: str,
+        run_id: str,
+        session_id: Optional[str] = Query(
+            default=None,
+            description="Session ID the run belongs to. Required for non-admin JWT users.",
+        ),
+    ) -> "Union[Agent, RemoteAgent]":
+        agent = get_agent_by_id(
+            agent_id=agent_id,
+            agents=os.agents,
+            db=os.db,
+            registry=os.registry,
+            create_fresh=True,
+        )
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if not session_id:
+                raise HTTPException(status_code=400, detail="session_id is required for this action")
+            await _verify_run_in_session(agent, session_id, run_id, scoped_user_id)
+        return agent
+
+    return dependency
+
+
+def resolve_owned_team(os: "AgentOS") -> Callable:
+    """Return a dependency yielding the Team for a run the caller owns.
+
+    See ``resolve_owned_agent`` for behaviour.
+    """
+    from agno.os.utils import get_team_by_id
+
+    async def dependency(
+        request: Request,
+        team_id: str,
+        run_id: str,
+        session_id: Optional[str] = Query(
+            default=None,
+            description="Session ID the run belongs to. Required for non-admin JWT users.",
+        ),
+    ) -> "Union[Team, RemoteTeam]":
+        team = get_team_by_id(
+            team_id=team_id,
+            teams=os.teams,
+            db=os.db,
+            registry=os.registry,
+            create_fresh=True,
+        )
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if not session_id:
+                raise HTTPException(status_code=400, detail="session_id is required for this action")
+            await _verify_run_in_session(team, session_id, run_id, scoped_user_id)
+        return team
+
+    return dependency
+
+
+def resolve_owned_workflow(os: "AgentOS") -> Callable:
+    """Return a dependency yielding the Workflow for a run the caller owns.
+
+    See ``resolve_owned_agent`` for behaviour.
+    """
+    from agno.os.utils import get_workflow_by_id
+
+    async def dependency(
+        request: Request,
+        workflow_id: str,
+        run_id: str,
+        session_id: Optional[str] = Query(
+            default=None,
+            description="Session ID the run belongs to. Required for non-admin JWT users.",
+        ),
+    ) -> "Union[Workflow, RemoteWorkflow]":
+        workflow = get_workflow_by_id(
+            workflow_id=workflow_id,
+            workflows=os.workflows,
+            db=os.db,
+            registry=os.registry,
+            create_fresh=True,
+        )
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if not session_id:
+                raise HTTPException(status_code=400, detail="session_id is required for this action")
+            await _verify_run_in_session(workflow, session_id, run_id, scoped_user_id)
+        return workflow
+
+    return dependency

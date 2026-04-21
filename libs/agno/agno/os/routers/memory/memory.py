@@ -1,6 +1,6 @@
 import logging
 import math
-from typing import List, Optional, Union, cast
+from typing import Any, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import Depends, HTTPException, Path, Query, Request
@@ -10,6 +10,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
 from agno.models.utils import get_model
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
+from agno.os.middleware.user_scope import get_user_scoped_db
 from agno.os.routers.memory.schemas import (
     DeleteMemoriesRequest,
     OptimizeMemoriesRequest,
@@ -28,8 +29,8 @@ from agno.os.schema import (
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
-from agno.os.middleware.user_scope import get_user_scoped_db
 from agno.os.settings import AgnoAPISettings
+from agno.os.user_scoped_db import AsyncUserScopedDb, UserScopedDb
 from agno.remote.base import RemoteDb
 
 logger = logging.getLogger(__name__)
@@ -91,9 +92,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to use for memory storage"),
         table: Optional[str] = Query(default=None, description="Table to use for memory storage"),
     ) -> UserMemorySchema:
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
-            payload.user_id = user_id
+        # Force payload.user_id to the JWT user for non-admin callers. Admins
+        # (get_scoped_user_id returns None) may create on behalf of anyone.
+        from agno.os.middleware.user_scope import get_scoped_user_id
+
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            payload.user_id = scoped_user_id
 
         if payload.user_id is None:
             raise HTTPException(status_code=400, detail="User ID is required")
@@ -173,11 +178,17 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 table=table,
                 headers=headers,
             )
+        # Admins can target another user's memory via the query param; non-admins
+        # get the wrapper's injected user_id.
+        local_kwargs: Dict[str, Any] = {"memory_id": memory_id}
+        if not isinstance(db, (UserScopedDb, AsyncUserScopedDb)) and user_id is not None:
+            local_kwargs["user_id"] = user_id
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            await db.delete_user_memory(memory_id=memory_id)
+            await db.delete_user_memory(**local_kwargs)
         else:
-            db.delete_user_memory(memory_id=memory_id)
+            db.delete_user_memory(**local_kwargs)
 
     @router.delete(
         "/memories",
@@ -293,32 +304,28 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 headers=headers,
             )
 
-        # For local DBs, the scoped wrapper handles user_id injection
+        # For local DBs, the scoped wrapper handles user_id injection for
+        # non-admins. For admins / no-JWT callers the wrapper is a passthrough,
+        # so respect the query-param user_id explicitly.
+        local_kwargs: Dict[str, Any] = {
+            "limit": limit,
+            "page": page,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            "topics": topics,
+            "search_content": search_content,
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+            "deserialize": False,
+        }
+        if not isinstance(db, (UserScopedDb, AsyncUserScopedDb)) and user_id is not None:
+            local_kwargs["user_id"] = user_id
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            user_memories, total_count = await db.get_user_memories(
-                limit=limit,
-                page=page,
-                agent_id=agent_id,
-                team_id=team_id,
-                topics=topics,
-                search_content=search_content,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                deserialize=False,
-            )
+            user_memories, total_count = await db.get_user_memories(**local_kwargs)
         else:
-            user_memories, total_count = db.get_user_memories(  # type: ignore
-                limit=limit,
-                page=page,
-                agent_id=agent_id,
-                team_id=team_id,
-                topics=topics,
-                search_content=search_content,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                deserialize=False,
-            )
+            user_memories, total_count = db.get_user_memories(**local_kwargs)  # type: ignore
 
         memories = [UserMemorySchema.from_dict(user_memory) for user_memory in user_memories]  # type: ignore
         return PaginatedResponse(
@@ -381,11 +388,17 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 headers=headers,
             )
 
+        # Admins pass the query-param user_id straight through (the wrapper is
+        # a no-op for them); non-admins get user_id injected by the scoped wrapper.
+        local_kwargs: Dict[str, Any] = {"memory_id": memory_id, "deserialize": False}
+        if not isinstance(db, (UserScopedDb, AsyncUserScopedDb)) and user_id is not None:
+            local_kwargs["user_id"] = user_id
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            user_memory = await db.get_user_memory(memory_id=memory_id, deserialize=False)
+            user_memory = await db.get_user_memory(**local_kwargs)
         else:
-            user_memory = db.get_user_memory(memory_id=memory_id, deserialize=False)
+            user_memory = db.get_user_memory(**local_kwargs)
         if not user_memory:
             raise HTTPException(status_code=404, detail=f"Memory with ID {memory_id} not found")
 
@@ -439,11 +452,17 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 headers=headers,
             )
 
+        # Admins can still filter by user_id via query param; non-admins get the
+        # wrapper-injected value and the explicit kwarg is ignored.
+        local_kwargs: Dict[str, Any] = {}
+        if not isinstance(db, (UserScopedDb, AsyncUserScopedDb)) and user_id is not None:
+            local_kwargs["user_id"] = user_id
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            return await db.get_all_memory_topics()
+            return await db.get_all_memory_topics(**local_kwargs)
         else:
-            return db.get_all_memory_topics()
+            return db.get_all_memory_topics(**local_kwargs)  # type: ignore[return-value]
 
     @router.patch(
         "/memories/{memory_id}",
@@ -485,9 +504,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to use for update"),
         table: Optional[str] = Query(default=None, description="Table to use for update"),
     ) -> UserMemorySchema:
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
-            payload.user_id = user_id
+        # Force payload.user_id to the JWT user for non-admin callers. Admins
+        # (get_scoped_user_id returns None) may update memories belonging to anyone.
+        from agno.os.middleware.user_scope import get_scoped_user_id
+
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            payload.user_id = scoped_user_id
 
         if payload.user_id is None:
             raise HTTPException(status_code=400, detail="User ID is required")
@@ -588,17 +611,17 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             # Ensure limit and page are integers
             limit = int(limit) if limit is not None else 20
             page = int(page) if page is not None else 1
+            # Admins may filter by user_id via the query param; for scoped wrappers
+            # the injected user_id wins so we don't pass it twice.
+            local_kwargs: Dict[str, Any] = {"limit": limit, "page": page}
+            if not isinstance(db, (UserScopedDb, AsyncUserScopedDb)) and user_id is not None:
+                local_kwargs["user_id"] = user_id
+
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
-                user_stats, total_count = await db.get_user_memory_stats(
-                    limit=limit,
-                    page=page,
-                )
+                user_stats, total_count = await db.get_user_memory_stats(**local_kwargs)
             else:
-                user_stats, total_count = db.get_user_memory_stats(
-                    limit=limit,
-                    page=page,
-                )
+                user_stats, total_count = db.get_user_memory_stats(**local_kwargs)
             return PaginatedResponse(
                 data=[UserStatsSchema.from_dict(stats) for stats in user_stats],
                 meta=PaginationInfo(
@@ -690,15 +713,17 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 )
 
             # Create memory manager with optional model
+            # db may be a UserScopedDb/AsyncUserScopedDb wrapper at this point;
+            # MemoryManager treats it structurally.
             if request.model:
                 try:
                     model_instance = get_model(request.model)
                 except ValueError as e:
                     raise HTTPException(status_code=400, detail=str(e))
-                memory_manager = MemoryManager(model=model_instance, db=db)
+                memory_manager = MemoryManager(model=model_instance, db=db)  # type: ignore[arg-type]
             else:
                 # No model specified - use MemoryManager's default
-                memory_manager = MemoryManager(db=db)
+                memory_manager = MemoryManager(db=db)  # type: ignore[arg-type]
 
             # Get current memories to count tokens before optimization
             if isinstance(db, AsyncBaseDb):

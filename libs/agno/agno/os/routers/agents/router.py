@@ -28,6 +28,7 @@ from agno.os.auth import (
     require_approval_resolved,
     require_resource_access,
 )
+from agno.os.middleware.user_scope import resolve_owned_agent
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -465,13 +466,9 @@ def get_agent_router(
         dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
     )
     async def cancel_agent_run(
-        agent_id: str,
         run_id: str,
+        agent=Depends(resolve_owned_agent(os)),
     ):
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
-
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
         await agent.acancel_run(run_id=run_id)
@@ -817,7 +814,6 @@ def get_agent_router(
 
         # Load the session to get its runs
         from agno.agent._storage import aread_or_create_session
-
         from agno.os.middleware.user_scope import get_scoped_user_id
 
         user_id = get_scoped_user_id(request)

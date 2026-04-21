@@ -26,7 +26,16 @@ def create_token(user_id: str, scopes: list[str] | None = None) -> str:
     payload = {
         "sub": user_id,
         "aud": TEST_OS_ID,
-        "scopes": scopes or ["agents:read", "agents:run", "sessions:read", "sessions:write", "memories:read", "memories:write", "traces:read"],
+        "scopes": scopes
+        or [
+            "agents:read",
+            "agents:run",
+            "sessions:read",
+            "sessions:write",
+            "memories:read",
+            "memories:write",
+            "traces:read",
+        ],
         "exp": datetime.now(UTC) + timedelta(hours=1),
         "iat": datetime.now(UTC),
     }
@@ -274,3 +283,95 @@ class TestMemoryIsolation:
         data = resp.json()["data"]
         memory_ids = [m.get("id") or m.get("memory_id") for m in data]
         assert memory_id in memory_ids
+
+
+# --- Async DB dispatch ---
+
+
+class TestAsyncDbDispatch:
+    """Regression coverage for the sync/async router dispatch against wrapped
+    AsyncBaseDb instances. Without virtual-subclass registration, routers fall
+    into the sync branch and crash trying to unpack a coroutine.
+    """
+
+    @pytest.fixture
+    def async_client(self, tmp_path):
+        import uuid
+
+        from agno.db.sqlite.async_sqlite import AsyncSqliteDb
+
+        db = AsyncSqliteDb(
+            db_file=str(tmp_path / f"async_iso_{uuid.uuid4().hex[:8]}.db"),
+        )
+        agent = Agent(name="test-agent", id="test-agent", db=db, instructions="hi")
+        agent_os = AgentOS(
+            id=TEST_OS_ID,
+            agents=[agent],
+            authorization=True,
+            authorization_config=AuthorizationConfig(
+                verification_keys=[JWT_SECRET],
+                algorithm="HS256",
+            ),
+        )
+        return TestClient(agent_os.get_app())
+
+    def test_sessions_list_works_on_async_db(self, async_client):
+        """GET /sessions must route through the async branch for AsyncBaseDb."""
+        token = create_token("user-a")
+        resp = async_client.get("/sessions?type=agent", headers=auth_header(token))
+        assert resp.status_code == 200, resp.text
+        assert "data" in resp.json()
+
+    def test_memories_list_works_on_async_db(self, async_client):
+        token = create_token("user-a")
+        resp = async_client.get("/memories", headers=auth_header(token))
+        assert resp.status_code == 200, resp.text
+        assert "data" in resp.json()
+
+    def test_traces_list_works_on_async_db(self, async_client):
+        token = create_token("user-a")
+        resp = async_client.get("/traces", headers=auth_header(token))
+        assert resp.status_code == 200, resp.text
+
+
+# --- Cancel ownership ---
+
+
+class TestCancelOwnership:
+    """Cancel endpoints must not let one user cancel another user's run."""
+
+    def test_non_admin_cancel_requires_session_id(self, client):
+        token = create_token("user-a")
+        resp = client.post(
+            "/agents/test-agent/runs/some-run/cancel",
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 400
+        assert "session_id" in resp.json()["detail"].lower()
+
+    def test_non_admin_cancel_foreign_run_returns_404(self, client):
+        # user-a creates a session + synthetic run, user-b tries to cancel by id
+        token_a = create_token("user-a", scopes=["agent_os:admin"])
+        token_b = create_token("user-b")
+
+        resp = client.post(
+            "/sessions?type=agent",
+            json={"agent_id": "test-agent", "user_id": "user-a"},
+            headers=auth_header(token_a),
+        )
+        assert resp.status_code == 201
+        session_id = resp.json().get("session_id") or resp.json().get("agent_session_id")
+
+        resp = client.post(
+            f"/agents/test-agent/runs/run-does-not-exist/cancel?session_id={session_id}",
+            headers=auth_header(token_b),
+        )
+        assert resp.status_code == 404
+
+    def test_admin_cancel_without_session_id_still_succeeds(self, client):
+        admin_token = create_admin_token()
+        resp = client.post(
+            "/agents/test-agent/runs/some-run/cancel",
+            headers=auth_header(admin_token),
+        )
+        assert resp.status_code == 200
