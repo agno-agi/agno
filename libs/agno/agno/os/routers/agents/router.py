@@ -705,13 +705,12 @@ def get_agent_router(
         agents: List[AgentResponse] = []
         if accessible_agents:
             for agent in accessible_agents:
-                if isinstance(agent, AgentFactory):
+                if isinstance(agent, Agent):
+                    agents.append(await AgentResponse.from_agent(agent=agent, is_component=False))
+                elif isinstance(agent, AgentFactory):
                     agents.append(AgentResponse.from_factory(agent))
                 elif isinstance(agent, RemoteAgent):
                     agents.append(await agent.get_agent_config())
-                else:
-                    agent_response = await AgentResponse.from_agent(agent=agent, is_component=False)
-                    agents.append(agent_response)
 
         if os.db and isinstance(os.db, BaseDb):
             from agno.agent.agent import get_agents

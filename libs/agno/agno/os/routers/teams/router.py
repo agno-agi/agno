@@ -708,13 +708,12 @@ def get_team_router(
 
         teams = []
         for team in accessible_teams:
-            if isinstance(team, TeamFactory):
+            if isinstance(team, Team):
+                teams.append(await TeamResponse.from_team(team=team, is_component=False))
+            elif isinstance(team, TeamFactory):
                 teams.append(TeamResponse.from_factory(team))
             elif isinstance(team, RemoteTeam):
                 teams.append(await team.get_team_config())
-            else:
-                team_response = await TeamResponse.from_team(team=team, is_component=False)
-                teams.append(team_response)
 
         # Also load teams from database
         if os.db and isinstance(os.db, BaseDb):

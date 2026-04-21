@@ -11,7 +11,6 @@ from fastapi import (
 from agno.agent.factory import AgentFactory
 from agno.exceptions import RemoteServerUnavailableError
 from agno.team.factory import TeamFactory
-from agno.workflow.factory import WorkflowFactory
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.managers import websocket_manager
 from agno.os.routers.workflows.router import handle_workflow_subscription, handle_workflow_via_websocket
@@ -145,37 +144,11 @@ def get_base_router(
     )
     async def config() -> ConfigResponse:
         try:
-            agent_summaries = []
-            if os.agents:
-                for agent in os.agents:
-                    if isinstance(agent, AgentFactory):
-                        agent_summaries.append(
-                            AgentSummaryResponse(id=agent.id, name=agent.name, description=agent.description)
-                        )
-                    else:
-                        agent_summaries.append(AgentSummaryResponse.from_agent(agent))
-
-            team_summaries = []
-            if os.teams:
-                for team in os.teams:
-                    if isinstance(team, TeamFactory):
-                        team_summaries.append(
-                            TeamSummaryResponse(id=team.id, name=team.name, description=team.description)
-                        )
-                    else:
-                        team_summaries.append(TeamSummaryResponse.from_team(team))
-
-            workflow_summaries = []
-            if os.workflows:
-                for workflow in os.workflows:
-                    if isinstance(workflow, WorkflowFactory):
-                        workflow_summaries.append(
-                            WorkflowSummaryResponse(
-                                id=workflow.id, name=workflow.name, description=workflow.description
-                            )
-                        )
-                    else:
-                        workflow_summaries.append(WorkflowSummaryResponse.from_workflow(workflow))
+            agent_summaries = [AgentSummaryResponse.from_agent(a) for a in os.agents] if os.agents else []
+            team_summaries = [TeamSummaryResponse.from_team(t) for t in os.teams] if os.teams else []
+            workflow_summaries = [
+                WorkflowSummaryResponse.from_workflow(w) for w in os.workflows
+            ] if os.workflows else []
         except RemoteServerUnavailableError as e:
             raise HTTPException(
                 status_code=502,

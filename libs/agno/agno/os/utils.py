@@ -1378,6 +1378,8 @@ async def resolve_agent(
     """
     is_factory = agents and any(isinstance(a, AgentFactory) and a.id == agent_id for a in agents)
     if is_factory:
+        if request is None:
+            raise HTTPException(status_code=400, detail="Request context is required for factory agents")
         ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
         try:
             agent = await get_agent_by_id_async(
@@ -1419,6 +1421,8 @@ async def resolve_team(
     """Resolve a team by ID with proper error handling for both factory and non-factory paths."""
     is_factory = teams and any(isinstance(t, TeamFactory) and t.id == team_id for t in teams)
     if is_factory:
+        if request is None:
+            raise HTTPException(status_code=400, detail="Request context is required for factory teams")
         ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
         try:
             team = await get_team_by_id_async(
@@ -1462,6 +1466,8 @@ async def resolve_workflow(
         isinstance(w, WorkflowFactory) and w.id == workflow_id for w in workflows
     )
     if is_factory:
+        if request is None:
+            raise HTTPException(status_code=400, detail="Request context is required for factory workflows")
         ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
         try:
             workflow = await get_workflow_by_id_async(

@@ -5,6 +5,7 @@ from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.agent import Agent
+from agno.agent.factory import AgentFactory
 from agno.agent.remote import RemoteAgent
 from agno.db.base import SessionType
 from agno.os.config import (
@@ -18,8 +19,10 @@ from agno.os.config import (
 )
 from agno.os.utils import extract_input_media, get_run_input, get_session_name, to_utc_datetime
 from agno.session import AgentSession, TeamSession, WorkflowSession
+from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
+from agno.workflow.factory import WorkflowFactory
 from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
@@ -103,7 +106,9 @@ class AgentSummaryResponse(BaseModel):
     db_id: Optional[str] = Field(None, description="Database identifier")
 
     @classmethod
-    def from_agent(cls, agent: Union[Agent, RemoteAgent]) -> "AgentSummaryResponse":
+    def from_agent(cls, agent: Union[Agent, RemoteAgent, AgentFactory]) -> "AgentSummaryResponse":
+        if isinstance(agent, AgentFactory):
+            return cls(id=agent.id, name=agent.name, description=agent.description)
         return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
 
 
@@ -115,7 +120,9 @@ class TeamSummaryResponse(BaseModel):
     mode: Optional[str] = Field(None, description="Team execution mode (coordinate, route, broadcast, tasks)")
 
     @classmethod
-    def from_team(cls, team: Union[Team, RemoteTeam]) -> "TeamSummaryResponse":
+    def from_team(cls, team: Union[Team, RemoteTeam, TeamFactory]) -> "TeamSummaryResponse":
+        if isinstance(team, TeamFactory):
+            return cls(id=team.id, name=team.name, description=team.description)
         db_id = team.db.id if team.db else None
         mode = team.mode.value if hasattr(team, "mode") and team.mode else None
         return cls(id=team.id, name=team.name, description=team.description, db_id=db_id, mode=mode)
@@ -133,9 +140,11 @@ class WorkflowSummaryResponse(BaseModel):
     @classmethod
     def from_workflow(
         cls,
-        workflow: Union[Workflow, RemoteWorkflow],
+        workflow: Union[Workflow, RemoteWorkflow, WorkflowFactory],
         is_component: bool = False,
     ) -> "WorkflowSummaryResponse":
+        if isinstance(workflow, WorkflowFactory):
+            return cls(id=workflow.id, name=workflow.name, description=workflow.description)
         db_id = workflow.db.id if workflow.db else None
         return cls(
             id=workflow.id,
