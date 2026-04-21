@@ -436,6 +436,16 @@ async def workflow_response_streamer(
         async for run_response_chunk in run_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
 
+        # If the workflow paused, yield the full WorkflowRunOutput as a final SSE event
+        # so the FE has step_requirements for the /continue request.
+        _session = workflow.get_session(session_id=session_id)
+        if _session and _session.runs:
+            _last_run = _session.runs[-1]
+            if getattr(_last_run, "is_paused", False):
+                run_dict = _last_run.to_dict()
+                run_json = json.dumps(run_dict, default=json_serializer, separators=(",", ":"))
+                yield f"event: WorkflowRunOutput\ndata: {run_json}\n\n"
+
     except (InputCheckError, OutputCheckError) as e:
         error_response = WorkflowErrorEvent(
             error=str(e),
@@ -484,6 +494,15 @@ async def workflow_continue_response_streamer(
 
         async for run_response_chunk in run_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
+
+        # If the workflow re-paused, yield the full WorkflowRunOutput as a final SSE event
+        _session = workflow.get_session(session_id=session_id)
+        if _session and _session.runs:
+            _last_run = _session.runs[-1]
+            if getattr(_last_run, "is_paused", False):
+                run_dict = _last_run.to_dict()
+                run_json = json.dumps(run_dict, default=json_serializer, separators=(",", ":"))
+                yield f"event: WorkflowRunOutput\ndata: {run_json}\n\n"
 
     except (InputCheckError, OutputCheckError) as e:
         error_response = WorkflowErrorEvent(
