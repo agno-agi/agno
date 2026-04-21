@@ -75,7 +75,7 @@ def process_events(event_stream):
         elif isinstance(event, StepCompletedEvent):
             console.print(f"  [green]StepCompletedEvent: {event.step_name}[/]")
         elif isinstance(event, WorkflowCompletedEvent):
-            console.print(f"  [bold green]WorkflowCompletedEvent[/]")
+            console.print("  [bold green]WorkflowCompletedEvent[/]")
         elif hasattr(event, "content") and event.content:
             print(f"  {event.content}", end="", flush=True)
 

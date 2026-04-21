@@ -10,7 +10,6 @@ Tests cover:
 - Workflow streaming integration: events appear in continue_run stream
 """
 
-from agno.run.base import RunStatus
 from agno.run.workflow import (
     WORKFLOW_RUN_EVENT_TYPE_REGISTRY,
     StepContinuedEvent,
@@ -18,12 +17,8 @@ from agno.run.workflow import (
     StepExecutorPausedEvent,
     StepPausedEvent,
     WorkflowRunEvent,
-    WorkflowRunOutput,
 )
-from agno.workflow.step import Step
 from agno.workflow.types import (
-    StepInput,
-    StepOutput,
     StepRequirement,
 )
 
