@@ -186,7 +186,10 @@ def apply_pause_state(
     workflow_run_response.step_results = collected_step_outputs
 
     if pause_result.step_requirement:
-        workflow_run_response.step_requirements = [pause_result.step_requirement]
+        # Append to existing resolved requirements so the FE can see the full
+        # HITL history on completed runs.  Only the last entry is "active".
+        existing = workflow_run_response.step_requirements or []
+        workflow_run_response.step_requirements = existing + [pause_result.step_requirement]
 
 
 def save_paused_session(
@@ -340,7 +343,10 @@ def apply_post_execution_pause_state(
     workflow_run_response.step_results = collected_step_outputs
 
     if pause_result.step_requirement:
-        workflow_run_response.step_requirements = [pause_result.step_requirement]
+        # Append to existing resolved requirements so the FE can see the full
+        # HITL history on completed runs.  Only the last entry is "active".
+        existing = workflow_run_response.step_requirements or []
+        workflow_run_response.step_requirements = existing + [pause_result.step_requirement]
 
 
 class ContinueExecutionState:
@@ -555,7 +561,8 @@ def apply_executor_pause(
     workflow_run_response.paused_step_index = step_index
     workflow_run_response.paused_step_name = step_name
     workflow_run_response.pause_kind = PauseKind.EXECUTOR
-    workflow_run_response.step_requirements = [step_req]
+    existing = workflow_run_response.step_requirements or []
+    workflow_run_response.step_requirements = existing + [step_req]
     workflow_run_response.step_results = collected_step_outputs
     return step_req
 

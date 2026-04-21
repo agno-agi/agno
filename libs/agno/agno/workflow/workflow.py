@@ -129,6 +129,8 @@ STEP_TYPE_MAPPING = {
     Router: StepType.ROUTER,
 }
 
+
+
 # Any step-like component that can appear in a workflow (top-level or nested).
 # Matches what callers iterate over in ``Workflow.steps`` (see ``WorkflowSteps``
 # below): Step + composite step types + nested Workflow + callable step.
@@ -4854,17 +4856,20 @@ class Workflow:
         if step_requirements is not None:
             run_response.step_requirements = step_requirements
 
+        # The active requirement is the last one in the list (earlier entries are
+        # resolved history from previous pause/continue cycles).
+        _all_reqs = run_response.step_requirements or []
+        _active_reqs = _all_reqs[-1:] if _all_reqs else []
+
         # Check for executor HITL requirements (these bypass normal resolution checks)
         executor_step_req = None
-        if run_response.step_requirements:
-            for step_req in run_response.step_requirements:
-                if step_req.requires_executor_input:
-                    executor_step_req = step_req
-                    break
+        for step_req in _active_reqs:
+            if step_req.requires_executor_input:
+                executor_step_req = step_req
+                break
 
-        # Check for timeout on all step requirements (must run before validation
-        # so timed-out requirements are auto-resolved before we check for unresolved ones)
-        for step_req in run_response.step_requirements or []:
+        # Check for timeout on active requirements
+        for step_req in _active_reqs:
             timeout_action = check_timeout(step_req)
             if timeout_action is not None:
                 log_debug(f"Step '{step_req.step_name}' timed out - applying action: {timeout_action}")
@@ -4877,9 +4882,10 @@ class Workflow:
                     step_req.confirmed = False
                     step_req.on_reject = "cancel"
 
-        # Validate that all step requirements are resolved (skip for executor HITL)
-        if not executor_step_req and run_response.active_step_requirements:
-            unresolved = [req.step_name for req in run_response.active_step_requirements]
+        # Validate that active step requirements are resolved (skip for executor HITL)
+        active_unresolved = [req for req in _active_reqs if not req.is_resolved]
+        if not executor_step_req and active_unresolved:
+            unresolved = [req.step_name for req in active_unresolved]
             raise ValueError(f"Cannot continue run - unresolved step requirements: {unresolved}")
 
         # Validate that all error requirements are resolved
@@ -4887,22 +4893,22 @@ class Workflow:
             unresolved = [req.step_name for req in run_response.active_error_requirements]
             raise ValueError(f"Cannot continue run - unresolved error requirements: {unresolved}")
 
-        # Detect post-execution review (step already ran)
-        is_post_execution_review = any(req.is_post_execution for req in (run_response.step_requirements or []))
+        # Detect post-execution review (step already ran) — only on active requirement
+        is_post_execution_review = any(req.is_post_execution for req in _active_reqs)
         # Detect loop iteration review specifically (confirmed = continue loop, not advance past it)
         is_loop_iteration_review = any(
-            req.is_post_execution and req.step_type == "Loop" for req in (run_response.step_requirements or [])
+            req.is_post_execution and req.step_type == "Loop" for req in _active_reqs
         )
         # Detect router output review (reject = re-route to a different branch)
         is_router_output_review = any(
-            req.is_post_execution and req.step_type == "Router" for req in (run_response.step_requirements or [])
+            req.is_post_execution and req.step_type == "Router" for req in _active_reqs
         )
         retry_step = False
 
-        # Check if any step was rejected
+        # Check if active step was rejected
         rejected_steps = [
             req
-            for req in (run_response.step_requirements or [])
+            for req in _active_reqs
             if req.requires_confirmation and req.confirmed is False
         ]
 
@@ -5063,7 +5069,6 @@ class Workflow:
 
         # Update run status to running
         run_response.status = RunStatus.running
-        run_response.step_requirements = None
         run_response.error_requirements = None
 
         # Create run context
@@ -6749,17 +6754,20 @@ class Workflow:
         if step_requirements is not None:
             run_response.step_requirements = step_requirements
 
+        # The active requirement is the last one in the list (earlier entries are
+        # resolved history from previous pause/continue cycles).
+        _all_reqs = run_response.step_requirements or []
+        _active_reqs = _all_reqs[-1:] if _all_reqs else []
+
         # Check for executor HITL requirements (these bypass normal resolution checks)
         executor_step_req = None
-        if run_response.step_requirements:
-            for step_req in run_response.step_requirements:
-                if step_req.requires_executor_input:
-                    executor_step_req = step_req
-                    break
+        for step_req in _active_reqs:
+            if step_req.requires_executor_input:
+                executor_step_req = step_req
+                break
 
-        # Check for timeout on all step requirements (must run before validation
-        # so timed-out requirements are auto-resolved before we check for unresolved ones)
-        for step_req in run_response.step_requirements or []:
+        # Check for timeout on active requirements
+        for step_req in _active_reqs:
             timeout_action = check_timeout(step_req)
             if timeout_action is not None:
                 log_debug(f"Step '{step_req.step_name}' timed out - applying action: {timeout_action}")
@@ -6772,9 +6780,10 @@ class Workflow:
                     step_req.confirmed = False
                     step_req.on_reject = "cancel"
 
-        # Validate that all requirements are resolved (skip for executor HITL)
-        if not executor_step_req and run_response.active_step_requirements:
-            unresolved = [req.step_name for req in run_response.active_step_requirements]
+        # Validate that active step requirements are resolved (skip for executor HITL)
+        active_unresolved = [req for req in _active_reqs if not req.is_resolved]
+        if not executor_step_req and active_unresolved:
+            unresolved = [req.step_name for req in active_unresolved]
             raise ValueError(f"Cannot continue run - unresolved step requirements: {unresolved}")
 
         # Validate that all error requirements are resolved
@@ -6782,22 +6791,22 @@ class Workflow:
             unresolved = [req.step_name for req in run_response.active_error_requirements]
             raise ValueError(f"Cannot continue run - unresolved error requirements: {unresolved}")
 
-        # Detect post-execution review (step already ran)
-        is_post_execution_review = any(req.is_post_execution for req in (run_response.step_requirements or []))
+        # Detect post-execution review (step already ran) — only on active requirement
+        is_post_execution_review = any(req.is_post_execution for req in _active_reqs)
         # Detect loop iteration review specifically (confirmed = continue loop, not advance past it)
         is_loop_iteration_review = any(
-            req.is_post_execution and req.step_type == "Loop" for req in (run_response.step_requirements or [])
+            req.is_post_execution and req.step_type == "Loop" for req in _active_reqs
         )
         # Detect router output review (reject = re-route to a different branch)
         is_router_output_review = any(
-            req.is_post_execution and req.step_type == "Router" for req in (run_response.step_requirements or [])
+            req.is_post_execution and req.step_type == "Router" for req in _active_reqs
         )
         retry_step = False
 
-        # Check if any step was rejected
+        # Check if active step was rejected
         rejected_steps = [
             req
-            for req in (run_response.step_requirements or [])
+            for req in _active_reqs
             if req.requires_confirmation and req.confirmed is False
         ]
 
@@ -6955,7 +6964,6 @@ class Workflow:
 
         # Update run status to running
         run_response.status = RunStatus.running
-        run_response.step_requirements = None
         run_response.error_requirements = None
 
         # Create run context
