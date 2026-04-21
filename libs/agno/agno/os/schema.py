@@ -134,6 +134,8 @@ class WorkflowSummaryResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the workflow")
     description: Optional[str] = Field(None, description="Description of the workflow")
     db_id: Optional[str] = Field(None, description="Database identifier")
+    is_factory: bool = Field(False, description="Whether this workflow is a factory")
+    factory_input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for factory_input")
     is_component: bool = Field(False, description="Whether this workflow was created via Builder")
     current_version: Optional[int] = Field(None, description="Current published version number")
     stage: Optional[str] = Field(None, description="Stage of the loaded config (draft/published)")
@@ -145,7 +147,19 @@ class WorkflowSummaryResponse(BaseModel):
         is_component: bool = False,
     ) -> "WorkflowSummaryResponse":
         if isinstance(workflow, WorkflowFactory):
-            return cls(id=workflow.id, name=workflow.name, description=workflow.description)
+            factory_input_schema = None
+            if workflow.input_schema is not None:
+                try:
+                    factory_input_schema = workflow.input_schema.model_json_schema()
+                except Exception:
+                    pass
+            return cls(
+                id=workflow.id,
+                name=workflow.name,
+                description=workflow.description,
+                is_factory=True,
+                factory_input_schema=factory_input_schema,
+            )
         db_id = workflow.db.id if workflow.db else None
         return cls(
             id=workflow.id,

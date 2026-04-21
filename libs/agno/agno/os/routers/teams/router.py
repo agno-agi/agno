@@ -537,6 +537,7 @@ def get_team_router(
                 team_id, os.teams, os.db, registry,
                 request=request, user_id=user_id, session_id=session_id,
             )
+            raise HTTPException(status_code=400, detail="This team is a factory. Use the run endpoint to create an instance.")
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
