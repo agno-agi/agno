@@ -118,15 +118,35 @@ class TestStepRequirementExecutorFields:
         assert req.executor_type == "agent"
 
     def test_needs_executor_resolution_true(self):
-        """needs_executor_resolution is True when both flags set."""
+        """needs_executor_resolution is True when an underlying RunRequirement is unresolved."""
+        pending = {"tool_execution": {"tool_name": "x", "tool_args": {}, "requires_confirmation": True}}
         req = StepRequirement(
             step_id="s1",
             step_name="test",
             step_index=0,
             requires_executor_input=True,
-            executor_requirements=[{"id": "r1"}],
+            executor_requirements=[pending],
         )
         assert req.needs_executor_resolution is True
+
+    def test_needs_executor_resolution_false_all_resolved(self):
+        """needs_executor_resolution is False once all underlying RunRequirements are resolved."""
+        resolved = {
+            "tool_execution": {
+                "tool_name": "x",
+                "tool_args": {},
+                "requires_confirmation": True,
+                "confirmed": True,
+            }
+        }
+        req = StepRequirement(
+            step_id="s1",
+            step_name="test",
+            step_index=0,
+            requires_executor_input=True,
+            executor_requirements=[resolved],
+        )
+        assert req.needs_executor_resolution is False
 
     def test_needs_executor_resolution_false_no_requirements(self):
         """needs_executor_resolution is False when executor_requirements is None."""
@@ -368,7 +388,9 @@ class TestWorkflowRunOutputExecutorProperties:
             step_name="executor",
             step_index=1,
             requires_executor_input=True,
-            executor_requirements=[{"id": "r1"}],
+            executor_requirements=[
+                {"tool_execution": {"tool_name": "x", "tool_args": {}, "requires_confirmation": True}}
+            ],
         )
         output = WorkflowRunOutput()
         output.step_requirements = [req1, req2]

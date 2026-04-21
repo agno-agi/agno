@@ -1054,7 +1054,7 @@ class StepRequirement:
         """
         if not self.requires_executor_input or not self.executor_requirements:
             return False
-        # Local import to avoid circulars (agno.run.requirement imports from workflow types indirectly).
+
         from agno.run.requirement import RunRequirement
 
         for req in self.executor_requirements:
