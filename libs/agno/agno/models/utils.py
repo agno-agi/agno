@@ -59,6 +59,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return CometAPI(id=model_id)
 
+    elif model_provider == "cloudflare":
+        from agno.models.cloudflare import Cloudflare
+
+        return Cloudflare(id=model_id)
+
     elif model_provider == "dashscope":
         from agno.models.dashscope import DashScope
 

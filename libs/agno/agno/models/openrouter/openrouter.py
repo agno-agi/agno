@@ -71,7 +71,10 @@ class OpenRouter(OpenAILike):
         """
         # Get base request params from parent class
         request_params = super().get_request_params(
-            response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
+            response_format=response_format,
+            tools=tools,
+            tool_choice=tool_choice,
+            run_response=run_response,
         )
 
         # Add fallback models to extra_body if specified
