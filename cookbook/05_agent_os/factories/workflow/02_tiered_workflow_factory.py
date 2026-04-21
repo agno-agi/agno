@@ -25,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 import jwt as pyjwt
 
 from agno.agent import Agent
-from agno.agent.factory import RequestContext
+from agno.factory import RequestContext
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS

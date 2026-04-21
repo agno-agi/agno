@@ -5,7 +5,7 @@ free-tier users get a cheaper one. The tier comes from JWT claims (trusted),
 so clients can't self-upgrade by changing a request field.
 
 Run:
-    .venvs/demo/bin/python cookbook/05_agent_os/factories/04_tiered_model_factory.py
+    .venvs/demo/bin/python cookbook/05_agent_os/factories/agent/04_tiered_model_factory.py
 
 Test:
     # Free tier (cheaper model)
@@ -26,7 +26,7 @@ from datetime import UTC, datetime, timedelta
 import jwt as pyjwt
 
 from agno.agent import Agent, AgentFactory
-from agno.agent.factory import RequestContext
+from agno.factory import RequestContext
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.middleware import JWTMiddleware

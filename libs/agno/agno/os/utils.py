@@ -8,7 +8,7 @@ from pydantic import BaseModel, create_model
 from starlette.middleware.cors import CORSMiddleware
 
 from agno.agent import Agent, AgentFactory, RemoteAgent
-from agno.agent.factory import (
+from agno.factory import (
     FactoryContextRequired,
     FactoryError,
     RequestContext,
@@ -519,7 +519,7 @@ def build_request_context(
     Parses factory_input JSON and populates trusted context from request.state
     (set by auth middleware).
     """
-    from agno.agent.factory import TrustedContext
+    from agno.factory import TrustedContext
 
     # Parse factory_input JSON string
     parsed_input: Any = None

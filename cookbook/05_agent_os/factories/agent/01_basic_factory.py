@@ -4,7 +4,7 @@ Demonstrates the simplest factory pattern: a callable that receives a
 RequestContext and returns a fresh Agent with tenant-specific instructions.
 
 Run:
-    .venvs/demo/bin/python cookbook/05_agent_os/factories/01_basic_factory.py
+    .venvs/demo/bin/python cookbook/05_agent_os/factories/agent/01_basic_factory.py
 
 Test:
     # List agents (factory shows up with type: "factory")
@@ -18,7 +18,7 @@ Test:
 """
 
 from agno.agent import Agent, AgentFactory
-from agno.agent.factory import RequestContext
+from agno.factory import RequestContext
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS

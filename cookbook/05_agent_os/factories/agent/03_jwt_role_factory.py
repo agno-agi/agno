@@ -9,7 +9,7 @@ to decide tool access, and the client can customize the theme but not escalate
 their privileges.
 
 Run:
-    .venvs/demo/bin/python cookbook/05_agent_os/factories/03_jwt_role_factory.py
+    .venvs/demo/bin/python cookbook/05_agent_os/factories/agent/03_jwt_role_factory.py
 
 Test:
     # Generate test tokens (printed at startup) and use them:
@@ -36,7 +36,7 @@ import jwt as pyjwt
 from pydantic import BaseModel
 
 from agno.agent import Agent, AgentFactory
-from agno.agent.factory import FactoryPermissionError, RequestContext
+from agno.factory import FactoryPermissionError, RequestContext
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS

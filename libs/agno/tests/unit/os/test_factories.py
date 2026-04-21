@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
-from agno.agent.factory import (
-    AgentFactory,
+from agno.agent.factory import AgentFactory
+from agno.factory import (
     FactoryContextRequired,
     FactoryError,
     FactoryPermissionError,

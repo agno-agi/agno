@@ -16,7 +16,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from agno.agent.factory import FactoryContextRequired, FactoryError, FactoryPermissionError, FactoryValidationError
+from agno.factory import FactoryContextRequired, FactoryError, FactoryPermissionError, FactoryValidationError
 from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.os.auth import (

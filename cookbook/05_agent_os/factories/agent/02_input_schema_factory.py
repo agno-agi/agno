@@ -5,7 +5,7 @@ declares a pydantic model for validation. AgentOS validates the input and
 exposes it as `ctx.input` (a typed pydantic instance).
 
 Run:
-    .venvs/demo/bin/python cookbook/05_agent_os/factories/02_input_schema_factory.py
+    .venvs/demo/bin/python cookbook/05_agent_os/factories/agent/02_input_schema_factory.py
 
 Test:
     # Run with default persona
@@ -33,7 +33,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from agno.agent import Agent, AgentFactory
-from agno.agent.factory import RequestContext
+from agno.factory import RequestContext
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS

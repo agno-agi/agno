@@ -17,8 +17,8 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent
-from agno.agent.factory import (
-    AgentFactory,
+from agno.agent.factory import AgentFactory
+from agno.factory import (
     FactoryContextRequired,
     FactoryError,
     FactoryPermissionError,

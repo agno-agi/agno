@@ -7,8 +7,9 @@ from agno.agent.agent import (
     get_agent_by_id,
     get_agents,
 )
-from agno.agent.factory import (
-    AgentFactory,
+from agno.agent.factory import AgentFactory
+from agno.factory import (
+    BaseFactory,
     FactoryContextRequired,
     FactoryError,
     FactoryPermissionError,
@@ -44,6 +45,7 @@ from agno.run.agent import (
 __all__ = [
     "Agent",
     "AgentFactory",
+    "BaseFactory",
     "FallbackConfig",
     "FactoryContextRequired",
     "FactoryError",
