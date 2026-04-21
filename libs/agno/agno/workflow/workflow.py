@@ -1361,7 +1361,8 @@ class Workflow:
             if self._has_async_db():
                 result = await self._aupsert_session(session=session)  # type: ignore
             else:
-                result = self._upsert_session(session=session)
+                # Offload the sync DB call so it doesn't block the event loop.
+                result = await asyncio.to_thread(self._upsert_session, session=session)
             if result is None:
                 log_warning(f"WorkflowSession not persisted (ownership mismatch): {session.session_id}")
             else:

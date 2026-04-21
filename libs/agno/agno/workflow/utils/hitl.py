@@ -462,14 +462,21 @@ def is_executor_pause(step_output: Any) -> bool:
 
 
 def get_last_executor_run(workflow_run_response: "WorkflowRunOutput") -> Any:
-    """Get the last executor run response from step_executor_runs.
+    """Get the most recent paused executor run from step_executor_runs.
 
-    This is used to find the paused executor's RunOutput after
-    _store_executor_response has been called.
+    ``step_executor_runs`` is append-only: if a Loop runs the same step multiple
+    times (or multiple steps executed before the pause) it can contain several
+    entries. Return the last entry whose RunOutput is actually paused; fall back
+    to the absolute last entry only if none report ``is_paused`` (legacy shape
+    or executor that doesn't surface the flag).
     """
-    if workflow_run_response.step_executor_runs:
-        return workflow_run_response.step_executor_runs[-1]
-    return None
+    runs = workflow_run_response.step_executor_runs
+    if not runs:
+        return None
+    for run in reversed(runs):
+        if getattr(run, "is_paused", False):
+            return run
+    return runs[-1]
 
 
 def resolve_executor_pause(
