@@ -27,6 +27,15 @@ from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
 
+class ComponentEntryType(str, Enum):
+    """Whether a registered component is a prototype or a factory."""
+
+    agent = "agent"
+    team = "team"
+    workflow = "workflow"
+    factory = "factory"
+
+
 class BadRequestResponse(BaseModel):
     model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}})
 

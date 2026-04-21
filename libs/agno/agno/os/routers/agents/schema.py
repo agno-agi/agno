@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 from agno.agent import Agent
 from agno.models.message import Message
-from agno.os.schema import ModelResponse
+from agno.os.schema import ComponentEntryType, ModelResponse
 from agno.os.utils import (
     format_tools,
 )
@@ -26,7 +26,7 @@ class AgentResponse(BaseModel):
     db_id: Optional[str] = None
     description: Optional[str] = None
     role: Optional[str] = None
-    type: Optional[str] = None  # "agent" or "factory"
+    type: Optional[ComponentEntryType] = None
     model: Optional[ModelResponse] = None
     tools: Optional[Dict[str, Any]] = None
     sessions: Optional[Dict[str, Any]] = None
@@ -60,7 +60,7 @@ class AgentResponse(BaseModel):
             id=factory.id,
             name=factory.name,
             description=factory.description,
-            type="factory",
+            type=ComponentEntryType.factory,
             factory_input_schema=factory_input_schema,
         )
 

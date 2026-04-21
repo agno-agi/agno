@@ -36,6 +36,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
     get_team_by_id,
@@ -814,16 +815,13 @@ def get_team_router(
         dependencies=[Depends(require_resource_access("teams", "read", "team_id"))],
     )
     async def get_team(team_id: str, request: Request) -> TeamResponse:
-        # Check if it's a factory first — return factory info without requiring a RequestContext
-        if os.teams:
-            for t in os.teams:
-                if isinstance(t, TeamFactory) and t.id == team_id:
-                    return TeamResponse.from_factory(t)
-
         try:
             team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
         except FactoryContextRequired:
-            raise HTTPException(status_code=400, detail="This team is a factory. Use the run endpoint to create an instance.")
+            factory = find_factory_by_id(team_id, os.teams)
+            if factory:
+                return TeamResponse.from_factory(factory)
+            raise HTTPException(status_code=404, detail="Team not found")
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")

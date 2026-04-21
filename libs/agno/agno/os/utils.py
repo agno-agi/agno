@@ -547,6 +547,24 @@ def build_request_context(
     )
 
 
+def find_factory_by_id(
+    component_id: str,
+    components: Optional[Sequence[Any]],
+) -> Optional[Any]:
+    """Find a factory entry by ID from a list of components.
+
+    Returns the factory object if found, None otherwise.
+    """
+    if not components:
+        return None
+    from agno.factory.base import BaseFactory
+
+    for component in components:
+        if isinstance(component, BaseFactory) and component.id == component_id:
+            return component
+    return None
+
+
 def get_agent_by_id(
     agent_id: str,
     agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentFactory]]] = None,

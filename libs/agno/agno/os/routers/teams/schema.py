@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 from agno.agent import Agent
 from agno.os.routers.agents.schema import AgentResponse
-from agno.os.schema import ModelResponse
+from agno.os.schema import ComponentEntryType, ModelResponse
 from agno.os.utils import (
     format_team_tools,
 )
@@ -42,7 +42,7 @@ class TeamResponse(BaseModel):
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
-    type: Optional[str] = None  # "team" or "factory"
+    type: Optional[ComponentEntryType] = None
     factory_input_schema: Optional[Dict[str, Any]] = None
     is_component: bool = False
     current_version: Optional[int] = None
@@ -62,7 +62,7 @@ class TeamResponse(BaseModel):
             id=factory.id,
             name=factory.name,
             description=factory.description,
-            type="factory",
+            type=ComponentEntryType.factory,
             factory_input_schema=factory_input_schema,
         )
 

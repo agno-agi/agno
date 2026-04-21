@@ -45,6 +45,7 @@ from agno.os.utils import (
     process_document,
     process_image,
     process_video,
+    find_factory_by_id,
     get_agent_by_id,
     resolve_agent,
 )
@@ -765,16 +766,14 @@ def get_agent_router(
         dependencies=[Depends(require_resource_access("agents", "read", "agent_id"))],
     )
     async def get_agent(agent_id: str, request: Request) -> AgentResponse:
-        # Check if it's a factory first — return factory info without requiring a RequestContext
-        if os.agents:
-            for a in os.agents:
-                if isinstance(a, AgentFactory) and a.id == agent_id:
-                    return AgentResponse.from_factory(a)
-
         try:
             agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
         except FactoryContextRequired:
-            raise HTTPException(status_code=400, detail="This agent is a factory. Use the run endpoint to create an instance.")
+            # Factory agents return config info directly (no run context needed)
+            factory = find_factory_by_id(agent_id, os.agents)
+            if factory:
+                return AgentResponse.from_factory(factory)
+            raise HTTPException(status_code=404, detail="Agent not found")
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")

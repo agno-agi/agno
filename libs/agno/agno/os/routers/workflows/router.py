@@ -37,12 +37,12 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
     get_workflow_by_id,
     resolve_workflow,
 )
-from agno.workflow.factory import WorkflowFactory
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowErrorEvent
 from agno.utils.log import log_debug, log_warning, logger
@@ -613,18 +613,13 @@ def get_workflow_router(
         request: Request,
         version: Optional[int] = Query(None, description="Workflow version to retrieve"),
     ) -> WorkflowResponse:
-        # Check if it's a factory first — return factory info without requiring a RequestContext
-        if os.workflows:
-            for w in os.workflows:
-                if isinstance(w, WorkflowFactory) and w.id == workflow_id:
-                    return WorkflowResponse(
-                        id=w.id, name=w.name, description=w.description
-                    )
-
         try:
             workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
         except FactoryContextRequired:
-            raise HTTPException(status_code=400, detail="This workflow is a factory. Use the run endpoint to create an instance.")
+            factory = find_factory_by_id(workflow_id, os.workflows)
+            if factory:
+                return WorkflowResponse(id=factory.id, name=factory.name, description=factory.description)
+            raise HTTPException(status_code=404, detail="Workflow not found")
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
