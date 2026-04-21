@@ -465,6 +465,17 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "GET /approvals/*/status": ["approvals:read"],
         "POST /approvals/*/resolve": ["approvals:write"],
         "DELETE /approvals/*": ["approvals:delete"],
+        # Trace search
+        "POST /traces/search": ["traces:read"],
+        # Database migration endpoints (admin-only operations)
+        "POST /databases/all/migrate": ["system:write"],
+        "POST /databases/*/migrate": ["system:write"],
+        # Additional knowledge endpoints
+        "POST /knowledge/remote-content": ["knowledge:write"],
+        "GET /knowledge/*/sources": ["knowledge:read"],
+        "GET /knowledge/*/sources/*/files": ["knowledge:read"],
+        # Registry (read-only)
+        "GET /registry": ["system:read"],
         # Component endpoints (Studio)
         "GET /components": ["components:read"],
         "GET /components/*": ["components:read"],
