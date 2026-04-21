@@ -390,6 +390,43 @@ async def team_continue_response_streamer(
         return
 
 
+async def team_resumable_continue_response_streamer(
+    team: Union[Team, RemoteTeam],
+    run_id: str,
+    requirements: Optional[List] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
+    auth_token: Optional[str] = None,
+) -> AsyncGenerator:
+    """Resumable SSE generator for continue_run with background=True, stream=True.
+
+    Delegates to team.acontinue_run(background=True, stream=True) which handles:
+    - Running continue-run in a detached asyncio.Task (survives client disconnect)
+    - Buffering events for reconnection via /resume
+    - Publishing to SSE subscribers for resumed clients
+    - Yielding SSE-formatted strings via a queue
+    """
+    extra_kwargs: dict = {}
+    if auth_token and isinstance(team, RemoteTeam):
+        extra_kwargs["auth_token"] = auth_token
+
+    if background_tasks is not None:
+        extra_kwargs["background_tasks"] = background_tasks
+
+    async for sse_data in team.acontinue_run(
+        run_id=run_id,
+        requirements=requirements or [],
+        session_id=session_id,
+        user_id=user_id,
+        stream=True,
+        stream_events=True,
+        background=True,
+        **extra_kwargs,
+    ):
+        yield sse_data
+
+
 def get_team_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -782,6 +819,7 @@ def get_team_router(
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         stream: bool = Form(True),
+        background: bool = Form(False),
     ):
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -843,7 +881,25 @@ def get_team_router(
         # Extract auth token for remote teams
         auth_token = get_auth_token_from_request(request)
 
-        if stream:
+        if stream and background:
+            # background=True, stream=True: resumable SSE streaming
+            # Continue-run runs in a detached asyncio.Task that survives client disconnections.
+            # Events are buffered for reconnection via /resume endpoint.
+            if isinstance(team, RemoteTeam):
+                raise HTTPException(status_code=400, detail="Background execution is not supported for remote teams")
+            return StreamingResponse(
+                team_resumable_continue_response_streamer(
+                    team,
+                    run_id=run_id,
+                    requirements=updated_requirements or [],
+                    session_id=session_id,
+                    user_id=user_id,
+                    background_tasks=background_tasks,
+                    auth_token=auth_token,
+                ),
+                media_type="text/event-stream",
+            )
+        elif stream:
             return StreamingResponse(
                 team_continue_response_streamer(
                     team,
