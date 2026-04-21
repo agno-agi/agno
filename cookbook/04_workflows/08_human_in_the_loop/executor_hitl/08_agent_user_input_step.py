@@ -10,9 +10,6 @@ Usage:
     .venvs/demo/bin/python libs/agno/agno/test.py
 """
 
-from rich.console import Console
-from rich.prompt import Prompt
-
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
@@ -24,6 +21,8 @@ from agno.tools import tool
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
+from rich.console import Console
+from rich.prompt import Prompt
 
 console = Console()
 
@@ -93,11 +92,15 @@ if __name__ == "__main__":
         paused_response = session.runs[-1]
 
     if paused_response and paused_response.is_paused:
-        console.print(f"\n[bold yellow]Workflow paused (step: {paused_response.paused_step_name})[/]")
+        console.print(
+            f"\n[bold yellow]Workflow paused (step: {paused_response.paused_step_name})[/]"
+        )
 
         for step_req in paused_response.step_requirements or []:
             if step_req.requires_executor_input:
-                console.print(f"  Agent: {step_req.executor_agent_name} ({step_req.executor_type})")
+                console.print(
+                    f"  Agent: {step_req.executor_agent_name} ({step_req.executor_type})"
+                )
                 for executor_req in step_req.executor_requirements or []:
                     tool_exec = (
                         executor_req.get("tool_execution", {})
@@ -127,7 +130,9 @@ if __name__ == "__main__":
                             console.print("  [bold]User input required for:[/]")
                             for field in schema:
                                 fname = (
-                                    field.get("name", "?") if isinstance(field, dict) else getattr(field, "name", "?")
+                                    field.get("name", "?")
+                                    if isinstance(field, dict)
+                                    else getattr(field, "name", "?")
                                 )
                                 console.print(f"    - {fname}")
 
@@ -139,7 +144,9 @@ if __name__ == "__main__":
                         if schema:
                             for field in schema:
                                 fname = (
-                                    field.get("name", "?") if isinstance(field, dict) else getattr(field, "name", "?")
+                                    field.get("name", "?")
+                                    if isinstance(field, dict)
+                                    else getattr(field, "name", "?")
                                 )
                                 value = Prompt.ask(f"  Enter value for '{fname}'")
                                 if isinstance(field, dict):
@@ -175,7 +182,10 @@ if __name__ == "__main__":
                                                 field.value = val
                     else:
                         # Object-based requirement: use provide_user_input
-                        if hasattr(executor_req, "needs_user_input") and executor_req.needs_user_input:
+                        if (
+                            hasattr(executor_req, "needs_user_input")
+                            and executor_req.needs_user_input
+                        ):
                             user_values = {}
                             for field in executor_req.user_input_schema or []:
                                 value = Prompt.ask(f"  Enter value for '{field.name}'")

@@ -16,7 +16,11 @@ Usage:
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
-from agno.run.workflow import StepExecutorPausedEvent, StepPausedEvent, WorkflowCompletedEvent
+from agno.run.workflow import (
+    StepExecutorPausedEvent,
+    StepPausedEvent,
+    WorkflowCompletedEvent,
+)
 from agno.tools import tool
 from agno.workflow.step import Step
 from agno.workflow.types import OnReject, StepInput, StepOutput
@@ -82,30 +86,57 @@ def resolve_executor_pause(run_output):
         if req.requires_executor_input:
             console.print(f"  Executor: [cyan]{req.executor_agent_name}[/]")
             for executor_req in req.executor_requirements or []:
-                tool_exec = executor_req.get("tool_execution", {}) if isinstance(executor_req, dict) else getattr(executor_req, "tool_execution", None)
+                tool_exec = (
+                    executor_req.get("tool_execution", {})
+                    if isinstance(executor_req, dict)
+                    else getattr(executor_req, "tool_execution", None)
+                )
                 if tool_exec:
-                    t_name = tool_exec.get("tool_name", "?") if isinstance(tool_exec, dict) else getattr(tool_exec, "tool_name", "?")
-                    t_args = tool_exec.get("tool_args", {}) if isinstance(tool_exec, dict) else getattr(tool_exec, "tool_args", {})
+                    t_name = (
+                        tool_exec.get("tool_name", "?")
+                        if isinstance(tool_exec, dict)
+                        else getattr(tool_exec, "tool_name", "?")
+                    )
+                    t_args = (
+                        tool_exec.get("tool_args", {})
+                        if isinstance(tool_exec, dict)
+                        else getattr(tool_exec, "tool_args", {})
+                    )
                     console.print(f"  Tool: [bold blue]{t_name}({t_args})[/]")
 
-            answer = Prompt.ask("  Approve query?", choices=["y", "n"], default="y").strip().lower()
+            answer = (
+                Prompt.ask("  Approve query?", choices=["y", "n"], default="y")
+                .strip()
+                .lower()
+            )
             for executor_req in req.executor_requirements or []:
                 if isinstance(executor_req, dict):
                     executor_req["confirmation"] = answer == "y"
-                    if "tool_execution" in executor_req and executor_req["tool_execution"]:
+                    if (
+                        "tool_execution" in executor_req
+                        and executor_req["tool_execution"]
+                    ):
                         executor_req["tool_execution"]["confirmed"] = answer == "y"
                 else:
-                    executor_req.confirm() if answer == "y" else executor_req.reject(note="Declined")
+                    executor_req.confirm() if answer == "y" else executor_req.reject(
+                        note="Declined"
+                    )
 
 
 def resolve_output_review(run_output):
     """Resolve step-level post-execution output review."""
     for req in run_output.step_requirements or []:
         if req.requires_output_review and not req.requires_executor_input:
-            console.print(f"  [dim]{req.output_review_message or 'Review the output'}[/]")
+            console.print(
+                f"  [dim]{req.output_review_message or 'Review the output'}[/]"
+            )
             if req.step_output:
                 console.print(f"  Output: {req.step_output.content}")
-            answer = Prompt.ask("  Approve output?", choices=["y", "n"], default="y").strip().lower()
+            answer = (
+                Prompt.ask("  Approve output?", choices=["y", "n"], default="y")
+                .strip()
+                .lower()
+            )
             if answer == "y":
                 req.confirm()
             else:
@@ -114,7 +145,9 @@ def resolve_output_review(run_output):
 
 
 if __name__ == "__main__":
-    console.print("[bold]Dual HITL: Tool Confirmation + Post-Execution Output Review[/]\n")
+    console.print(
+        "[bold]Dual HITL: Tool Confirmation + Post-Execution Output Review[/]\n"
+    )
     console.print("1. Agent will ask to run a query -> you confirm the tool call")
     console.print("2. After agent completes -> you review the output\n")
 
@@ -134,12 +167,20 @@ if __name__ == "__main__":
 
     while run_output and run_output.is_paused:
         pause_count += 1
-        has_executor = any(r.requires_executor_input for r in (run_output.step_requirements or []))
+        has_executor = any(
+            r.requires_executor_input for r in (run_output.step_requirements or [])
+        )
         has_review = any(
-            r.requires_output_review and r.confirmed is None and not r.requires_executor_input
+            r.requires_output_review
+            and r.confirmed is None
+            and not r.requires_executor_input
             for r in (run_output.step_requirements or [])
         )
-        label = "executor" if has_executor else ("output-review" if has_review else "confirmation")
+        label = (
+            "executor"
+            if has_executor
+            else ("output-review" if has_review else "confirmation")
+        )
         console.print(f"\n[bold magenta]--- Pause #{pause_count} ({label}) ---[/]")
 
         if has_executor:
@@ -156,7 +197,9 @@ if __name__ == "__main__":
             if isinstance(event, StepPausedEvent):
                 console.print(f"\n[yellow]Paused: {event.step_name}[/]")
             elif isinstance(event, StepExecutorPausedEvent):
-                console.print(f"\n[yellow]Executor paused: {event.executor_agent_name}[/]")
+                console.print(
+                    f"\n[yellow]Executor paused: {event.executor_agent_name}[/]"
+                )
             elif isinstance(event, WorkflowCompletedEvent):
                 console.print("\n[green]Workflow completed![/]")
             elif hasattr(event, "content") and event.content:
@@ -165,4 +208,6 @@ if __name__ == "__main__":
         session = workflow.get_session()
         run_output = session.runs[-1] if session and session.runs else None
 
-    console.print(f"\n[bold green]Done after {pause_count} pause(s). Output: {run_output.content if run_output else 'N/A'}[/]")
+    console.print(
+        f"\n[bold green]Done after {pause_count} pause(s). Output: {run_output.content if run_output else 'N/A'}[/]"
+    )

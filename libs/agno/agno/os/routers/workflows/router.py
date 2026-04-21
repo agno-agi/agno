@@ -1090,7 +1090,9 @@ def get_workflow_router(
     async def list_workflow_runs(
         workflow_id: str,
         session_id: str = Query(..., description="Session ID to list runs for"),
-        status: Optional[str] = Query(None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR, PAUSED)"),
+        status: Optional[str] = Query(
+            None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR, PAUSED)"
+        ),
     ):
         from agno.os.schema import WorkflowRunSchema
 

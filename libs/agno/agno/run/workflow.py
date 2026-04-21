@@ -21,6 +21,7 @@ from agno.utils.media import (
 if TYPE_CHECKING:
     from agno.workflow.types import (
         ErrorRequirement,
+        ExecutorType,
         StepOutput,
         StepRequirement,
         WorkflowMetrics,
@@ -30,6 +31,7 @@ else:
     StepRequirement = Any
     ErrorRequirement = Any
     WorkflowMetrics = Any
+    ExecutorType = Any
 
 
 class WorkflowRunEvent(str, Enum):
@@ -273,7 +275,7 @@ class StepExecutorPausedEvent(BaseWorkflowRunOutputEvent):
     executor_agent_id: Optional[str] = None
     executor_agent_name: Optional[str] = None
     executor_run_id: Optional[str] = None
-    executor_type: Optional[str] = None  # "agent" or "team"
+    executor_type: Optional[Union[ExecutorType, str]] = None  # "agent" or "team"
     executor_requirements: Optional[List[Any]] = None
 
 

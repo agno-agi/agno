@@ -442,6 +442,22 @@ def finalize_workflow_completion(
 # -------------------------------------------------------------------------
 
 
+def is_executor_pause(step_output: Any) -> bool:
+    """Return True if step_output represents an agent/team executor HITL pause.
+
+    Executor-level HITL only applies when the step's executor is an agent or team.
+    If the executor is a nested Workflow (or anything else), its `is_paused` flag
+    must not be treated as an executor pause — the nested workflow has its own
+    pause/resume lifecycle.
+    """
+    if not getattr(step_output, "is_paused", False):
+        return False
+    executor_type = getattr(step_output, "executor_type", None)
+    # Normalize enum -> value for comparison
+    executor_type_value = getattr(executor_type, "value", executor_type)
+    return executor_type_value in ("agent", "team")
+
+
 def get_last_executor_run(workflow_run_response: "WorkflowRunOutput") -> Any:
     """Get the last executor run response from step_executor_runs.
 

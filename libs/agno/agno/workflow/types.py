@@ -737,6 +737,19 @@ class StepType(str, Enum):
     WORKFLOW = "Workflow"
 
 
+class ExecutorType(str, Enum):
+    """Type of executor that runs inside a Step.
+
+    Used for `StepOutput.executor_type`, `StepMetrics.executor_type`,
+    `StepRequirement.executor_type`, and `StepExecutorPausedEvent.executor_type`.
+    """
+
+    AGENT = "agent"
+    TEAM = "team"
+    WORKFLOW = "workflow"
+    FUNCTION = "function"
+
+
 @dataclass
 class UserInputField:
     """A field that requires user input.
@@ -836,7 +849,7 @@ class StepRequirement:
     executor_agent_id: Optional[str] = None
     executor_agent_name: Optional[str] = None
     executor_run_id: Optional[str] = None
-    executor_type: Optional[str] = None  # "agent" or "team"
+    executor_type: Optional[Union[ExecutorType, str]] = None  # "agent" or "team"
     # Session ID for the executor's session (needed for DB-based continue_run)
     executor_session_id: Optional[str] = None
 
@@ -1095,7 +1108,9 @@ class StepRequirement:
             result["executor_agent_id"] = self.executor_agent_id
             result["executor_agent_name"] = self.executor_agent_name
             result["executor_run_id"] = self.executor_run_id
-            result["executor_type"] = self.executor_type
+            result["executor_type"] = (
+                self.executor_type.value if isinstance(self.executor_type, ExecutorType) else self.executor_type
+            )
             result["executor_session_id"] = self.executor_session_id
 
         if self.step_output is not None:

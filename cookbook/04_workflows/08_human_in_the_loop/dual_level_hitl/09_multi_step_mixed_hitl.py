@@ -22,7 +22,11 @@ Usage:
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
-from agno.run.workflow import StepExecutorPausedEvent, StepPausedEvent, WorkflowCompletedEvent
+from agno.run.workflow import (
+    StepExecutorPausedEvent,
+    StepPausedEvent,
+    WorkflowCompletedEvent,
+)
 from agno.tools import tool
 from agno.workflow.step import Step
 from agno.workflow.types import OnReject, StepInput, StepOutput
@@ -112,8 +116,18 @@ workflow = Workflow(
             requires_user_input=True,
             user_input_message="Provide project details:",
             user_input_schema=[
-                {"name": "project_name", "field_type": "text", "description": "Project name", "required": True},
-                {"name": "scope", "field_type": "text", "description": "Project scope", "required": True},
+                {
+                    "name": "project_name",
+                    "field_type": "text",
+                    "description": "Project name",
+                    "required": True,
+                },
+                {
+                    "name": "scope",
+                    "field_type": "text",
+                    "description": "Project scope",
+                    "required": True,
+                },
             ],
         ),
         Step(
@@ -154,9 +168,17 @@ def resolve_user_input(run_output):
 
 def resolve_confirmation(run_output):
     for req in run_output.step_requirements or []:
-        if req.requires_confirmation and not req.requires_executor_input and not req.requires_output_review:
+        if (
+            req.requires_confirmation
+            and not req.requires_executor_input
+            and not req.requires_output_review
+        ):
             console.print(f"  [dim]{req.confirmation_message}[/]")
-            answer = Prompt.ask("  Confirm?", choices=["y", "n"], default="y").strip().lower()
+            answer = (
+                Prompt.ask("  Confirm?", choices=["y", "n"], default="y")
+                .strip()
+                .lower()
+            )
             if answer == "y":
                 req.confirm()
             else:
@@ -169,7 +191,11 @@ def resolve_output_review(run_output):
             console.print(f"  [dim]{req.output_review_message}[/]")
             if req.step_output:
                 console.print(f"  Output: {req.step_output.content}")
-            answer = Prompt.ask("  Approve?", choices=["y", "n"], default="y").strip().lower()
+            answer = (
+                Prompt.ask("  Approve?", choices=["y", "n"], default="y")
+                .strip()
+                .lower()
+            )
             if answer == "y":
                 req.confirm()
             else:
@@ -182,31 +208,61 @@ def resolve_executor_pause(run_output):
         if req.requires_executor_input:
             console.print(f"  Executor: [cyan]{req.executor_agent_name}[/]")
             for executor_req in req.executor_requirements or []:
-                tool_exec = executor_req.get("tool_execution", {}) if isinstance(executor_req, dict) else getattr(executor_req, "tool_execution", None)
+                tool_exec = (
+                    executor_req.get("tool_execution", {})
+                    if isinstance(executor_req, dict)
+                    else getattr(executor_req, "tool_execution", None)
+                )
                 if tool_exec:
-                    t_name = tool_exec.get("tool_name", "?") if isinstance(tool_exec, dict) else getattr(tool_exec, "tool_name", "?")
-                    t_args = tool_exec.get("tool_args", {}) if isinstance(tool_exec, dict) else getattr(tool_exec, "tool_args", {})
+                    t_name = (
+                        tool_exec.get("tool_name", "?")
+                        if isinstance(tool_exec, dict)
+                        else getattr(tool_exec, "tool_name", "?")
+                    )
+                    t_args = (
+                        tool_exec.get("tool_args", {})
+                        if isinstance(tool_exec, dict)
+                        else getattr(tool_exec, "tool_args", {})
+                    )
                     console.print(f"  Tool: [bold blue]{t_name}({t_args})[/]")
-            answer = Prompt.ask("  Approve?", choices=["y", "n"], default="y").strip().lower()
+            answer = (
+                Prompt.ask("  Approve?", choices=["y", "n"], default="y")
+                .strip()
+                .lower()
+            )
             for executor_req in req.executor_requirements or []:
                 if isinstance(executor_req, dict):
                     executor_req["confirmation"] = answer == "y"
-                    if "tool_execution" in executor_req and executor_req["tool_execution"]:
+                    if (
+                        "tool_execution" in executor_req
+                        and executor_req["tool_execution"]
+                    ):
                         executor_req["tool_execution"]["confirmed"] = answer == "y"
                 else:
-                    executor_req.confirm() if answer == "y" else executor_req.reject(note="Declined")
+                    executor_req.confirm() if answer == "y" else executor_req.reject(
+                        note="Declined"
+                    )
 
 
 def resolve_pause(run_output):
     """Route to the appropriate resolver based on requirement type."""
-    has_executor = any(r.requires_executor_input for r in (run_output.step_requirements or []))
-    has_user_input = any(r.requires_user_input and not r.requires_executor_input for r in (run_output.step_requirements or []))
+    has_executor = any(
+        r.requires_executor_input for r in (run_output.step_requirements or [])
+    )
+    has_user_input = any(
+        r.requires_user_input and not r.requires_executor_input
+        for r in (run_output.step_requirements or [])
+    )
     has_review = any(
-        r.requires_output_review and r.confirmed is None and not r.requires_executor_input
+        r.requires_output_review
+        and r.confirmed is None
+        and not r.requires_executor_input
         for r in (run_output.step_requirements or [])
     )
     has_confirm = any(
-        r.requires_confirmation and not r.requires_executor_input and not r.requires_output_review
+        r.requires_confirmation
+        and not r.requires_executor_input
+        and not r.requires_output_review
         for r in (run_output.step_requirements or [])
     )
 
@@ -270,7 +326,9 @@ if __name__ == "__main__":
             if isinstance(event, StepPausedEvent):
                 console.print(f"\n[yellow]Paused: {event.step_name}[/]")
             elif isinstance(event, StepExecutorPausedEvent):
-                console.print(f"\n[yellow]Executor paused: {event.executor_agent_name}[/]")
+                console.print(
+                    f"\n[yellow]Executor paused: {event.executor_agent_name}[/]"
+                )
             elif isinstance(event, WorkflowCompletedEvent):
                 console.print("\n[green]Workflow completed![/]")
             elif hasattr(event, "content") and event.content:

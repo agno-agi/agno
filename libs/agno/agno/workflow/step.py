@@ -35,6 +35,7 @@ from agno.utils.log import log_debug, log_warning, logger, use_agent_logger, use
 from agno.utils.merge_dict import merge_dictionaries
 from agno.workflow.types import (
     ErrorRequirement,
+    ExecutorType,
     HumanReview,
     OnError,
     OnReject,
@@ -2133,7 +2134,7 @@ class Step:
         """
         executor_id = getattr(self.active_executor, "id", None) or getattr(self.active_executor, "agent_id", None)
         executor_name = getattr(self.active_executor, "name", None)
-        executor_type = "team" if isinstance(self.active_executor, Team) else "agent"
+        executor_type = ExecutorType.TEAM if isinstance(self.active_executor, Team) else ExecutorType.AGENT
 
         # Serialize requirements for transport
         serialized_reqs: List[Any] = []
