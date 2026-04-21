@@ -618,7 +618,7 @@ def get_workflow_router(
         except FactoryContextRequired:
             factory = find_factory_by_id(workflow_id, os.workflows)
             if factory:
-                return WorkflowResponse(id=factory.id, name=factory.name, description=factory.description)
+                return WorkflowResponse.from_factory(factory)
             raise HTTPException(status_code=404, detail="Workflow not found")
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
