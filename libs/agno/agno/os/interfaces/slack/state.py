@@ -59,6 +59,11 @@ class StreamState:
     # Total chars sent to the current Slack stream; reset on rotation
     stream_chars_sent: int = 0
 
+    # HITL: set by _on_run_paused when a RunPausedEvent fires. Router reads
+    # this after stream.stop() to post the pause message via chat.postMessage
+    # (AsyncChatStream only handles task_update chunks, not Block Kit).
+    paused_event: Optional["BaseRunOutputEvent"] = None
+
     def track_task(self, key: str, title: str) -> None:
         self.task_cards[key] = TaskCard(title=title)
 

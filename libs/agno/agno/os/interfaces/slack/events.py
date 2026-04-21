@@ -263,6 +263,14 @@ async def _on_run_error(chunk: BaseRunOutputEvent, state: StreamState, stream: A
     return True
 
 
+async def _on_run_paused(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+    # Stash the pause event so the router can post the Block Kit pause card
+    # after the stream closes (chat_stream can't carry Block Kit payloads).
+    state.paused_event = chunk
+    state.terminal_status = "complete"
+    return True
+
+
 # =============================================================================
 # Workflow Event Handlers (require custom logic)
 # =============================================================================
@@ -387,6 +395,7 @@ HANDLERS: Dict[str, _EventHandler] = {
     RunEvent.run_completed.value: _on_run_completed,
     RunEvent.run_error.value: _on_run_error,
     RunEvent.run_cancelled.value: _on_run_error,  # Treat cancellation as terminal error
+    RunEvent.run_paused.value: _on_run_paused,  # HITL — router posts Block Kit after stream ends
     # -------------------------------------------------------------------------
     # Workflow Lifecycle Events
     # -------------------------------------------------------------------------

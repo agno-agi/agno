@@ -7,6 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RemoteAgent
+from agno.os.interfaces.slack.blocks import build_pause_message
 from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import (
     build_run_metadata,
@@ -57,6 +58,38 @@ class SlackChallengeResponse(BaseModel):
     challenge: str = Field(description="Challenge string to echo back to Slack")
 
 
+async def _post_pause_message_safely(
+    async_client: Any,
+    paused_event: Any,
+    channel: str,
+    thread_ts: str,
+) -> None:
+    """Post the Block Kit pause card into the thread after stream.stop().
+    Runs AsyncChatStream-independent because chat_stream doesn't support
+    Block Kit payloads."""
+    run_id = getattr(paused_event, "run_id", None)
+    # active_requirements filters out anything already resolved in-flight.
+    requirements = list(getattr(paused_event, "active_requirements", None) or [])
+    if not run_id or not requirements:
+        return
+    try:
+        # Use run_id as the approval identifier in block_ids. On SUBMIT, F11
+        # recovers the run_id from the 'pause:<run_id>' block_id and fetches
+        # the requirements via entity.aget_run_output(run_id, session_id).
+        blocks = build_pause_message(run_id, requirements)
+        # BlockKitMessage would validate here; we skip and emit raw dicts to
+        # keep chat.postMessage independent of the Pydantic roundtrip.
+        block_dicts = [b.model_dump(exclude_none=True, mode="json") for b in blocks]
+        await async_client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text="Run paused — please resolve below",
+            blocks=block_dicts,
+        )
+    except Exception as exc:
+        log_error(f"Failed to post pause message (run_id={run_id}): {exc}")
+
+
 def attach_routes(
     router: APIRouter,
     agent: Optional[Union[Agent, RemoteAgent]] = None,
@@ -74,6 +107,8 @@ def attach_routes(
     buffer_size: int = 100,
     max_file_size: int = 1_073_741_824,  # 1GB
     resolve_user_identity: bool = False,
+    hitl_enabled: bool = False,
+    approval_authorization: Any = "requester_only",
 ) -> APIRouter:
     # Inner functions capture config via closure to keep each instance isolated
     entity = agent or team or workflow
@@ -149,6 +184,280 @@ def attach_routes(
                 background_tasks.add_task(_process_slack_event, data)
 
         return SlackEventResponse(status="ok")
+
+    @router.post(
+        "/interactions",
+        operation_id=f"slack_interactions_{op_suffix}",
+        name="slack_interactions",
+        description="Handle Slack interactive components (HITL buttons / form submit)",
+        response_model=SlackEventResponse,
+        response_model_exclude_none=True,
+        responses={
+            200: {"description": "Interaction accepted"},
+            400: {"description": "Malformed interaction payload"},
+            403: {"description": "Invalid Slack signature"},
+        },
+    )
+    async def slack_interactions(request: Request, background_tasks: BackgroundTasks):
+        if not hitl_enabled:
+            # HITL not enabled — drop silently. The endpoint is always mounted
+            # so Slack's app-manifest configuration doesn't have to change per
+            # deployment, but we no-op when the feature is off.
+            return SlackEventResponse(status="ok")
+
+        body = await request.body()
+        timestamp = request.headers.get("X-Slack-Request-Timestamp")
+        slack_signature = request.headers.get("X-Slack-Signature", "")
+        if not timestamp or not slack_signature:
+            raise HTTPException(status_code=400, detail="Missing Slack headers")
+        if not verify_slack_signature(body, timestamp, slack_signature, signing_secret=signing_secret):
+            raise HTTPException(status_code=403, detail="Invalid signature")
+
+        # Pre-ack retry drop — Slack retries after ~3s if we don't ack. We ACK
+        # below; any retry arriving before that gets the same 200 response.
+        if request.headers.get("X-Slack-Retry-Num"):
+            return SlackEventResponse(status="ok")
+
+        # Slack sends interactive payloads as application/x-www-form-urlencoded
+        # with a single form field `payload=<URL-encoded JSON>`.
+        form = await request.form()
+        payload_raw = form.get("payload")
+        if not isinstance(payload_raw, str) or not payload_raw:
+            raise HTTPException(status_code=400, detail="Missing payload")
+        try:
+            import json as _json
+
+            payload = _json.loads(payload_raw)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Malformed payload JSON")
+
+        # Dispatch by action_id — only block_actions payloads carry HITL clicks.
+        if payload.get("type") != "block_actions":
+            return SlackEventResponse(status="ok")
+        actions = payload.get("actions") or []
+        if not actions:
+            return SlackEventResponse(status="ok")
+        action_id = actions[0].get("action_id", "")
+
+        if action_id in ("row_approve", "row_reject"):
+            background_tasks.add_task(_handle_row_click, payload)
+        elif action_id == "submit_pause":
+            background_tasks.add_task(_handle_submit, payload)
+        # Silently ignore unknown action_ids — a non-HITL Slack app sharing
+        # the same endpoint might also post interactions here.
+
+        return SlackEventResponse(status="ok")
+
+    async def _handle_row_click(payload: Dict[str, Any]) -> None:
+        """Approve/Deny click on a confirmation card.
+
+        If the pause is confirmation-only (no form-collecting rows), this is
+        the atomic commit — we update the row visually AND trigger the full
+        submit/resume flow inline. If the pause is mixed, we only update the
+        visual; the Submit button will commit everything later.
+        """
+        from slack_sdk.web.async_client import AsyncWebClient
+
+        from agno.os.interfaces.slack.blocks import parse_row_block_id
+
+        actions = payload.get("actions") or []
+        if not actions:
+            return
+        action_id = actions[0].get("action_id") or ""
+        button_value = actions[0].get("value") or ""
+        if action_id not in ("row_approve", "row_reject"):
+            return
+        # button_value carries "req_id|approval_id" — this is our source of
+        # truth. The Actions block_id is now "rowact:..." (not a row_block_id),
+        # so parsing req_id from block_id would fail.
+        if "|" not in button_value:
+            return
+        req_id, approval_id = button_value.split("|", 1)
+        decided = "approve" if action_id == "row_approve" else "reject"
+
+        channel = (payload.get("channel") or {}).get("id")
+        message = payload.get("message") or {}
+        msg_ts = message.get("ts")
+        original_blocks = list(message.get("blocks") or [])
+        if not channel or not msg_ts:
+            return
+
+        # Collapse the clicked row into a decided chip; preserve other blocks.
+        new_blocks: List[Dict[str, Any]] = []
+        any_pending_confirm = False
+        has_submit_block = False
+        for block in original_blocks:
+            bid = block.get("block_id") or ""
+            block_type = block.get("type")
+            if block_type == "actions" and bid.startswith("pause:"):
+                has_submit_block = True
+                new_blocks.append(block)
+                continue
+            # The decided row's companion Actions block (buttons) — drop it so
+            # users can't click again. Matched by the rowact:<req_id>:... prefix
+            # emitted by _build_confirmation_row.
+            if bid == f"rowact:{req_id}:confirmation":
+                continue
+            parsed_block = parse_row_block_id(bid)
+            is_confirm_row = parsed_block and parsed_block.get("kind") == "confirmation"
+            if is_confirm_row and parsed_block.get("req_id") == req_id:
+                chip = "✅ Approved" if decided == "approve" else "❌ Rejected"
+                # task_card has title; Section has text; older Card uses body.
+                body_text = (
+                    block.get("title")
+                    or (block.get("text") or {}).get("text")
+                    or (block.get("body") or {}).get("text")
+                    or ""
+                )
+                new_blocks.append(
+                    {
+                        "type": "section",
+                        "block_id": f"row:{req_id}:confirmation:decided:{decided}",
+                        "text": {"type": "mrkdwn", "text": f"*{body_text}*\n\n{chip}"},
+                    }
+                )
+            else:
+                if is_confirm_row and parsed_block.get("status") == "pending":
+                    any_pending_confirm = True
+                new_blocks.append(block)
+
+        client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
+        try:
+            await client.chat_update(channel=channel, ts=msg_ts, blocks=new_blocks, text="Run paused")
+        except Exception as exc:
+            log_error(f"[HITL] chat_update failed for row {req_id}: {exc}")
+
+        # Atomic commit for confirmation-only pauses: no Submit block + no
+        # other pending confirmation rows → trigger the submit/resume flow.
+        if not has_submit_block and not any_pending_confirm and approval_id:
+            synthetic_payload = dict(payload)
+            # Repurpose: make it look like a submit_pause click so _handle_submit
+            # reads it uniformly. We inject the approval_id via submit block_id.
+            synthetic_payload["actions"] = [
+                {
+                    "action_id": "submit_pause",
+                    "block_id": f"pause:{approval_id}",
+                    "value": approval_id,
+                }
+            ]
+            # Replace the message blocks in the payload with the updated
+            # state so parse_submit_payload sees the 'decided:<decision>'
+            # block_ids on confirmation rows.
+            synthetic_payload["message"] = {**(payload.get("message") or {}), "blocks": new_blocks}
+            await _handle_submit(synthetic_payload)
+
+    async def _handle_submit(payload: Dict[str, Any]) -> None:
+        """SUBMIT button clicked. Parse the form state, hydrate the paused
+        requirements, apply user decisions, then resume the run and post the
+        continuation back to the same thread.
+
+        v0 uses non-streaming continuation for simplicity — one chat.postMessage
+        per resumption with the final content. No CAS guard (last write wins).
+        """
+        from slack_sdk.web.async_client import AsyncWebClient
+
+        from agno.os.interfaces.slack.blocks import (
+            apply_decisions,
+            parse_submit_payload,
+        )
+
+        actions = payload.get("actions") or []
+        if not actions:
+            return
+        submit_block_id = actions[0].get("block_id") or ""
+        # block_id shape for SUBMIT: "pause:<run_id>"
+        if not submit_block_id.startswith("pause:"):
+            return
+        run_id = submit_block_id[len("pause:") :]
+        channel = (payload.get("channel") or {}).get("id")
+        message = payload.get("message") or {}
+        msg_ts = message.get("ts")
+        if not (run_id and channel and msg_ts):
+            return
+
+        # thread_ts: the pause card was posted inside an assistant thread.
+        # Slack includes the thread_ts in message metadata; fall back to msg_ts.
+        thread_ts = message.get("thread_ts") or msg_ts
+        session_id = f"{entity_id}:{thread_ts}"
+
+        client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
+
+        # Fetch the paused run so we can hydrate the in-memory requirements.
+        # aget_run_output pulls the last RunOutput from the agent's session storage.
+        try:
+            run_output = await entity.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
+        except Exception as exc:
+            log_error(f"[HITL] aget_run_output failed for run={run_id}: {exc}")
+            run_output = None
+
+        requirements = list(getattr(run_output, "requirements", None) or []) if run_output else []
+        if not requirements:
+            await _post_ephemeral(
+                client,
+                channel=channel,
+                user=(payload.get("user") or {}).get("id", ""),
+                text="This approval is no longer active.",
+            )
+            return
+
+        decisions, errors = parse_submit_payload(payload, requirements)
+        if errors:
+            detail = "\n".join(f"• {e.field}: {e.message}" for e in errors)
+            await _post_ephemeral(
+                client,
+                channel=channel,
+                user=(payload.get("user") or {}).get("id", ""),
+                text=f"Please fix the following and submit again:\n{detail}",
+            )
+            return
+
+        apply_decisions(decisions, requirements)
+
+        # Leave the pause card in whatever decided-chip state _handle_row_click
+        # already set (e.g., "✅ Approved" or "❌ Rejected"). Overwriting it
+        # with a "Submitted — resuming…" context block erased the chip and
+        # produced a confusing near-empty message bubble. The continuation
+        # message that posts next already gives the user resumption feedback.
+
+        # Resume the run with hydrated requirements. v0 uses stream=False for
+        # simplicity; later versions can plumb continuation into chat_stream.
+        try:
+            continued = await entity.acontinue_run(  # type: ignore[union-attr]
+                run_id=run_id,
+                requirements=requirements,
+                session_id=session_id,
+                stream=False,
+            )
+        except Exception as exc:
+            log_error(f"[HITL] acontinue_run failed for run={run_id}: {exc}")
+            await send_slack_message_async(
+                client,
+                channel=channel,
+                message=_ERROR_MESSAGE,
+                thread_ts=thread_ts,
+            )
+            return
+
+        content = getattr(continued, "content", None) or ""
+        if content:
+            await send_slack_message_async(
+                client,
+                channel=channel,
+                message=str(content),
+                thread_ts=thread_ts,
+            )
+
+    async def _post_ephemeral(
+        client: Any,
+        *,
+        channel: str,
+        user: str,
+        text: str,
+    ) -> None:
+        try:
+            await client.chat_postEphemeral(channel=channel, user=user, text=text)
+        except Exception as exc:
+            log_error(f"[HITL] chat_postEphemeral failed: {exc}")
 
     async def _process_slack_event(data: dict):
         event = data["event"]
@@ -430,7 +739,42 @@ def attach_routes(
                 stop_kwargs["markdown_text"] = state.flush()
             if completion_chunks:
                 stop_kwargs["chunks"] = completion_chunks
-            await stream.stop(**stop_kwargs)
+
+            # HITL: attach the approval UI directly to the finalized streamed
+            # message via stream.stop(blocks=...). Keeps task cards + approval
+            # in one cohesive message with no visual seam.
+            pause_blocks: Optional[List[Dict[str, Any]]] = None
+            if hitl_enabled and state.paused_event is not None:
+                run_id = getattr(state.paused_event, "run_id", None)
+                requirements = list(getattr(state.paused_event, "active_requirements", None) or [])
+                if run_id and requirements:
+                    try:
+                        pydantic_blocks = build_pause_message(run_id, requirements)
+                        pause_blocks = [b.model_dump(exclude_none=True, mode="json") for b in pydantic_blocks]
+                        stop_kwargs["blocks"] = pause_blocks
+                    except Exception as exc:
+                        log_error(f"[HITL] Failed to build pause blocks: {exc}")
+
+            try:
+                await stream.stop(**stop_kwargs)
+            except Exception as exc:
+                # Fall back: stop without blocks, then post separately. Covers
+                # the case where Slack rejects task_card blocks for this workspace.
+                if pause_blocks:
+                    log_error(f"[HITL] stream.stop(blocks=) failed, falling back to post: {exc}")
+                    stop_kwargs.pop("blocks", None)
+                    try:
+                        await stream.stop(**stop_kwargs)
+                    except Exception:
+                        pass
+                    await _post_pause_message_safely(
+                        async_client,
+                        state.paused_event,
+                        ctx["channel_id"],
+                        ctx["thread_id"],
+                    )
+                else:
+                    raise
 
             await upload_response_media_async(async_client, state, ctx["channel_id"], ctx["thread_id"])
 
