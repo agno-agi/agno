@@ -9,7 +9,6 @@ if TYPE_CHECKING:
 
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.routers.teams.schema import TeamResponse
-from agno.os.schema import ComponentEntryType
 from agno.workflow.agent import WorkflowAgent
 from agno.workflow.workflow import Workflow
 
@@ -90,7 +89,7 @@ class WorkflowResponse(BaseModel):
     team: Optional[TeamResponse] = Field(None, description="Team configuration if used")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
     workflow_agent: bool = Field(False, description="Whether this workflow uses a WorkflowAgent")
-    type: Optional[ComponentEntryType] = Field(None, description="Component type (workflow or factory)")
+    is_factory: bool = Field(False, description="Whether this workflow is a factory")
     factory_input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for factory_input")
     is_component: bool = Field(False, description="Whether this workflow was created via Builder")
     current_version: Optional[int] = Field(None, description="Current published version number")
@@ -110,7 +109,7 @@ class WorkflowResponse(BaseModel):
             id=factory.id,
             name=factory.name,
             description=factory.description,
-            type=ComponentEntryType.factory,
+            is_factory=True,
             factory_input_schema=factory_input_schema,
         )
 
