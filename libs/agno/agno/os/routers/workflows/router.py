@@ -345,9 +345,18 @@ async def handle_workflow_continue_via_websocket(websocket: WebSocket, message: 
                 )
                 return
 
-        # Continue the workflow with streaming and send events over WebSocket.
-        # Unlike arun(), acontinue_run() has no background/websocket handling,
-        # so we iterate the async stream ourselves in a background task.
+        # TODO: acontinue_run() does not support background/websocket like arun() does.
+        # arun() delegates to _arun_background_stream() which threads a WebSocketHandler
+        # through _aexecute_stream() and all _handle_event() calls. acontinue_run() and
+        # _acontinue_execute_stream() were never built with this support. To fix properly:
+        #   1. Add background/websocket params to acontinue_run (+ overloads)
+        #   2. Add websocket_handler param to _acontinue_execute_stream
+        #   3. Thread websocket_handler through all _handle_event() calls in both
+        #      _continue_execute_stream and _acontinue_execute_stream
+        #   4. Add _acontinue_run_background_stream() mirroring _arun_background_stream()
+        # For now, iterate the stream in a background task and forward events over the
+        # WebSocket directly. This bypasses _handle_event's event buffering and websocket
+        # manager broadcasting, so reconnecting clients won't receive these events.
         async def _drive_continue_stream():
             try:
                 response_stream = await workflow.acontinue_run(  # type: ignore
