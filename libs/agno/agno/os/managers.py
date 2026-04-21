@@ -215,6 +215,7 @@ class EventsBuffer:
         """
         # Store all event types (WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent)
         self.events: Dict[str, List[Union[WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent]]] = {}
+        self._next_index: Dict[str, int] = {}  # monotonic event index counter per run
         self.run_metadata: Dict[str, Dict[str, Any]] = {}  # {run_id: {status, last_updated, etc}}
         self.max_events_per_run = max_events_per_run
         self.cleanup_interval = cleanup_interval
@@ -225,6 +226,7 @@ class EventsBuffer:
 
         if run_id not in self.events:
             self.events[run_id] = []
+            self._next_index[run_id] = 0
             self.run_metadata[run_id] = {
                 "status": RunStatus.running,
                 "created_at": current_time,
@@ -234,8 +236,9 @@ class EventsBuffer:
         self.events[run_id].append(event)
         self.run_metadata[run_id]["last_updated"] = current_time
 
-        # Get the index of the event we just added (before potential trimming)
-        event_index = len(self.events[run_id]) - 1
+        # Monotonic counter — to survive buffer trims
+        event_index = self._next_index[run_id]
+        self._next_index[run_id] += 1
 
         # Keep buffer size under control - trim oldest events if exceeded
         if len(self.events[run_id]) > self.max_events_per_run:
@@ -252,24 +255,38 @@ class EventsBuffer:
 
         Args:
             run_id: The run ID (agent/team/workflow)
-            last_event_index: Index of last event received by client (0-based)
+            last_event_index: Monotonic index of last event received by client (0-based)
 
         Returns:
             List of events since last_event_index, or all events if None
         """
         events = self.events.get(run_id, [])
+        if not events:
+            return []
 
         if last_event_index is None:
             # Client has no events, send all
             return events
 
-        # Client has events up to last_event_index, send new ones
-        # last_event_index is 0-based, so we want events starting from index + 1
-        if last_event_index >= len(events) - 1:
+        # The buffer may have been trimmed, so list positions don't match event indices.
+        # first_index is the monotonic index of the oldest event still in the buffer.
+        next_idx = self._next_index.get(run_id, len(events))
+        first_index = next_idx - len(events)
+
+        # Client wants events after last_event_index
+        start_index = last_event_index + 1
+
+        if start_index >= next_idx:
             # Client is caught up
             return []
 
-        return events[last_event_index + 1 :]
+        if start_index <= first_index:
+            # Client is behind the buffer — return everything we have
+            return events
+
+        # Convert monotonic index to list position
+        list_offset = start_index - first_index
+        return events[list_offset:]
 
     def get_event_count(self, run_id: str) -> int:
         """Get the current number of events for a run"""
@@ -289,6 +306,7 @@ class EventsBuffer:
         """Remove buffer for a completed run (called after retention period)"""
         if run_id in self.events:
             del self.events[run_id]
+        self._next_index.pop(run_id, None)
         if run_id in self.run_metadata:
             del self.run_metadata[run_id]
         log_debug(f"Cleaned up event buffer for run {run_id}")
