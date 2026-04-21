@@ -528,8 +528,13 @@ def build_request_context(
     if factory_input is not None:
         try:
             parsed_input = json.loads(factory_input)
-        except (json.JSONDecodeError, TypeError):
-            parsed_input = factory_input  # Let validation catch it later
+        except (json.JSONDecodeError, TypeError) as e:
+            raise HTTPException(status_code=400, detail=f"factory_input must be valid JSON: {e}")
+        if not isinstance(parsed_input, dict):
+            raise HTTPException(
+                status_code=400,
+                detail=f"factory_input must be a JSON object, got {type(parsed_input).__name__}",
+            )
 
     # Build trusted context from middleware-populated request.state
     claims = getattr(request.state, "claims", None) or {}
