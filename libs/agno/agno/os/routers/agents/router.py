@@ -45,11 +45,9 @@ from agno.os.utils import (
     process_document,
     process_image,
     process_video,
-    find_factory_by_id,
     get_agent_by_id,
     resolve_agent,
 )
-from agno.factory import FactoryContextRequired
 from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.base import RunStatus
@@ -484,13 +482,16 @@ def get_agent_router(
     ):
         try:
             agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
-        except FactoryContextRequired:
-            raise HTTPException(status_code=400, detail="This agent is a factory. Use the run endpoint to create an instance.")
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
+        if isinstance(agent, AgentFactory):
+            # cancel_run is static — doesn't need the agent instance
+            from agno.agent._run import acancel_run
+            await acancel_run(run_id)
+            return JSONResponse(content={}, status_code=200)
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
@@ -559,13 +560,17 @@ def get_agent_router(
 
         try:
             agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
-        except FactoryContextRequired:
-            raise HTTPException(status_code=400, detail="This agent is a factory. Use the run endpoint to create an instance.")
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
+        if isinstance(agent, AgentFactory):
+            # Re-invoke factory to get an agent for continue (no factory_input available)
+            agent = await resolve_agent(
+                agent_id, os.agents, os.db, os.registry,
+                request=request, user_id=user_id, session_id=session_id,
+            )
 
         if (session_id is None or session_id == "") and not isinstance(agent, RemoteAgent):
             raise HTTPException(
@@ -768,19 +773,15 @@ def get_agent_router(
     async def get_agent(agent_id: str, request: Request) -> AgentResponse:
         try:
             agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
-        except FactoryContextRequired:
-            # Factory agents return config info directly (no run context needed)
-            factory = find_factory_by_id(agent_id, os.agents)
-            if factory:
-                return AgentResponse.from_factory(factory)
-            raise HTTPException(status_code=404, detail="Agent not found")
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        if isinstance(agent, RemoteAgent):
+        if isinstance(agent, AgentFactory):
+            return AgentResponse.from_factory(agent)
+        elif isinstance(agent, RemoteAgent):
             return await agent.get_agent_config()
         else:
             return await AgentResponse.from_agent(agent=agent)
@@ -807,13 +808,15 @@ def get_agent_router(
     ):
         try:
             agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
-        except FactoryContextRequired:
-            raise HTTPException(status_code=400, detail="This agent is a factory. Use the run endpoint to create an instance.")
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
+        if isinstance(agent, AgentFactory):
+            if not os.db:
+                raise HTTPException(status_code=400, detail="Factory agent run polling requires a database on AgentOS")
+            agent = Agent(id=agent_id, db=os.db)
         if isinstance(agent, RemoteAgent):
             raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
 
@@ -847,13 +850,15 @@ def get_agent_router(
 
         try:
             agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
-        except FactoryContextRequired:
-            raise HTTPException(status_code=400, detail="This agent is a factory. Use the run endpoint to create an instance.")
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
+        if isinstance(agent, AgentFactory):
+            if not os.db:
+                raise HTTPException(status_code=400, detail="Factory agent run listing requires a database on AgentOS")
+            agent = Agent(id=agent_id, db=os.db)
         if isinstance(agent, RemoteAgent):
             raise HTTPException(status_code=400, detail="Run listing is not supported for remote agents")
 

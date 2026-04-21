@@ -225,12 +225,14 @@ class TestGetAgentByIdWithFactories:
         assert result.id == "agent-user-1"
         assert result.factory_id == "my-factory"
 
-    def test_factory_without_context_raises(self):
+    def test_factory_without_context_returns_factory(self):
         from agno.os.utils import get_agent_by_id
 
         factory = AgentFactory(id="my-factory", factory=lambda ctx: None)
-        with pytest.raises(FactoryContextRequired):
-            get_agent_by_id("my-factory", agents=[factory])
+        result = get_agent_by_id("my-factory", agents=[factory])
+        # Without ctx, get_agent_by_id returns the factory itself for config/discovery
+        assert result is factory
+        assert isinstance(result, AgentFactory)
 
     def test_factory_wrong_return_type_raises(self):
         from agno.os.utils import get_agent_by_id
