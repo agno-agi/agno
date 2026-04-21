@@ -134,6 +134,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
         run_id = message.get("run_id")
         workflow_id = message.get("workflow_id")
         session_id = message.get("session_id")
+        user_id = message.get("user_id")
         last_event_index = message.get("last_event_index")  # 0-based index of last received event
 
         if not run_id:
@@ -150,7 +151,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
                     workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
                 )
                 if workflow and isinstance(workflow, Workflow):
-                    workflow_run = await workflow.aget_run_output(run_id, session_id)
+                    workflow_run = await workflow.aget_run_output(run_id, session_id, user_id=user_id)
 
                     if workflow_run:
                         # Run exists in DB - send all events from DB
@@ -461,6 +462,20 @@ def get_websocket_router(
                     await websocket.send_text(json.dumps({"event": "pong"}))
 
                 elif action == "start-workflow":
+                    # Check workflow-level scope enforcement
+                    workflow_id = message.get("workflow_id")
+                    user_scopes = websocket_user_context.get("scopes", [])
+                    if user_scopes and workflow_id:
+                        from agno.os.scopes import has_required_scopes
+
+                        if not has_required_scopes(
+                            user_scopes, ["workflows:run"], resource_type="workflows", resource_id=workflow_id
+                        ):
+                            await websocket.send_text(
+                                json.dumps({"event": "error", "error": "Insufficient permissions to run this workflow"})
+                            )
+                            continue
+
                     # Add user context to message if available from JWT auth
                     if websocket_user_context:
                         if "user_id" not in message and websocket_user_context.get("user_id"):
@@ -469,6 +484,10 @@ def get_websocket_router(
                     await handle_workflow_via_websocket(websocket, message, os)
 
                 elif action == "reconnect":
+                    # Add user_id context for scoped session lookup on reconnect
+                    if websocket_user_context:
+                        if "user_id" not in message and websocket_user_context.get("user_id"):
+                            message["user_id"] = websocket_user_context["user_id"]
                     # Subscribe/reconnect to an existing workflow run
                     await handle_workflow_subscription(websocket, message, os)
 
