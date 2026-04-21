@@ -6,7 +6,7 @@ from agno.factory import BaseFactory
 class AgentFactory(BaseFactory):
     """A factory that produces an Agent per request.
 
-    Factories live alongside prototype agents in ``AgentOS(agents=[...])``.
+    Factories live alongside agents in ``AgentOS(agents=[...])``.
     On each request, AgentOS invokes the factory with a :class:`RequestContext`
     and uses the returned Agent for that request.
     """

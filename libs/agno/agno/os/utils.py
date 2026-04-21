@@ -1350,7 +1350,7 @@ async def resolve_agent(
     """Resolve an agent by ID with proper error handling for both factory and non-factory paths.
 
     For factory agents: builds RequestContext, invokes factory, handles factory-specific errors.
-    For non-factory agents: resolves via prototype deep_copy or DB lookup.
+    For non-factory agents: resolves via deep_copy or DB lookup.
 
     Raises HTTPException on all error paths.
     """

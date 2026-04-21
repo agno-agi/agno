@@ -6,7 +6,7 @@ from agno.factory import BaseFactory
 class TeamFactory(BaseFactory):
     """A factory that produces a Team per request.
 
-    Factories live alongside prototype teams in ``AgentOS(teams=[...])``.
+    Factories live alongside teams in ``AgentOS(teams=[...])``.
     On each request, AgentOS invokes the factory with a :class:`RequestContext`
     and uses the returned Team for that request.
     """

@@ -6,7 +6,7 @@ from agno.factory import BaseFactory
 class WorkflowFactory(BaseFactory):
     """A factory that produces a Workflow per request.
 
-    Factories live alongside prototype workflows in ``AgentOS(workflows=[...])``.
+    Factories live alongside workflows in ``AgentOS(workflows=[...])``.
     On each request, AgentOS invokes the factory with a :class:`RequestContext`
     and uses the returned Workflow for that request.
     """

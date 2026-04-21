@@ -69,7 +69,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
             return
 
-        # Get workflow from OS — supports both prototypes and factories
+        # Get workflow from OS — supports both static and factory components
         is_factory = os.workflows and any(
             isinstance(w, WorkflowFactory) and w.id == workflow_id for w in (os.workflows or [])
         )
@@ -728,7 +728,7 @@ def get_workflow_router(
                 log_warning("Metadata parameter passed in both request state and kwargs, using request state")
             kwargs["metadata"] = metadata
 
-        # Retrieve the workflow by ID (supports both prototypes and factories)
+        # Retrieve the workflow by ID (supports both static and factory components)
         workflow = await resolve_workflow(
             workflow_id,
             os.workflows,
