@@ -264,6 +264,7 @@ class StepPausedEvent(BaseWorkflowRunOutputEvent):
     # User input fields
     requires_user_input: bool = False
     user_input_message: Optional[str] = None
+    user_input_schema: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass

@@ -108,6 +108,12 @@ def create_step_paused_event(
     from agno.run.workflow import StepPausedEvent
 
     req = pause_result.step_requirement
+
+    # Serialize user_input_schema so the FE knows what fields to render
+    user_input_schema = None
+    if req and req.user_input_schema:
+        user_input_schema = [f.to_dict() for f in req.user_input_schema]
+
     return StepPausedEvent(
         run_id=workflow_run_response.run_id or "",
         workflow_name=workflow_run_response.workflow_name,
@@ -120,6 +126,7 @@ def create_step_paused_event(
         confirmation_message=req.confirmation_message if req else None,
         requires_user_input=req.requires_user_input if req else False,
         user_input_message=req.user_input_message if req else None,
+        user_input_schema=user_input_schema,
     )
 
 
