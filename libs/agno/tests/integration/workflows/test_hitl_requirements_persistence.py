@@ -16,8 +16,6 @@ Tests cover:
 - Async: requirements persist in async mode
 """
 
-import pytest
-
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowRunOutput
 from agno.workflow import OnError, OnReject, Router
