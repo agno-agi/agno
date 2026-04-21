@@ -438,6 +438,8 @@ async def workflow_response_streamer(
 
         # If the workflow paused, yield the full WorkflowRunOutput as a final SSE event
         # so the FE has step_requirements for the /continue request.
+        if isinstance(workflow, RemoteWorkflow):
+            return
         _session = workflow.get_session(session_id=session_id)
         if _session and _session.runs:
             _last_run = _session.runs[-1]

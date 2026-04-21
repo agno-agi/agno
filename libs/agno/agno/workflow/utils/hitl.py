@@ -465,13 +465,26 @@ def is_executor_pause(step_output: Any) -> bool:
     If the executor is a nested Workflow (or anything else), its `is_paused` flag
     must not be treated as an executor pause — the nested workflow has its own
     pause/resume lifecycle.
+
+    For composite steps (Condition, Loop, Router, Steps), the pause originates from
+    an inner Step but is propagated up with step_type="Condition"/etc and no
+    executor_type. In that case we check the nested steps for the actual executor.
     """
     if not getattr(step_output, "is_paused", False):
         return False
     executor_type = getattr(step_output, "executor_type", None)
     # Normalize enum -> value for comparison
     executor_type_value = getattr(executor_type, "value", executor_type)
-    return executor_type_value in ("agent", "team")
+    if executor_type_value in ("agent", "team"):
+        return True
+    # Check nested steps — composite steps (Condition/Loop/Router) propagate
+    # is_paused but don't carry executor_type themselves.
+    nested = getattr(step_output, "steps", None)
+    if nested:
+        for inner in reversed(nested):
+            if is_executor_pause(inner):
+                return True
+    return False
 
 
 def get_last_executor_run(workflow_run_response: "WorkflowRunOutput") -> Any:
