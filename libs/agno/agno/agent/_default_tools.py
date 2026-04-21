@@ -121,7 +121,7 @@ def create_knowledge_search_tool(
         if agent.references_format == "json":
             import json
 
-            return json.dumps(docs, indent=2, default=str)
+            return json.dumps(docs, indent=2, default=str, ensure_ascii=False)
         else:
             import yaml
 

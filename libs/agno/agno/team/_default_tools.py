@@ -1221,7 +1221,7 @@ def create_knowledge_search_tool(
         if not docs:
             return "No documents found"
         if team.references_format == "json":
-            return json.dumps(docs, indent=2, default=str)
+            return json.dumps(docs, indent=2, default=str, ensure_ascii=False)
         else:
             import yaml
 
