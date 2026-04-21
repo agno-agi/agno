@@ -535,7 +535,17 @@ def get_system_message(
             "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
         )
 
-    # 2.6 Trailing sections: media, additional info, tools, expected output, etc.
+    # 2.6 LearningMachine context
+    if team._learning is not None and team.add_learnings_to_context:
+        learning_context = team._learning.build_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            team_id=team.id,
+        )
+        if learning_context:
+            system_message_content += learning_context + "\n"
+
+    # 2.7 Trailing sections: media, additional info, tools, expected output, etc.
     system_message_content += _build_trailing_sections(
         team,
         audio=audio,
@@ -756,7 +766,17 @@ async def aget_system_message(
             "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
         )
 
-    # 2.6 Trailing sections: media, additional info, tools, expected output, etc.
+    # 2.6 LearningMachine context
+    if team._learning is not None and team.add_learnings_to_context:
+        learning_context = await team._learning.abuild_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            team_id=team.id,
+        )
+        if learning_context:
+            system_message_content += learning_context + "\n"
+
+    # 2.7 Trailing sections: media, additional info, tools, expected output, etc.
     system_message_content += _build_trailing_sections(
         team,
         audio=audio,
