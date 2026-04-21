@@ -663,6 +663,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process the request: extract JWT, validate, and check RBAC scopes."""
+        # Ensure the JWTValidator is accessible on app.state for WebSocket endpoints
+        # and other components that need JWT validation outside the middleware chain.
+        # This handles both built-in (AgentOS authorization=True) and manual
+        # (app.add_middleware(JWTMiddleware, ...)) setup paths.
+        if not getattr(request.app.state, "jwt_validator", None):
+            request.app.state.jwt_validator = self.validator
+
         path = request.url.path
         method = request.method
 

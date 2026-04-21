@@ -12,6 +12,7 @@ class AuthorizationConfig(BaseModel):
     jwks_file: Optional[str] = None
     algorithm: Optional[str] = None
     verify_audience: Optional[bool] = None
+    audience: Optional[str] = None
 
 
 class EvalsDomainConfig(BaseModel):

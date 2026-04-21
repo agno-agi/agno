@@ -858,12 +858,14 @@ class AgentOS:
         jwks_file = None
         verification_keys = None
         algorithm = "RS256"
+        audience = None
 
         if self.authorization_config:
             algorithm = self.authorization_config.algorithm or "RS256"
             verification_keys = self.authorization_config.verification_keys
             jwks_file = self.authorization_config.jwks_file
             verify_audience = self.authorization_config.verify_audience or False
+            audience = self.authorization_config.audience
 
         log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
 
@@ -899,15 +901,17 @@ class AgentOS:
                 ] + interface_prefixes
 
         # Add middleware to stack
-        fastapi_app.add_middleware(
-            JWTMiddleware,
-            verification_keys=verification_keys,
-            jwks_file=jwks_file,
-            algorithm=algorithm,
-            authorization=self.authorization,
-            verify_audience=verify_audience,
-            excluded_route_paths=excluded_route_paths,
-        )
+        middleware_kwargs: Dict[str, Any] = {
+            "verification_keys": verification_keys,
+            "jwks_file": jwks_file,
+            "algorithm": algorithm,
+            "authorization": self.authorization,
+            "verify_audience": verify_audience,
+            "excluded_route_paths": excluded_route_paths,
+        }
+        if audience:
+            middleware_kwargs["audience"] = audience
+        fastapi_app.add_middleware(JWTMiddleware, **middleware_kwargs)
 
     def get_routes(self) -> List[Any]:
         """Retrieve all routes from the FastAPI app.
