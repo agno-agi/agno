@@ -267,7 +267,9 @@ async def test_multimcp_connect_merges_init_headers_when_sse_headers_default_to_
     tools._async_exit_stack = _AsyncExitStackStub()
 
     with (
-        patch("agno.tools.mcp.multi_mcp.sse_client", return_value=_AsyncContextManager(("read", "write"))) as sse_client_mock,
+        patch(
+            "agno.tools.mcp.multi_mcp.sse_client", return_value=_AsyncContextManager(("read", "write"))
+        ) as sse_client_mock,
         patch("agno.tools.mcp.multi_mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
         patch.object(MultiMCPTools, "initialize", new=AsyncMock()),
         patch.object(MultiMCPTools, "build_tools", new=AsyncMock()),
