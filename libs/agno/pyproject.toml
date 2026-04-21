@@ -119,6 +119,7 @@ tavily = ["tavily-python"]
 crawl4ai = ["crawl4ai>=0.6.3"]
 github = ["PyGithub"]
 gitlab = ["python-gitlab", "httpx"]
+gdrive = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
 google_bigquery = ["google-cloud-bigquery"]
 google_slides = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
@@ -249,6 +250,7 @@ tools = [
   # "agno[crawl4ai]",  # Temporarily disabled - depends on litellm which is compromised on PyPI (March 24, 2026)
   "agno[github]",
   "agno[gitlab]",
+  "agno[gdrive]",
   "agno[gmail]",
   "agno[google_slides]",
   "agno[googlemaps]",
