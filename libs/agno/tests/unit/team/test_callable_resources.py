@@ -514,3 +514,58 @@ class TestTeamDeepCopyCallableFactories:
         team = _make_team(members=agents)
         copy = team.deep_copy()
         assert isinstance(copy.members, list)
+
+    def test_deep_copy_no_warning_on_callable_tools(self):
+        """Regression: Team.deep_copy() must not iterate a callable tools factory."""
+        import logging
+
+        def tools_factory():
+            return [_dummy_tool]
+
+        team = _make_team(tools=tools_factory, cache_callables=False)
+
+        records: list = []
+
+        class _Recorder(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        agno_logger = logging.getLogger("agno")
+        handler = _Recorder(level=logging.WARNING)
+        agno_logger.addHandler(handler)
+        try:
+            copied = team.deep_copy()
+        finally:
+            agno_logger.removeHandler(handler)
+
+        assert copied.tools is tools_factory
+        offenders = [r.getMessage() for r in records if "Failed to process tools for deep copy" in r.getMessage()]
+        assert not offenders, f"Unexpected warning(s) emitted: {offenders}"
+
+    def test_deep_copy_with_member_using_callable_tools(self):
+        """Regression: a Team member Agent with callable tools should not warn during deep_copy."""
+        import logging
+
+        def member_tools_factory():
+            return [_dummy_tool]
+
+        member = Agent(name="member", tools=member_tools_factory, cache_callables=False)
+        team = _make_team(members=[member])
+
+        records: list = []
+
+        class _Recorder(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        agno_logger = logging.getLogger("agno")
+        handler = _Recorder(level=logging.WARNING)
+        agno_logger.addHandler(handler)
+        try:
+            copied = team.deep_copy()
+        finally:
+            agno_logger.removeHandler(handler)
+
+        offenders = [r.getMessage() for r in records if "Failed to process tools for deep copy" in r.getMessage()]
+        assert not offenders, f"Unexpected warning(s) emitted: {offenders}"
+        assert copied.members[0].tools is member_tools_factory

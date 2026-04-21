@@ -735,3 +735,58 @@ class TestAgentDeepCopyCallable:
         copied = agent.deep_copy()
         # The factory should be shared by reference (not deep-copied)
         assert copied.tools is agent.tools
+
+    def test_deep_copy_no_warning_on_callable_factory(self):
+        """Regression: deep_copy() must not try to iterate a callable factory."""
+        import logging
+
+        def factory():
+            return [_dummy_tool]
+
+        agent = Agent(name="test", tools=factory, cache_callables=False)
+
+        records: list = []
+
+        class _Recorder(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        agno_logger = logging.getLogger("agno")
+        handler = _Recorder(level=logging.WARNING)
+        agno_logger.addHandler(handler)
+        try:
+            copied = agent.deep_copy()
+        finally:
+            agno_logger.removeHandler(handler)
+
+        assert copied.tools is factory
+        offenders = [r.getMessage() for r in records if "Failed to process tools for deep copy" in r.getMessage()]
+        assert not offenders, f"Unexpected warning(s) emitted: {offenders}"
+
+    def test_deep_copy_callable_factory_still_resolves(self):
+        """After deep_copy, the factory should still resolve to the expected tool list."""
+        sentinel = _dummy_tool
+
+        def factory():
+            return [sentinel]
+
+        agent = Agent(name="test", tools=factory, cache_callables=False)
+        copied = agent.deep_copy()
+
+        ctx = _make_run_context(user_id="u1")
+        resolve_callable_tools(copied, ctx)
+        assert ctx.tools == [sentinel]
+
+    def test_deep_copy_lambda_factory_preserved(self):
+        factory = lambda: [_dummy_tool]  # noqa: E731
+        agent = Agent(name="test", tools=factory)
+        copied = agent.deep_copy()
+        assert copied.tools is factory
+
+    def test_deep_copy_toolkit_not_treated_as_factory(self):
+        """A Toolkit instance is callable-adjacent but must still be deep-copied as a tool."""
+        tk = Toolkit(name="tk", tools=[Function.from_callable(_dummy_tool)])
+        agent = Agent(name="test", tools=[tk])
+        copied = agent.deep_copy()
+        assert isinstance(copied.tools, list)
+        assert len(copied.tools) == 1
