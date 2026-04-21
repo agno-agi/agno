@@ -16,7 +16,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from agno.factory import FactoryContextRequired, FactoryError, FactoryPermissionError, FactoryValidationError
+from agno.factory import FactoryContextRequired
 from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
 from agno.os.auth import (
@@ -37,11 +37,10 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
-    build_request_context,
     format_sse_event,
     get_request_kwargs,
     get_workflow_by_id,
-    get_workflow_by_id_async,
+    resolve_workflow,
 )
 from agno.workflow.factory import WorkflowFactory
 from agno.run.base import RunStatus
@@ -632,19 +631,12 @@ def get_workflow_router(
                     )
 
         try:
-            workflow = get_workflow_by_id(
-                workflow_id=workflow_id,
-                workflows=os.workflows,
-                db=os.db,
-                version=version,
-                registry=os.registry,
-                create_fresh=True,
-            )
+            workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
         except FactoryContextRequired:
-            raise HTTPException(
-                status_code=400,
-                detail="This workflow is a factory. Use the run endpoint with factory_input to create an instance.",
-            )
+            raise HTTPException(status_code=400, detail="This workflow is a factory. Use the run endpoint to create an instance.")
+        except Exception as e:
+            logger.error(f"Error resolving workflow '{workflow_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
         if isinstance(workflow, RemoteWorkflow):
@@ -730,26 +722,17 @@ def get_workflow_router(
             kwargs["metadata"] = metadata
 
         # Retrieve the workflow by ID (supports both prototypes and factories)
-        ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
-        try:
-            workflow = await get_workflow_by_id_async(
-                workflow_id=workflow_id,
-                workflows=os.workflows,
-                db=os.db,
-                version=version,
-                registry=os.registry,
-                create_fresh=True,
-                ctx=ctx,
-            )
-        except FactoryValidationError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        except FactoryPermissionError as e:
-            raise HTTPException(status_code=403, detail=str(e))
-        except FactoryError as e:
-            logger.error(f"Factory error for workflow '{workflow_id}': {e}")
-            raise HTTPException(status_code=500, detail="Workflow factory error")
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Workflow not found")
+        workflow = await resolve_workflow(
+            workflow_id,
+            os.workflows,
+            os.db,
+            os.registry,
+            version=version,
+            request=request,
+            user_id=user_id,
+            session_id=session_id,
+            factory_input=factory_input,
+        )
 
         if session_id:
             logger.debug(f"Continuing session: {session_id}")
@@ -814,15 +797,12 @@ def get_workflow_router(
     )
     async def cancel_workflow_run(workflow_id: str, run_id: str):
         try:
-            workflow = get_workflow_by_id(
-                workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
-            )
+            workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
         except FactoryContextRequired:
-            raise HTTPException(
-                status_code=400,
-                detail="This workflow is a factory. Use the run endpoint with factory_input to create an instance.",
-            )
-
+            raise HTTPException(status_code=400, detail="This workflow is a factory. Use the run endpoint to create an instance.")
+        except Exception as e:
+            logger.error(f"Error resolving workflow '{workflow_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
@@ -852,14 +832,12 @@ def get_workflow_router(
         session_id: str = Query(..., description="Session ID for the run"),
     ):
         try:
-            workflow = get_workflow_by_id(
-                workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
-            )
+            workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
         except FactoryContextRequired:
-            raise HTTPException(
-                status_code=400,
-                detail="This workflow is a factory. Use the run endpoint with factory_input to create an instance.",
-            )
+            raise HTTPException(status_code=400, detail="This workflow is a factory. Use the run endpoint to create an instance.")
+        except Exception as e:
+            logger.error(f"Error resolving workflow '{workflow_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
         if isinstance(workflow, RemoteWorkflow):

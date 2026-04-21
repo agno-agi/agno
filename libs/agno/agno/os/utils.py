@@ -11,6 +11,8 @@ from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.factory import (
     FactoryContextRequired,
     FactoryError,
+    FactoryPermissionError,
+    FactoryValidationError,
     RequestContext,
 )
 from agno.db.base import AsyncBaseDb, BaseDb
@@ -1349,3 +1351,143 @@ def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any],
         return str(input_content)
     else:
         return str(input_content)
+
+
+# ---------------------------------------------------------------------------
+# High-level resolvers with error handling for routers
+# ---------------------------------------------------------------------------
+
+
+async def resolve_agent(
+    agent_id: str,
+    agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentFactory]]],
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    registry: Optional[Registry] = None,
+    version: Optional[int] = None,
+    request: Optional[Request] = None,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    factory_input: Optional[str] = None,
+) -> Union[Agent, RemoteAgent]:
+    """Resolve an agent by ID with proper error handling for both factory and non-factory paths.
+
+    For factory agents: builds RequestContext, invokes factory, handles factory-specific errors.
+    For non-factory agents: resolves via prototype deep_copy or DB lookup.
+
+    Raises HTTPException on all error paths.
+    """
+    is_factory = agents and any(isinstance(a, AgentFactory) and a.id == agent_id for a in agents)
+    if is_factory:
+        ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
+        try:
+            agent = await get_agent_by_id_async(
+                agent_id, agents, db, registry, version=version, create_fresh=True, ctx=ctx
+            )
+        except FactoryValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except FactoryPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except FactoryError as e:
+            logger.error(f"Factory error for agent '{agent_id}': {e}")
+            raise HTTPException(status_code=500, detail="Agent factory error")
+        except Exception as e:
+            logger.error(f"Error in agent factory '{agent_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error in agent factory: {e}")
+    else:
+        try:
+            agent = get_agent_by_id(agent_id, agents, db, registry, version=version, create_fresh=True)
+        except Exception as e:
+            logger.error(f"Error resolving agent '{agent_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return agent
+
+
+async def resolve_team(
+    team_id: str,
+    teams: Optional[Sequence[Union[Team, RemoteTeam, TeamFactory]]],
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    registry: Optional[Registry] = None,
+    version: Optional[int] = None,
+    request: Optional[Request] = None,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    factory_input: Optional[str] = None,
+) -> Union[Team, RemoteTeam]:
+    """Resolve a team by ID with proper error handling for both factory and non-factory paths."""
+    is_factory = teams and any(isinstance(t, TeamFactory) and t.id == team_id for t in teams)
+    if is_factory:
+        ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
+        try:
+            team = await get_team_by_id_async(
+                team_id, teams, db=db, version=version, registry=registry, create_fresh=True, ctx=ctx
+            )
+        except FactoryValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except FactoryPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except FactoryError as e:
+            logger.error(f"Factory error for team '{team_id}': {e}")
+            raise HTTPException(status_code=500, detail="Team factory error")
+        except Exception as e:
+            logger.error(f"Error in team factory '{team_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error in team factory: {e}")
+    else:
+        try:
+            team = get_team_by_id(team_id, teams, db=db, version=version, registry=registry, create_fresh=True)
+        except Exception as e:
+            logger.error(f"Error resolving team '{team_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+
+    if team is None:
+        raise HTTPException(status_code=404, detail="Team not found")
+    return team
+
+
+async def resolve_workflow(
+    workflow_id: str,
+    workflows: Optional[Sequence[Union[Workflow, RemoteWorkflow, WorkflowFactory]]],
+    db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    registry: Optional[Registry] = None,
+    version: Optional[int] = None,
+    request: Optional[Request] = None,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    factory_input: Optional[str] = None,
+) -> Union[Workflow, RemoteWorkflow]:
+    """Resolve a workflow by ID with proper error handling for both factory and non-factory paths."""
+    is_factory = workflows and any(
+        isinstance(w, WorkflowFactory) and w.id == workflow_id for w in workflows
+    )
+    if is_factory:
+        ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
+        try:
+            workflow = await get_workflow_by_id_async(
+                workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True, ctx=ctx
+            )
+        except FactoryValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except FactoryPermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except FactoryError as e:
+            logger.error(f"Factory error for workflow '{workflow_id}': {e}")
+            raise HTTPException(status_code=500, detail="Workflow factory error")
+        except Exception as e:
+            logger.error(f"Error in workflow factory '{workflow_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error in workflow factory: {e}")
+    else:
+        try:
+            workflow = get_workflow_by_id(
+                workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True
+            )
+        except Exception as e:
+            logger.error(f"Error resolving workflow '{workflow_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
+
+    if workflow is None:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+    return workflow
+
+
