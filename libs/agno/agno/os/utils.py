@@ -619,7 +619,11 @@ def get_agent_by_id(
                             f"Agent '{agent_id}' is a factory and requires a RequestContext. "
                             "Pass ctx= when calling get_agent_by_id from a request handler."
                         )
-                    return agent.resolve(ctx, expected_type=Agent)
+                    result = agent.resolve(ctx, expected_type=Agent)
+                    # Initialize the factory-produced agent (same as _initialize_agents does at startup)
+                    result.initialize_agent()
+                    result.store_events = True
+                    return result
                 # RemoteAgent or other
                 return agent
 
@@ -668,7 +672,10 @@ async def get_agent_by_id_async(
                             f"Agent '{agent_id}' is a factory and requires a RequestContext. "
                             "Pass ctx= when calling get_agent_by_id_async from a request handler."
                         )
-                    return await agent.resolve_async(ctx, expected_type=Agent)
+                    result = await agent.resolve_async(ctx, expected_type=Agent)
+                    result.initialize_agent()
+                    result.store_events = True
+                    return result
                 # RemoteAgent or other
                 return agent
 
@@ -724,7 +731,10 @@ def get_team_by_id(
                 if isinstance(team, TeamFactory):
                     if ctx is None:
                         raise FactoryContextRequired(f"Team '{team_id}' is a factory and requires a RequestContext.")
-                    return team.resolve(ctx, expected_type=Team)
+                    result = team.resolve(ctx, expected_type=Team)
+                    result.initialize_team()
+                    result.store_events = True
+                    return result
                 return team
 
     if db and isinstance(db, BaseDb):
@@ -763,7 +773,10 @@ async def get_team_by_id_async(
                 if isinstance(team, TeamFactory):
                     if ctx is None:
                         raise FactoryContextRequired(f"Team '{team_id}' is a factory and requires a RequestContext.")
-                    return await team.resolve_async(ctx, expected_type=Team)
+                    result = await team.resolve_async(ctx, expected_type=Team)
+                    result.initialize_team()
+                    result.store_events = True
+                    return result
                 return team
 
     if db and isinstance(db, BaseDb):
@@ -823,7 +836,10 @@ def get_workflow_by_id(
                         raise FactoryContextRequired(
                             f"Workflow '{workflow_id}' is a factory and requires a RequestContext."
                         )
-                    return workflow.resolve(ctx, expected_type=Workflow)
+                    result = workflow.resolve(ctx, expected_type=Workflow)
+                    result.initialize_workflow()
+                    result.store_events = True
+                    return result
                 return workflow
 
     if db and isinstance(db, BaseDb):
@@ -864,7 +880,10 @@ async def get_workflow_by_id_async(
                         raise FactoryContextRequired(
                             f"Workflow '{workflow_id}' is a factory and requires a RequestContext."
                         )
-                    return await workflow.resolve_async(ctx, expected_type=Workflow)
+                    result = await workflow.resolve_async(ctx, expected_type=Workflow)
+                    result.initialize_workflow()
+                    result.store_events = True
+                    return result
                 return workflow
 
     if db and isinstance(db, BaseDb):
