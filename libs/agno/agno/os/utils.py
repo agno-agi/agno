@@ -620,9 +620,6 @@ def get_agent_by_id(
                             "Pass ctx= when calling get_agent_by_id from a request handler."
                         )
                     result = agent.resolve(ctx, expected_type=Agent)
-                    # Initialize the factory-produced agent (same as _initialize_agents does at startup)
-                    result.initialize_agent()
-                    result.store_events = True
                     return result
                 # RemoteAgent or other
                 return agent
@@ -673,8 +670,6 @@ async def get_agent_by_id_async(
                             "Pass ctx= when calling get_agent_by_id_async from a request handler."
                         )
                     result = await agent.resolve_async(ctx, expected_type=Agent)
-                    result.initialize_agent()
-                    result.store_events = True
                     return result
                 # RemoteAgent or other
                 return agent
@@ -732,8 +727,6 @@ def get_team_by_id(
                     if ctx is None:
                         raise FactoryContextRequired(f"Team '{team_id}' is a factory and requires a RequestContext.")
                     result = team.resolve(ctx, expected_type=Team)
-                    result.initialize_team()
-                    result.store_events = True
                     return result
                 return team
 
@@ -774,8 +767,6 @@ async def get_team_by_id_async(
                     if ctx is None:
                         raise FactoryContextRequired(f"Team '{team_id}' is a factory and requires a RequestContext.")
                     result = await team.resolve_async(ctx, expected_type=Team)
-                    result.initialize_team()
-                    result.store_events = True
                     return result
                 return team
 
@@ -837,8 +828,6 @@ def get_workflow_by_id(
                             f"Workflow '{workflow_id}' is a factory and requires a RequestContext."
                         )
                     result = workflow.resolve(ctx, expected_type=Workflow)
-                    result.initialize_workflow()
-                    result.store_events = True
                     return result
                 return workflow
 
@@ -881,8 +870,6 @@ async def get_workflow_by_id_async(
                             f"Workflow '{workflow_id}' is a factory and requires a RequestContext."
                         )
                     result = await workflow.resolve_async(ctx, expected_type=Workflow)
-                    result.initialize_workflow()
-                    result.store_events = True
                     return result
                 return workflow
 

@@ -11,4 +11,7 @@ class TeamFactory(BaseFactory):
     and uses the returned Team for that request.
     """
 
-    pass
+    def _post_resolve(self, component) -> None:
+        super()._post_resolve(component)
+        component.initialize_team()
+        component.store_events = True

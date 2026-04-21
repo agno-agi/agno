@@ -96,15 +96,16 @@ class BaseFactory(Generic[T]):
             return await self.factory(ctx)  # type: ignore[misc,return-value]
         return self.factory(ctx)  # type: ignore[return-value]
 
-    def _set_factory_id(self, component: T) -> None:
-        """Set factory_id on the produced component (Agent, Team, or Workflow).
+    def _post_resolve(self, component: T) -> None:
+        """Post-resolve setup for the produced component.
 
-        This is picked up by RunOutput (via getattr(agent, "factory_id", None)),
+        Sets factory_id on the component so SSE events include it for FE matching.
+        Picked up by RunOutput (via getattr(agent, "factory_id", None)),
         then propagated to all SSE events by handle_event() in utils/events.py.
-        The FE uses factory_id to match SSE events to the selected factory
-        (see useStreamSessionResolver.ts).
+        The factory author's original component.id is preserved.
 
-        The factory author's original component.id is preserved for session keying.
+        Subclasses override this to add component-specific initialization
+        (e.g. initialize_agent(), initialize_team(), store_events).
         """
         component.factory_id = self.id  # type: ignore[attr-defined]
 
@@ -131,7 +132,7 @@ class BaseFactory(Generic[T]):
             raise FactoryError(
                 f"{type(self).__name__} '{self.id}' returned {type(result).__name__}, expected {expected_type.__name__}."
             )
-        self._set_factory_id(result)
+        self._post_resolve(result)
         return result
 
     async def resolve_async(self, ctx: RequestContext, expected_type: Type[T]) -> T:
@@ -143,5 +144,5 @@ class BaseFactory(Generic[T]):
             raise FactoryError(
                 f"{type(self).__name__} '{self.id}' returned {type(result).__name__}, expected {expected_type.__name__}."
             )
-        self._set_factory_id(result)
+        self._post_resolve(result)
         return result
