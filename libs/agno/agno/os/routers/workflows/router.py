@@ -345,15 +345,37 @@ async def handle_workflow_continue_via_websocket(websocket: WebSocket, message: 
                 )
                 return
 
-        # Continue the workflow with streaming via WebSocket
-        await workflow.acontinue_run(  # type: ignore
-            run_response=existing_run,
-            session_id=session_id,
-            stream=True,
-            stream_events=True,
-            background=True,
-            websocket=websocket,
-        )
+        # TODO: acontinue_run() does not support background/websocket like arun() does.
+        # arun() delegates to _arun_background_stream() which threads a WebSocketHandler
+        # through _aexecute_stream() and all _handle_event() calls. acontinue_run() and
+        # _acontinue_execute_stream() were never built with this support. To fix properly:
+        #   1. Add background/websocket params to acontinue_run (+ overloads)
+        #   2. Add websocket_handler param to _acontinue_execute_stream
+        #   3. Thread websocket_handler through all _handle_event() calls in both
+        #      _continue_execute_stream and _acontinue_execute_stream
+        #   4. Add _acontinue_run_background_stream() mirroring _arun_background_stream()
+        # For now, iterate the stream in a background task and forward events over the
+        # WebSocket directly. This bypasses _handle_event's event buffering and websocket
+        # manager broadcasting, so reconnecting clients won't receive these events.
+        async def _drive_continue_stream():
+            try:
+                response_stream = await workflow.acontinue_run(  # type: ignore
+                    run_response=existing_run,
+                    session_id=session_id,
+                    stream=True,
+                    stream_events=True,
+                )
+                async for event in response_stream:
+                    event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
+                    await websocket.send_text(json.dumps(event_dict, default=json_serializer))
+            except Exception as e:
+                logger.error(f"Error in continue stream: {e}")
+                try:
+                    await websocket.send_text(json.dumps({"event": "error", "error": str(e)}))
+                except Exception:
+                    pass
+
+        asyncio.create_task(_drive_continue_stream())
 
     except (InputCheckError, OutputCheckError) as e:
         await websocket.send_text(

@@ -90,7 +90,9 @@ def process_events(event_stream):
 
 if __name__ == "__main__":
     console.print("[bold]StepExecutorContinuedEvent Demo[/]\n")
-    console.print("Watch for StepExecutorContinuedEvent after approving the tool call.\n")
+    console.print(
+        "Watch for StepExecutorContinuedEvent after approving the tool call.\n"
+    )
 
     # Initial run — agent will pause when it tries to call get_the_weather
     console.print("[bold]--- Initial run ---[/]")
@@ -118,14 +120,23 @@ if __name__ == "__main__":
                         )
                         console.print(f"  Tool: [bold blue]{t_name}[/]")
 
-                answer = Prompt.ask("Approve?", choices=["y", "n"], default="y").strip().lower()
+                answer = (
+                    Prompt.ask("Approve?", choices=["y", "n"], default="y")
+                    .strip()
+                    .lower()
+                )
                 for executor_req in req.executor_requirements or []:
                     if isinstance(executor_req, dict):
                         executor_req["confirmation"] = answer == "y"
-                        if "tool_execution" in executor_req and executor_req["tool_execution"]:
+                        if (
+                            "tool_execution" in executor_req
+                            and executor_req["tool_execution"]
+                        ):
                             executor_req["tool_execution"]["confirmed"] = answer == "y"
                     else:
-                        executor_req.confirm() if answer == "y" else executor_req.reject(note="Declined")
+                        executor_req.confirm() if answer == "y" else executor_req.reject(
+                            note="Declined"
+                        )
 
         # Continue — StepExecutorContinuedEvent should appear here
         console.print("\n[bold]--- Continue run ---[/]")
@@ -134,4 +145,6 @@ if __name__ == "__main__":
         session = workflow.get_session()
         run_output = session.runs[-1] if session and session.runs else None
 
-    console.print(f"\n[bold green]Final: {run_output.content if run_output else 'N/A'}[/]")
+    console.print(
+        f"\n[bold green]Final: {run_output.content if run_output else 'N/A'}[/]"
+    )

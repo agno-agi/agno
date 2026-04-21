@@ -196,9 +196,7 @@ if __name__ == "__main__":
             if isinstance(event, StepPausedEvent):
                 console.print(f"\n[yellow]Paused: {event.step_name}[/]")
             elif isinstance(event, StepExecutorPausedEvent):
-                console.print(
-                    f"\n[yellow]Executor paused: {event.executor_name}[/]"
-                )
+                console.print(f"\n[yellow]Executor paused: {event.executor_name}[/]")
             elif isinstance(event, WorkflowCompletedEvent):
                 console.print("\n[green]Workflow completed![/]")
             elif hasattr(event, "content") and event.content:
