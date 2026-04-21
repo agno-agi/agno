@@ -20,7 +20,7 @@ import pytest
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.run.base import RunStatus
-from agno.run.workflow import StepExecutorPausedEvent, WorkflowRunOutput
+from agno.run.workflow import StepExecutorPausedEvent
 from agno.team.team import Team
 from agno.tools.decorator import tool
 from agno.workflow.step import Step
@@ -247,7 +247,7 @@ class TestAgentConfirmationStreaming:
         _confirm_executor_requirements(paused_response)
 
         # Continue with streaming
-        continue_events = list(workflow.continue_run(paused_response, stream=True))
+        list(workflow.continue_run(paused_response, stream=True))  # consume stream
 
         # Verify completion via session
         session = workflow.get_session()
