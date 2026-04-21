@@ -150,20 +150,39 @@ async def agent_resumable_response_streamer(
     if auth_token and isinstance(agent, RemoteAgent):
         kwargs["auth_token"] = auth_token
 
-    async for sse_data in agent.arun(
-        input=message,
-        session_id=session_id,
-        user_id=user_id,
-        images=images,
-        audio=audio,
-        videos=videos,
-        files=files,
-        stream=True,
-        stream_events=stream_events,
-        background=True,
-        **kwargs,
-    ):
-        yield sse_data
+    try:
+        async for sse_data in agent.arun(
+            input=message,
+            session_id=session_id,
+            user_id=user_id,
+            images=images,
+            audio=audio,
+            videos=videos,
+            files=files,
+            stream=True,
+            stream_events=stream_events,
+            background=True,
+            **kwargs,
+        ):
+            yield sse_data
+    except (InputCheckError, OutputCheckError) as e:
+        error_response = RunErrorEvent(
+            content=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+            additional_data=e.additional_data,
+        )
+        yield format_sse_event(error_response)
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        error_response = RunErrorEvent(
+            content=str(e),
+        )
+        yield format_sse_event(error_response)
 
 
 async def agent_continue_response_streamer(
@@ -240,17 +259,36 @@ async def agent_resumable_continue_response_streamer(
     if background_tasks is not None:
         extra_kwargs["background_tasks"] = background_tasks
 
-    async for sse_data in agent.acontinue_run(
-        run_id=run_id,
-        updated_tools=updated_tools,
-        session_id=session_id,
-        user_id=user_id,
-        stream=True,
-        stream_events=True,
-        background=True,
-        **extra_kwargs,
-    ):
-        yield sse_data
+    try:
+        async for sse_data in agent.acontinue_run(
+            run_id=run_id,
+            updated_tools=updated_tools,
+            session_id=session_id,
+            user_id=user_id,
+            stream=True,
+            stream_events=True,
+            background=True,
+            **extra_kwargs,
+        ):
+            yield sse_data
+    except (InputCheckError, OutputCheckError) as e:
+        error_response = RunErrorEvent(
+            content=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+            additional_data=e.additional_data,
+        )
+        yield format_sse_event(error_response)
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        error_response = RunErrorEvent(
+            content=str(e),
+        )
+        yield format_sse_event(error_response)
 
 
 async def _resume_stream_generator(
