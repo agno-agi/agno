@@ -94,7 +94,9 @@ data_collection_workflow = Workflow(
     description="Gathers raw data and then analyzes it",
     steps=[
         Step(name="gather", agent=data_gatherer, description="Gather raw data"),
-        Step(name="analyze", agent=data_analyzer, description="Analyze the gathered data"),
+        Step(
+            name="analyze", agent=data_analyzer, description="Analyze the gathered data"
+        ),
     ],
 )
 
@@ -114,13 +116,29 @@ inner_workflow = Workflow(
                 name="fact_check_gate",
                 description="Fact-check if the topic likely contains numbers or statistics",
                 evaluator=needs_fact_check,
-                steps=[Step(name="fact_check", agent=fact_checker, description="Verify facts and claims")],
-                else_steps=[Step(name="pass_through", executor=pass_through, description="Pass topic through")],
+                steps=[
+                    Step(
+                        name="fact_check",
+                        agent=fact_checker,
+                        description="Verify facts and claims",
+                    )
+                ],
+                else_steps=[
+                    Step(
+                        name="pass_through",
+                        executor=pass_through,
+                        description="Pass topic through",
+                    )
+                ],
             ),
             name="parallel_research",
             description="Collect data and fact-check in parallel",
         ),
-        Step(name="merge", executor=merge_parallel_results, description="Merge parallel research outputs"),
+        Step(
+            name="merge",
+            executor=merge_parallel_results,
+            description="Merge parallel research outputs",
+        ),
     ],
 )
 
@@ -130,7 +148,11 @@ outer_workflow = Workflow(
     name="Research and Write",
     description="Researches a topic (with parallel data collection and fact-checking), then writes a polished article",
     steps=[
-        Step(name="research_phase", workflow=inner_workflow, description="Run the research sub-workflow"),
+        Step(
+            name="research_phase",
+            workflow=inner_workflow,
+            description="Run the research sub-workflow",
+        ),
         Step(name="writing_phase", agent=writer, description="Write the final article"),
     ],
     db=db,
