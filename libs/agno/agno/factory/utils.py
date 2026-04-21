@@ -1,7 +1,9 @@
 """Request context and exceptions for factory invocations."""
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Union
+
+from pydantic import BaseModel
 
 
 # ---------------------------------------------------------------------------
@@ -65,5 +67,5 @@ class RequestContext:
     user_id: Optional[str] = None
     session_id: Optional[str] = None
     request: Any = None  # fastapi.Request — typed as Any to avoid hard dependency at import time
-    input: Any = None
+    input: Optional[Union[BaseModel, Dict[str, Any]]] = None
     trusted: TrustedContext = field(default_factory=TrustedContext)
