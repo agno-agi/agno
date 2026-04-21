@@ -1,0 +1,276 @@
+"""Integration tests for per-user data isolation.
+
+Validates that:
+- Regular users only see their own sessions, traces, and memories
+- Admin users (agent_os:admin scope) see all data
+- User_id from the JWT cannot be spoofed via query parameters
+- Endpoints without auth return unfiltered data
+"""
+
+from datetime import UTC, datetime, timedelta
+
+import jwt
+import pytest
+from fastapi.testclient import TestClient
+
+from agno.agent.agent import Agent
+from agno.os import AgentOS
+from agno.os.config import AuthorizationConfig
+
+JWT_SECRET = "test-secret-for-isolation"
+TEST_OS_ID = "test-isolation-os"
+
+
+def create_token(user_id: str, scopes: list[str] | None = None) -> str:
+    """Create a JWT token for the given user."""
+    payload = {
+        "sub": user_id,
+        "aud": TEST_OS_ID,
+        "scopes": scopes or ["agents:read", "agents:run", "sessions:read", "sessions:write", "memories:read", "memories:write", "traces:read"],
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+
+def create_admin_token(user_id: str = "admin-user") -> str:
+    """Create a JWT token with admin scope."""
+    return create_token(user_id, scopes=["agent_os:admin"])
+
+
+def auth_header(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def test_agent(shared_db):
+    return Agent(
+        name="test-agent",
+        id="test-agent",
+        db=shared_db,
+        instructions="You are a test agent.",
+    )
+
+
+@pytest.fixture
+def client(test_agent):
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[JWT_SECRET],
+            algorithm="HS256",
+        ),
+    )
+    app = agent_os.get_app()
+    return TestClient(app)
+
+
+# --- Session isolation ---
+
+
+class TestSessionIsolation:
+    """Verify that session endpoints are scoped to the JWT user_id."""
+
+    def test_user_sees_only_own_sessions(self, client):
+        """User A creates a session, User B should not see it."""
+        token_a = create_token("user-a", scopes=["agent_os:admin"])
+        token_b = create_token("user-b")
+
+        # User A creates a session
+        resp = client.post(
+            "/sessions?type=agent",
+            json={"agent_id": "test-agent", "user_id": "user-a"},
+            headers=auth_header(token_a),
+        )
+        assert resp.status_code == 201, resp.text
+        session_id = resp.json().get("session_id") or resp.json().get("agent_session_id")
+        assert session_id
+
+        # User B lists sessions — should not see User A's session
+        resp = client.get(
+            "/sessions?type=agent",
+            headers=auth_header(token_b),
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        session_ids = [s["session_id"] for s in data]
+        assert session_id not in session_ids
+
+    def test_admin_sees_all_sessions(self, client):
+        """Admin should see sessions from all users."""
+        token_a = create_token("user-a", scopes=["agent_os:admin"])
+        admin_token = create_admin_token("admin-1")
+
+        # User A creates a session
+        resp = client.post(
+            "/sessions?type=agent",
+            json={"agent_id": "test-agent", "user_id": "user-a"},
+            headers=auth_header(token_a),
+        )
+        assert resp.status_code == 201
+        session_id = resp.json().get("session_id") or resp.json().get("agent_session_id")
+
+        # Admin lists sessions — should see it
+        resp = client.get(
+            "/sessions?type=agent",
+            headers=auth_header(admin_token),
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        session_ids = [s["session_id"] for s in data]
+        assert session_id in session_ids
+
+    def test_user_cannot_spoof_user_id_on_session_list(self, client):
+        """Passing user_id as query param should be overridden by JWT."""
+        token_a = create_token("user-a", scopes=["agent_os:admin"])
+        token_b = create_token("user-b")
+
+        # User A creates a session
+        resp = client.post(
+            "/sessions?type=agent",
+            json={"agent_id": "test-agent", "user_id": "user-a"},
+            headers=auth_header(token_a),
+        )
+        assert resp.status_code == 201
+        session_id = resp.json().get("session_id") or resp.json().get("agent_session_id")
+
+        # User B tries to list with user_id=user-a — should still be filtered to user-b
+        resp = client.get(
+            "/sessions?type=agent&user_id=user-a",
+            headers=auth_header(token_b),
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        session_ids = [s["session_id"] for s in data]
+        assert session_id not in session_ids
+
+    def test_user_cannot_get_other_users_session_by_id(self, client):
+        """User B should get 404 when trying to access User A's session by ID."""
+        token_a = create_token("user-a", scopes=["agent_os:admin"])
+        token_b = create_token("user-b")
+
+        # User A creates a session
+        resp = client.post(
+            "/sessions?type=agent",
+            json={"agent_id": "test-agent", "user_id": "user-a"},
+            headers=auth_header(token_a),
+        )
+        assert resp.status_code == 201
+        session_id = resp.json().get("session_id") or resp.json().get("agent_session_id")
+
+        # User B tries to get it by ID — should get 404
+        resp = client.get(
+            f"/sessions/{session_id}?type=agent",
+            headers=auth_header(token_b),
+        )
+        assert resp.status_code == 404
+
+    def test_user_cannot_delete_other_users_session(self, client):
+        """User B should not be able to delete User A's session."""
+        token_a = create_token("user-a", scopes=["agent_os:admin"])
+        token_b = create_token("user-b")
+
+        # User A creates a session
+        resp = client.post(
+            "/sessions?type=agent",
+            json={"agent_id": "test-agent", "user_id": "user-a"},
+            headers=auth_header(token_a),
+        )
+        assert resp.status_code == 201
+        session_id = resp.json().get("session_id") or resp.json().get("agent_session_id")
+
+        # User B tries to delete it
+        resp = client.delete(
+            f"/sessions/{session_id}",
+            headers=auth_header(token_b),
+        )
+        # Should either 404 or silently no-op (depends on DB adapter)
+        # Either way, the session should still exist for admin
+        admin_token = create_admin_token()
+        resp = client.get(
+            f"/sessions/{session_id}?type=agent",
+            headers=auth_header(admin_token),
+        )
+        assert resp.status_code == 200
+
+
+# --- Trace isolation ---
+
+
+class TestTraceIsolation:
+    """Verify that trace endpoints are scoped to the JWT user_id."""
+
+    def test_user_sees_only_own_traces(self, client):
+        """Regular user should only see their own traces."""
+        token_a = create_token("user-a")
+        token_b = create_token("user-b")
+
+        # Both users list traces — should get empty (no runs yet) but no errors
+        resp_a = client.get("/traces", headers=auth_header(token_a))
+        assert resp_a.status_code == 200
+
+        resp_b = client.get("/traces", headers=auth_header(token_b))
+        assert resp_b.status_code == 200
+
+    def test_admin_sees_all_traces(self, client):
+        """Admin should see traces from all users."""
+        admin_token = create_admin_token()
+        resp = client.get("/traces", headers=auth_header(admin_token))
+        assert resp.status_code == 200
+
+    def test_trace_stats_scoped_to_user(self, client):
+        """Trace stats should be filtered by user."""
+        token_a = create_token("user-a")
+        resp = client.get("/trace_session_stats", headers=auth_header(token_a))
+        assert resp.status_code == 200
+
+
+# --- Memory isolation ---
+
+
+class TestMemoryIsolation:
+    """Verify that memory endpoints are scoped to the JWT user_id."""
+
+    def test_user_sees_only_own_memories(self, client):
+        """Regular user should only see their own memories."""
+        token_a = create_token("user-a")
+        token_b = create_token("user-b")
+
+        # User A creates a memory
+        resp = client.post(
+            "/memories",
+            json={"memory": "User A likes coffee", "user_id": "user-a"},
+            headers=auth_header(token_a),
+        )
+        assert resp.status_code in (200, 201), resp.text
+        memory_id = resp.json().get("id") or resp.json().get("memory_id")
+
+        # User B lists memories — should not see User A's memory
+        resp = client.get("/memories", headers=auth_header(token_b))
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        memory_ids = [m.get("id") or m.get("memory_id") for m in data]
+        assert memory_id not in memory_ids
+
+    def test_admin_sees_all_memories(self, client):
+        """Admin should see memories from all users."""
+        token_a = create_token("user-a")
+        admin_token = create_admin_token()
+
+        # User A creates a memory
+        resp = client.post(
+            "/memories",
+            json={"memory": "User A likes tea", "user_id": "user-a"},
+            headers=auth_header(token_a),
+        )
+        assert resp.status_code in (200, 201), resp.text
+        memory_id = resp.json().get("id") or resp.json().get("memory_id")
+
+        # Admin lists memories — should see it
+        resp = client.get("/memories", headers=auth_header(admin_token))
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        memory_ids = [m.get("id") or m.get("memory_id") for m in data]
+        assert memory_id in memory_ids

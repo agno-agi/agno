@@ -160,24 +160,24 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> None:
         db = await get_user_scoped_db(request, dbs, db_id, table)
 
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
-
         if isinstance(db, RemoteDb):
+            remote_user_id = user_id
+            if hasattr(request.state, "user_id") and request.state.user_id is not None:
+                remote_user_id = request.state.user_id
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.delete_memory(
                 memory_id=memory_id,
-                user_id=user_id,
+                user_id=remote_user_id,
                 db_id=db_id,
                 table=table,
                 headers=headers,
             )
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            await db.delete_user_memory(memory_id=memory_id, user_id=user_id)
+            await db.delete_user_memory(memory_id=memory_id)
         else:
-            db.delete_user_memory(memory_id=memory_id, user_id=user_id)
+            db.delete_user_memory(memory_id=memory_id)
 
     @router.delete(
         "/memories",
@@ -271,14 +271,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> PaginatedResponse[UserMemorySchema]:
         db = await get_user_scoped_db(request, dbs, db_id, table)
 
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
-
         if isinstance(db, RemoteDb):
+            # RemoteDb needs explicit user_id — scoped wrapper doesn't apply
+            remote_user_id = user_id
+            if hasattr(request.state, "user_id") and request.state.user_id is not None:
+                remote_user_id = request.state.user_id
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.get_memories(
-                user_id=user_id,
+                user_id=remote_user_id,
                 agent_id=agent_id,
                 team_id=team_id,
                 topics=topics,
@@ -292,12 +293,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 headers=headers,
             )
 
+        # For local DBs, the scoped wrapper handles user_id injection
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             user_memories, total_count = await db.get_user_memories(
                 limit=limit,
                 page=page,
-                user_id=user_id,
                 agent_id=agent_id,
                 team_id=team_id,
                 topics=topics,
@@ -310,7 +311,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             user_memories, total_count = db.get_user_memories(  # type: ignore
                 limit=limit,
                 page=page,
-                user_id=user_id,
                 agent_id=agent_id,
                 team_id=team_id,
                 topics=topics,
@@ -367,15 +367,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> UserMemorySchema:
         db = await get_user_scoped_db(request, dbs, db_id, table)
 
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
-
         if isinstance(db, RemoteDb):
+            remote_user_id = user_id
+            if hasattr(request.state, "user_id") and request.state.user_id is not None:
+                remote_user_id = request.state.user_id
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.get_memory(
                 memory_id=memory_id,
-                user_id=user_id,
+                user_id=remote_user_id,
                 db_id=db_id,
                 table=table,
                 headers=headers,
@@ -383,9 +383,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            user_memory = await db.get_user_memory(memory_id=memory_id, user_id=user_id, deserialize=False)
+            user_memory = await db.get_user_memory(memory_id=memory_id, deserialize=False)
         else:
-            user_memory = db.get_user_memory(memory_id=memory_id, user_id=user_id, deserialize=False)
+            user_memory = db.get_user_memory(memory_id=memory_id, deserialize=False)
         if not user_memory:
             raise HTTPException(status_code=404, detail=f"Memory with ID {memory_id} not found")
 
@@ -430,9 +430,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> List[str]:
         db = await get_user_scoped_db(request, dbs, db_id, table)
 
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
-
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -444,9 +441,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            return await db.get_all_memory_topics(user_id=user_id)
+            return await db.get_all_memory_topics()
         else:
-            return db.get_all_memory_topics(user_id=user_id)
+            return db.get_all_memory_topics()
 
     @router.patch(
         "/memories/{memory_id}",
@@ -576,9 +573,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ) -> PaginatedResponse[UserStatsSchema]:
         db = await get_user_scoped_db(request, dbs, db_id, table)
 
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
-
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -599,13 +593,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 user_stats, total_count = await db.get_user_memory_stats(
                     limit=limit,
                     page=page,
-                    user_id=user_id,
                 )
             else:
                 user_stats, total_count = db.get_user_memory_stats(
                     limit=limit,
                     page=page,
-                    user_id=user_id,
                 )
             return PaginatedResponse(
                 data=[UserStatsSchema.from_dict(stats) for stats in user_stats],
