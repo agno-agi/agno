@@ -106,15 +106,26 @@ class SubAgentConfig(BaseModel):
     These are injected into the parent's guidance as 'always route via spawn_agent'."""
 
     # ── Model tier selection ─────────────────────────────────────────────────
-    model_tiers: Optional[Dict[str, str]] = None
-    """Map of tier label → model ID string.
+    model_tiers: Optional[Dict[str, Any]] = None
+    """Map of tier label → model ID string **or** pre-instantiated ``Model``.
+
+    * A **string** is passed through ``agno.models.utils.get_model`` which
+      currently defaults to OpenAI — so plain strings work only when
+      ``OPENAI_API_KEY`` is available. For non-OpenAI providers (Azure,
+      Anthropic, Bedrock, Vertex, …) pass a fully-constructed ``Model``
+      instance instead.
+
+    * A **``Model`` instance** is returned as-is, skipping ``get_model``.
 
     Example::
 
+        from agno.models.azure import AzureOpenAI
+        from agno.models.anthropic import Claude
+
         model_tiers={
-            "fast":     "gpt-5.4-mini",
-            "standard": "gpt-5.4",
-            "powerful": "o3",
+            "fast":     "gpt-5.4-mini",                          # OpenAI
+            "standard": AzureOpenAI(id="gpt-4o"),                # Azure
+            "powerful": Claude(id="claude-opus-4-7"),            # Anthropic
         }
     """
 
@@ -232,8 +243,22 @@ class SubAgentToolkit(Toolkit):
             for the full execution duration.  **Do NOT call it from an async
             context** (e.g. a FastAPI request handler or an async Jupyter cell)
             as it will block the event loop.  Use ``aspawn_agent`` instead when
-            running inside an async application.
+            running inside an async application.  This is enforced at runtime:
+            calling ``spawn_agent`` from inside a running event loop raises
+            ``RuntimeError``.
         """
+        # Fail-fast if invoked from a running event loop — blocking the loop
+        # with a sync run is the most common silent-misuse of this API.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass  # no running loop — we're in a genuine sync context, proceed
+        else:
+            raise RuntimeError(
+                "spawn_agent() is synchronous and would block the event loop. "
+                "Use aspawn_agent() from async code (coroutines, FastAPI "
+                "handlers, async Jupyter cells)."
+            )
         spawn_depth = (getattr(self._parent, "metadata", None) or {}).get("spawn_depth", 0) + 1
         with self._sync_semaphore:
             t0 = time.monotonic()
@@ -247,18 +272,23 @@ class SubAgentToolkit(Toolkit):
                 return f"Subagent '{role}' failed: {e}"
             if self._config.log_subagent_runs:
                 duration = time.monotonic() - t0
-                m = result.metrics if result else None
+                m = result.metrics if result is not None else None
                 token_str = (
                     f" | tokens={m.total_tokens} (in={m.input_tokens} out={m.output_tokens})"
-                    if m and m.total_tokens
+                    if m is not None and m.total_tokens
                     else ""
                 )
                 log_info(f"Subagent '{role}' completed{token_str} | duration={duration:.2f}s | depth={spawn_depth}")
-            if self._config.show_subagent_output and result and result.content:
-                print(f"\n--- Subagent: {role} ---")
-                print(result.content)
-                print(f"--- End Subagent: {role} ---\n")
-        if result and result.content:
+        # Print outside the semaphore so slow stdout flushes don't stall other
+        # spawns waiting to acquire it.
+        if self._config.show_subagent_output and result is not None and result.content is not None:
+            print(f"\n--- Subagent: {role} ---")
+            print(result.content)
+            print(f"--- End Subagent: {role} ---\n")
+        # Use ``is not None`` rather than truthiness so that a legitimate
+        # empty-string or 0/False content value is returned verbatim instead
+        # of being masked by the "no output" sentinel.
+        if result is not None and result.content is not None:
             return str(result.content)
         return "Subagent completed with no output."
 
@@ -300,18 +330,20 @@ class SubAgentToolkit(Toolkit):
                 return f"Subagent '{role}' failed: {e}"
             if self._config.log_subagent_runs:
                 duration = time.monotonic() - t0
-                m = result.metrics if result else None
+                m = result.metrics if result is not None else None
                 token_str = (
                     f" | tokens={m.total_tokens} (in={m.input_tokens} out={m.output_tokens})"
-                    if m and m.total_tokens
+                    if m is not None and m.total_tokens
                     else ""
                 )
                 log_info(f"Subagent '{role}' completed{token_str} | duration={duration:.2f}s | depth={spawn_depth}")
-            if self._config.show_subagent_output and result and result.content:
-                print(f"\n--- Subagent: {role} ---")
-                print(result.content)
-                print(f"--- End Subagent: {role} ---\n")
-        if result and result.content:
+        # Print outside the async semaphore so a slow stdout flush doesn't
+        # stall other coroutines waiting to acquire it.
+        if self._config.show_subagent_output and result is not None and result.content is not None:
+            print(f"\n--- Subagent: {role} ---")
+            print(result.content)
+            print(f"--- End Subagent: {role} ---\n")
+        if result is not None and result.content is not None:
             return str(result.content)
         return "Subagent completed with no output."
 
@@ -379,9 +411,88 @@ class SubAgentToolkit(Toolkit):
         lines.append("--- End Subagent Guidance ---")
         return "\n".join(lines)
 
+    # Markers used by ``refresh_parent_instructions`` to locate the previously
+    # injected guidance block. Keep in sync with ``build_guidance``.
+    _GUIDANCE_MARKER_START = "--- Dynamic Subagent Guidance ---"
+    _GUIDANCE_MARKER_END = "--- End Subagent Guidance ---"
+
+    def refresh_parent_instructions(self) -> bool:
+        """Regenerate the guidance block and replace it in-place on the parent.
+
+        Useful when the user mutates ``subagent_config`` (e.g. appends a new
+        ``context_heavy_tools`` entry) after ``initialize_agent()`` /
+        ``initialize_team()`` and wants the change reflected in what the LLM
+        actually sees.
+
+        Behaviour:
+
+        * ``parent.instructions`` is a ``str`` → the last occurrence of the
+          guidance block (between the start and end markers) is replaced.
+        * ``parent.instructions`` is a ``list[str]`` → the last list entry
+          containing the start marker is replaced with the fresh block.
+        * ``parent.instructions`` is a callable or ``None`` → returns
+          ``False``; callable instructions cannot be augmented at runtime.
+
+        Returns ``True`` when the parent instructions were updated.
+        """
+        new_block = self.build_guidance()
+        instr = getattr(self._parent, "instructions", None)
+
+        if isinstance(instr, str):
+            start = instr.rfind(self._GUIDANCE_MARKER_START)
+            end = instr.rfind(self._GUIDANCE_MARKER_END)
+            if start == -1 or end == -1 or end < start:
+                return False
+            end += len(self._GUIDANCE_MARKER_END)
+            self._parent.instructions = instr[:start] + new_block + instr[end:]
+            return True
+
+        if isinstance(instr, list):
+            for i in range(len(instr) - 1, -1, -1):
+                entry = instr[i]
+                if isinstance(entry, str) and self._GUIDANCE_MARKER_START in entry:
+                    instr[i] = new_block
+                    return True
+            return False
+
+        # Callable or None — nothing to do.
+        return False
+
     # ──────────────────────────────────────────────────────────────────────────
     # Internal helpers
     # ──────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _deep_copy_tools_for_subagent(tools: Optional[List[Any]]) -> Optional[List[Any]]:
+        """Copy a resolved tools list the same way ``Agent.deep_copy`` does.
+
+        Without this, tools passed through ``update={"tools": [...]}`` in
+        ``deep_copy`` bypass the normal per-field deep-copy machinery and end
+        up shared by reference with the parent. Stateful toolkits (caches,
+        counters, connection pools) would then leak state across agents.
+
+        MCP toolkits are intentionally shared by reference — they hold open
+        server connections that must not be duplicated. Everything else is
+        ``deepcopy``-ed; on failure we fall back to reference-sharing (matches
+        the existing behaviour of ``agent._utils.deep_copy_field``).
+        """
+        from copy import deepcopy
+
+        if tools is None:
+            return None
+        copied: List[Any] = []
+        for tool in tools:
+            is_mcp = hasattr(type(tool), "__mro__") and any(
+                c.__name__ in ("MCPTools", "MultiMCPTools") for c in type(tool).__mro__
+            )
+            if is_mcp:
+                copied.append(tool)
+                continue
+            try:
+                copied.append(deepcopy(tool))
+            except Exception:
+                copied.append(tool)
+        return copied
 
     @staticmethod
     def _strip_subagent_toolkits(tools: Optional[List[Any]]) -> Optional[List[Any]]:
@@ -443,6 +554,13 @@ class SubAgentToolkit(Toolkit):
             # so it is safe to deep_copy and pass to run() without calling
             # initialize_agent() here.
             parent_model = getattr(self._parent, "model", None)
+            parent_knowledge = getattr(self._parent, "knowledge", None)
+            if parent_knowledge is not None:
+                log_warning(
+                    "No subagent_template configured — spawned subagent will NOT "
+                    "inherit parent.knowledge. Pass subagent_template=Agent("
+                    "knowledge=..., ...) if the subagent needs the knowledge base."
+                )
             template = Agent(model=parent_model)
 
         # ── Per-spawn overrides ───────────────────────────────────────────────
@@ -517,10 +635,14 @@ class SubAgentToolkit(Toolkit):
         # template carried a SubAgentToolkit that we had to strip. Without the
         # second branch, deep_copy would copy the original (unsanitised) tools
         # list and re-attach the toolkit to the subagent.
+        #
+        # Values passed in ``update`` bypass ``deep_copy_field``, so we run the
+        # same per-tool deep-copy logic here to prevent the subagent from
+        # sharing stateful toolkit objects with the parent.
         if resolved_tools is not None:
-            update["tools"] = resolved_tools
+            update["tools"] = self._deep_copy_tools_for_subagent(resolved_tools)
         elif template_leaked_toolkit:
-            update["tools"] = template_tools_sanitized
+            update["tools"] = self._deep_copy_tools_for_subagent(template_tools_sanitized)
         # Only override additional_context when we actually have a value.
         # Passing None in the update dict would clobber the template's own
         # additional_context field during deep_copy.
@@ -537,7 +659,10 @@ class SubAgentToolkit(Toolkit):
         """Resolve the model for the spawned subagent.
 
         Priority:
-        1. ``model_tier`` → looked up in ``config.model_tiers`` via ``get_model()``
+        1. ``model_tier`` → looked up in ``config.model_tiers``:
+           * pre-instantiated ``Model`` → returned as-is (any provider)
+           * string → passed through ``agno.models.utils.get_model``
+             (OpenAI-only by default)
         2. Template model
         3. Parent model
         """
@@ -547,17 +672,22 @@ class SubAgentToolkit(Toolkit):
             and self._config.model_tiers
             and model_tier in self._config.model_tiers
         ):
+            value = self._config.model_tiers[model_tier]
+            # Pre-instantiated Model bypasses get_model — this is the only
+            # path that works for non-OpenAI providers like Azure/Anthropic.
+            from agno.models.base import Model as _Model
+
+            if isinstance(value, _Model):
+                return value
             try:
                 from agno.models.utils import get_model
 
-                resolved = get_model(self._config.model_tiers[model_tier])
+                resolved = get_model(value)
                 if resolved is not None:
                     return resolved
             except Exception:
                 log_warning(
-                    f"Could not resolve model tier '{model_tier}' "
-                    f"('{self._config.model_tiers.get(model_tier)}'). "
-                    "Falling back to template model."
+                    f"Could not resolve model tier '{model_tier}' ('{value!r}'). Falling back to template model."
                 )
         # Fall through: template model → parent model
         return getattr(template, "model", None) or getattr(self._parent, "model", None)
@@ -570,25 +700,43 @@ class SubAgentToolkit(Toolkit):
         * ``Function`` → kept if ``tool.name`` is in ``permitted``.
         * Plain callable → kept if ``__name__`` is in ``permitted``.
         * ``SubAgentToolkit`` is always excluded (defence in depth).
+
+        Duplicates are suppressed: the first match for a given name wins, and
+        subsequent collisions trigger a ``log_warning``.  This prevents an
+        illegal tool schema where the LLM would see two tools of the same
+        name (e.g., when two parent toolkits each expose a ``search``
+        function).
         """
         from agno.tools import Toolkit as _Toolkit
         from agno.tools.function import Function as _Function
 
         result: List[Any] = []
+        seen: set = set()
+
+        def _add(obj: Any, name: str) -> None:
+            if name in seen:
+                log_warning(
+                    f"Duplicate tool name '{name}' encountered while building "
+                    "subagent tools; keeping the first occurrence only."
+                )
+                return
+            seen.add(name)
+            result.append(obj)
+
         for tool in tools or []:
             if isinstance(tool, SubAgentToolkit):
                 continue
             if isinstance(tool, _Toolkit):
                 for fn_name, fn_obj in tool.functions.items():
                     if fn_name in permitted:
-                        result.append(fn_obj)
+                        _add(fn_obj, fn_name)
             elif isinstance(tool, _Function):
                 if tool.name in permitted:
-                    result.append(tool)
+                    _add(tool, tool.name)
             elif callable(tool):
                 name = getattr(tool, "__name__", None)
                 if name and name in permitted:
-                    result.append(tool)
+                    _add(tool, name)
         return result
 
     def _resolve_tools(
@@ -622,7 +770,13 @@ class SubAgentToolkit(Toolkit):
             # to None. An empty list means "explicit override: no tools" — collapsing
             # to None would fall back to the template's tools, which could re-leak
             # tools the caller explicitly filtered out.
-            return self._strip_subagent_toolkits(parent_tools_raw)
+            stripped = self._strip_subagent_toolkits(parent_tools_raw)
+            # When an ``allowed_tools`` whitelist is set, it applies to inherited
+            # parent tools as well. Otherwise combining ``inherit_parent_tools=True``
+            # with ``allowed_tools=[...]`` would silently bypass the whitelist.
+            if self._config.allowed_tools is not None:
+                stripped = self._filter_tools_by_names(stripped, set(self._config.allowed_tools))
+            return stripped
 
         # Use `is not None` rather than truthiness so that allowed_tools=[]
         # correctly means "empty whitelist, block everything" instead of being

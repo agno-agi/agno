@@ -681,7 +681,11 @@ class Agent:
         self.add_culture_to_context = add_culture_to_context
 
         self.enable_dynamic_subagents = enable_dynamic_subagents
+        if subagent_template is not None and not isinstance(subagent_template, Agent):
+            raise TypeError(f"subagent_template must be an Agent instance, got {type(subagent_template).__name__}")
         self.subagent_template = subagent_template
+        if subagent_config is not None and not isinstance(subagent_config, SubAgentConfig):
+            raise TypeError(f"subagent_config must be a SubAgentConfig instance, got {type(subagent_config).__name__}")
         self.subagent_config = subagent_config
 
         self.debug_mode = debug_mode

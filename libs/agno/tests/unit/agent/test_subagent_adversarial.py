@@ -1165,3 +1165,398 @@ def test_sync_spawn_log_emitted_after_semaphore_acquire():
     spawn_log_idxs = [i for i, e in enumerate(events) if e.startswith("log:") and "Spawn" in e]
     assert spawn_log_idxs, f"no Spawning log observed. events={events}"
     assert spawn_log_idxs[0] > sem_enter_idx, f"Spawning log fired BEFORE semaphore acquire. events={events}"
+
+
+# ---------------------------------------------------------------------------
+# 22. inherit_parent_tools respects allowed_tools whitelist (regression)
+# ---------------------------------------------------------------------------
+
+
+def test_inherit_parent_tools_honours_allowed_tools_whitelist():
+    """Regression: inherit_parent_tools=True must apply the allowed_tools
+    whitelist. Previously the early-return path ignored the whitelist and
+    silently delegated every parent tool."""
+    from agno.tools.function import Function
+
+    safe = MagicMock(spec=Function)
+    safe.name = "safe_lookup"
+    danger = MagicMock(spec=Function)
+    danger.name = "delete_all_rows"
+
+    parent = _make_parent(tools=[safe, danger])
+    cfg = SubAgentConfig(
+        inherit_parent_tools=True,
+        allowed_tools=["safe_lookup"],
+    )
+    tk = SubAgentToolkit(parent=parent, config=cfg)
+
+    resolved = tk._resolve_tools(tool_names=None, template_tools=None)
+    assert resolved is not None
+    assert safe in resolved
+    assert danger not in resolved, (
+        "inherit_parent_tools=True must apply allowed_tools whitelist; "
+        "'delete_all_rows' leaked despite allowed_tools=['safe_lookup']"
+    )
+
+
+def test_inherit_parent_tools_with_empty_allowed_tools_blocks_everything():
+    """Regression: allowed_tools=[] (empty whitelist) must block even
+    inherited parent tools."""
+    from agno.tools.function import Function
+
+    fn = MagicMock(spec=Function)
+    fn.name = "any"
+    parent = _make_parent(tools=[fn])
+    cfg = SubAgentConfig(inherit_parent_tools=True, allowed_tools=[])
+    tk = SubAgentToolkit(parent=parent, config=cfg)
+    resolved = tk._resolve_tools(tool_names=None, template_tools=None)
+    assert resolved == [] or fn not in (resolved or []), "inherit_parent_tools=True bypasses allowed_tools=[]"
+
+
+def test_inherit_parent_tools_whitelist_keeps_permitted_tool_end_to_end():
+    """End-to-end on a real Agent: inherit_parent_tools=True + allowed_tools
+    filters correctly at _build_subagent time."""
+
+    def safe_lookup() -> str:
+        """Safe read-only."""
+        return "ok"
+
+    def danger_delete() -> str:
+        """Destructive."""
+        return "DELETED"
+
+    parent = Agent(
+        name="orch",
+        tools=[safe_lookup, danger_delete],
+        enable_dynamic_subagents=True,
+        subagent_config=SubAgentConfig(
+            inherit_parent_tools=True,
+            allowed_tools=["safe_lookup"],
+        ),
+    )
+    parent.initialize_agent()
+    tk = next(t for t in parent.tools if isinstance(t, SubAgentToolkit))
+    sub = tk._build_subagent("r", "i", None, None, None, "t")
+    names = [getattr(t, "__name__", getattr(t, "name", type(t).__name__)) for t in (sub.tools or [])]
+    assert "safe_lookup" in names
+    assert "danger_delete" not in names
+
+
+# ---------------------------------------------------------------------------
+# 23. model_tiers accepts pre-instantiated Model instances (non-OpenAI)
+# ---------------------------------------------------------------------------
+
+
+def test_model_tier_accepts_pre_instantiated_model_instance():
+    """model_tiers values can be Model instances — these are returned verbatim,
+    bypassing get_model() which defaults to OpenAI and won't work for other
+    providers like Azure/Anthropic."""
+    from agno.models.base import Model
+
+    # Create a minimal Model subclass stand-in.
+    fake_model = MagicMock(spec=Model)
+    fake_model.id = "custom-model-id"
+
+    mock_template = _mock_agent()
+    parent = _make_parent(template=mock_template)
+    cfg = SubAgentConfig(
+        model_tiers={"fast": fake_model},
+        allow_model_tier_selection=True,
+    )
+    tk = SubAgentToolkit(parent=parent, config=cfg)
+
+    resolved = tk._resolve_model("fast", mock_template)
+    assert resolved is fake_model, (
+        "model_tiers value that is already a Model must be returned verbatim; "
+        "get_model() must NOT be called when the tier value is a Model instance"
+    )
+
+
+def test_model_tier_string_id_still_routes_through_get_model():
+    """Regression: string values must still flow through get_model()."""
+    mock_template = _mock_agent()
+    parent = _make_parent(template=mock_template)
+    cfg = SubAgentConfig(
+        model_tiers={"fast": "gpt-4o-mini"},
+        allow_model_tier_selection=True,
+    )
+    tk = SubAgentToolkit(parent=parent, config=cfg)
+
+    import agno.models.utils as mutils
+
+    sentinel = object()
+    real_get_model = mutils.get_model
+    mutils.get_model = lambda mid: sentinel if mid == "gpt-4o-mini" else None  # type: ignore
+    try:
+        resolved = tk._resolve_model("fast", mock_template)
+    finally:
+        mutils.get_model = real_get_model  # type: ignore
+    assert resolved is sentinel
+
+
+def test_refresh_parent_instructions_updates_string_instructions():
+    """Mutating subagent_config after init + calling refresh_parent_instructions
+    must update the injected guidance block in the parent's instructions."""
+    cfg = SubAgentConfig(context_heavy_tools=["alpha"])
+    parent = Agent(
+        name="p",
+        instructions="Base instructions.",
+        enable_dynamic_subagents=True,
+        subagent_config=cfg,
+    )
+    parent.initialize_agent()
+    tk = next(t for t in parent.tools if isinstance(t, SubAgentToolkit))
+    assert "alpha" in (parent.instructions or "")
+
+    cfg.context_heavy_tools = ["alpha", "beta"]
+    updated = tk.refresh_parent_instructions()
+    assert updated is True
+    assert "alpha" in parent.instructions
+    assert "beta" in parent.instructions
+    # Base instructions preserved.
+    assert "Base instructions." in parent.instructions
+    # Exactly one guidance block (not duplicated).
+    assert parent.instructions.count("--- Dynamic Subagent Guidance ---") == 1
+
+
+def test_refresh_parent_instructions_updates_list_instructions():
+    """Same thing when parent.instructions is a list."""
+    cfg = SubAgentConfig(context_heavy_tools=["alpha"])
+    parent = Agent(
+        name="p",
+        instructions=["line 1", "line 2"],
+        enable_dynamic_subagents=True,
+        subagent_config=cfg,
+    )
+    parent.initialize_agent()
+    tk = next(t for t in parent.tools if isinstance(t, SubAgentToolkit))
+
+    cfg.context_heavy_tools = ["alpha", "gamma"]
+    assert tk.refresh_parent_instructions() is True
+    joined = "\n".join(parent.instructions)
+    assert "gamma" in joined
+    assert "line 1" in joined
+
+
+def test_refresh_parent_instructions_noop_for_callable_instructions():
+    """Callable instructions cannot be rewritten at runtime → returns False."""
+
+    def make(agent):
+        return "dynamic"
+
+    parent = Agent(
+        name="p",
+        instructions=make,
+        enable_dynamic_subagents=True,
+    )
+    parent.initialize_agent()
+    tk = next(t for t in parent.tools if isinstance(t, SubAgentToolkit))
+    assert tk.refresh_parent_instructions() is False
+    # instructions still the callable reference
+    assert parent.instructions is make
+
+
+def test_agent_rejects_non_agent_subagent_template():
+    """subagent_template must be an Agent instance — catch common misuses."""
+    with pytest.raises(TypeError, match="subagent_template must be an Agent"):
+        Agent(name="p", subagent_template="not an agent")  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="subagent_template must be an Agent"):
+        Agent(name="p", subagent_template={"name": "fake"})  # type: ignore[arg-type]
+
+
+def test_agent_rejects_non_config_subagent_config():
+    """subagent_config must be a SubAgentConfig instance."""
+    with pytest.raises(TypeError, match="subagent_config must be"):
+        Agent(name="p", subagent_config={"max_concurrent": 3})  # type: ignore[arg-type]
+
+
+def test_team_rejects_non_agent_subagent_template():
+    """Team enforces the same subagent_template type check as Agent."""
+    from agno.team.team import Team
+
+    m = Agent(name="m")
+    with pytest.raises(TypeError, match="subagent_template must be an Agent"):
+        Team(members=[m], subagent_template="bad")  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_spawn_agent_raises_when_called_from_async_context():
+    """Calling the sync spawn_agent from inside a running event loop would
+    silently block; the guard must raise RuntimeError instead."""
+    parent = _make_parent(template=_mock_agent())
+    tk = SubAgentToolkit(parent=parent, config=SubAgentConfig(log_subagent_runs=False))
+    with pytest.raises(RuntimeError, match="aspawn_agent"):
+        tk.spawn_agent(role="r", instructions="i", task="t")
+
+
+def test_spawn_agent_succeeds_from_sync_context():
+    """Regression: sync call from sync context still works."""
+    parent = _make_parent(template=_mock_agent())
+    tk = SubAgentToolkit(parent=parent, config=SubAgentConfig(log_subagent_runs=False))
+    out = tk.spawn_agent(role="r", instructions="i", task="t")
+    assert out == "ok"
+
+
+def test_fallback_agent_warns_when_parent_has_knowledge_but_no_template():
+    """If the user configured parent.knowledge but no subagent_template, the
+    fallback Agent(model=parent_model) silently drops the knowledge ref.
+    A warning must surface so the user knows to pass a template."""
+    from unittest.mock import patch
+
+    class _KB:
+        pass
+
+    parent_agent = Agent(
+        name="p",
+        knowledge=_KB(),  # type: ignore[arg-type]
+        enable_dynamic_subagents=True,
+        # subagent_template intentionally NOT set → triggers fallback path
+    )
+    parent_agent.initialize_agent()
+    tk = next(t for t in parent_agent.tools if isinstance(t, SubAgentToolkit))
+
+    with patch("agno.agent.subagent.log_warning") as mock_warn:
+        tk._build_subagent("r", "i", None, None, None, "t")
+
+    warn_msgs = [str(c) for c in mock_warn.call_args_list]
+    assert any("knowledge" in m.lower() for m in warn_msgs), f"expected knowledge-related warning in {warn_msgs}"
+
+
+def test_fallback_agent_no_warning_when_parent_has_no_knowledge():
+    """No knowledge → no warning (avoid log spam)."""
+    from unittest.mock import patch
+
+    parent_agent = Agent(name="p", enable_dynamic_subagents=True)
+    parent_agent.initialize_agent()
+    tk = next(t for t in parent_agent.tools if isinstance(t, SubAgentToolkit))
+
+    with patch("agno.agent.subagent.log_warning") as mock_warn:
+        tk._build_subagent("r", "i", None, None, None, "t")
+
+    warn_msgs = [str(c) for c in mock_warn.call_args_list]
+    assert not any("knowledge" in m.lower() for m in warn_msgs), (
+        f"unexpected knowledge warning when parent has no knowledge: {warn_msgs}"
+    )
+
+
+def test_subagent_empty_string_result_is_returned_verbatim():
+    """result.content=="" is a LEGITIMATE answer from the model; it must not
+    be replaced with the 'no output' sentinel."""
+
+    def mk():
+        r = MagicMock()
+        r.content = ""
+        r.metrics = None
+        mock = MagicMock()
+        mock.run = MagicMock(return_value=r)
+        mock.arun = AsyncMock(return_value=r)
+        mock.deep_copy = MagicMock(return_value=mock)
+        return mock
+
+    parent = _make_parent(template=mk())
+    tk = SubAgentToolkit(parent=parent, config=SubAgentConfig(log_subagent_runs=False))
+    out = tk.spawn_agent(role="r", instructions="i", task="t")
+    assert out == "", f"expected empty string passthrough, got {out!r}"
+
+
+def test_subagent_none_result_falls_back_to_sentinel():
+    """Only result is None OR result.content is None triggers the sentinel."""
+    mock = MagicMock()
+    r = MagicMock()
+    r.content = None
+    r.metrics = None
+    mock.run = MagicMock(return_value=r)
+    mock.arun = AsyncMock(return_value=r)
+    mock.deep_copy = MagicMock(return_value=mock)
+
+    parent = _make_parent(template=mock)
+    tk = SubAgentToolkit(parent=parent, config=SubAgentConfig(log_subagent_runs=False))
+    out = tk.spawn_agent(role="r", instructions="i", task="t")
+    assert out == "Subagent completed with no output."
+
+
+def test_subagent_tools_are_deep_copied_not_shared_with_parent():
+    """Toolkits placed in update['tools'] must be deep-copied, not shared
+    with the parent. Mutating a toolkit's state in the subagent must not
+    corrupt the parent's toolkit instance."""
+    from agno.tools import Toolkit as _Toolkit
+
+    class StatefulToolkit(_Toolkit):
+        def __init__(self) -> None:
+            super().__init__(name="stateful")
+            self.counter = 0
+
+    tk_on_template = StatefulToolkit()
+    template = Agent(name="tmpl", tools=[tk_on_template])
+    parent = Agent(
+        name="p",
+        enable_dynamic_subagents=True,
+        subagent_template=template,
+    )
+    parent.initialize_agent()
+    toolkit = next(t for t in parent.tools if isinstance(t, SubAgentToolkit))
+
+    sub = toolkit._build_subagent("r", "i", None, None, None, "t")
+    sub_tks = [t for t in (sub.tools or []) if isinstance(t, StatefulToolkit)]
+    assert sub_tks, "expected the template's StatefulToolkit on the subagent"
+    sub_tks[0].counter = 42  # mutate on the subagent side
+
+    # Parent's toolkit must NOT have been affected.
+    assert tk_on_template.counter == 0, (
+        "subagent's toolkit mutation leaked into parent — tools were shared by reference"
+    )
+
+
+def test_duplicate_function_name_across_toolkits_deduped_with_warning():
+    """Two toolkits each contribute a Function named 'search'. The LLM must
+    see only ONE tool (the first), and a warning must be emitted — otherwise
+    the tool schema sent to the model is illegal (duplicate names)."""
+    from agno.tools import Toolkit as _Toolkit
+    from agno.tools.function import Function
+
+    s1 = MagicMock(spec=Function)
+    s1.name = "search"
+    s2 = MagicMock(spec=Function)
+    s2.name = "search"
+
+    class TK1(_Toolkit):
+        def __init__(self):
+            super().__init__(name="tk1")
+            self.functions["search"] = s1
+
+    class TK2(_Toolkit):
+        def __init__(self):
+            super().__init__(name="tk2")
+            self.functions["search"] = s2
+
+    parent = _make_parent(tools=[TK1(), TK2()])
+    cfg = SubAgentConfig(allowed_tools=["search"])
+    toolkit = SubAgentToolkit(parent=parent, config=cfg)
+
+    from unittest.mock import patch
+
+    with patch("agno.agent.subagent.log_warning") as mock_warn:
+        resolved = toolkit._resolve_tools(["search"], template_tools=None)
+
+    assert resolved is not None
+    count = sum(1 for t in resolved if t is s1 or t is s2)
+    assert count == 1, f"Expected deduped to 1 'search' Function, got {count}"
+    assert any("Duplicate tool name" in str(call) for call in mock_warn.call_args_list), (
+        f"Expected a duplicate-name warning; got: {mock_warn.call_args_list}"
+    )
+
+
+def test_model_tier_mixed_dict_accepts_both_str_and_model():
+    """model_tiers may mix strings and Model instances in the same dict."""
+    from agno.models.base import Model
+
+    instance = MagicMock(spec=Model)
+    instance.id = "instance-one"
+
+    cfg = SubAgentConfig(
+        model_tiers={"fast": "gpt-4o-mini", "powerful": instance},
+        allow_model_tier_selection=True,
+    )
+    assert cfg.model_tiers is not None
+    assert cfg.model_tiers["fast"] == "gpt-4o-mini"
+    assert cfg.model_tiers["powerful"] is instance
