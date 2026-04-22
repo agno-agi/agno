@@ -29,7 +29,9 @@ class OpenAIEmbedder(Embedder):
     async_client: Optional[AsyncOpenAI] = None
 
     def __post_init__(self):
-        if self.dimensions is None:
+        if self.dimensions is None and self.base_url is None:
+            # Auto-set dimensions only for standard OpenAI endpoints.
+            # Custom base_url providers may not support the dimensions parameter.
             self.dimensions = 3072 if self.id == "text-embedding-3-large" else 1536
 
     @property
@@ -71,8 +73,8 @@ class OpenAIEmbedder(Embedder):
         }
         if self.user is not None:
             _request_params["user"] = self.user
-        # Pass dimensions for text-embedding-3 models or when using custom base_url (third-party APIs)
-        if self.id.startswith("text-embedding-3") or self.base_url is not None:
+        # Pass dimensions only when explicitly set or auto-set for standard OpenAI text-embedding-3 models.
+        if self.dimensions is not None:
             _request_params["dimensions"] = self.dimensions
         if self.request_params:
             _request_params.update(self.request_params)
@@ -107,8 +109,8 @@ class OpenAIEmbedder(Embedder):
         }
         if self.user is not None:
             req["user"] = self.user
-        # Pass dimensions for text-embedding-3 models or when using custom base_url (third-party APIs)
-        if self.id.startswith("text-embedding-3") or self.base_url is not None:
+        # Pass dimensions only when explicitly set or auto-set for standard OpenAI text-embedding-3 models.
+        if self.dimensions is not None:
             req["dimensions"] = self.dimensions
         if self.request_params:
             req.update(self.request_params)
@@ -128,8 +130,8 @@ class OpenAIEmbedder(Embedder):
         }
         if self.user is not None:
             req["user"] = self.user
-        # Pass dimensions for text-embedding-3 models or when using custom base_url (third-party APIs)
-        if self.id.startswith("text-embedding-3") or self.base_url is not None:
+        # Pass dimensions only when explicitly set or auto-set for standard OpenAI text-embedding-3 models.
+        if self.dimensions is not None:
             req["dimensions"] = self.dimensions
         if self.request_params:
             req.update(self.request_params)
