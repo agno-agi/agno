@@ -37,7 +37,7 @@ class DatabaseContextProvider(ContextProvider):
     def __init__(
         self,
         *,
-        id: str,
+        id: str = "database",
         name: str | None = None,
         sql_engine: Engine,
         readonly_engine: Engine,

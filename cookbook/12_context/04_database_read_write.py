@@ -55,6 +55,10 @@ with engine.begin() as conn:
 # Create the provider — same engine for read + write in this demo
 #   (in production, pass a separate readonly engine that can't mutate)
 # ---------------------------------------------------------------------------
+# Passing an explicit `id` (rather than the default "database") is
+# recommended — it scopes the tool names to `query_contacts` /
+# `update_contacts`, which keeps collisions away when an agent talks
+# to more than one database.
 db = DatabaseContextProvider(
     id="contacts",
     sql_engine=engine,

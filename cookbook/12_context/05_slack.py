@@ -59,9 +59,13 @@ async def main() -> None:
     print(f"\nslack.status() = {slack.status()}\n")
 
     # --- Read path (always runs) ---
+    # Uses `search_workspace`, which is paginated by relevance and
+    # scales to huge workspaces — `list_channels` would page past
+    # most of what's there.
     read_prompt = (
-        "List the public channels in this workspace. Include the channel "
-        "name and a brief purpose where available."
+        "Find the 3 most recent messages in this workspace mentioning "
+        "'agno'. For each, include channel, author, timestamp, and a "
+        "one-line quote. If nothing matches, say so."
     )
     print(f"> {read_prompt}\n")
     await agent.aprint_response(read_prompt)
