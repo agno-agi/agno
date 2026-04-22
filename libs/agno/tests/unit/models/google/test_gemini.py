@@ -62,6 +62,18 @@ def test_gemini_formats_unexpected_error_message_with_type_when_message_empty():
     assert model._format_unexpected_error_message(asyncio.TimeoutError()) == "TimeoutError"
 
 
+def test_gemini_formats_unexpected_error_message_passes_through_non_empty():
+    """When str(e) is non-empty, preserve the original message verbatim so that
+    existing log/user-facing semantics do not change."""
+    model = Gemini(api_key="test-key")
+
+    assert model._format_unexpected_error_message(ValueError("boom")) == "boom"
+    assert (
+        model._format_unexpected_error_message(ConnectionResetError("connection reset by peer"))
+        == "connection reset by peer"
+    )
+
+
 def test_gemini_invoke_wraps_generic_errors_with_exception_type():
     model = Gemini(api_key="test-key")
     assistant_message = Message(role="assistant")

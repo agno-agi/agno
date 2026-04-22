@@ -240,10 +240,17 @@ class Gemini(Model):
 
     @staticmethod
     def _format_unexpected_error_message(error: Exception) -> str:
-        """Return a debuggable error message for generic provider exceptions."""
-        error_type = type(error).__name__
+        """Return a loggable message for a generic provider exception.
+
+        - If ``str(error)`` is non-empty, pass it through unchanged. This keeps
+          existing log/error semantics intact for the common case (rate limits,
+          timeouts with a message, API error strings, etc).
+        - If ``str(error)`` is empty, fall back to the exception class name so
+          the log/ ``ModelProviderError`` still contains a debuggable token
+          instead of an empty string (the original bug).
+        """
         error_message = str(error).strip()
-        return f"{error_type}: {error_message}" if error_message else error_type
+        return error_message or type(error).__name__
 
     def _append_file_search_tool(self, builtin_tools: List[Tool]) -> None:
         """Append Gemini File Search tool to builtin_tools if file search is enabled.
