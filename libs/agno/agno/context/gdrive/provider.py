@@ -50,15 +50,14 @@ class GDriveContextProvider(ContextProvider):
         model: Model | None = None,
     ) -> None:
         super().__init__(id=id, name=name, mode=mode, model=model)
-        self.service_account_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-        if not self.service_account_path:
+        resolved = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+        if not resolved:
             raise ValueError("GDriveContextProvider: GOOGLE_SERVICE_ACCOUNT_FILE is required")
+        self.service_account_path: str = resolved
         self._tools: GoogleDriveTools | None = None
         self._agent: Agent | None = None
 
     def status(self) -> Status:
-        if not self.service_account_path:
-            return Status(ok=False, detail="GOOGLE_SERVICE_ACCOUNT_FILE not set")
         path = Path(self.service_account_path).expanduser()
         if not path.exists():
             return Status(ok=False, detail=f"service account file not found: {path}")
@@ -74,20 +73,25 @@ class GDriveContextProvider(ContextProvider):
         return answer_from_run(await self._ensure_agent().arun(question))
 
     def instructions(self) -> str:
-        if self.mode == ContextMode.agent:
-            return f"`{self.name}`: call `{self.query_tool_name}(question)` to query Google Drive."
+        if self.mode == ContextMode.tools:
+            return (
+                f"`{self.name}`: `search_files(query)` or `list_files(query)` with Drive query syntax "
+                "(e.g. `name contains 'roadmap'`, `mimeType = 'application/vnd.google-apps.document'`). "
+                "Then `read_file(file_id)` to read contents. Read-only. Note: these share tool names "
+                "with other providers — mode=tools only works in isolation."
+            )
         return (
-            f"`{self.name}`: `search_files(query)` or `list_files(query)` with Drive query syntax "
-            "(e.g. `name contains 'roadmap'`, `mimeType = 'application/vnd.google-apps.document'`). "
-            "Then `read_file(file_id)` to read contents. Read-only."
+            f"`{self.name}`: call `{self.query_tool_name}(question)` to query Google Drive — "
+            "searches by name, mimeType, modifiedTime, etc., and returns matches with webViewLinks."
         )
 
-    # ------------------------------------------------------------------
-    # Mode resolution
-    # ------------------------------------------------------------------
-
+    # Wrap in a `query_gdrive` sub-agent because `GoogleDriveTools` exposes
+    # `list_files` / `search_files` / `read_file` — names that collide with
+    # `FileTools`, and agno's tool resolver dedupes by name across the whole
+    # list (silently dropping the second toolkit). mode=tools only works when
+    # Drive is the sole file-like provider.
     def _default_tools(self) -> list:
-        return self._all_tools()
+        return [self._query_tool()]
 
     def _all_tools(self) -> list:
         return [self._ensure_tools()]

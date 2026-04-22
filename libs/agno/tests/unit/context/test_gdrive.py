@@ -1,8 +1,10 @@
 """Unit tests for GDriveContextProvider.
 
-The brief flagged that Slack/GDrive write-filtering had not been
-re-verified with the same rigor as GitHub. These tests verify that
-upload/download/delete are all filtered out.
+Default mode wraps Drive tools in a `query_gdrive` sub-agent because
+`GoogleDriveTools` exposes `list_files` / `search_files` / `read_file` —
+names that collide with `FileTools` in `FilesystemContextProvider`.
+Only `mode=tools` exposes the raw Drive toolkit, and only works when
+Drive is the sole file-like provider in the agent's tool list.
 """
 
 import json
@@ -77,7 +79,7 @@ async def test_astatus_matches_status(fake_key_file: Path):
 
 
 # ---------------------------------------------------------------------------
-# Tool exposure — write tools MUST NOT be present
+# Tool exposure per mode
 # ---------------------------------------------------------------------------
 
 
@@ -85,8 +87,20 @@ def _tool_names(toolkit) -> list[str]:
     return list(toolkit.functions.keys())
 
 
-def test_default_mode_exposes_readonly_drive_tools(fake_key_file: Path):
+def test_default_mode_wraps_in_query_tool(fake_key_file: Path):
+    """Default mode is a `query_gdrive` sub-agent — NOT the raw Drive toolkit.
+
+    The wrap exists so GDrive can coexist with FilesystemContextProvider
+    without its tool names colliding with FileTools.
+    """
     p = GDriveContextProvider(service_account_path=str(fake_key_file), mode=ContextMode.default)
+    tools = p.get_tools()
+    assert len(tools) == 1
+    assert tools[0].name == "query_gdrive"
+
+
+def test_tools_mode_exposes_readonly_drive_tools(fake_key_file: Path):
+    p = GDriveContextProvider(service_account_path=str(fake_key_file), mode=ContextMode.tools)
     tools = p.get_tools()
     assert len(tools) == 1
     names = _tool_names(tools[0])
@@ -97,8 +111,8 @@ def test_default_mode_exposes_readonly_drive_tools(fake_key_file: Path):
     assert "read_file" in names
 
 
-def test_default_mode_filters_write_tools(fake_key_file: Path):
-    p = GDriveContextProvider(service_account_path=str(fake_key_file), mode=ContextMode.default)
+def test_tools_mode_filters_write_tools(fake_key_file: Path):
+    p = GDriveContextProvider(service_account_path=str(fake_key_file), mode=ContextMode.tools)
     names = set(_tool_names(p.get_tools()[0]))
 
     # Known write / mutation tools exposed by GoogleDriveTools must NOT be present
@@ -107,10 +121,16 @@ def test_default_mode_filters_write_tools(fake_key_file: Path):
     assert not present, f"Write tools leaked into GDrive provider: {present}"
 
 
-def test_tools_mode_matches_default_mode(fake_key_file: Path):
+def test_default_mode_differs_from_tools_mode(fake_key_file: Path):
+    """Default mode wraps, tools mode exposes raw — they should NOT match."""
     p_default = GDriveContextProvider(service_account_path=str(fake_key_file), mode=ContextMode.default)
     p_tools = GDriveContextProvider(service_account_path=str(fake_key_file), mode=ContextMode.tools)
-    assert _tool_names(p_default.get_tools()[0]) == _tool_names(p_tools.get_tools()[0])
+
+    default_names = [t.name for t in p_default.get_tools()]
+    tools_names = _tool_names(p_tools.get_tools()[0])
+
+    assert default_names == ["query_gdrive"]
+    assert "query_gdrive" not in tools_names
 
 
 def test_agent_mode_returns_single_query_tool(fake_key_file: Path):
@@ -124,3 +144,20 @@ def test_agent_mode_builds_agent(fake_key_file: Path):
     p = GDriveContextProvider(service_account_path=str(fake_key_file), mode=ContextMode.agent)
     agent = p._build_agent()
     assert agent.id == "gdrive"
+
+
+# ---------------------------------------------------------------------------
+# Instructions
+# ---------------------------------------------------------------------------
+
+
+def test_instructions_default_mode_mentions_query_tool(fake_key_file: Path):
+    p = GDriveContextProvider(service_account_path=str(fake_key_file), mode=ContextMode.default)
+    assert "query_gdrive" in p.instructions()
+
+
+def test_instructions_tools_mode_warns_about_name_collisions(fake_key_file: Path):
+    p = GDriveContextProvider(service_account_path=str(fake_key_file), mode=ContextMode.tools)
+    out = p.instructions()
+    assert "search_files" in out
+    assert "mode=tools only works in isolation" in out
