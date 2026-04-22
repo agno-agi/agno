@@ -36,6 +36,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
     get_team_by_id,
@@ -43,10 +44,12 @@ from agno.os.utils import (
     process_document,
     process_image,
     process_video,
+    resolve_team,
 )
 from agno.registry import Registry
 from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 from agno.utils.log import log_warning, logger
@@ -237,6 +240,10 @@ def get_team_router(
         background: bool = Form(
             False, description="Run in background and return immediately with run metadata (requires database)"
         ),
+        factory_input: Optional[str] = Form(
+            None,
+            description="JSON object with factory-specific parameters for dynamic team construction",
+        ),
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
 
@@ -266,11 +273,17 @@ def get_team_router(
 
         logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
 
-        team = get_team_by_id(
-            team_id=team_id, teams=os.teams, db=os.db, version=version, registry=registry, create_fresh=True
+        team = await resolve_team(
+            team_id,
+            os.teams,
+            os.db,
+            registry,
+            version=version,
+            request=request,
+            user_id=user_id,
+            session_id=session_id,
+            factory_input=factory_input,
         )
-        if team is None:
-            raise HTTPException(status_code=404, detail="Team not found")
 
         # Member HITL needs member runs embedded on the team run (member_responses).
         # Without this, API continue cannot reliably reload member tool state from the DB.
@@ -438,7 +451,19 @@ def get_team_router(
         team_id: str,
         run_id: str,
     ):
-        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        # Factory teams: cancel is static, no team instance needed
+        factory = find_factory_by_id(team_id, os.teams)
+        if factory:
+            from agno.team._run import acancel_run
+
+            await acancel_run(run_id)
+            return JSONResponse(content={}, status_code=200)
+
+        try:
+            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+        except Exception as e:
+            logger.error(f"Error resolving team '{team_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -508,7 +533,23 @@ def get_team_router(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON in requirements field")
 
-        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        # Factory teams: re-invoke factory to get a real team for continue
+        factory = find_factory_by_id(team_id, os.teams)
+        if factory:
+            team = await resolve_team(  # type: ignore[assignment]
+                team_id,
+                os.teams,
+                factory.db,
+                request=request,
+                user_id=user_id,
+                session_id=session_id,
+            )
+        else:
+            try:
+                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            except Exception as e:
+                logger.error(f"Error resolving team '{team_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -689,11 +730,12 @@ def get_team_router(
 
         teams = []
         for team in accessible_teams:
-            if isinstance(team, RemoteTeam):
+            if isinstance(team, Team):
+                teams.append(await TeamResponse.from_team(team=team, is_component=False))
+            elif isinstance(team, TeamFactory):
+                teams.append(TeamResponse.from_factory(team))
+            elif isinstance(team, RemoteTeam):
                 teams.append(await team.get_team_config())
-            else:
-                team_response = await TeamResponse.from_team(team=team, is_component=False)
-                teams.append(team_response)
 
         # Also load teams from database
         if os.db and isinstance(os.db, BaseDb):
@@ -794,7 +836,16 @@ def get_team_router(
         dependencies=[Depends(require_resource_access("teams", "read", "team_id"))],
     )
     async def get_team(team_id: str, request: Request) -> TeamResponse:
-        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        # Factory teams: return factory metadata directly
+        factory = find_factory_by_id(team_id, os.teams)
+        if factory:
+            return TeamResponse.from_factory(factory)
+
+        try:
+            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+        except Exception as e:
+            logger.error(f"Error resolving team '{team_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -823,13 +874,27 @@ def get_team_router(
         run_id: str,
         session_id: str = Query(..., description="Session ID for the run"),
     ):
-        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
-        if team is None:
-            raise HTTPException(status_code=404, detail="Team not found")
-        if isinstance(team, RemoteTeam):
-            raise HTTPException(status_code=400, detail="Run polling is not supported for remote teams")
+        # Factory teams
+        factory = find_factory_by_id(team_id, os.teams)
+        if factory:
+            team = await resolve_team(  # type: ignore[assignment]
+                team_id,
+                os.teams,
+                factory.db,
+                session_id=session_id,
+            )
+        else:
+            try:
+                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            except Exception as e:
+                logger.error(f"Error resolving team '{team_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+            if team is None:
+                raise HTTPException(status_code=404, detail="Team not found")
+            if isinstance(team, RemoteTeam):
+                raise HTTPException(status_code=400, detail="Run polling is not supported for remote teams")
 
-        run_output = await team.aget_run_output(run_id=run_id, session_id=session_id)
+        run_output = await team.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
 
@@ -858,13 +923,27 @@ def get_team_router(
         from agno.os.schema import TeamRunSchema
         from agno.team._storage import _aread_or_create_session
 
-        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
-        if team is None:
-            raise HTTPException(status_code=404, detail="Team not found")
-        if isinstance(team, RemoteTeam):
-            raise HTTPException(status_code=400, detail="Run listing is not supported for remote teams")
+        # Factory teams
+        factory = find_factory_by_id(team_id, os.teams)
+        if factory:
+            team = await resolve_team(  # type: ignore[assignment]
+                team_id,
+                os.teams,
+                factory.db,
+                session_id=session_id,
+            )
+        else:
+            try:
+                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            except Exception as e:
+                logger.error(f"Error resolving team '{team_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+            if team is None:
+                raise HTTPException(status_code=404, detail="Team not found")
+            if isinstance(team, RemoteTeam):
+                raise HTTPException(status_code=400, detail="Run listing is not supported for remote teams")
 
-        session = await _aread_or_create_session(team, session_id=session_id)
+        session = await _aread_or_create_session(team, session_id=session_id)  # type: ignore[arg-type]
         runs = session.runs or []
 
         result = []

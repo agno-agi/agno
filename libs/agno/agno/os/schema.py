@@ -5,6 +5,7 @@ from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.agent import Agent
+from agno.agent.factory import AgentFactory
 from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.db.base import SessionType
@@ -19,10 +20,13 @@ from agno.os.config import (
 )
 from agno.os.utils import extract_input_media, get_run_input, get_session_name, to_utc_datetime
 from agno.session import AgentSession, TeamSession, WorkflowSession
+from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
+from agno.workflow.factory import WorkflowFactory
 from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
+
 
 
 class BadRequestResponse(BaseModel):
@@ -105,10 +109,12 @@ class AgentSummaryResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
     @classmethod
-    def from_agent(cls, agent: Union[Agent, AgentProtocol, RemoteAgent]) -> "AgentSummaryResponse":
+    def from_agent(cls, agent: Union[Agent, AgentProtocol, RemoteAgent, AgentFactory]) -> "AgentSummaryResponse":
         agent_db = getattr(agent, "db", None)
         framework = getattr(agent, "framework", None)
         metadata = {"framework": framework} if framework else None
+        if isinstance(agent, AgentFactory):
+            return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
         return cls(
             id=agent.id,
             name=agent.name,
@@ -126,7 +132,9 @@ class TeamSummaryResponse(BaseModel):
     mode: Optional[str] = Field(None, description="Team execution mode (coordinate, route, broadcast, tasks)")
 
     @classmethod
-    def from_team(cls, team: Union[Team, RemoteTeam]) -> "TeamSummaryResponse":
+    def from_team(cls, team: Union[Team, RemoteTeam, TeamFactory]) -> "TeamSummaryResponse":
+        if isinstance(team, TeamFactory):
+            return cls(id=team.id, name=team.name, description=team.description, db_id=team.db.id if team.db else None)
         db_id = team.db.id if team.db else None
         mode = team.mode.value if hasattr(team, "mode") and team.mode else None
         return cls(id=team.id, name=team.name, description=team.description, db_id=db_id, mode=mode)
@@ -137,6 +145,8 @@ class WorkflowSummaryResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the workflow")
     description: Optional[str] = Field(None, description="Description of the workflow")
     db_id: Optional[str] = Field(None, description="Database identifier")
+    is_factory: bool = Field(False, description="Whether this workflow is a factory")
+    factory_input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for factory_input")
     is_component: bool = Field(False, description="Whether this workflow was created via Builder")
     current_version: Optional[int] = Field(None, description="Current published version number")
     stage: Optional[str] = Field(None, description="Stage of the loaded config (draft/published)")
@@ -144,9 +154,24 @@ class WorkflowSummaryResponse(BaseModel):
     @classmethod
     def from_workflow(
         cls,
-        workflow: Union[Workflow, RemoteWorkflow],
+        workflow: Union[Workflow, RemoteWorkflow, WorkflowFactory],
         is_component: bool = False,
     ) -> "WorkflowSummaryResponse":
+        if isinstance(workflow, WorkflowFactory):
+            factory_input_schema = None
+            if workflow.input_schema is not None:
+                try:
+                    factory_input_schema = workflow.input_schema.model_json_schema()
+                except Exception:
+                    pass
+            return cls(
+                id=workflow.id,
+                name=workflow.name,
+                description=workflow.description,
+                db_id=workflow.db.id if workflow.db else None,
+                is_factory=True,
+                factory_input_schema=factory_input_schema,
+            )
         db_id = workflow.db.id if workflow.db else None
         return cls(
             id=workflow.id,
