@@ -13,6 +13,7 @@ from rich import box
 from rich.panel import Panel
 from starlette.requests import Request
 
+from agno.agent.protocol import AgentProtocol
 from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
@@ -195,7 +196,7 @@ class AgentOS:
         description: Optional[str] = None,
         version: Optional[str] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-        agents: Optional[List[Union[Agent, RemoteAgent, AgentFactory]]] = None,
+        agents: Optional[List[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]] = None,
         teams: Optional[List[Union[Team, RemoteTeam, TeamFactory]]] = None,
         workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = None,
         knowledge: Optional[List[Knowledge]] = None,
@@ -259,9 +260,9 @@ class AgentOS:
 
         self.config = load_yaml_config(config) if isinstance(config, str) else config
 
-        self.agents: Optional[List[Union[Agent, RemoteAgent, AgentFactory]]] = agents
-        self.workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = workflows
+        self.agents: Optional[List[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]] = agents
         self.teams: Optional[List[Union[Team, RemoteTeam, TeamFactory]]] = teams
+        self.workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = workflows
         self.a2a_interface = a2a_interface
         self.knowledge = knowledge
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()

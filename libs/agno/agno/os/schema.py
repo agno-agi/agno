@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from agno.agent import Agent
 from agno.agent.factory import AgentFactory
+from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.db.base import SessionType
 from agno.os.config import (
@@ -105,12 +106,22 @@ class AgentSummaryResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the agent")
     description: Optional[str] = Field(None, description="Description of the agent")
     db_id: Optional[str] = Field(None, description="Database identifier")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
     @classmethod
-    def from_agent(cls, agent: Union[Agent, RemoteAgent, AgentFactory]) -> "AgentSummaryResponse":
+    def from_agent(cls, agent: Union[Agent, AgentProtocol, RemoteAgent, AgentFactory]) -> "AgentSummaryResponse":
+        agent_db = getattr(agent, "db", None)
+        framework = getattr(agent, "framework", None)
+        metadata = {"framework": framework} if framework else None
         if isinstance(agent, AgentFactory):
             return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
-        return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
+        return cls(
+            id=agent.id,
+            name=agent.name,
+            description=getattr(agent, "description", None),
+            db_id=agent_db.id if agent_db else None,
+            metadata=metadata,
+        )
 
 
 class TeamSummaryResponse(BaseModel):

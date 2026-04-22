@@ -8,6 +8,7 @@ from fastapi import (
     WebSocket,
 )
 
+from agno.agent.protocol import AgentProtocol
 from agno.agent.factory import AgentFactory
 from agno.exceptions import RemoteServerUnavailableError
 from agno.team.factory import TeamFactory
@@ -210,6 +211,8 @@ def get_base_router(
         if os.agents:
             for agent in os.agents:
                 if isinstance(agent, AgentFactory):
+                    continue
+                if isinstance(agent, AgentProtocol):
                     continue
                 model = cast(Model, agent.model)
                 if model and model.id is not None and model.provider is not None:
