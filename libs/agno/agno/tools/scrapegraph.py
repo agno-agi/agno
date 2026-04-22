@@ -18,14 +18,13 @@ import json
 import time
 import warnings
 from os import getenv
-from typing import Any, List, Optional, TypeVar
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
 
 try:
     from scrapegraph_py import (
-        ApiResult,
         FetchConfig,
         HtmlFormatConfig,
         JsonFormatConfig,
@@ -45,10 +44,8 @@ _CRAWL_POLL_INTERVAL_SECONDS = 3
 _REMOVED_INIT_PARAMS = frozenset({"enable_agentic_crawler"})
 _REMOVED_CRAWL_PARAMS = frozenset({"cache_website", "same_domain_only", "batch_size", "use_session"})
 
-T = TypeVar("T")
 
-
-def _unwrap(result: "ApiResult[T]") -> T:
+def _unwrap(result: Any) -> Any:
     """Return result.data on success; raise RuntimeError with result.error otherwise."""
     if getattr(result, "status", None) == "success" and result.data is not None:
         return result.data
@@ -94,15 +91,9 @@ class ScrapeGraphTools(Toolkit):
         self.client = ScrapeGraphAI(api_key=self.api_key)
         self.render_heavy_js = render_heavy_js
 
-        # Ensure the toolkit always exposes at least one tool: if the caller
-        # turned off smartscraper without enabling any other method, fall back
-        # to markdownify. (An explicit enable on any other tool suppresses the
-        # fallback, so `enable_scrape=True, enable_smartscraper=False` gives
-        # you just `scrape`, not `scrape + markdownify`.)
-        _any_tool_enabled = any(
-            [enable_smartscraper, enable_markdownify, enable_crawl, enable_searchscraper, enable_scrape, all]
-        )
-        if not _any_tool_enabled:
+        # If the caller disabled smartscraper without enabling any other tool,
+        # fall back to markdownify so the toolkit always exposes at least one tool.
+        if not any([enable_smartscraper, enable_markdownify, enable_crawl, enable_searchscraper, enable_scrape, all]):
             enable_markdownify = True
 
         tools: List[Any] = []
@@ -185,8 +176,8 @@ class ScrapeGraphTools(Toolkit):
                 fetch_config=self._fetch_config(),
             )
             extracted = _unwrap(response)
-            payload = extracted.json_data if extracted.json_data is not None else extracted.raw
-            return json.dumps(payload)
+            extracted_payload = extracted.json_data if extracted.json_data is not None else extracted.raw
+            return json.dumps(extracted_payload)
         except Exception as e:
             logger.exception(f"Smartscraper failed for {url}")
             return json.dumps({"error": str(e)})
@@ -208,11 +199,17 @@ class ScrapeGraphTools(Toolkit):
                 fetch_config=self._fetch_config(),
             )
             scraped = _unwrap(response)
+            # Contract: {"results": {"markdown": {"data": "..."}}}. Defensive:
+            # also accept the legacy shape where "markdown" is a bare string or
+            # a list of chunks so a minor upstream change doesn't crash us.
             markdown_field = scraped.results.get("markdown", {})
-            value = markdown_field.get("data", "") if isinstance(markdown_field, dict) else markdown_field
-            if isinstance(value, list):
-                value = "\n\n".join(str(v) for v in value)
-            return json.dumps({"markdown": str(value), "url": url})
+            if isinstance(markdown_field, dict):
+                markdown_text = markdown_field.get("data", "")
+            else:
+                markdown_text = markdown_field
+            if isinstance(markdown_text, list):
+                markdown_text = "\n\n".join(str(chunk) for chunk in markdown_text)
+            return json.dumps({"markdown": str(markdown_text), "url": url})
         except Exception as e:
             logger.exception(f"Markdownify failed for {url}")
             return json.dumps({"error": str(e)})
@@ -321,12 +318,15 @@ class ScrapeGraphTools(Toolkit):
         """
         try:
             log_debug(f"ScrapeGraph scrape request for URL: {website_url}")
-            fetch_config = self._fetch_config()
+            # Build fetch_config fresh so render_heavy_js and headers combine
+            # cleanly — avoids reconstructing a FetchConfig only to overwrite it.
+            fetch_config_kwargs: dict = {}
+            if self.render_heavy_js:
+                fetch_config_kwargs["mode"] = "js"
             if headers:
-                fetch_config = FetchConfig(
-                    mode=fetch_config.mode if fetch_config else "auto",
-                    headers=headers,
-                )
+                fetch_config_kwargs["headers"] = headers
+            fetch_config = FetchConfig(**fetch_config_kwargs) if fetch_config_kwargs else None
+
             response = self.client.scrape(
                 website_url,
                 formats=[HtmlFormatConfig()],

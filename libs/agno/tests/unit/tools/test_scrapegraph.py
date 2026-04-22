@@ -5,7 +5,13 @@ import os
 import warnings
 from unittest.mock import Mock, patch
 
-from agno.tools.scrapegraph import (
+import pytest
+
+# Skip the whole module when the optional SDK isn't installed so pytest
+# collection doesn't crash in environments that don't pull the extras.
+pytest.importorskip("scrapegraph_py")
+
+from agno.tools.scrapegraph import (  # noqa: E402
     _CRAWL_MAX_WAIT_SECONDS,
     _CRAWL_POLL_INTERVAL_SECONDS,
     ScrapeGraphTools,
