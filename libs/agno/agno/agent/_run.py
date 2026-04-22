@@ -1159,7 +1159,6 @@ def _run_stream(
                     )
                 yield run_error
                 break
-                raise
             except KeyboardInterrupt:
                 run_response = cast(RunOutput, run_response)
                 yield handle_event(  # type: ignore
@@ -2375,7 +2374,6 @@ async def _arun_stream(
                 # Yield the error event
                 yield run_error
                 break
-                raise
 
             except KeyboardInterrupt:
                 run_response = cast(RunOutput, run_response)
@@ -3346,7 +3344,6 @@ def _continue_run_stream(
                 )
                 yield run_error
                 break
-                raise
             except KeyboardInterrupt:
                 run_response = cast(RunOutput, run_response)
                 yield handle_event(  # type: ignore
@@ -4342,7 +4339,6 @@ async def _acontinue_run_stream(
                 # Yield the error event
                 yield run_error
                 break
-                raise
             except KeyboardInterrupt:
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
