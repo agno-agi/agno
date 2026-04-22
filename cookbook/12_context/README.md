@@ -41,7 +41,8 @@ Providers ship in this package:
 | `06_mcp_server.py` | Wrap an MCP server; explicit `asetup` / `aclose` lifecycle |
 | `07_google_drive.py` | Google Drive via a service account; reads a shared Doc |
 | `08_multi_provider.py` | Three providers on one agent; names compose cleanly |
-| `09_custom_provider.py` | Subclass `ContextProvider` for your own source |
+| `09_web_plus_slack.py` | Compositional: Slack topics feed per-topic web searches |
+| `10_custom_provider.py` | Subclass `ContextProvider` for your own source |
 
 ## Run
 
@@ -49,7 +50,7 @@ Providers ship in this package:
 # Self-contained (no external service)
 OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/00_filesystem.py
 OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/04_database_read_write.py
-OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/09_custom_provider.py
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/10_custom_provider.py
 
 # Exa SDK (keyed) — higher throughput
 OPENAI_API_KEY=... EXA_API_KEY=... .venvs/demo/bin/python cookbook/12_context/01_web_exa.py
@@ -72,4 +73,8 @@ OPENAI_API_KEY=... GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/sa.json \
 
 # Multi-provider (fs + web + db) — web uses Exa MCP, so no EXA key required
 OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/08_multi_provider.py
+
+# Compositional demo (Slack topics -> per-topic web searches)
+OPENAI_API_KEY=... EXA_API_KEY=... SLACK_BOT_TOKEN=xoxb-... \
+    .venvs/demo/bin/python cookbook/12_context/09_web_plus_slack.py
 ```
