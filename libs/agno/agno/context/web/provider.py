@@ -16,6 +16,7 @@ from agno.context._utils import answer_from_run
 from agno.context.backend import ContextBackend
 from agno.context.mode import ContextMode
 from agno.context.provider import Answer, ContextProvider, Status
+from agno.run import RunContext
 
 if TYPE_CHECKING:
     from agno.models.base import Model
@@ -52,13 +53,15 @@ class WebContextProvider(ContextProvider):
         self._agent = None
         await self.backend.aclose()
 
-    def query(self, question: str) -> Answer:
+    def query(self, question: str, *, run_context: RunContext | None = None) -> Answer:
         agent = self._ensure_agent()
-        return answer_from_run(agent.run(question))
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
+        return answer_from_run(agent.run(question, **kwargs))
 
-    async def aquery(self, question: str) -> Answer:
+    async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
         agent = self._ensure_agent()
-        return answer_from_run(await agent.arun(question))
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
+        return answer_from_run(await agent.arun(question, **kwargs))
 
     def instructions(self) -> str:
         if self.mode == ContextMode.tools:

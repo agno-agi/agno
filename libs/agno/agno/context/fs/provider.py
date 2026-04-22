@@ -15,6 +15,7 @@ from agno.agent import Agent
 from agno.context._utils import answer_from_run
 from agno.context.mode import ContextMode
 from agno.context.provider import Answer, ContextProvider, Status
+from agno.run import RunContext
 from agno.tools.file import FileTools
 
 if TYPE_CHECKING:
@@ -49,11 +50,13 @@ class FilesystemContextProvider(ContextProvider):
     async def astatus(self) -> Status:
         return self.status()
 
-    def query(self, question: str) -> Answer:
-        return answer_from_run(self._ensure_agent().run(question))
+    def query(self, question: str, *, run_context: RunContext | None = None) -> Answer:
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
+        return answer_from_run(self._ensure_agent().run(question, **kwargs))
 
-    async def aquery(self, question: str) -> Answer:
-        return answer_from_run(await self._ensure_agent().arun(question))
+    async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
+        return answer_from_run(await self._ensure_agent().arun(question, **kwargs))
 
     def instructions(self) -> str:
         if self.mode == ContextMode.tools:

@@ -151,7 +151,7 @@ async def test_slack_aupdate_routes_through_write_agent(monkeypatch):
         def __init__(self, bucket: str):
             self._bucket = bucket
 
-        async def arun(self, instruction: str):
+        async def arun(self, instruction: str, **kwargs):
             calls[self._bucket] += 1
 
             class _Out:
@@ -169,6 +169,52 @@ async def test_slack_aupdate_routes_through_write_agent(monkeypatch):
     assert isinstance(out, Answer)
     assert calls == {"read": 0, "write": 1}
     assert out.text == "write:post hello to #ops"
+
+
+@pytest.mark.asyncio
+async def test_slack_aquery_threads_action_token_metadata_to_subagent(monkeypatch):
+    """The BLOCKER this PR fixes: Slack's search_workspace needs
+    run_context.metadata["action_token"] to authenticate. If the
+    caller's RunContext has action_token in metadata, aquery must
+    forward it into sub_agent.arun(metadata=...) so the sub-agent's
+    call to search_workspace sees it.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agno.context.provider import Answer
+    from agno.run import RunContext
+
+    p = SlackContextProvider(token="xoxb-x")
+
+    # Replace the read sub-agent with a mock whose arun tracks kwargs.
+    # (After upstream's write-access split, aquery goes through
+    # _ensure_read_agent, not _ensure_agent.)
+    mock_agent = MagicMock()
+    mock_run_output = MagicMock()
+    mock_run_output.get_content_as_string = MagicMock(return_value="mock answer")
+    mock_run_output.content = "mock answer"
+    mock_agent.arun = AsyncMock(return_value=mock_run_output)
+    monkeypatch.setattr(p, "_ensure_read_agent", lambda: mock_agent)
+
+    # Caller's RunContext carries the action_token the Slack interface
+    # would have injected.
+    rc = RunContext(
+        run_id="r-slack-1",
+        session_id="s-slack-1",
+        user_id="U123",
+        metadata={"action_token": "xoxa-2-abc-def"},
+    )
+    answer = await p.aquery("find recent chatter about launch", run_context=rc)
+
+    # Sub-agent must have been called with the metadata threaded through.
+    mock_agent.arun.assert_awaited_once()
+    _, kwargs = mock_agent.arun.call_args
+    assert kwargs.get("metadata") == {"action_token": "xoxa-2-abc-def"}, (
+        f"expected action_token to propagate; got kwargs={kwargs}"
+    )
+    assert kwargs.get("user_id") == "U123"
+    assert kwargs.get("session_id") == "s-slack-1"
+    assert isinstance(answer, Answer)
 
 
 # ---------------------------------------------------------------------------

@@ -38,6 +38,7 @@ from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING
 
 from agno.context.mode import ContextMode
+from agno.run import RunContext
 from agno.tools import tool
 
 if TYPE_CHECKING:
@@ -92,21 +93,26 @@ class ContextProvider(ABC):
         self.update_tool_name = update_tool_name or f"update_{_sanitize_id(id)}"
 
     @abstractmethod
-    def query(self, question: str) -> Answer: ...
+    def query(self, question: str, *, run_context: RunContext | None = None) -> Answer: ...
 
     @abstractmethod
-    async def aquery(self, question: str) -> Answer: ...
+    async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer: ...
 
-    def update(self, instruction: str) -> Answer:
+    def update(self, instruction: str, *, run_context: RunContext | None = None) -> Answer:
         """Apply a natural-language write. Default: read-only.
 
         Override for providers that support writes (e.g. a database or
         inbox). The base raises `NotImplementedError` so `_update_tool`
         can report "<name> is read-only" to the calling agent.
+
+        ``run_context`` carries the caller agent's user_id, session_id,
+        metadata, and dependencies. Subclasses should forward these to
+        their sub-agent so per-user auth and framework-injected context
+        (e.g. Slack ``action_token`` in ``metadata``) survive the hop.
         """
         raise NotImplementedError(f"{type(self).__name__} is read-only")
 
-    async def aupdate(self, instruction: str) -> Answer:
+    async def aupdate(self, instruction: str, *, run_context: RunContext | None = None) -> Answer:
         """Async variant of `update()`. Default: read-only."""
         raise NotImplementedError(f"{type(self).__name__} is read-only")
 
@@ -161,6 +167,25 @@ class ContextProvider(ABC):
     # Internals
     # ------------------------------------------------------------------
 
+    def _run_kwargs_for_sub_agent(self, run_context: RunContext | None) -> dict:
+        """Extract kwargs to pass to a sub-agent ``arun()`` from the
+        caller's RunContext.
+
+        Propagates ``user_id``, ``session_id``, ``metadata``, and
+        ``dependencies`` so per-user auth and framework-injected state
+        (e.g. Slack's ``action_token`` in ``metadata``) reach the
+        sub-agent. Message history and session_state stay with the
+        outer agent — sub-agents run isolated.
+        """
+        if run_context is None:
+            return {}
+        kwargs: dict = {}
+        for attr in ("user_id", "session_id", "metadata", "dependencies"):
+            value = getattr(run_context, attr, None)
+            if value:
+                kwargs[attr] = value
+        return kwargs
+
     def _default_tools(self) -> list:
         """What `mode=default` resolves to. Override in subclasses to set
         the provider's recommended exposure."""
@@ -170,9 +195,9 @@ class ContextProvider(ABC):
         provider = self
 
         @tool(name=self.query_tool_name)
-        async def _query(question: str) -> str:
+        async def _query(question: str, run_context: RunContext | None = None) -> str:
             try:
-                answer = await provider.aquery(question)
+                answer = await provider.aquery(question, run_context=run_context)
             except Exception as exc:
                 return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
             payload: dict = {"results": [asdict(r) for r in answer.results]}
@@ -186,9 +211,9 @@ class ContextProvider(ABC):
         provider = self
 
         @tool(name=self.update_tool_name)
-        async def _update(instruction: str) -> str:
+        async def _update(instruction: str, run_context: RunContext | None = None) -> str:
             try:
-                answer = await provider.aupdate(instruction)
+                answer = await provider.aupdate(instruction, run_context=run_context)
             except NotImplementedError:
                 return json.dumps({"error": f"{provider.name} is read-only"})
             except Exception as exc:

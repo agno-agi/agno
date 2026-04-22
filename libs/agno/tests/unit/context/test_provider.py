@@ -14,6 +14,7 @@ import pytest
 
 from agno.context import Answer, ContextMode, ContextProvider, Status
 from agno.context.provider import _sanitize_id
+from agno.run import RunContext
 
 # ---------------------------------------------------------------------------
 # Test fixtures — minimal providers that pass / raise on demand
@@ -29,25 +30,25 @@ class _EchoProvider(ContextProvider):
     async def astatus(self) -> Status:
         return self.status()
 
-    def query(self, question: str) -> Answer:
+    def query(self, question: str, *, run_context: RunContext | None = None) -> Answer:
         return Answer(text=f"q:{question}")
 
-    async def aquery(self, question: str) -> Answer:
+    async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
         return Answer(text=f"q:{question}")
 
 
 class _RaisingQueryProvider(_EchoProvider):
-    async def aquery(self, question: str) -> Answer:
+    async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
         raise RuntimeError("aquery boom")
 
 
 class _WritableProvider(_EchoProvider):
-    async def aupdate(self, instruction: str) -> Answer:
+    async def aupdate(self, instruction: str, *, run_context: RunContext | None = None) -> Answer:
         return Answer(text=f"u:{instruction}")
 
 
 class _RaisingWritableProvider(_EchoProvider):
-    async def aupdate(self, instruction: str) -> Answer:
+    async def aupdate(self, instruction: str, *, run_context: RunContext | None = None) -> Answer:
         raise ValueError("aupdate boom")
 
 
@@ -135,7 +136,7 @@ async def test_query_tool_catches_aquery_exceptions():
 @pytest.mark.asyncio
 async def test_query_tool_omits_text_when_answer_text_is_none():
     class _DocsOnly(_EchoProvider):
-        async def aquery(self, question: str) -> Answer:
+        async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
             return Answer()
 
     tool_ = _DocsOnly(id="e")._query_tool()
@@ -179,6 +180,76 @@ async def test_update_tool_catches_aupdate_exceptions():
     assert "error" in payload
     assert "ValueError" in payload["error"]
     assert "aupdate boom" in payload["error"]
+
+
+# ---------------------------------------------------------------------------
+# RunContext propagation — the wrapper should thread run_context from the
+# calling agent's auto-injection into provider.aquery / aupdate, and the
+# `_run_kwargs_for_sub_agent` helper should extract the right fields.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_query_tool_forwards_run_context_to_aquery():
+    captured: dict = {}
+
+    class _Captor(_EchoProvider):
+        async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
+            captured["run_context"] = run_context
+            return Answer(text=f"q:{question}")
+
+    p = _Captor(id="c")
+    query_tool = p._query_tool()
+    rc = RunContext(run_id="r-1", user_id="u-1", session_id="s-1", metadata={"action_token": "xoxa-abc"})
+    # Framework would normally inject run_context via Function._run_context;
+    # calling the entrypoint directly with run_context= simulates that path.
+    await query_tool.entrypoint(question="hello", run_context=rc)
+    assert captured["run_context"] is rc
+
+
+@pytest.mark.asyncio
+async def test_update_tool_forwards_run_context_to_aupdate():
+    captured: dict = {}
+
+    class _WCaptor(_EchoProvider):
+        async def aupdate(self, instruction: str, *, run_context: RunContext | None = None) -> Answer:
+            captured["run_context"] = run_context
+            return Answer(text=f"u:{instruction}")
+
+    p = _WCaptor(id="w")
+    update_tool = p._update_tool()
+    rc = RunContext(run_id="r-2", session_id="s-2", user_id="u-2", dependencies={"db_url": "postgres://..."})
+    await update_tool.entrypoint(instruction="write x", run_context=rc)
+    assert captured["run_context"] is rc
+
+
+def test_run_kwargs_for_sub_agent_extracts_only_populated_fields():
+    # None -> empty dict (no kwargs injected)
+    assert _EchoProvider(id="e")._run_kwargs_for_sub_agent(None) == {}
+
+    # Fields with truthy values are extracted
+    rc = RunContext(
+        run_id="r-3",
+        user_id="u-1",
+        session_id="s-1",
+        metadata={"action_token": "xoxa-abc"},
+        dependencies={"tenant": "acme"},
+    )
+    kwargs = _EchoProvider(id="e")._run_kwargs_for_sub_agent(rc)
+    assert kwargs == {
+        "user_id": "u-1",
+        "session_id": "s-1",
+        "metadata": {"action_token": "xoxa-abc"},
+        "dependencies": {"tenant": "acme"},
+    }
+
+
+def test_run_kwargs_for_sub_agent_drops_empty_fields():
+    # Empty dict / empty string / None values should NOT be propagated,
+    # so sub-agent defaults aren't silently overridden with empty data.
+    rc = RunContext(run_id="r-4", user_id="", session_id="only-session", metadata={}, dependencies=None)
+    kwargs = _EchoProvider(id="e")._run_kwargs_for_sub_agent(rc)
+    assert kwargs == {"session_id": "only-session"}
 
 
 # ---------------------------------------------------------------------------

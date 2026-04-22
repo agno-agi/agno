@@ -29,6 +29,7 @@ from agno.agent import Agent
 from agno.context._utils import answer_from_run
 from agno.context.mode import ContextMode
 from agno.context.provider import Answer, ContextProvider, Status
+from agno.run import RunContext
 from agno.tools.slack import SlackTools
 
 if TYPE_CHECKING:
@@ -74,17 +75,21 @@ class SlackContextProvider(ContextProvider):
     # Query / update
     # ------------------------------------------------------------------
 
-    def query(self, question: str) -> Answer:
-        return answer_from_run(self._ensure_read_agent().run(question))
+    def query(self, question: str, *, run_context: RunContext | None = None) -> Answer:
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
+        return answer_from_run(self._ensure_read_agent().run(question, **kwargs))
 
-    async def aquery(self, question: str) -> Answer:
-        return answer_from_run(await self._ensure_read_agent().arun(question))
+    async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
+        return answer_from_run(await self._ensure_read_agent().arun(question, **kwargs))
 
-    def update(self, instruction: str) -> Answer:
-        return answer_from_run(self._ensure_write_agent().run(instruction))
+    def update(self, instruction: str, *, run_context: RunContext | None = None) -> Answer:
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
+        return answer_from_run(self._ensure_write_agent().run(instruction, **kwargs))
 
-    async def aupdate(self, instruction: str) -> Answer:
-        return answer_from_run(await self._ensure_write_agent().arun(instruction))
+    async def aupdate(self, instruction: str, *, run_context: RunContext | None = None) -> Answer:
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
+        return answer_from_run(await self._ensure_write_agent().arun(instruction, **kwargs))
 
     def instructions(self) -> str:
         if self.mode == ContextMode.tools:
