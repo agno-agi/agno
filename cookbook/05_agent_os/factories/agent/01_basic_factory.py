@@ -41,7 +41,6 @@ def build_tenant_agent(ctx: RequestContext) -> Agent:
     """Called on every request. Returns a fresh Agent for the calling tenant."""
     user_id = ctx.user_id or "anonymous"
     return Agent(
-        id=f"tenant_agent_{user_id}",
         model=OpenAIResponses(id="gpt-5.4"),
         db=db,
         instructions=f"You are a helpful assistant for tenant {user_id}. Be concise.",
@@ -51,6 +50,7 @@ def build_tenant_agent(ctx: RequestContext) -> Agent:
 
 
 tenant_factory = AgentFactory(
+    db=db,
     id="tenant-agent",
     name="Per-tenant assistant",
     description="Builds a personalized agent per tenant on each request",

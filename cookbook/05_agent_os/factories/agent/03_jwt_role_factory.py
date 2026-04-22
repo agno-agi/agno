@@ -109,10 +109,8 @@ def build_workspace_agent(ctx: RequestContext) -> Agent:
     if role == "admin":
         tools.append(manage_members)
 
-    user_id = ctx.user_id or "unknown"
 
     return Agent(
-        id=f"workspace_{org_id}_{user_id}",
         model=OpenAIResponses(id="gpt-5.4"),
         db=db,
         tools=tools,
@@ -128,6 +126,7 @@ def build_workspace_agent(ctx: RequestContext) -> Agent:
 
 
 workspace_factory = AgentFactory(
+    db=db,
     id="workspace-agent",
     name="Workspace Agent",
     description="RBAC workspace agent -- tools depend on JWT role",

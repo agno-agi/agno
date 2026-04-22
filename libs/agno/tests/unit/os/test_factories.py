@@ -33,6 +33,15 @@ def _make_ctx(**kwargs) -> RequestContext:
     return RequestContext(**kwargs)
 
 
+def _make_mock_db():
+    db = MagicMock()
+    db.id = "test-db"
+    return db
+
+
+_mock_db = _make_mock_db()
+
+
 def _make_mock_agent(agent_id: str = "produced-agent"):
     agent = MagicMock()
     agent.id = agent_id
@@ -65,6 +74,7 @@ def _make_mock_workflow(workflow_id: str = "produced-workflow"):
 class TestAgentFactory:
     def test_basic_construction(self):
         factory = AgentFactory(
+            db=_mock_db,
             id="test-factory",
             factory=lambda ctx: _make_mock_agent(),
             name="Test Factory",
@@ -72,13 +82,18 @@ class TestAgentFactory:
         )
         assert factory.id == "test-factory"
         assert factory.name == "Test Factory"
+        assert factory.db == _mock_db
         assert factory.input_schema is None
+
+    def test_db_required(self):
+        with pytest.raises(ValueError, match="requires a 'db'"):
+            AgentFactory(id="f1", db=None, factory=lambda ctx: None)
 
     def test_invoke_sync(self):
         def build(ctx):
             return _make_mock_agent(f"agent-{ctx.user_id}")
 
-        factory = AgentFactory(id="f1", factory=build)
+        factory = AgentFactory(db=_mock_db, id="f1", factory=build)
         ctx = _make_ctx(user_id="user-123")
         result = factory.invoke(ctx)
         assert result.id == "agent-user-123"
@@ -88,7 +103,7 @@ class TestAgentFactory:
         def build(ctx):
             return _make_mock_agent(f"agent-{ctx.user_id}")
 
-        factory = AgentFactory(id="f1", factory=build)
+        factory = AgentFactory(db=_mock_db, id="f1", factory=build)
         ctx = _make_ctx(user_id="user-456")
         result = await factory.invoke_async(ctx)
         assert result.id == "agent-user-456"
@@ -98,7 +113,7 @@ class TestAgentFactory:
         async def build(ctx):
             return _make_mock_agent(f"async-agent-{ctx.user_id}")
 
-        factory = AgentFactory(id="f1", factory=build)
+        factory = AgentFactory(db=_mock_db, id="f1", factory=build)
         assert factory.is_async()
         ctx = _make_ctx(user_id="user-789")
         result = await factory.invoke_async(ctx)
@@ -108,7 +123,7 @@ class TestAgentFactory:
         async def build(ctx):
             return _make_mock_agent()
 
-        factory = AgentFactory(id="f1", factory=build)
+        factory = AgentFactory(db=_mock_db, id="f1", factory=build)
         ctx = _make_ctx()
         with pytest.raises(FactoryError, match="async"):
             factory.invoke(ctx)
@@ -121,37 +136,37 @@ class TestAgentFactory:
 
 class TestInputValidation:
     def test_no_schema_passthrough(self):
-        factory = AgentFactory(id="f1", factory=lambda ctx: None)
+        factory = AgentFactory(db=_mock_db, id="f1", factory=lambda ctx: None)
         assert factory.validate_input({"key": "val"}) == {"key": "val"}
         assert factory.validate_input(None) is None
 
     def test_schema_validates_dict(self):
-        factory = AgentFactory(id="f1", factory=lambda ctx: None, input_schema=SampleInput)
+        factory = AgentFactory(db=_mock_db, id="f1", factory=lambda ctx: None, input_schema=SampleInput)
         result = factory.validate_input({"persona": "analyst", "depth": 5})
         assert isinstance(result, SampleInput)
         assert result.persona == "analyst"
         assert result.depth == 5
 
     def test_schema_validates_json_string(self):
-        factory = AgentFactory(id="f1", factory=lambda ctx: None, input_schema=SampleInput)
+        factory = AgentFactory(db=_mock_db, id="f1", factory=lambda ctx: None, input_schema=SampleInput)
         result = factory.validate_input(json.dumps({"persona": "skeptic"}))
         assert isinstance(result, SampleInput)
         assert result.persona == "skeptic"
         assert result.depth == 3  # default
 
     def test_schema_defaults_when_none(self):
-        factory = AgentFactory(id="f1", factory=lambda ctx: None, input_schema=SampleInput)
+        factory = AgentFactory(db=_mock_db, id="f1", factory=lambda ctx: None, input_schema=SampleInput)
         result = factory.validate_input(None)
         assert isinstance(result, SampleInput)
         assert result.persona == "default"
 
     def test_invalid_json_raises(self):
-        factory = AgentFactory(id="f1", factory=lambda ctx: None, input_schema=SampleInput)
+        factory = AgentFactory(db=_mock_db, id="f1", factory=lambda ctx: None, input_schema=SampleInput)
         with pytest.raises(FactoryValidationError, match="not valid JSON"):
             factory.validate_input("{bad json")
 
     def test_wrong_type_raises(self):
-        factory = AgentFactory(id="f1", factory=lambda ctx: None, input_schema=SampleInput)
+        factory = AgentFactory(db=_mock_db, id="f1", factory=lambda ctx: None, input_schema=SampleInput)
         with pytest.raises(FactoryValidationError, match="JSON object"):
             factory.validate_input(42)
 
@@ -159,7 +174,7 @@ class TestInputValidation:
         class StrictInput(BaseModel):
             required_field: str
 
-        factory = AgentFactory(id="f1", factory=lambda ctx: None, input_schema=StrictInput)
+        factory = AgentFactory(db=_mock_db, id="f1", factory=lambda ctx: None, input_schema=StrictInput)
         with pytest.raises(FactoryValidationError, match="validation failed"):
             factory.validate_input({})
 
@@ -217,25 +232,24 @@ class TestGetAgentByIdWithFactories:
             agent.id = f"agent-{ctx.user_id}"
             return agent
 
-        factory = AgentFactory(id="my-factory", factory=build)
+        factory = AgentFactory(db=_mock_db, id="my-factory", factory=build)
         ctx = _make_ctx(user_id="user-1")
         result = get_agent_by_id("my-factory", agents=[factory], ctx=ctx)
         assert result is not None
-        # Factory author's ID is preserved; factory_id is set for FE matching
-        assert result.id == "agent-user-1"
-        assert result.factory_id == "my-factory"
+        # Factory-produced agent's ID is overridden to match the factory's registration ID
+        assert result.id == "my-factory"
 
     def test_factory_without_context_raises(self):
         from agno.os.utils import get_agent_by_id
 
-        factory = AgentFactory(id="my-factory", factory=lambda ctx: None)
+        factory = AgentFactory(db=_mock_db, id="my-factory", factory=lambda ctx: None)
         with pytest.raises(FactoryContextRequired):
             get_agent_by_id("my-factory", agents=[factory])
 
     def test_factory_wrong_return_type_raises(self):
         from agno.os.utils import get_agent_by_id
 
-        factory = AgentFactory(id="my-factory", factory=lambda ctx: "not-an-agent")
+        factory = AgentFactory(db=_mock_db, id="my-factory", factory=lambda ctx: "not-an-agent")
         ctx = _make_ctx()
         with pytest.raises(FactoryError, match="expected Agent"):
             get_agent_by_id("my-factory", agents=[factory], ctx=ctx)
@@ -256,7 +270,7 @@ class TestExceptions:
         def build(ctx):
             raise FactoryPermissionError("User not authorized for this agent")
 
-        factory = AgentFactory(id="f1", factory=build)
+        factory = AgentFactory(db=_mock_db, id="f1", factory=build)
         ctx = _make_ctx()
         with pytest.raises(FactoryPermissionError, match="not authorized"):
             factory.invoke(ctx)
@@ -269,7 +283,7 @@ class TestExceptions:
 
 class TestTeamFactory:
     def test_basic(self):
-        factory = TeamFactory(id="tf1", factory=lambda ctx: _make_mock_team(), name="Team Factory")
+        factory = TeamFactory(db=_mock_db, id="tf1", factory=lambda ctx: _make_mock_team(), name="Team Factory")
         assert factory.id == "tf1"
         ctx = _make_ctx()
         result = factory.invoke(ctx)
@@ -278,7 +292,7 @@ class TestTeamFactory:
 
 class TestWorkflowFactory:
     def test_basic(self):
-        factory = WorkflowFactory(id="wf1", factory=lambda ctx: _make_mock_workflow(), name="WF Factory")
+        factory = WorkflowFactory(db=_mock_db, id="wf1", factory=lambda ctx: _make_mock_workflow(), name="WF Factory")
         assert factory.id == "wf1"
         ctx = _make_ctx()
         result = factory.invoke(ctx)

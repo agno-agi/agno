@@ -93,7 +93,6 @@ def build_hitl_agent(ctx: RequestContext) -> Agent:
     user_id = ctx.user_id or "anonymous"
 
     return Agent(
-        id=f"hitl_agent_{user_id}",
         model=OpenAIResponses(id="gpt-5.4"),
         db=db,
         tools=[get_top_hackernews_stories],
@@ -106,6 +105,7 @@ def build_hitl_agent(ctx: RequestContext) -> Agent:
 
 
 hitl_factory = AgentFactory(
+    db=db,
     id="hitl-agent",
     name="HITL Agent",
     description="Factory agent with a tool requiring human confirmation before execution",

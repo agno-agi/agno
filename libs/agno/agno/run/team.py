@@ -193,7 +193,6 @@ class BaseTeamRunEvent(BaseRunOutputEvent):
     event: str = ""
     team_id: str = ""
     team_name: str = ""
-    factory_id: Optional[str] = None  # Set when team was produced by a factory
     run_id: Optional[str] = None
     parent_run_id: Optional[str] = None
     session_id: Optional[str] = None
@@ -728,7 +727,6 @@ class TeamRunOutput:
     run_id: Optional[str] = None
     team_id: Optional[str] = None
     team_name: Optional[str] = None
-    factory_id: Optional[str] = None  # Set when team was produced by a factory
     session_id: Optional[str] = None
     parent_run_id: Optional[str] = None
     user_id: Optional[str] = None

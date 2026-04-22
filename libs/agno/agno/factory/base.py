@@ -26,6 +26,8 @@ class BaseFactory(Generic[T]):
 
     Args:
         id: Stable handle used in API URLs (e.g. ``POST /agents/{id}/runs``).
+            The produced component's id will be enforced to match this.
+        db: Database for session storage. Required — the FE needs db_id for requests.
         factory: Callable that receives a RequestContext and returns a component of type T.
             Both sync and async callables are accepted.
         name: Human-readable name for UI discovery.
@@ -38,12 +40,16 @@ class BaseFactory(Generic[T]):
     def __init__(
         self,
         id: str,
+        db: Any,
         factory: Union[Callable[["RequestContext"], T], Callable[["RequestContext"], Awaitable[T]]],
         name: Optional[str] = None,
         description: Optional[str] = None,
         input_schema: Optional[Type[BaseModel]] = None,
     ):
+        if db is None:
+            raise ValueError("BaseFactory requires a 'db' argument for session storage.")
         self.id = id
+        self.db = db
         self.factory = factory
         self.name = name
         self.description = description
@@ -99,15 +105,26 @@ class BaseFactory(Generic[T]):
     def _post_resolve(self, component: T) -> None:
         """Post-resolve setup for the produced component.
 
-        Sets factory_id on the component so SSE events include it for FE matching.
-        Picked up by RunOutput (via getattr(agent, "factory_id", None)),
-        then propagated to all SSE events by handle_event() in utils/events.py.
-        The factory author's original component.id is preserved.
+        Enforces that the produced component's id matches the factory's registration id.
+        If the factory author set a different id, log a warning and override it.
+        Also sets the db from the factory if the component doesn't have one.
 
         Subclasses override this to add component-specific initialization
         (e.g. initialize_agent(), initialize_team(), store_events).
         """
-        component.factory_id = self.id  # type: ignore[attr-defined]
+        if component.id is not None and component.id != self.id:  # type: ignore[attr-defined]
+            from agno.utils.log import log_warning
+
+            log_warning(
+                f"Factory '{self.id}': produced component has id='{component.id}', "  # type: ignore[attr-defined]
+                f"overriding to match factory id='{self.id}'. "
+                "The component id must match the factory id for session storage and FE matching."
+            )
+        component.id = self.id  # type: ignore[attr-defined]
+
+        # Set db from factory if component doesn't have one
+        if not getattr(component, "db", None) and self.db:
+            component.db = self.db  # type: ignore[attr-defined]
 
     def resolve(self, ctx: RequestContext, expected_type: Type[T]) -> T:
         """Validate input, invoke the factory, and type-check the result.
@@ -116,14 +133,14 @@ class BaseFactory(Generic[T]):
         1. Validates ctx.input against input_schema (if set)
         2. Invokes the factory callable with the validated context
         3. Checks the return type matches expected_type (Agent, Team, or Workflow)
-        4. Sets factory_id on the result for SSE event matching
+        4. Enforces component.id matches factory.id, sets db, initializes component
 
         Args:
             ctx: The request context (input will be validated and replaced).
             expected_type: The expected return type (Agent, Team, or Workflow).
 
         Returns:
-            The produced component (Agent, Team, or Workflow) with factory_id set.
+            The produced component, initialized and ready to run.
         """
         validated_input = self.validate_input(ctx.input)
         ctx_with_input = replace(ctx, input=validated_input)

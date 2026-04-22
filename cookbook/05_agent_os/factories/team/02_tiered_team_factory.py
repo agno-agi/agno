@@ -58,7 +58,6 @@ def build_research_team(ctx: RequestContext) -> Team:
     """Build a research team whose size and model depend on subscription tier."""
     claims = ctx.trusted.claims
     tier = claims.get("tier", "free")
-    user_id = ctx.user_id or "anonymous"
     model_id = TIER_MODELS.get(tier, TIER_MODELS["free"])
 
     researcher = Agent(
@@ -88,7 +87,6 @@ def build_research_team(ctx: RequestContext) -> Team:
         members.append(reviewer)
 
     return Team(
-        id=f"research_team_{user_id}",
         name="Research Team",
         model=OpenAIResponses(id=model_id),
         members=members,
@@ -103,6 +101,7 @@ def build_research_team(ctx: RequestContext) -> Team:
 
 
 research_team_factory = TeamFactory(
+    db=db,
     id="research-team",
     name="Research Team",
     description="Research team -- size and model quality scale with subscription tier",

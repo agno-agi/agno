@@ -73,10 +73,8 @@ class ResearchInput(BaseModel):
 def build_research_agent(ctx: RequestContext) -> Agent:
     """Build a research agent with the requested persona and depth."""
     cfg: ResearchInput = ctx.input
-    user_id = ctx.user_id or "anon"
 
     return Agent(
-        id=f"research_{user_id}_{cfg.persona}",
         model=OpenAIResponses(id="gpt-5.4"),
         db=db,
         instructions=(
@@ -90,6 +88,7 @@ def build_research_agent(ctx: RequestContext) -> Agent:
 
 
 research_factory = AgentFactory(
+    db=db,
     id="research-agent",
     name="Research Agent",
     description="Builds a research agent with configurable persona and depth",
