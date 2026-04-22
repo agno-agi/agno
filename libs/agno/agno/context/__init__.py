@@ -2,8 +2,8 @@
 Context Providers
 =================
 
-Expose any external source — the web, a filesystem, Slack, GitHub, Drive,
-an MCP server — to an agent as a first-class, queryable context.
+Expose any external source — the web, a filesystem, Slack, Google Drive —
+to an agent as a first-class, queryable context.
 
 Every source subclasses :class:`ContextProvider`. A :class:`ContextBackend`
 is the pluggable I/O layer behind a provider (used today by

@@ -1,8 +1,7 @@
 # Context Providers
 
 Context Providers expose any external source — the web, a filesystem,
-Slack, GitHub, Google Drive, an MCP server — to an agent as a
-first-class, queryable context.
+Slack, Google Drive — to an agent as a first-class, queryable context.
 
 Every provider subclasses `agno.context.ContextProvider` and implements:
 
@@ -31,9 +30,7 @@ calling agent wires into its own `tools=[...]`.
 | `web_exa_mcp.py` | `WebContextProvider` + `ExaMCPBackend` | Keyless — uses Exa's public MCP |
 | `filesystem.py` | `FilesystemContextProvider` | Read-only, rooted at a local dir |
 | `slack.py` | `SlackContextProvider` | Read-only, requires `SLACK_BOT_TOKEN` |
-| `github.py` | `GitHubContextProvider` | Read-only, requires `GITHUB_ACCESS_TOKEN` |
 | `gdrive.py` | `GDriveContextProvider` | Service-account auth, read-only |
-| `mcp.py` | `MCPContextProvider` | Wraps a public MCP server (sequential-thinking) |
 
 ## Run
 

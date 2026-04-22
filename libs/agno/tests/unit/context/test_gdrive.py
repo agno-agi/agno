@@ -40,17 +40,8 @@ def test_construction_with_path(fake_key_file: Path):
 
 def test_construction_reads_env(monkeypatch, fake_key_file: Path):
     monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", str(fake_key_file))
-    monkeypatch.delenv("GOOGLE_DELEGATED_USER", raising=False)
     p = GDriveContextProvider()
     assert p.service_account_path == str(fake_key_file)
-    assert p.delegated_user is None
-
-
-def test_construction_picks_up_delegated_user(monkeypatch, fake_key_file: Path):
-    monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", str(fake_key_file))
-    monkeypatch.setenv("GOOGLE_DELEGATED_USER", "me@example.com")
-    p = GDriveContextProvider()
-    assert p.delegated_user == "me@example.com"
 
 
 def test_construction_without_path_raises(monkeypatch):
@@ -68,15 +59,7 @@ def test_status_ok_when_file_exists(fake_key_file: Path):
     p = GDriveContextProvider(service_account_path=str(fake_key_file))
     s = p.status()
     assert s.ok is True
-    assert "gdrive" in s.detail
-
-
-def test_status_includes_delegated_user(fake_key_file: Path):
-    p = GDriveContextProvider(
-        service_account_path=str(fake_key_file),
-        delegated_user="me@example.com",
-    )
-    assert "me@example.com" in p.status().detail
+    assert s.detail == "gdrive"
 
 
 def test_status_fails_when_file_missing(tmp_path: Path):

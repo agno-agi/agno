@@ -3,15 +3,22 @@ Google Drive Context Provider
 =============================
 
 Read-only Google Drive access for the calling agent — list, search,
-read files. Auth via a service account (headless). Upload/download
-are left off.
+read files.
+
+The agent authenticates as a dedicated Google **service account** — its
+own identity, not a borrowed user token. The owner of a folder grants
+the service account access by sharing the folder with its email; the
+agent can then read exactly what's been shared, nothing more. There is
+no OAuth consent, no user impersonation, no domain-wide delegation.
 
 To enable:
-1. Create a service account in Google Cloud Console, download the JSON key.
+1. Create a service account in Google Cloud Console and download the
+   JSON key.
 2. Share the Drive folders/files you want the agent to see with the
-   service account's email (or use domain-wide delegation via
-   `GOOGLE_DELEGATED_USER`).
+   service account's email (role: Viewer).
 3. Set `GOOGLE_SERVICE_ACCOUNT_FILE` to the path of the key file.
+
+Upload/download are left off — this provider does not write to Drive.
 """
 
 from __future__ import annotations
@@ -37,7 +44,6 @@ class GDriveContextProvider(ContextProvider):
         self,
         *,
         service_account_path: str | None = None,
-        delegated_user: str | None = None,
         id: str = "gdrive",
         name: str = "Google Drive",
         mode: ContextMode = ContextMode.default,
@@ -45,7 +51,6 @@ class GDriveContextProvider(ContextProvider):
     ) -> None:
         super().__init__(id=id, name=name, mode=mode, model=model)
         self.service_account_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-        self.delegated_user = delegated_user or getenv("GOOGLE_DELEGATED_USER")
         if not self.service_account_path:
             raise ValueError("GDriveContextProvider: GOOGLE_SERVICE_ACCOUNT_FILE is required")
         self._tools: GoogleDriveTools | None = None
@@ -57,8 +62,7 @@ class GDriveContextProvider(ContextProvider):
         path = Path(self.service_account_path).expanduser()
         if not path.exists():
             return Status(ok=False, detail=f"service account file not found: {path}")
-        delegated = f" (as {self.delegated_user})" if self.delegated_user else ""
-        return Status(ok=True, detail=f"gdrive{delegated}")
+        return Status(ok=True, detail="gdrive")
 
     async def astatus(self) -> Status:
         return self.status()
@@ -96,7 +100,6 @@ class GDriveContextProvider(ContextProvider):
         if self._tools is None:
             self._tools = GoogleDriveTools(
                 service_account_path=self.service_account_path,
-                delegated_user=self.delegated_user,
                 list_files=True,
                 search_files=True,
                 read_file=True,

@@ -4,15 +4,20 @@ Google Drive Context Provider
 
 Read-only Google Drive access via a service account.
 
+The agent authenticates as a dedicated service account — its own
+identity, not yours. Whatever folders you share with the service
+account's email, the agent can read. Nothing else. No OAuth consent,
+no user impersonation.
+
 Setup:
-1. Create a service account in Google Cloud Console and download the JSON key.
-2. Share Drive folders/files with the service account's email (or use
-   domain-wide delegation via `GOOGLE_DELEGATED_USER`).
+1. Create a service account in Google Cloud Console and download the
+   JSON key.
+2. Share Drive folders/files with the service account's email (role:
+   Viewer). Uncheck "Notify people" — service accounts have no inbox.
 3. Set `GOOGLE_SERVICE_ACCOUNT_FILE` to the JSON key path.
 
 Run: pip install openai google-api-python-client google-auth-httplib2 google-auth-oauthlib
 Env: GOOGLE_SERVICE_ACCOUNT_FILE, OPENAI_API_KEY
-Optional: GOOGLE_DELEGATED_USER
 """
 
 from agno.agent import Agent
