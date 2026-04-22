@@ -124,7 +124,7 @@ class ScrapeGraphTools(Toolkit):
             url (str): The URL to convert.
 
         Returns:
-            str: JSON string with the scrape result, or an error message.
+            str: The markdown content of the webpage, or an error message.
         """
         try:
             log_debug(f"ScrapeGraph markdownify request for URL: {url}")
@@ -135,7 +135,10 @@ class ScrapeGraphTools(Toolkit):
             )
             if response.status != "success" or response.data is None:
                 return f"Error converting {url} to markdown: {response.error or 'unknown error'}"
-            return response.data.model_dump_json(by_alias=True)
+            markdown_field = response.data.results.get("markdown", {})
+            if isinstance(markdown_field, dict):
+                return str(markdown_field.get("data", ""))
+            return str(markdown_field)
         except Exception as error:
             return f"Error converting {url} to markdown: {type(error).__name__}: {error}"
 
@@ -150,7 +153,7 @@ class ScrapeGraphTools(Toolkit):
         """
         try:
             log_debug(f"ScrapeGraph searchscraper request (query_length={len(query)})")
-            response = self.client.search(query)
+            response = self.client.search(query, fetch_config=self._fetch_config())
             if response.status != "success" or response.data is None:
                 return f"Error searching: {response.error or 'unknown error'}"
             return response.data.model_dump_json(by_alias=True)

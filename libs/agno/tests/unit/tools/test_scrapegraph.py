@@ -116,14 +116,14 @@ def test_smartscraper_error(scrapegraph_tools, mock_scrapegraph):
 
 
 def test_markdownify(scrapegraph_tools, mock_scrapegraph):
-    """Test markdownify method."""
+    """Test markdownify method returns plain markdown text."""
     data = Mock()
-    data.model_dump_json.return_value = json.dumps({"results": {"markdown": {"data": "# Title"}}})
+    data.results = {"markdown": {"data": "# Title\n\nContent"}}
     mock_scrapegraph.scrape.return_value = _api_result(data)
 
     result = scrapegraph_tools.markdownify("https://example.com")
 
-    assert "# Title" in result
+    assert result == "# Title\n\nContent"
     args, kwargs = mock_scrapegraph.scrape.call_args
     assert args[0] == "https://example.com"
     assert kwargs["formats"][0].type == "markdown"
@@ -214,7 +214,9 @@ def test_searchscraper(scrapegraph_tools, mock_scrapegraph):
     result_data = json.loads(result)
 
     assert result_data == {"results": [{"title": "t"}]}
-    mock_scrapegraph.search.assert_called_once_with("what is X")
+    args, kwargs = mock_scrapegraph.search.call_args
+    assert args[0] == "what is X"
+    assert kwargs["fetch_config"] is None
 
 
 def test_searchscraper_error(scrapegraph_tools, mock_scrapegraph):
