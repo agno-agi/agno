@@ -656,7 +656,7 @@ def _run(
                         user_id=user_id,
                     )
 
-                return run_response
+                raise
             except KeyboardInterrupt:
                 run_response = cast(RunOutput, run_response)
                 run_response.status = RunStatus.cancelled
@@ -1751,7 +1751,7 @@ async def _arun(
                         user_id=user_id,
                     )
 
-                return run_response
+                raise
 
             except KeyboardInterrupt:
                 run_response = cast(RunOutput, run_response)
@@ -3061,7 +3061,7 @@ def _continue_run(
                     agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
 
-                return run_response
+                raise
             except KeyboardInterrupt:
                 run_response = cast(RunOutput, run_response)
                 run_response.status = RunStatus.cancelled
@@ -3859,7 +3859,7 @@ async def _acontinue_run(
                         user_id=user_id,
                     )
 
-                return run_response
+                raise
 
             except KeyboardInterrupt:
                 run_response = cast(RunOutput, run_response)
