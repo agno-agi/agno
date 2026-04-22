@@ -301,6 +301,32 @@ def test_exclude_patterns_support_globs():
         assert "keep.txt" in files
 
 
+def test_default_excludes_env_family():
+    """The '.env*' and '*.env' default patterns together hide both prefix
+    (.env.local) and suffix (local.env) naming conventions for env files."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        file_tools = FileTools(base_dir=base_dir)
+
+        # Prefix convention (Next.js / Vite / most modern web frameworks)
+        (base_dir / ".env").write_text("SECRET=1")
+        (base_dir / ".env.local").write_text("SECRET=2")
+        (base_dir / ".env.production").write_text("SECRET=3")
+        (base_dir / ".envrc").write_text("export FOO=bar")
+
+        # Suffix convention (Docker Compose --env-file, shell scripts)
+        (base_dir / "local.env").write_text("SECRET=4")
+        (base_dir / "prod.env").write_text("SECRET=5")
+
+        # Real code that happens to contain "env" - must stay visible
+        (base_dir / "environment.py").write_text("import os")
+        (base_dir / "env.yaml").write_text("key: value")
+        (base_dir / "keep.txt").write_text("visible")
+
+        listed = sorted(json.loads(file_tools.list_files()))
+        assert listed == ["env.yaml", "environment.py", "keep.txt"]
+
+
 def test_search_content_honors_exclusions():
     """search_content should not return matches inside excluded directories."""
     with tempfile.TemporaryDirectory() as tmp_dir:

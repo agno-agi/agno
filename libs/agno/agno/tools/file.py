@@ -30,24 +30,64 @@ TEXT_EXTENSIONS = {
 }
 
 DEFAULT_EXCLUDE_PATTERNS = [
+    # Environments and secrets
     ".venv",
     "venv",
-    ".env",
+    ".env*",
+    "*.env",
+    # Version control
     ".git",
     ".hg",
     ".svn",
+    # Python caches and build artifacts
     "__pycache__",
-    "node_modules",
     ".mypy_cache",
     ".ruff_cache",
     ".pytest_cache",
     ".tox",
     ".nox",
+    ".ipynb_checkpoints",
     "dist",
     "build",
     "*.egg-info",
+    # JavaScript and TypeScript
+    "node_modules",
     ".next",
     ".turbo",
+    ".nuxt",
+    ".svelte-kit",
+    ".docusaurus",
+    ".parcel-cache",
+    ".nyc_output",
+    "*.tsbuildinfo",
+    ".serverless",
+    # JVM (Java, Kotlin, Android, Gradle)
+    ".gradle",
+    ".kotlin",
+    "*.class",
+    # Dart and Flutter
+    ".dart_tool",
+    ".flutter-plugins",
+    ".flutter-plugins-dependencies",
+    # Swift and Xcode
+    ".build",
+    "xcuserdata",
+    "*.xcuserstate",
+    # Ruby
+    ".bundle",
+    "*.gem",
+    ".yardoc",
+    # Elixir
+    "_build",
+    ".elixir_ls",
+    # .NET / Visual Studio
+    ".vs",
+    # Infrastructure as Code (state files hidden by default for security)
+    ".terraform",
+    "*.tfstate",
+    "*.tfstate.*",
+    ".terragrunt-cache",
+    # OS artifacts
     ".DS_Store",
 ]
 
