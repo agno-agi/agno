@@ -170,6 +170,30 @@ def test_scrape_with_render_heavy_js(mock_scrapegraph):
         assert kwargs["fetch_config"].mode == "js"
 
 
+def test_toolkit_level_headers_applied_to_every_call(mock_scrapegraph):
+    """Test that constructor-level `headers` flow into the SDK FetchConfig."""
+    with patch.dict("os.environ", {"SGAI_API_KEY": TEST_API_KEY}):
+        tools = ScrapeGraphTools(all=True, headers={"User-Agent": "custom-ua"})
+        tools.client = mock_scrapegraph
+
+        # smartscraper
+        extract_data = Mock()
+        extract_data.json_data = {"ok": True}
+        extract_data.raw = None
+        mock_scrapegraph.extract.return_value = _api_result(extract_data)
+        tools.smartscraper("https://x.com", "extract")
+        _, extract_kwargs = mock_scrapegraph.extract.call_args
+        assert extract_kwargs["fetch_config"].headers == {"User-Agent": "custom-ua"}
+
+        # scrape
+        scrape_data = Mock()
+        scrape_data.model_dump_json.return_value = "{}"
+        mock_scrapegraph.scrape.return_value = _api_result(scrape_data)
+        tools.scrape("https://x.com")
+        _, scrape_kwargs = mock_scrapegraph.scrape.call_args
+        assert scrape_kwargs["fetch_config"].headers == {"User-Agent": "custom-ua"}
+
+
 def test_scrape_error(scrapegraph_tools, mock_scrapegraph):
     """Test scrape returns an error string when the API fails."""
     mock_scrapegraph.scrape.return_value = _api_result(data=None, status="error", error="bad url")

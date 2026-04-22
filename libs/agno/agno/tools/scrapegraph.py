@@ -44,6 +44,7 @@ class ScrapeGraphTools(Toolkit):
         enable_crawl: bool = False,
         enable_scrape: bool = False,
         render_heavy_js: bool = False,
+        headers: Optional[Dict[str, str]] = None,
         crawl_poll_interval: int = 3,
         crawl_max_wait: int = 180,
         all: bool = False,
@@ -59,6 +60,7 @@ class ScrapeGraphTools(Toolkit):
             enable_crawl (bool): Enable multi-page crawl with structured extraction. Defaults to False.
             enable_scrape (bool): Enable raw HTML scraping. Defaults to False.
             render_heavy_js (bool): Request JavaScript rendering on every call. Defaults to False.
+            headers (Optional[Dict[str, str]]): Custom HTTP headers to send with every outbound fetch (e.g. User-Agent, Cookie, Authorization). Applied to every tool call when set. Defaults to None.
             crawl_poll_interval (int): Seconds between crawl status polls. Defaults to 3. Raise this for very large crawls.
             crawl_max_wait (int): Max seconds to wait for a crawl to complete. Defaults to 180. Raise this if your crawls legitimately take longer.
             all (bool): Enable all tools. Defaults to False.
@@ -69,6 +71,7 @@ class ScrapeGraphTools(Toolkit):
 
         self.client: ScrapeGraphAI = ScrapeGraphAI(api_key=self.api_key)
         self.render_heavy_js: bool = render_heavy_js
+        self.headers: Optional[Dict[str, str]] = headers
         self.crawl_poll_interval: int = crawl_poll_interval
         self.crawl_max_wait: int = crawl_max_wait
 
@@ -87,9 +90,12 @@ class ScrapeGraphTools(Toolkit):
         super().__init__(name="scrapegraph_tools", tools=tools, **kwargs)
 
     def _fetch_config(self) -> Optional[FetchConfig]:
+        config_kwargs: Dict[str, Any] = {}
         if self.render_heavy_js:
-            return FetchConfig(mode="js")
-        return None
+            config_kwargs["mode"] = "js"
+        if self.headers:
+            config_kwargs["headers"] = self.headers
+        return FetchConfig(**config_kwargs) if config_kwargs else None
 
     def smartscraper(self, url: str, prompt: str) -> str:
         """Extract structured data from a webpage using an AI prompt.
