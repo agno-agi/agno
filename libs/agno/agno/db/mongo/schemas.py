@@ -113,6 +113,13 @@ LEARNINGS_COLLECTION_SCHEMA = [
     {"key": "updated_at"},
 ]
 
+CONTEXT_COLLECTION_SCHEMA = [
+    {"key": "id", "unique": True},
+    {"key": "name"},
+    {"key": "created_at"},
+    {"key": "updated_at"},
+]
+
 
 def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
     """Get the index definitions for a specific collection type."""
@@ -126,6 +133,7 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
         "traces": TRACE_COLLECTION_SCHEMA,
         "spans": SPAN_COLLECTION_SCHEMA,
         "learnings": LEARNINGS_COLLECTION_SCHEMA,
+        "context": CONTEXT_COLLECTION_SCHEMA,
     }
 
     indexes = index_definitions.get(collection_type)

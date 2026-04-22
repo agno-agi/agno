@@ -21,6 +21,7 @@ from agno.db.mysql.utils import (
     get_dates_to_calculate_metrics_for,
     serialize_cultural_knowledge_for_db,
 )
+from agno.db.schemas.context import ContextItem
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -56,6 +57,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        context_table: Optional[str] = None,
         create_schema: bool = True,
     ):
         """
@@ -80,6 +82,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
+            context_table (Optional[str]): Name of the table to store context items.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
 
@@ -104,6 +107,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
+            context_table=context_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -356,6 +360,14 @@ class AsyncMySQLDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.spans_table
+
+        if table_type == "context":
+            self.context_table = await self._get_or_create_table(
+                table_name=self.context_table_name,
+                table_type="context",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.context_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -3010,3 +3022,173 @@ class AsyncMySQLDb(AsyncBaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for AsyncMySQLDb")
+
+    # -- Context methods --
+
+    async def clear_context_items(self) -> None:
+        """Delete all context items from the database."""
+        try:
+            table = await self._get_table(table_type="context")
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    await sess.execute(table.delete())
+
+        except Exception as e:
+            log_error(f"Exception deleting all context items: {e}")
+            raise e
+
+    async def delete_context_item(self, id: str) -> None:
+        """Delete a context item from the database.
+
+        Args:
+            id (str): The ID of the context item to delete.
+        """
+        try:
+            table = await self._get_table(table_type="context")
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    delete_stmt = table.delete().where(table.c.id == id)
+                    result = await sess.execute(delete_stmt)
+
+                    success = result.rowcount > 0  # type: ignore[attr-defined]
+                    if success:
+                        log_debug(f"Successfully deleted context item id: {id}")
+                    else:
+                        log_debug(f"No context item found with id: {id}")
+
+        except Exception as e:
+            log_error(f"Error deleting context item: {e}")
+            raise e
+
+    async def get_context_item(self, id: str) -> Optional[ContextItem]:
+        """Get a context item from the database.
+
+        Args:
+            id (str): The ID of the context item to get.
+
+        Returns:
+            Optional[ContextItem]: The context item, or None if it doesn't exist.
+        """
+        try:
+            table = await self._get_table(table_type="context")
+            if table is None:
+                return None
+
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = select(table).where(table.c.id == id)
+                    result = await sess.execute(stmt)
+                    row = result.fetchone()
+                    if row is None:
+                        return None
+
+                    db_row = dict(row._mapping)
+                    if not db_row:
+                        return None
+
+            return ContextItem.from_dict(db_row)
+
+        except Exception as e:
+            log_error(f"Exception reading from context table: {e}")
+            raise e
+
+    async def get_all_context_items(
+        self,
+        name: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[ContextItem]:
+        """Get all context items from the database.
+
+        Args:
+            name (Optional[str]): The name of the context item to filter by.
+            metadata (Optional[Dict[str, Any]]): Filter by metadata fields.
+
+        Returns:
+            List[ContextItem]: List of context items.
+        """
+        try:
+            table = await self._get_table(table_type="context")
+            if table is None:
+                return []
+
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = select(table)
+
+                    if name is not None:
+                        stmt = stmt.where(table.c.name == name)
+                    if metadata is not None:
+                        for key, value in metadata.items():
+                            stmt = stmt.where(
+                                func.json_unquote(func.json_extract(table.c.metadata, f"$.{key}")) == str(value)
+                            )
+
+                    result = await sess.execute(stmt)
+                    rows = result.fetchall()
+                    if not rows:
+                        return []
+
+                    db_rows = [dict(record._mapping) for record in rows]
+
+            return [ContextItem.from_dict(row) for row in db_rows]
+
+        except Exception as e:
+            log_error(f"Error reading from context table: {e}")
+            raise e
+
+    async def upsert_context_item(self, context_item: ContextItem) -> Optional[ContextItem]:
+        """Upsert a context item into the database.
+
+        Args:
+            context_item (ContextItem): The context item to upsert.
+
+        Returns:
+            Optional[ContextItem]: The upserted context item.
+        """
+        try:
+            table = await self._get_table(table_type="context", create_table_if_not_found=True)
+            if table is None:
+                return None
+
+            if context_item.id is None:
+                context_item.id = str(uuid4())
+
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = mysql.insert(table).values(
+                        id=context_item.id,
+                        name=context_item.name,
+                        content=context_item.content,
+                        description=context_item.description,
+                        metadata=context_item.metadata,
+                        variables=context_item.variables,
+                        version=context_item.version,
+                        parent_id=context_item.parent_id,
+                        optimization_notes=context_item.optimization_notes,
+                        created_at=context_item.created_at if context_item.created_at else int(time.time()),
+                        updated_at=context_item.updated_at if context_item.updated_at else int(time.time()),
+                    )
+                    stmt = stmt.on_duplicate_key_update(
+                        name=context_item.name,
+                        content=context_item.content,
+                        description=context_item.description,
+                        metadata=context_item.metadata,
+                        variables=context_item.variables,
+                        version=context_item.version,
+                        parent_id=context_item.parent_id,
+                        optimization_notes=context_item.optimization_notes,
+                        updated_at=int(time.time()),
+                    )
+                    await sess.execute(stmt)
+
+            return await self.get_context_item(context_item.id)
+
+        except Exception as e:
+            log_error(f"Error upserting context item: {e}")
+            raise e

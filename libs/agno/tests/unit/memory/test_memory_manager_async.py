@@ -100,6 +100,22 @@ class DummyAsyncMemoryDb(AsyncBaseDb):
     async def get_knowledge_content(self, *args, **kwargs):
         raise NotImplementedError
 
+    # Context Manager methods (required by AsyncBaseDb)
+    async def get_context_item(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def get_all_context_items(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def upsert_context_item(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def delete_context_item(self, *args, **kwargs):
+        raise NotImplementedError
+
+    async def clear_context_items(self, *args, **kwargs):
+        raise NotImplementedError
+
     async def get_knowledge_contents(self, *args, **kwargs):
         raise NotImplementedError
 

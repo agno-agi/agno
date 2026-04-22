@@ -162,6 +162,20 @@ VERSIONS_TABLE_SCHEMA = {
     "updated_at": {"type": String, "nullable": True},
 }
 
+CONTEXT_ITEM_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False, "index": True},
+    "content": {"type": String, "nullable": False},
+    "description": {"type": String, "nullable": True},
+    "metadata": {"type": JSON, "nullable": True},
+    "variables": {"type": JSON, "nullable": True},
+    "version": {"type": BigInteger, "nullable": False, "default": 1},
+    "parent_id": {"type": String, "nullable": True},
+    "optimization_notes": {"type": String, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+}
+
 COMPONENTS_TABLE_SCHEMA = {
     "component_id": {"type": String, "primary_key": True},
     "component_type": {"type": String, "nullable": False, "index": True},  # agent|team|workflow
@@ -333,6 +347,7 @@ def get_table_schema_definition(
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
+        "context": CONTEXT_ITEM_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
 

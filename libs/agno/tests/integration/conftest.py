@@ -157,6 +157,7 @@ def sqlite_db_real(temp_storage_db_file) -> SqliteDb:
         metrics_table="test_metrics",
         eval_table="test_evals",
         knowledge_table="test_knowledge",
+        context_table="test_context_items",
         db_file=temp_storage_db_file,
     )
 
