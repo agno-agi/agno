@@ -131,6 +131,8 @@ class BaseFactory(Generic[T]):
         if not getattr(component, "db", None) and self.db:
             component.db = self.db  # type: ignore[attr-defined]
 
+        component.store_events = True  # type: ignore[attr-defined]
+
     def resolve(self, ctx: RequestContext, expected_type: Type[T]) -> T:
         """Validate input, invoke the factory, and type-check the result.
 

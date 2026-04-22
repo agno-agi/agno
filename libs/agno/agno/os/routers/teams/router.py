@@ -42,14 +42,14 @@ from agno.os.utils import (
     get_team_by_id,
     process_audio,
     process_document,
-    resolve_team,
     process_image,
     process_video,
+    resolve_team,
 )
-from agno.team.factory import TeamFactory
 from agno.registry import Registry
 from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 from agno.utils.log import log_warning, logger
@@ -455,6 +455,7 @@ def get_team_router(
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
             from agno.team._run import acancel_run
+
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
 
@@ -536,8 +537,12 @@ def get_team_router(
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
             team = await resolve_team(  # type: ignore[assignment]
-                team_id, os.teams, factory.db if factory else os.db,
-                request=request, user_id=user_id, session_id=session_id,
+                team_id,
+                os.teams,
+                factory.db,
+                request=request,
+                user_id=user_id,
+                session_id=session_id,
             )
         else:
             try:
@@ -873,7 +878,10 @@ def get_team_router(
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
             team = await resolve_team(  # type: ignore[assignment]
-                team_id, os.teams, factory.db if factory else os.db, session_id=session_id,
+                team_id,
+                os.teams,
+                factory.db,
+                session_id=session_id,
             )
         else:
             try:
@@ -919,7 +927,10 @@ def get_team_router(
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
             team = await resolve_team(  # type: ignore[assignment]
-                team_id, os.teams, factory.db if factory else os.db, session_id=session_id,
+                team_id,
+                os.teams,
+                factory.db,
+                session_id=session_id,
             )
         else:
             try:

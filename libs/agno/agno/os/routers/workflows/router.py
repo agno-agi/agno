@@ -16,9 +16,9 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from agno.factory import FactoryContextRequired
 from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
+from agno.factory import FactoryContextRequired
 from agno.os.auth import (
     get_auth_token_from_request,
     get_authentication_dependency,
@@ -44,11 +44,11 @@ from agno.os.utils import (
     get_workflow_by_id_async,
     resolve_workflow,
 )
-from agno.workflow.factory import WorkflowFactory
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowErrorEvent
 from agno.utils.log import log_debug, log_warning, logger
 from agno.utils.serialize import json_serializer
+from agno.workflow.factory import WorkflowFactory
 from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
@@ -95,8 +95,12 @@ async def handle_workflow_via_websocket(
             )
             try:
                 workflow = await get_workflow_by_id_async(
-                    workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry,
-                    create_fresh=True, ctx=ctx,
+                    workflow_id=workflow_id,
+                    workflows=os.workflows,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    ctx=ctx,
                 )
             except Exception as e:
                 await websocket.send_text(json.dumps({"event": "error", "error": f"Factory error: {e}"}))
@@ -841,7 +845,9 @@ def get_workflow_router(
             return WorkflowResponse.from_factory(factory)
 
         try:
-            workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)  # type: ignore[assignment]
+            workflow = get_workflow_by_id(
+                workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+            )  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
@@ -1130,11 +1136,14 @@ def get_workflow_router(
         factory = find_factory_by_id(workflow_id, os.workflows)
         if factory:
             from agno.run.cancel import acancel_run
+
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
 
         try:
-            workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)  # type: ignore[assignment]
+            workflow = get_workflow_by_id(
+                workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+            )  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
@@ -1170,11 +1179,16 @@ def get_workflow_router(
         factory = find_factory_by_id(workflow_id, os.workflows)
         if factory:
             workflow = await resolve_workflow(  # type: ignore[assignment]
-                workflow_id, os.workflows, factory.db if factory else os.db, session_id=session_id,
+                workflow_id,
+                os.workflows,
+                factory.db,
+                session_id=session_id,
             )
         else:
             try:
-                workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)  # type: ignore[assignment]
+                workflow = get_workflow_by_id(
+                    workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+                )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving workflow '{workflow_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")

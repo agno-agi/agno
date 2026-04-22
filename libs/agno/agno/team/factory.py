@@ -14,4 +14,3 @@ class TeamFactory(BaseFactory):
     def _post_resolve(self, component) -> None:
         super()._post_resolve(component)
         component.initialize_team()
-        component.store_events = True
