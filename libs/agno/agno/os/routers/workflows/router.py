@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
+from agno.factory import FactoryContextRequired
 from agno.os.auth import (
     get_auth_token_from_request,
     get_authentication_dependency,
@@ -36,14 +37,18 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
     get_workflow_by_id,
+    get_workflow_by_id_async,
+    resolve_workflow,
 )
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowErrorEvent
 from agno.utils.log import log_debug, log_warning, logger
 from agno.utils.serialize import json_serializer
+from agno.workflow.factory import WorkflowFactory
 from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
@@ -51,22 +56,63 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
-async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os: "AgentOS"):
+async def handle_workflow_via_websocket(
+    websocket: WebSocket, message: dict, os: "AgentOS", ws_user_context: Optional[Dict[str, Any]] = None
+):
     """Handle workflow execution directly via WebSocket"""
     try:
         workflow_id = message.get("workflow_id")
         session_id = message.get("session_id")
         user_message = message.get("message", "")
         user_id = message.get("user_id")
+        factory_input = message.get("factory_input")
 
         if not workflow_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
             return
 
-        # Get workflow from OS
-        workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+        # Get workflow from OS — supports both static and factory components
+        is_factory = os.workflows and any(
+            isinstance(w, WorkflowFactory) and w.id == workflow_id for w in (os.workflows or [])
         )
+        if is_factory:
+            from agno.factory import RequestContext, TrustedContext
+
+            # Build trusted context from JWT claims if available (via websocket auth)
+            trusted = TrustedContext()
+            if ws_user_context:
+                claims = ws_user_context.get("payload", {})
+                scopes = ws_user_context.get("scopes", frozenset())
+                if isinstance(scopes, (list, set)):
+                    scopes = frozenset(scopes)
+                trusted = TrustedContext(claims=claims, scopes=scopes)
+
+            ctx = RequestContext(
+                user_id=user_id,
+                session_id=session_id,
+                input=factory_input,
+                trusted=trusted,
+            )
+            try:
+                workflow = await get_workflow_by_id_async(
+                    workflow_id=workflow_id,
+                    workflows=os.workflows,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    ctx=ctx,
+                )
+            except Exception as e:
+                await websocket.send_text(json.dumps({"event": "error", "error": f"Factory error: {e}"}))
+                return
+        else:
+            try:
+                workflow = get_workflow_by_id(
+                    workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+                )
+            except Exception as e:
+                await websocket.send_text(json.dumps({"event": "error", "error": f"Error resolving workflow: {e}"}))
+                return
         if not workflow:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
             return
@@ -146,9 +192,16 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
         if buffer_status is None:
             # Run not in buffer - check database
             if workflow_id and session_id:
-                workflow = get_workflow_by_id(
-                    workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
-                )
+                try:
+                    workflow = get_workflow_by_id(
+                        workflow_id=workflow_id,
+                        workflows=os.workflows,
+                        db=os.db,
+                        registry=os.registry,
+                        create_fresh=True,
+                    )
+                except FactoryContextRequired:
+                    workflow = None
                 if workflow and isinstance(workflow, Workflow):
                     workflow_run = await workflow.aget_run_output(run_id, session_id)
 
@@ -647,7 +700,7 @@ def get_websocket_router(
                         if "user_id" not in message and websocket_user_context.get("user_id"):
                             message["user_id"] = websocket_user_context["user_id"]
                     # Handle workflow execution directly via WebSocket
-                    await handle_workflow_via_websocket(websocket, message, os)
+                    await handle_workflow_via_websocket(websocket, message, os, ws_user_context=websocket_user_context)
 
                 elif action == "reconnect":
                     # Subscribe/reconnect to an existing workflow run
@@ -786,16 +839,21 @@ def get_workflow_router(
         request: Request,
         version: Optional[int] = Query(None, description="Workflow version to retrieve"),
     ) -> WorkflowResponse:
-        workflow = get_workflow_by_id(
-            workflow_id=workflow_id,
-            workflows=os.workflows,
-            db=os.db,
-            version=version,
-            registry=os.registry,
-            create_fresh=True,
-        )
+        # Factory workflows: return factory metadata directly
+        factory = find_factory_by_id(workflow_id, os.workflows)
+        if factory:
+            return WorkflowResponse.from_factory(factory)
+
+        try:
+            workflow = get_workflow_by_id(
+                workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+            )  # type: ignore[assignment]
+        except Exception as e:
+            logger.error(f"Error resolving workflow '{workflow_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
+
         if isinstance(workflow, RemoteWorkflow):
             return await workflow.get_workflow_config()
         else:
@@ -847,6 +905,10 @@ def get_workflow_router(
         ),
         user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
         version: Optional[int] = Form(None, description="Workflow version to use for this run"),
+        factory_input: Optional[str] = Form(
+            None,
+            description="JSON object with factory-specific parameters for dynamic workflow construction",
+        ),
     ):
         kwargs = await get_request_kwargs(request, create_workflow_run)
 
@@ -874,17 +936,18 @@ def get_workflow_router(
                 log_warning("Metadata parameter passed in both request state and kwargs, using request state")
             kwargs["metadata"] = metadata
 
-        # Retrieve the workflow by ID
-        workflow = get_workflow_by_id(
-            workflow_id=workflow_id,
-            workflows=os.workflows,
-            db=os.db,
+        # Retrieve the workflow by ID (supports both static and factory components)
+        workflow = await resolve_workflow(
+            workflow_id,
+            os.workflows,
+            os.db,
+            os.registry,
             version=version,
-            registry=os.registry,
-            create_fresh=True,
+            request=request,
+            user_id=user_id,
+            session_id=session_id,
+            factory_input=factory_input,
         )
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Workflow not found")
 
         if session_id:
             logger.debug(f"Continuing session: {session_id}")
@@ -969,6 +1032,10 @@ def get_workflow_router(
         session_id: Optional[str] = Form(None, description="Session ID for the paused run"),
         user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
         stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
+        factory_input: Optional[str] = Form(
+            None,
+            description="JSON object with factory-specific parameters for dynamic workflow reconstruction",
+        ),
     ):
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -981,15 +1048,16 @@ def get_workflow_router(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON in step_requirements field")
 
-        workflow = get_workflow_by_id(
-            workflow_id=workflow_id,
-            workflows=os.workflows,
-            db=os.db,
-            registry=os.registry,
-            create_fresh=True,
+        workflow = await resolve_workflow(
+            workflow_id,
+            os.workflows,
+            os.db,
+            os.registry,
+            request=request,
+            user_id=user_id,
+            session_id=session_id,
+            factory_input=factory_input,
         )
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Workflow not found")
 
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Continue is not supported for remote workflows")
@@ -1069,10 +1137,21 @@ def get_workflow_router(
         dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
     )
     async def cancel_workflow_run(workflow_id: str, run_id: str):
-        workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
-        )
+        # Factory workflows: cancel is static, no workflow instance needed
+        factory = find_factory_by_id(workflow_id, os.workflows)
+        if factory:
+            from agno.run.cancel import acancel_run
 
+            await acancel_run(run_id)
+            return JSONResponse(content={}, status_code=200)
+
+        try:
+            workflow = get_workflow_by_id(
+                workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+            )  # type: ignore[assignment]
+        except Exception as e:
+            logger.error(f"Error resolving workflow '{workflow_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
@@ -1099,13 +1178,41 @@ def get_workflow_router(
     async def get_workflow_run(
         workflow_id: str,
         run_id: str,
+        request: Request,
         session_id: str = Query(..., description="Session ID for the run"),
+        factory_input: Optional[str] = Query(
+            None,
+            description="JSON object with factory-specific parameters for dynamic workflow reconstruction",
+        ),
     ):
-        workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
-        )
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Workflow not found")
+        user_id = getattr(request.state, "user_id", None)
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            if session_id and session_id != request.state.session_id:
+                log_warning("Session ID parameter passed in both request state and query params, using request state")
+            session_id = request.state.session_id
+
+        # Factory workflows: resolve to get a real workflow for session lookup
+        factory = find_factory_by_id(workflow_id, os.workflows)
+        if factory:
+            workflow = await resolve_workflow(  # type: ignore[assignment]
+                workflow_id,
+                os.workflows,
+                factory.db,
+                request=request,
+                user_id=user_id,
+                session_id=session_id,
+                factory_input=factory_input,
+            )
+        else:
+            try:
+                workflow = get_workflow_by_id(
+                    workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+                )  # type: ignore[assignment]
+            except Exception as e:
+                logger.error(f"Error resolving workflow '{workflow_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
+            if workflow is None:
+                raise HTTPException(status_code=404, detail="Workflow not found")
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Run polling is not supported for remote workflows")
 
@@ -1132,18 +1239,34 @@ def get_workflow_router(
     )
     async def list_workflow_runs(
         workflow_id: str,
+        request: Request,
         session_id: str = Query(..., description="Session ID to list runs for"),
         status: Optional[str] = Query(
             None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR, PAUSED)"
         ),
+        factory_input: Optional[str] = Query(
+            None,
+            description="JSON object with factory-specific parameters for dynamic workflow reconstruction",
+        ),
     ):
         from agno.os.schema import WorkflowRunSchema
 
-        workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+        user_id = getattr(request.state, "user_id", None)
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            if session_id and session_id != request.state.session_id:
+                log_warning("Session ID parameter passed in both request state and query params, using request state")
+            session_id = request.state.session_id
+
+        workflow = await resolve_workflow(
+            workflow_id,
+            os.workflows,
+            os.db,
+            os.registry,
+            request=request,
+            user_id=user_id,
+            session_id=session_id,
+            factory_input=factory_input,
         )
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Workflow not found")
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Run listing is not supported for remote workflows")
 

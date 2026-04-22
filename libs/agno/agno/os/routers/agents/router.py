@@ -17,6 +17,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent
+from agno.agent.factory import AgentFactory
 from agno.agent.remote import RemoteAgent
 from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
@@ -38,6 +39,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    find_factory_by_id,
     format_sse_event,
     get_agent_by_id,
     get_request_kwargs,
@@ -45,6 +47,7 @@ from agno.os.utils import (
     process_document,
     process_image,
     process_video,
+    resolve_agent,
 )
 from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
@@ -239,6 +242,10 @@ def get_agent_router(
         background: bool = Form(
             False, description="Run in background and return immediately with run metadata (requires database)"
         ),
+        factory_input: Optional[str] = Form(
+            None,
+            description="JSON object with factory-specific parameters for dynamic agent construction",
+        ),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
 
@@ -266,11 +273,17 @@ def get_agent_router(
                 log_warning("Metadata parameter passed in both request state and kwargs, using request state")
             kwargs["metadata"] = metadata
 
-        agent = get_agent_by_id(
-            agent_id, os.agents, os.db, registry, version=int(version) if version else None, create_fresh=True
+        agent = await resolve_agent(
+            agent_id,
+            os.agents,
+            os.db,
+            registry,
+            version=int(version) if version else None,
+            request=request,
+            user_id=user_id,
+            session_id=session_id,
+            factory_input=factory_input,
         )
-        if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
 
         if session_id is None or session_id == "":
             log_debug("Creating new session")
@@ -468,7 +481,21 @@ def get_agent_router(
         agent_id: str,
         run_id: str,
     ):
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        # Factory agents: cancel is static, no agent instance needed
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            from agno.agent._run import acancel_run
+
+            await acancel_run(run_id)
+            return JSONResponse(content={}, status_code=200)
+
+        try:
+            agent = get_agent_by_id(
+                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+            )  # type: ignore[assignment]
+        except Exception as e:
+            log_error(f"Error resolving agent '{agent_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -537,7 +564,26 @@ def get_agent_router(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
 
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        # Factory agents: re-invoke factory to get a real agent for continue
+        # (needs model/tools to resume the paused run, factory_input not available)
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            agent = await resolve_agent(  # type: ignore[assignment]
+                agent_id,
+                os.agents,
+                factory.db,
+                request=request,
+                user_id=user_id,
+                session_id=session_id,
+            )
+        else:
+            try:
+                agent = get_agent_by_id(
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                )  # type: ignore[assignment]
+            except Exception as e:
+                log_error(f"Error resolving agent '{agent_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -680,11 +726,12 @@ def get_agent_router(
         agents: List[AgentResponse] = []
         if accessible_agents:
             for agent in accessible_agents:
-                if isinstance(agent, RemoteAgent):
+                if isinstance(agent, Agent):
+                    agents.append(await AgentResponse.from_agent(agent=agent, is_component=False))
+                elif isinstance(agent, AgentFactory):
+                    agents.append(AgentResponse.from_factory(agent))
+                elif isinstance(agent, RemoteAgent):
                     agents.append(await agent.get_agent_config())
-                else:
-                    agent_response = await AgentResponse.from_agent(agent=agent, is_component=False)
-                    agents.append(agent_response)
 
         if os.db and isinstance(os.db, BaseDb):
             from agno.agent.agent import get_agents
@@ -739,7 +786,18 @@ def get_agent_router(
         dependencies=[Depends(require_resource_access("agents", "read", "agent_id"))],
     )
     async def get_agent(agent_id: str, request: Request) -> AgentResponse:
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        # Factory agents: return factory metadata directly (no invocation needed)
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            return AgentResponse.from_factory(factory)
+
+        try:
+            agent = get_agent_by_id(
+                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+            )  # type: ignore[assignment]
+        except Exception as e:
+            log_error(f"Error resolving agent '{agent_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -768,13 +826,29 @@ def get_agent_router(
         run_id: str,
         session_id: str = Query(..., description="Session ID for the run"),
     ):
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
-        if isinstance(agent, RemoteAgent):
-            raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
+        # Factory agents: resolve to get a real agent for session lookup
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            agent = await resolve_agent(  # type: ignore[assignment]
+                agent_id,
+                os.agents,
+                factory.db,
+                session_id=session_id,
+            )
+        else:
+            try:
+                agent = get_agent_by_id(
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                )  # type: ignore[assignment]
+            except Exception as e:
+                log_error(f"Error resolving agent '{agent_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+            if agent is None:
+                raise HTTPException(status_code=404, detail="Agent not found")
+            if isinstance(agent, RemoteAgent):
+                raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
 
-        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
 
@@ -802,16 +876,32 @@ def get_agent_router(
     ):
         from agno.os.schema import RunSchema
 
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
-        if isinstance(agent, RemoteAgent):
-            raise HTTPException(status_code=400, detail="Run listing is not supported for remote agents")
+        # Factory agents: resolve to get a real agent for session lookup
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            agent = await resolve_agent(  # type: ignore[assignment]
+                agent_id,
+                os.agents,
+                factory.db,
+                session_id=session_id,
+            )
+        else:
+            try:
+                agent = get_agent_by_id(
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                )  # type: ignore[assignment]
+            except Exception as e:
+                log_error(f"Error resolving agent '{agent_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+            if agent is None:
+                raise HTTPException(status_code=404, detail="Agent not found")
+            if isinstance(agent, RemoteAgent):
+                raise HTTPException(status_code=400, detail="Run listing is not supported for remote agents")
 
         # Load the session to get its runs
         from agno.agent._storage import aread_or_create_session
 
-        session = await aread_or_create_session(agent, session_id=session_id)
+        session = await aread_or_create_session(agent, session_id=session_id)  # type: ignore[arg-type]
         runs = session.runs or []
 
         # Convert to dicts and optionally filter by status
