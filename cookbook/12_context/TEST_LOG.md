@@ -18,7 +18,19 @@ the files it pulled from.
 
 ---
 
-### 01_web_exa_mcp.py
+### 01_web_exa.py
+
+**Status:** Smoke-only (no EXA_API_KEY available locally)
+
+**Description:** `WebContextProvider(backend=ExaBackend())`.
+
+**Result:** Without a key, `web.status()` returns
+`Status(ok=False, detail='EXA_API_KEY not set')` — clean, no crash.
+`get_tools()` returns `[query_web]` as expected.
+
+---
+
+### 02_web_exa_mcp.py
 
 **Status:** PASS
 
@@ -30,18 +42,6 @@ provider.
 **Result:** Provider connected, status reported `mcp.exa.ai
 (keyless)`, agent answered a CPython-release question and cited
 python.org URLs; session closed cleanly.
-
----
-
-### 02_web_exa.py
-
-**Status:** Smoke-only (no EXA_API_KEY available locally)
-
-**Description:** `WebContextProvider(backend=ExaBackend())`.
-
-**Result:** Without a key, `web.status()` returns
-`Status(ok=False, detail='EXA_API_KEY not set')` — clean, no crash.
-`get_tools()` returns `[query_web]` as expected.
 
 ---
 
@@ -73,13 +73,18 @@ both rows; direct SQL check passed.
 
 ### 05_slack.py
 
-**Status:** PASS
+**Status:** PASS (read path); write path not E2E tested to avoid
+posting to a real workspace — unit test covers routing.
 
 **Description:** `SlackContextProvider` against a real Slack
-workspace.
+workspace. Default surface is `query_slack` + `update_slack`, with
+separate read and write sub-agents. Cookbook runs the read prompt
+always; opts into posting only when `SLACK_WRITE_CHANNEL` is set.
 
-**Result:** Provider authenticated with the bot token, sub-agent
-called `list_channels`, returned the workspace's public channels.
+**Result:** Read sub-agent authenticated with the bot token, called
+`list_channels`, returned the workspace's public channels with
+purposes. Without `SLACK_WRITE_CHANNEL` set the cookbook prints the
+opt-in hint and exits — no side effects.
 
 ---
 

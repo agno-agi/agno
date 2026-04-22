@@ -125,10 +125,10 @@ def test_slack_falls_back_to_slack_token(monkeypatch):
     assert p.token == "xoxb-fallback"
 
 
-def test_slack_default_surface_is_single_query_tool():
+def test_slack_default_surface_is_query_plus_update():
     p = SlackContextProvider(token="xoxb-x")
     tools = p.get_tools()
-    assert [t.name for t in tools] == ["query_slack"]
+    assert [t.name for t in tools] == ["query_slack", "update_slack"]
 
 
 def test_slack_status_reports_configured():
@@ -136,6 +136,39 @@ def test_slack_status_reports_configured():
     status = p.status()
     assert status.ok is True
     assert "token configured" in status.detail
+
+
+@pytest.mark.asyncio
+async def test_slack_aupdate_routes_through_write_agent(monkeypatch):
+    """aupdate must hit the write sub-agent, not the read one."""
+    from agno.context.provider import Answer
+
+    p = SlackContextProvider(token="xoxb-x")
+
+    calls: dict[str, int] = {"read": 0, "write": 0}
+
+    class _StubAgent:
+        def __init__(self, bucket: str):
+            self._bucket = bucket
+
+        async def arun(self, instruction: str):
+            calls[self._bucket] += 1
+
+            class _Out:
+                content = f"{self._bucket}:{instruction}"
+
+                def get_content_as_string(self):
+                    return self.content
+
+            return _Out()
+
+    p._read_agent = _StubAgent("read")  # type: ignore[assignment]
+    p._write_agent = _StubAgent("write")  # type: ignore[assignment]
+
+    out = await p.aupdate("post hello to #ops")
+    assert isinstance(out, Answer)
+    assert calls == {"read": 0, "write": 1}
+    assert out.text == "write:post hello to #ops"
 
 
 # ---------------------------------------------------------------------------
