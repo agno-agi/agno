@@ -86,13 +86,10 @@ class ScrapeGraphTools(Toolkit):
 
         super().__init__(name="scrapegraph_tools", tools=tools, **kwargs)
 
-    def _fetch_config(self, headers: Optional[Dict[str, str]] = None) -> Optional[FetchConfig]:
-        config_kwargs: Dict[str, Any] = {}
+    def _fetch_config(self) -> Optional[FetchConfig]:
         if self.render_heavy_js:
-            config_kwargs["mode"] = "js"
-        if headers:
-            config_kwargs["headers"] = headers
-        return FetchConfig(**config_kwargs) if config_kwargs else None
+            return FetchConfig(mode="js")
+        return None
 
     def smartscraper(self, url: str, prompt: str) -> str:
         """Extract structured data from a webpage using an AI prompt.
@@ -204,12 +201,11 @@ class ScrapeGraphTools(Toolkit):
         except Exception as error:
             return f"Error crawling {url}: {type(error).__name__}: {error}"
 
-    def scrape(self, url: str, headers: Optional[Dict[str, str]] = None) -> str:
+    def scrape(self, url: str) -> str:
         """Get raw HTML content from a webpage.
 
         Args:
             url (str): The URL to scrape.
-            headers (Optional[Dict[str, str]]): Optional HTTP headers.
 
         Returns:
             str: JSON string with the scrape result, or an error message.
@@ -219,7 +215,7 @@ class ScrapeGraphTools(Toolkit):
             response = self.client.scrape(
                 url,
                 formats=[HtmlFormatConfig()],
-                fetch_config=self._fetch_config(headers=headers),
+                fetch_config=self._fetch_config(),
             )
             if response.status != "success" or response.data is None:
                 return f"Error scraping {url}: {response.error or 'unknown error'}"

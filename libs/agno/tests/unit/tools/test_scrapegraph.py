@@ -170,18 +170,6 @@ def test_scrape_with_render_heavy_js(mock_scrapegraph):
         assert kwargs["fetch_config"].mode == "js"
 
 
-def test_scrape_with_custom_headers(scrapegraph_tools, mock_scrapegraph):
-    """Test scrape forwards custom headers to the SDK."""
-    data = Mock()
-    data.model_dump_json.return_value = "{}"
-    mock_scrapegraph.scrape.return_value = _api_result(data)
-
-    scrapegraph_tools.scrape("https://example.com", headers={"X-Custom": "abc"})
-
-    _, kwargs = mock_scrapegraph.scrape.call_args
-    assert kwargs["fetch_config"].headers == {"X-Custom": "abc"}
-
-
 def test_scrape_error(scrapegraph_tools, mock_scrapegraph):
     """Test scrape returns an error string when the API fails."""
     mock_scrapegraph.scrape.return_value = _api_result(data=None, status="error", error="bad url")
