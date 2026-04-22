@@ -8,7 +8,7 @@ Requirements:
     pip install claude-agent-sdk
 
 Usage:
-    .venvs/demo/bin/python cookbook/frameworks/claude_tools.py
+    .venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/claude_tools.py
 """
 
 from agno.agents.claude import ClaudeAgent

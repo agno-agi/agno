@@ -20,7 +20,7 @@ from agno.db.postgres import PostgresDb
 lm = dspy.LM("openai/gpt-5.4")
 dspy.configure(lm=lm)
 
-# ----- Create agent with SQLite persistence -----
+# ----- Create agent with Postgres persistence -----
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 agent = DSPyAgent(
@@ -53,6 +53,5 @@ agent.print_response(
     session_id=SESSION_ID,
 )
 
-print("\n--- Session persisted to tmp/dspy_sessions.db ---")
-print(f"Session ID: {SESSION_ID}")
+print(f"\n--- Session {SESSION_ID} persisted to Postgres ---")
 print("You can inspect the DB to see all runs and messages stored.")

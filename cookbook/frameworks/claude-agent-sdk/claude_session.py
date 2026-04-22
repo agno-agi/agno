@@ -44,5 +44,4 @@ agent.print_response(
     session_id=SESSION_ID,
 )
 
-print("\n--- Session persisted to tmp/claude_sessions.db ---")
-print(f"Session ID: {SESSION_ID}")
+print(f"\n--- Session {SESSION_ID} persisted to Postgres ---")

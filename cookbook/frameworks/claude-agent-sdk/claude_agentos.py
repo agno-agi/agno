@@ -12,7 +12,7 @@ Requirements:
     pip install claude-agent-sdk
 
 Usage:
-    .venvs/demo/bin/python cookbook/frameworks/claude_agentos.py
+    .venvs/demo/bin/python cookbook/frameworks/claude-agent-sdk/claude_agentos.py
 
 Then call the API:
     # List agents

@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, cast
+from typing import Any, AsyncIterator, Dict, List, Optional
 from uuid import uuid4
 
 from agno.agents.base import BaseExternalAgent
@@ -61,7 +61,14 @@ class LangGraphAgent(BaseExternalAgent):
     config: Optional[Dict[str, Any]] = field(default=None)
     framework: str = "langgraph"
 
-    async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> Any:
+    async def _arun_adapter(
+        self,
+        input: Any,
+        *,
+        history: Optional[List[Dict[str, Any]]] = None,
+        _lg_config_override: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Any:
         """Non-streaming LangGraph invocation."""
         try:
             from langchain_core.messages import AIMessage
@@ -72,7 +79,7 @@ class LangGraphAgent(BaseExternalAgent):
             graph_input = None
         else:
             graph_input = {self.input_key: build_messages_with_history(input, history)}
-        config = self._build_config(kwargs)
+        config = self._build_config(kwargs, override=_lg_config_override)
 
         result = await self.graph.ainvoke(graph_input, config=config)
 
@@ -84,7 +91,12 @@ class LangGraphAgent(BaseExternalAgent):
         return str(result)
 
     async def _arun_adapter_stream(
-        self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
+        self,
+        input: Any,
+        *,
+        history: Optional[List[Dict[str, Any]]] = None,
+        _lg_config_override: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> AsyncIterator[RunOutputEvent]:
         """Streaming LangGraph invocation with tool call visibility."""
         if self.graph is None:
@@ -96,7 +108,7 @@ class LangGraphAgent(BaseExternalAgent):
             graph_input = None
         else:
             graph_input = {self.input_key: build_messages_with_history(input, history)}
-        config = self._build_config(kwargs)
+        config = self._build_config(kwargs, override=_lg_config_override)
 
         async for event in self.graph.astream_events(graph_input, config=config, version="v2"):
             kind = event.get("event")
@@ -192,13 +204,10 @@ class LangGraphAgent(BaseExternalAgent):
             agent.replay("my-session", checkpoint_id, stream=True)
         """
         replay_config = self._build_config({"session_id": session_id})
-        replay_config.setdefault("configurable", {})["checkpoint_id"] = checkpoint_id
+        replay_config["configurable"]["checkpoint_id"] = checkpoint_id
 
         # Pass config through kwargs; self.config stays untouched.
-        result = self.run(None, stream=stream, session_id=session_id, _lg_config_override=replay_config, **kwargs)
-        if stream:
-            return list(cast(Iterator, result))
-        return result
+        return self.run(None, stream=stream, session_id=session_id, _lg_config_override=replay_config, **kwargs)
 
     def print_replay(
         self,
@@ -210,7 +219,7 @@ class LangGraphAgent(BaseExternalAgent):
     ) -> None:
         """Replay from a checkpoint and print the response with Rich formatting."""
         replay_config = self._build_config({"session_id": session_id})
-        replay_config.setdefault("configurable", {})["checkpoint_id"] = checkpoint_id
+        replay_config["configurable"]["checkpoint_id"] = checkpoint_id
         self.print_response(None, stream=stream, session_id=session_id, _lg_config_override=replay_config, **kwargs)
 
     def fork(
@@ -232,7 +241,7 @@ class LangGraphAgent(BaseExternalAgent):
             agent.fork("my-session", checkpoint_id, {"topic": "cats"}, stream=True)
         """
         fork_config_base = self._build_config({"session_id": session_id})
-        fork_config_base.setdefault("configurable", {})["checkpoint_id"] = checkpoint_id
+        fork_config_base["configurable"]["checkpoint_id"] = checkpoint_id
 
         update_kwargs: Dict[str, Any] = {"values": values}
         if as_node:
@@ -240,10 +249,7 @@ class LangGraphAgent(BaseExternalAgent):
         new_config = self.graph.update_state(fork_config_base, **update_kwargs)
 
         # Pass config through kwargs; self.config stays untouched.
-        result = self.run(None, stream=stream, session_id=session_id, _lg_config_override=new_config, **kwargs)
-        if stream:
-            return list(cast(Iterator, result))
-        return result
+        return self.run(None, stream=stream, session_id=session_id, _lg_config_override=new_config, **kwargs)
 
     def print_fork(
         self,
@@ -257,7 +263,7 @@ class LangGraphAgent(BaseExternalAgent):
     ) -> None:
         """Fork from a checkpoint with modified state and print the response."""
         fork_config_base = self._build_config({"session_id": session_id})
-        fork_config_base.setdefault("configurable", {})["checkpoint_id"] = checkpoint_id
+        fork_config_base["configurable"]["checkpoint_id"] = checkpoint_id
 
         update_kwargs: Dict[str, Any] = {"values": values}
         if as_node:
@@ -265,13 +271,11 @@ class LangGraphAgent(BaseExternalAgent):
         new_config = self.graph.update_state(fork_config_base, **update_kwargs)
         self.print_response(None, stream=stream, session_id=session_id, _lg_config_override=new_config, **kwargs)
 
-    def _build_config(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_config(self, kwargs: Dict[str, Any], *, override: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Build a LangGraph config mapping session_id to thread_id."""
-        # Replay/fork pass a prebuilt config via _lg_config_override so self.config stays untouched.
-        override = kwargs.pop("_lg_config_override", None)
+        # Shallow copy: configs commonly carry non-deepcopyable callbacks/tracers at the top level.
         base = override if override is not None else self.config
         config: Dict[str, Any] = dict(base or {})
-        # Rebuild the configurable subdict so mutations don't leak back into self.config.
         config["configurable"] = dict(config.get("configurable") or {})
         session_id = kwargs.get("session_id")
         if session_id:
