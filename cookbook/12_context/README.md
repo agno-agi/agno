@@ -20,7 +20,9 @@ Providers ship in this package:
 | Provider | Source | Tools |
 |----------|--------|-------|
 | `FilesystemContextProvider` | Local directory tree | `query_<id>` (read-only `FileTools` sub-agent) |
-| `WebContextProvider` + `ExaBackend` | The open web via Exa | `query_<id>` (search + fetch sub-agent) |
+| `WebContextProvider` + `ExaMCPBackend` | Web via Exa's public MCP server (keyless / keyed) | `query_<id>` (search + fetch sub-agent) |
+| `WebContextProvider` + `ExaBackend` | Web via Exa's direct SDK | `query_<id>` (search + fetch sub-agent) |
+| `WebContextProvider` + `ParallelBackend` | Web via Parallel's beta API | `query_<id>` (search + fetch sub-agent) |
 | `DatabaseContextProvider` | Any SQL database (SQLAlchemy) | `query_<id>`, `update_<id>` (separate read/write sub-agents) |
 | `SlackContextProvider` | A Slack workspace (read-only) | `query_<id>` (search / history / threads / users sub-agent) |
 | `MCPContextProvider` | One MCP server | `query_<id>` (sub-agent over the server's tools) or flat tools in `mode=tools` |
@@ -31,35 +33,43 @@ Providers ship in this package:
 | File | What it shows |
 |------|---------------|
 | `00_filesystem.py` | Browse local files via `FilesystemContextProvider` |
-| `01_web_exa.py` | Web research via `WebContextProvider(backend=ExaBackend())` |
-| `02_database_read_write.py` | Read + write a SQLite DB; end-to-end round trip |
-| `03_slack.py` | Read-only Slack workspace search + channel history |
-| `04_mcp_server.py` | Wrap an MCP server; explicit `asetup` / `aclose` lifecycle |
-| `05_google_drive.py` | Google Drive via a service account; reads a shared Doc |
-| `06_multi_provider.py` | Three providers on one agent; names compose cleanly |
-| `07_custom_provider.py` | Subclass `ContextProvider` for your own source |
+| `01_web_exa_mcp.py` | Web research via Exa's keyless public MCP endpoint |
+| `02_web_exa.py` | Web research via Exa's direct SDK (needs `EXA_API_KEY`) |
+| `03_web_parallel.py` | Web research via Parallel's beta API |
+| `04_database_read_write.py` | Read + write a SQLite DB; end-to-end round trip |
+| `05_slack.py` | Read-only Slack workspace search + channel lookup |
+| `06_mcp_server.py` | Wrap an MCP server; explicit `asetup` / `aclose` lifecycle |
+| `07_google_drive.py` | Google Drive via a service account; reads a shared Doc |
+| `08_multi_provider.py` | Three providers on one agent; names compose cleanly |
+| `09_custom_provider.py` | Subclass `ContextProvider` for your own source |
 
 ## Run
 
 ```bash
 # Self-contained (no external service)
 OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/00_filesystem.py
-OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/02_database_read_write.py
-OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/07_custom_provider.py
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/04_database_read_write.py
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/09_custom_provider.py
 
-# Needs Exa
-OPENAI_API_KEY=... EXA_API_KEY=... .venvs/demo/bin/python cookbook/12_context/01_web_exa.py
+# Keyless Exa MCP — no signup required
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/01_web_exa_mcp.py
 
-# Needs Slack bot token (xoxb-...)
-OPENAI_API_KEY=... SLACK_BOT_TOKEN=xoxb-... .venvs/demo/bin/python cookbook/12_context/03_slack.py
+# Exa SDK (keyed) — higher throughput
+OPENAI_API_KEY=... EXA_API_KEY=... .venvs/demo/bin/python cookbook/12_context/02_web_exa.py
 
-# Needs `uvx` on PATH (ships with `uv`) — MCP time server is downloaded on first run
-OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/04_mcp_server.py
+# Parallel SDK
+OPENAI_API_KEY=... PARALLEL_API_KEY=... .venvs/demo/bin/python cookbook/12_context/03_web_parallel.py
 
-# Needs a Google service-account JSON with at least one folder shared to its email
+# Slack bot token (xoxb-...)
+OPENAI_API_KEY=... SLACK_BOT_TOKEN=xoxb-... .venvs/demo/bin/python cookbook/12_context/05_slack.py
+
+# `uvx` on PATH (ships with `uv`) — the MCP time server is downloaded on first run
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/06_mcp_server.py
+
+# Google service-account JSON with at least one folder shared to its email
 OPENAI_API_KEY=... GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/sa.json \
-    .venvs/demo/bin/python cookbook/12_context/05_google_drive.py
+    .venvs/demo/bin/python cookbook/12_context/07_google_drive.py
 
-# Needs OpenAI + Exa
-OPENAI_API_KEY=... EXA_API_KEY=... .venvs/demo/bin/python cookbook/12_context/06_multi_provider.py
+# Multi-provider (fs + web + db) — web uses Exa MCP, so no EXA key required
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/08_multi_provider.py
 ```

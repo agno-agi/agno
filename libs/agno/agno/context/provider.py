@@ -10,8 +10,7 @@ the web, a database, an MCP server — to an agent. Subclasses implement:
 
 Providers that support writes also override `aupdate()` (and optionally
 `update()`); the default raises `NotImplementedError` so read-only
-providers inherit a clean failure that `_update_tool()` surfaces as
-"<name> is read-only".
+providers inherit a clean failure that `_update_tool()` surfaces as "<name> is read-only".
 
 `mode` controls how the provider surfaces itself to the calling agent:
 
@@ -130,12 +129,13 @@ class ContextProvider(ABC):
         return None
 
     async def asetup(self) -> None:
-        """Eagerly prepare any state the provider needs. Default: no-op.
+        """Setup any resources the provider needs. Default: no-op.
 
         Override in subclasses that need async initialization —
-        connecting an MCP session, opening a watch stream, priming a
+        connecting to an MCP session, opening a watch stream, priming a
         cache. Paired with ``aclose()``. Must be idempotent (safe to
-        call multiple times).
+        call multiple times) and safe to call even if the provider
+        was never fully initialized (e.g. lazy session never connected).
         """
         return None
 

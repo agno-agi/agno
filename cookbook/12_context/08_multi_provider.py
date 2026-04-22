@@ -2,16 +2,19 @@
 Multiple Context Providers on One Agent
 =======================================
 
-Three providers on one agent — filesystem, web (Exa), and an in-memory
-SQLite DB. Each provider contributes its own `query_<id>` tool; the
-agent picks which to call based on the question.
+Three providers on one agent — filesystem, web (Exa's keyless MCP),
+and an in-memory SQLite DB. Each provider contributes its own
+`query_<id>` tool; the agent picks which to call based on the
+question.
 
 Shows that `get_tools()` composes cleanly across providers: no name
-collisions, each source stays in its own namespace.
+collisions, each source stays in its own namespace. Also shows the
+lifecycle story: only the web provider needs `asetup`/`aclose`
+(its MCP session), and the caller brackets just that one.
 
 Requires:
     OPENAI_API_KEY
-    EXA_API_KEY  (for the web provider)
+    (optional) EXA_API_KEY  raises the Exa MCP rate ceiling
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.context.database import DatabaseContextProvider
 from agno.context.fs import FilesystemContextProvider
-from agno.context.web import ExaBackend, WebContextProvider
+from agno.context.web import ExaMCPBackend, WebContextProvider
 from agno.models.openai import OpenAIResponses
 from sqlalchemy import create_engine, text
 
@@ -41,9 +44,9 @@ fs = FilesystemContextProvider(
 )
 
 # ---------------------------------------------------------------------------
-# Provider 2: web (Exa)
+# Provider 2: web (Exa's keyless MCP)
 # ---------------------------------------------------------------------------
-web = WebContextProvider(backend=ExaBackend(), model=provider_model)
+web = WebContextProvider(backend=ExaMCPBackend(), model=provider_model)
 
 # ---------------------------------------------------------------------------
 # Provider 3: tiny SQLite DB with releases
@@ -92,16 +95,25 @@ agent = Agent(
 
 
 # ---------------------------------------------------------------------------
-# Run the Agent
+# Run the Agent — bracket the web provider's MCP session with
+# asetup/aclose. fs and db have no async resources so they don't need it.
 # ---------------------------------------------------------------------------
+async def main() -> None:
+    await web.asetup()
+    try:
+        print(f"\nfs.status()  = {fs.status()}")
+        print(f"web.status() = {web.status()}")
+        print(f"db.status()  = {db.status()}\n")
+        prompt = (
+            "Two things: (a) what cookbook files live in this directory, "
+            "and (b) what is the current version listed in the releases "
+            "database? Answer both parts."
+        )
+        print(f"> {prompt}\n")
+        await agent.aprint_response(prompt)
+    finally:
+        await web.aclose()
+
+
 if __name__ == "__main__":
-    print(f"\nfs.status()  = {fs.status()}")
-    print(f"web.status() = {web.status()}")
-    print(f"db.status()  = {db.status()}\n")
-    prompt = (
-        "Two things: (a) what cookbook files live in this directory, "
-        "and (b) what is the current version listed in the releases "
-        "database? Answer both parts."
-    )
-    print(f"> {prompt}\n")
-    asyncio.run(agent.aprint_response(prompt))
+    asyncio.run(main())

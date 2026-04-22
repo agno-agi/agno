@@ -19,17 +19,11 @@ from agno.context.fs import FilesystemContextProvider
 from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
-# Pick a root — this cookbook's directory
-# ---------------------------------------------------------------------------
-ROOT = Path(__file__).resolve().parent
-
-# ---------------------------------------------------------------------------
 # Create the provider
 # ---------------------------------------------------------------------------
 fs = FilesystemContextProvider(
-    root=ROOT,
     id="cookbooks",
-    name="Cookbooks",
+    root=Path(__file__).resolve().parent,
     model=OpenAIResponses(id="gpt-5.4-mini"),
 )
 
@@ -50,9 +44,10 @@ agent = Agent(
 if __name__ == "__main__":
     print(f"\nfs.status() = {fs.status()}\n")
     prompt = (
-        "What Python files live in this directory, and what does "
-        "07_custom_provider.py demonstrate? Quote a few lines from "
-        "its docstring so I know you actually read it."
+        "Walk me through setting up an agno context provider. Read "
+        "the README and a simple example in this directory, then "
+        "lay out the minimal steps with a short code snippet. Cite "
+        "the files you pulled from."
     )
     print(f"> {prompt}\n")
     asyncio.run(agent.aprint_response(prompt))
