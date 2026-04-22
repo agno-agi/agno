@@ -3,9 +3,12 @@
 import inspect
 import json
 from dataclasses import replace
-from typing import Any, Awaitable, Callable, Generic, Optional, Type, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Generic, Optional, Type, TypeVar, Union
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from agno.db.base import AsyncBaseDb, BaseDb
 
 from agno.factory.utils import (
     FactoryError,
@@ -40,12 +43,14 @@ class BaseFactory(Generic[T]):
     def __init__(
         self,
         id: str,
-        db: Any,
+        db: Union["BaseDb", "AsyncBaseDb"],
         factory: Union[Callable[["RequestContext"], T], Callable[["RequestContext"], Awaitable[T]]],
         name: Optional[str] = None,
         description: Optional[str] = None,
         input_schema: Optional[Type[BaseModel]] = None,
     ):
+        if not id:
+            raise ValueError("BaseFactory requires a non-empty 'id' argument.")
         if db is None:
             raise ValueError("BaseFactory requires a 'db' argument for session storage.")
         self.id = id
