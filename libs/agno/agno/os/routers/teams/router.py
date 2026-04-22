@@ -1,3 +1,4 @@
+import asyncio
 from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union
 from uuid import uuid4
 
@@ -98,7 +99,9 @@ async def team_response_streamer(
         )
         yield format_sse_event(error_response)
 
-    except BaseException as e:
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
         import traceback
 
         traceback.print_exc()

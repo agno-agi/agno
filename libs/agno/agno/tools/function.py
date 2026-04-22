@@ -450,19 +450,25 @@ class Function(BaseModel):
                 "files",
             ]
 
-            # Also exclude parameters whose types are Agent or Team,
+            # Also exclude parameters whose types are framework-injected,
             # even if the parameter name differs (e.g. my_agent: Agent). See issue #6344.
             try:
                 from agno.agent.agent import Agent
                 from agno.team.team import Team
 
-                framework_types = (Agent, Team)
+                framework_types = (Agent, Team, RunContext, Image, Video, Audio, File)
                 for param_name, hint in list(type_hints.items()):
                     if isinstance(hint, type) and issubclass(hint, framework_types):
                         del type_hints[param_name]
                         excluded_params.append(param_name)
             except Exception:
                 pass
+
+            # Snapshot excluded_params before user_input_fields are added,
+            # so we can use it to filter user_input_schema later.
+            if self.requires_user_input:
+                _excluded_framework_params = list(excluded_params)
+
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
                     excluded_params.extend(list(type_hints.keys()))
@@ -490,7 +496,9 @@ class Function(BaseModel):
                             param_descriptions[param_name] = param.description or ""
                         param_descriptions_clean[param_name] = param.description or ""
 
-            # If the function requires user input, we should set the user_input_schema to all parameters. The arguments provided by the model are filled in later.
+            # If the function requires user input, set user_input_schema to all parameters
+            # except framework-injected ones (using the snapshot taken before user_input_fields
+            # were added to excluded_params, since those should remain in the schema).
             if self.requires_user_input:
                 self.user_input_schema = [
                     UserInputField(
@@ -499,6 +507,7 @@ class Function(BaseModel):
                         field_type=type_hints.get(name, str),
                     )
                     for name in sig.parameters
+                    if name not in _excluded_framework_params
                 ]
 
             # Get JSON schema for parameters only
