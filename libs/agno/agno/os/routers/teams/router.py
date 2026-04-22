@@ -915,7 +915,7 @@ def get_team_router(
         from agno.os.schema import TeamRunSchema
         from agno.team._storage import _aread_or_create_session
 
-        # Factory teams: stub with factory.db for session lookup
+        # Factory teams
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
             team = await resolve_team(  # type: ignore[assignment]
