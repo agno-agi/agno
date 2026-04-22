@@ -258,7 +258,7 @@ def test_returns_scopes_for_sessions(middleware_with_auth):
 def test_returns_scopes_for_config(middleware_with_auth):
     """Test scopes for config endpoint."""
     scopes = middleware_with_auth._get_required_scopes("GET", "/config")
-    assert "system:read" in scopes
+    assert "config:read" in scopes
 
 
 def test_returns_scopes_for_traces(middleware_with_auth):
