@@ -187,14 +187,20 @@ class Gemini(Model):
 
         client_params = {k: v for k, v in client_params.items() if v is not None}
 
+        if self.client_params:
+            client_params.update(self.client_params)
+
         if self.timeout is not None:
             http_options = client_params.get("http_options", {})
             if isinstance(http_options, dict):
                 http_options["timeout"] = int(self.timeout * 1000)
                 client_params["http_options"] = http_options
-
-        if self.client_params:
-            client_params.update(self.client_params)
+            else:
+                # http_options is an HttpOptions object; set timeout attribute directly.
+                try:
+                    http_options.timeout = int(self.timeout * 1000)
+                except AttributeError:
+                    pass
 
         self.client = genai.Client(**client_params)
         return self.client
