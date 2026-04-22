@@ -31,7 +31,6 @@ on-demand `learn_context(id)` meta-tool.
 
 from __future__ import annotations
 
-import inspect
 import json
 import re
 from abc import ABC, abstractmethod
@@ -168,7 +167,7 @@ class ContextProvider(ABC):
     # Internals
     # ------------------------------------------------------------------
 
-    def _sub_agent_run_kwargs(self, run_context: RunContext | None) -> dict:
+    def _run_kwargs_for_sub_agent(self, run_context: RunContext | None) -> dict:
         """Extract kwargs to pass to a sub-agent ``arun()`` from the
         caller's RunContext.
 
@@ -194,9 +193,6 @@ class ContextProvider(ABC):
 
     def _query_tool(self):
         provider = self
-        # Backward compat: subclasses written before the run_context kwarg
-        # landed won't accept it. Only forward it when the override does.
-        aquery_accepts_rc = "run_context" in inspect.signature(provider.aquery).parameters
 
         @tool(name=self.query_tool_name, instructions=self.instructions())
         async def _query(question: str, run_context: RunContext | None = None) -> str:
@@ -215,10 +211,7 @@ class ContextProvider(ABC):
                 ``{"error": "<ExceptionType>: <message>"}``.
             """
             try:
-                if aquery_accepts_rc:
-                    answer = await provider.aquery(question, run_context=run_context)
-                else:
-                    answer = await provider.aquery(question)
+                answer = await provider.aquery(question, run_context=run_context)
             except Exception as exc:
                 return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
             payload: dict = {"results": [asdict(r) for r in answer.results]}
@@ -230,7 +223,6 @@ class ContextProvider(ABC):
 
     def _update_tool(self):
         provider = self
-        aupdate_accepts_rc = "run_context" in inspect.signature(provider.aupdate).parameters
 
         @tool(name=self.update_tool_name)
         async def _update(instruction: str, run_context: RunContext | None = None) -> str:
@@ -251,10 +243,7 @@ class ContextProvider(ABC):
                 On other failures: ``{"error": "<ExceptionType>: <message>"}``.
             """
             try:
-                if aupdate_accepts_rc:
-                    answer = await provider.aupdate(instruction, run_context=run_context)
-                else:
-                    answer = await provider.aupdate(instruction)
+                answer = await provider.aupdate(instruction, run_context=run_context)
             except NotImplementedError:
                 return json.dumps({"error": f"{provider.name} is read-only"})
             except Exception as exc:

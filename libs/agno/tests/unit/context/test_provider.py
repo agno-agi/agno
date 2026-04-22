@@ -217,7 +217,7 @@ def test_update_tool_description_comes_from_docstring():
 # ---------------------------------------------------------------------------
 # RunContext propagation — the wrapper should thread run_context from the
 # calling agent's auto-injection into provider.aquery / aupdate, and the
-# `_sub_agent_run_kwargs` helper should extract the right fields.
+# `_run_kwargs_for_sub_agent` helper should extract the right fields.
 # ---------------------------------------------------------------------------
 
 
@@ -255,9 +255,9 @@ async def test_update_tool_forwards_run_context_to_aupdate():
     assert captured["run_context"] is rc
 
 
-def test_sub_agent_run_kwargs_extracts_only_populated_fields():
+def test_run_kwargs_for_sub_agent_extracts_only_populated_fields():
     # None -> empty dict (no kwargs injected)
-    assert _EchoProvider(id="e")._sub_agent_run_kwargs(None) == {}
+    assert _EchoProvider(id="e")._run_kwargs_for_sub_agent(None) == {}
 
     # Fields with truthy values are extracted
     rc = RunContext(
@@ -267,7 +267,7 @@ def test_sub_agent_run_kwargs_extracts_only_populated_fields():
         metadata={"action_token": "xoxa-abc"},
         dependencies={"tenant": "acme"},
     )
-    kwargs = _EchoProvider(id="e")._sub_agent_run_kwargs(rc)
+    kwargs = _EchoProvider(id="e")._run_kwargs_for_sub_agent(rc)
     assert kwargs == {
         "user_id": "u-1",
         "session_id": "s-1",
@@ -276,44 +276,11 @@ def test_sub_agent_run_kwargs_extracts_only_populated_fields():
     }
 
 
-@pytest.mark.asyncio
-async def test_query_tool_is_backward_compatible_with_old_aquery_signature():
-    """A custom provider written before the run_context kwarg landed
-    shouldn't blow up when the tool injects run_context — the wrapper
-    should detect the signature and call the old API."""
-
-    class _LegacyProvider(_EchoProvider):
-        # Old signature — no run_context kwarg
-        async def aquery(self, question: str) -> Answer:  # type: ignore[override]
-            return Answer(text=f"legacy:{question}")
-
-    p = _LegacyProvider(id="legacy")
-    query_tool = p._query_tool()
-    rc = RunContext(run_id="r-bc", session_id="s-bc", user_id="u", metadata={"x": "y"})
-    out = await query_tool.entrypoint(question="hi", run_context=rc)
-    payload = json.loads(out)
-    assert payload["text"] == "legacy:hi", f"got {payload}"
-
-
-@pytest.mark.asyncio
-async def test_update_tool_is_backward_compatible_with_old_aupdate_signature():
-    class _LegacyWritable(_EchoProvider):
-        async def aupdate(self, instruction: str) -> Answer:  # type: ignore[override]
-            return Answer(text=f"legacy-u:{instruction}")
-
-    p = _LegacyWritable(id="legacyw")
-    update_tool = p._update_tool()
-    rc = RunContext(run_id="r-bc2", session_id="s-bc2", user_id="u")
-    out = await update_tool.entrypoint(instruction="add x", run_context=rc)
-    payload = json.loads(out)
-    assert payload["text"] == "legacy-u:add x", f"got {payload}"
-
-
-def test_sub_agent_run_kwargs_drops_empty_fields():
+def test_run_kwargs_for_sub_agent_drops_empty_fields():
     # Empty dict / empty string / None values should NOT be propagated,
     # so sub-agent defaults aren't silently overridden with empty data.
     rc = RunContext(run_id="r-4", user_id="", session_id="only-session", metadata={}, dependencies=None)
-    kwargs = _EchoProvider(id="e")._sub_agent_run_kwargs(rc)
+    kwargs = _EchoProvider(id="e")._run_kwargs_for_sub_agent(rc)
     assert kwargs == {"session_id": "only-session"}
 
 

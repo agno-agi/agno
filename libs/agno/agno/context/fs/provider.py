@@ -51,11 +51,11 @@ class FilesystemContextProvider(ContextProvider):
         return self.status()
 
     def query(self, question: str, *, run_context: RunContext | None = None) -> Answer:
-        kwargs = self._sub_agent_run_kwargs(run_context)
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
         return answer_from_run(self._ensure_agent().run(question, **kwargs))
 
     async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
-        kwargs = self._sub_agent_run_kwargs(run_context)
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
         return answer_from_run(await self._ensure_agent().arun(question, **kwargs))
 
     def instructions(self) -> str:

@@ -76,19 +76,19 @@ class SlackContextProvider(ContextProvider):
     # ------------------------------------------------------------------
 
     def query(self, question: str, *, run_context: RunContext | None = None) -> Answer:
-        kwargs = self._sub_agent_run_kwargs(run_context)
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
         return answer_from_run(self._ensure_read_agent().run(question, **kwargs))
 
     async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
-        kwargs = self._sub_agent_run_kwargs(run_context)
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
         return answer_from_run(await self._ensure_read_agent().arun(question, **kwargs))
 
     def update(self, instruction: str, *, run_context: RunContext | None = None) -> Answer:
-        kwargs = self._sub_agent_run_kwargs(run_context)
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
         return answer_from_run(self._ensure_write_agent().run(instruction, **kwargs))
 
     async def aupdate(self, instruction: str, *, run_context: RunContext | None = None) -> Answer:
-        kwargs = self._sub_agent_run_kwargs(run_context)
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
         return answer_from_run(await self._ensure_write_agent().arun(instruction, **kwargs))
 
     def instructions(self) -> str:

@@ -119,7 +119,7 @@ class MCPContextProvider(ContextProvider):
 
     async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
         agent = await self._aensure_agent()
-        kwargs = self._sub_agent_run_kwargs(run_context)
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
         return answer_from_run(await agent.arun(question, **kwargs))
 
     async def asetup(self) -> None:

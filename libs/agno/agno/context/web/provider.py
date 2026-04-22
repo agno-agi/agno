@@ -55,12 +55,12 @@ class WebContextProvider(ContextProvider):
 
     def query(self, question: str, *, run_context: RunContext | None = None) -> Answer:
         agent = self._ensure_agent()
-        kwargs = self._sub_agent_run_kwargs(run_context)
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
         return answer_from_run(agent.run(question, **kwargs))
 
     async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
         agent = self._ensure_agent()
-        kwargs = self._sub_agent_run_kwargs(run_context)
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
         return answer_from_run(await agent.arun(question, **kwargs))
 
     def instructions(self) -> str:
