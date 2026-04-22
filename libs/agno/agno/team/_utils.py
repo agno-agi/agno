@@ -163,9 +163,12 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
 
     from pydantic import BaseModel
 
+    from agno.utils.callables import is_callable_factory
+
     # For members, return callable factories by reference; deep copy static lists
     if field_name == "members" and field_value is not None:
-        if callable(field_value) and not isinstance(field_value, list):
+        # No excluded_types: Agent and Team instances are not callable
+        if is_callable_factory(field_value):
             return field_value
         copied_members = []
         for member in field_value:
@@ -177,7 +180,11 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
 
     # For tools, return callable factories by reference; share MCP tools but copy others
     if field_name == "tools" and field_value is not None:
-        if callable(field_value) and not isinstance(field_value, list):
+        from agno.tools import Toolkit
+        from agno.tools.function import Function
+
+        # Callable-factory tools are shared by reference and resolved per-run
+        if is_callable_factory(field_value, excluded_types=(Toolkit, Function)):
             return field_value
         try:
             copied_tools = []
