@@ -841,7 +841,7 @@ def get_workflow_router(
             return WorkflowResponse.from_factory(factory)
 
         try:
-            workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
+            workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
@@ -1134,7 +1134,7 @@ def get_workflow_router(
             return JSONResponse(content={}, status_code=200)
 
         try:
-            workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
+            workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
@@ -1166,13 +1166,15 @@ def get_workflow_router(
         run_id: str,
         session_id: str = Query(..., description="Session ID for the run"),
     ):
-        # Factory workflows: stub with factory.db for session lookup
+        # Factory workflows: resolve to get a real workflow for session lookup
         factory = find_factory_by_id(workflow_id, os.workflows)
         if factory:
-            workflow = Workflow(id=workflow_id, db=factory.db if factory else os.db)
+            workflow = await resolve_workflow(  # type: ignore[assignment]
+                workflow_id, os.workflows, factory.db if factory else os.db, session_id=session_id,
+            )
         else:
             try:
-                workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
+                workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving workflow '{workflow_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")

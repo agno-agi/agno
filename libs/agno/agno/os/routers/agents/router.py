@@ -489,7 +489,7 @@ def get_agent_router(
             return JSONResponse(content={}, status_code=200)
 
         try:
-            agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+            agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)  # type: ignore[assignment]
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -565,13 +565,13 @@ def get_agent_router(
         # (needs model/tools to resume the paused run, factory_input not available)
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
-            agent = await resolve_agent(
+            agent = await resolve_agent(  # type: ignore[assignment]
                 agent_id, os.agents, factory.db,
                 request=request, user_id=user_id, session_id=session_id,
             )
         else:
             try:
-                agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+                agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -783,7 +783,7 @@ def get_agent_router(
             return AgentResponse.from_factory(factory)
 
         try:
-            agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+            agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)  # type: ignore[assignment]
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -815,13 +815,15 @@ def get_agent_router(
         run_id: str,
         session_id: str = Query(..., description="Session ID for the run"),
     ):
-        # Factory agents: create stub with factory.db for session lookup
+        # Factory agents: resolve to get a real agent for session lookup
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
-            agent = resolve_agent(agent_id, os.agents, factory.db if factory else os.db, session_id=session_id)
+            agent = await resolve_agent(  # type: ignore[assignment]
+                agent_id, os.agents, factory.db if factory else os.db, session_id=session_id,
+            )
         else:
             try:
-                agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+                agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -830,7 +832,7 @@ def get_agent_router(
             if isinstance(agent, RemoteAgent):
                 raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
 
-        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
 
@@ -858,13 +860,15 @@ def get_agent_router(
     ):
         from agno.os.schema import RunSchema
 
-        # For factory agents, get_agent_by_id returns a stub with factory.db for session lookup
+        # Factory agents: resolve to get a real agent for session lookup
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
-            agent = resolve_agent(agent_id, os.agents, factory.db if factory else os.db, session_id=session_id)
+            agent = await resolve_agent(  # type: ignore[assignment]
+                agent_id, os.agents, factory.db if factory else os.db, session_id=session_id,
+            )
         else:
             try:
-                agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+                agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -876,7 +880,7 @@ def get_agent_router(
         # Load the session to get its runs
         from agno.agent._storage import aread_or_create_session
 
-        session = await aread_or_create_session(agent, session_id=session_id)
+        session = await aread_or_create_session(agent, session_id=session_id)  # type: ignore[arg-type]
         runs = session.runs or []
 
         # Convert to dicts and optionally filter by status

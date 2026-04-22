@@ -459,7 +459,7 @@ def get_team_router(
             return JSONResponse(content={}, status_code=200)
 
         try:
-            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -535,13 +535,13 @@ def get_team_router(
         # Factory teams: re-invoke factory to get a real team for continue
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
-            team = await resolve_team(
+            team = await resolve_team(  # type: ignore[assignment]
                 team_id, os.teams, factory.db if factory else os.db,
                 request=request, user_id=user_id, session_id=session_id,
             )
         else:
             try:
-                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -837,7 +837,7 @@ def get_team_router(
             return TeamResponse.from_factory(factory)
 
         try:
-            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -872,10 +872,12 @@ def get_team_router(
         # Factory teams: stub with factory.db for session lookup
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
-            team = Team(members=[], id=team_id, db=factory.db if factory else os.db)
+            team = await resolve_team(  # type: ignore[assignment]
+                team_id, os.teams, factory.db if factory else os.db, session_id=session_id,
+            )
         else:
             try:
-                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -884,7 +886,7 @@ def get_team_router(
             if isinstance(team, RemoteTeam):
                 raise HTTPException(status_code=400, detail="Run polling is not supported for remote teams")
 
-        run_output = await team.aget_run_output(run_id=run_id, session_id=session_id)
+        run_output = await team.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
 
@@ -916,10 +918,12 @@ def get_team_router(
         # Factory teams: stub with factory.db for session lookup
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
-            team = Team(members=[], id=team_id, db=factory.db if factory else os.db)
+            team = await resolve_team(  # type: ignore[assignment]
+                team_id, os.teams, factory.db if factory else os.db, session_id=session_id,
+            )
         else:
             try:
-                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -928,7 +932,7 @@ def get_team_router(
             if isinstance(team, RemoteTeam):
                 raise HTTPException(status_code=400, detail="Run listing is not supported for remote teams")
 
-        session = await _aread_or_create_session(team, session_id=session_id)
+        session = await _aread_or_create_session(team, session_id=session_id)  # type: ignore[arg-type]
         runs = session.runs or []
 
         result = []
