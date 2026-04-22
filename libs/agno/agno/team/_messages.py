@@ -535,6 +535,16 @@ def get_system_message(
             "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
         )
 
+    # 2.5.1 LearningMachine context (mirrors Agent behaviour)
+    if team._learning is not None and team.add_learnings_to_context:
+        learning_context = team._learning.build_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            agent_id=team.id,
+        )
+        if learning_context:
+            system_message_content += learning_context + "\n"
+
     # 2.6 Trailing sections: media, additional info, tools, expected output, etc.
     system_message_content += _build_trailing_sections(
         team,
@@ -755,6 +765,16 @@ async def aget_system_message(
             "Note: this information is from previous interactions and may be outdated. "
             "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
         )
+
+    # 2.5.1 LearningMachine context (mirrors Agent behaviour)
+    if team._learning is not None and team.add_learnings_to_context:
+        learning_context = await team._learning.abuild_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            agent_id=team.id,
+        )
+        if learning_context:
+            system_message_content += learning_context + "\n"
 
     # 2.6 Trailing sections: media, additional info, tools, expected output, etc.
     system_message_content += _build_trailing_sections(
