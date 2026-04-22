@@ -567,8 +567,8 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            log_error(f"Unknown error from Gemini API: {str(e) or repr(e)}")
+            raise ModelProviderError(message=str(e) or repr(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
         self,
@@ -621,8 +621,8 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            log_error(f"Unknown error from Gemini API: {str(e) or repr(e)}")
+            raise ModelProviderError(message=str(e) or repr(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
         self,
@@ -680,8 +680,8 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            log_error(f"Unknown error from Gemini API: {str(e) or repr(e)}")
+            raise ModelProviderError(message=str(e) or repr(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
         self,
@@ -737,8 +737,8 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            log_error(f"Unknown error from Gemini API: {str(e) or repr(e)}")
+            raise ModelProviderError(message=str(e) or repr(e), model_name=self.name, model_id=self.id) from e
 
     def _format_messages(self, messages: List[Message], compress_tool_results: bool = False):
         """
