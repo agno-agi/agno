@@ -6,9 +6,10 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-pytest.importorskip("scrapegraph_py")
-
-from agno.tools.scrapegraph import ScrapeGraphTools  # noqa: E402
+try:
+    from agno.tools.scrapegraph import ScrapeGraphTools
+except ImportError:
+    pytest.skip("scrapegraph-py not available or incompatible", allow_module_level=True)
 
 
 @pytest.fixture
