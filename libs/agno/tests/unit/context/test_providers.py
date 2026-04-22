@@ -14,7 +14,8 @@ from sqlalchemy import create_engine
 
 from agno.context.database import DatabaseContextProvider
 from agno.context.fs import FilesystemContextProvider
-from agno.context.mcp import MCPContextProvider
+from agno.context.gdrive import GDriveContextProvider
+from agno.context.slack import SlackContextProvider
 from agno.context.web import ExaBackend, WebContextProvider
 
 # ---------------------------------------------------------------------------
@@ -105,35 +106,66 @@ def test_db_status_ok_on_connectable_engine():
 
 
 # ---------------------------------------------------------------------------
-# MCP
+# Slack
 # ---------------------------------------------------------------------------
 
 
-def test_mcp_stdio_requires_command():
-    with pytest.raises(ValueError, match="transport=stdio requires `command`"):
-        MCPContextProvider("srv", transport="stdio")
+def test_slack_requires_token(monkeypatch):
+    monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("SLACK_TOKEN", raising=False)
+    with pytest.raises(ValueError, match="SLACK_BOT_TOKEN"):
+        SlackContextProvider()
 
 
-def test_mcp_http_requires_url():
-    with pytest.raises(ValueError, match="requires `url`"):
-        MCPContextProvider("srv", transport="streamable-http")
+def test_slack_falls_back_to_slack_token(monkeypatch):
+    monkeypatch.delenv("SLACK_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("SLACK_TOKEN", "xoxb-fallback")
+    p = SlackContextProvider()
+    assert p.token == "xoxb-fallback"
 
 
-def test_mcp_id_auto_sanitized_from_server_name():
-    p = MCPContextProvider("My.Server", transport="streamable-http", url="https://example.com/mcp")
-    assert p.id == "mcp_my_server"
-    assert p.query_tool_name == "query_mcp_my_server"
+def test_slack_default_surface_is_single_query_tool():
+    p = SlackContextProvider(token="xoxb-x")
+    tools = p.get_tools()
+    assert [t.name for t in tools] == ["query_slack"]
 
 
-def test_mcp_status_before_connect_reports_pending():
-    p = MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp")
+def test_slack_status_reports_configured():
+    p = SlackContextProvider(token="xoxb-x")
     status = p.status()
-    # Not yet connected — we don't want to force an async connect from sync code.
     assert status.ok is True
-    assert "not yet connected" in status.detail
+    assert "token configured" in status.detail
 
 
-def test_mcp_sync_query_raises_not_implemented():
-    p = MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp")
-    with pytest.raises(NotImplementedError, match="sync query"):
-        p.query("anything")
+# ---------------------------------------------------------------------------
+# Google Drive
+# ---------------------------------------------------------------------------
+
+
+def test_gdrive_requires_service_account_path(monkeypatch):
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    with pytest.raises(ValueError, match="GOOGLE_SERVICE_ACCOUNT_FILE"):
+        GDriveContextProvider()
+
+
+def test_gdrive_status_reports_missing_sa_file(tmp_path):
+    missing = tmp_path / "no-such-sa.json"
+    p = GDriveContextProvider(service_account_path=str(missing))
+    status = p.status()
+    assert status.ok is False
+    assert "service account file not found" in status.detail
+
+
+def test_gdrive_status_ok_when_sa_file_exists(tmp_path):
+    sa = tmp_path / "sa.json"
+    sa.write_text("{}")
+    p = GDriveContextProvider(service_account_path=str(sa))
+    assert p.status().ok is True
+
+
+def test_gdrive_default_surface_is_single_query_tool(tmp_path):
+    sa = tmp_path / "sa.json"
+    sa.write_text("{}")
+    p = GDriveContextProvider(service_account_path=str(sa))
+    tools = p.get_tools()
+    assert [t.name for t in tools] == ["query_gdrive"]
