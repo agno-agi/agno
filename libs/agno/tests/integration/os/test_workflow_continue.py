@@ -4,9 +4,11 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
+from agno.workflow.factory import WorkflowFactory
 from agno.workflow import OnReject
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
@@ -40,6 +42,10 @@ def _report(si: StepInput) -> StepOutput:
     return StepOutput(content=f"Final report based on: {prev}")
 
 
+class WorkflowFactoryInput(BaseModel):
+    mode: str = "default"
+
+
 @pytest.fixture
 def hitl_client(temp_storage_db_file):
     """Create a TestClient with a HITL workflow containing two Conditions."""
@@ -70,6 +76,49 @@ def hitl_client(temp_storage_db_file):
         ],
     )
     app = AgentOS(workflows=[workflow]).get_app()
+    return TestClient(app)
+
+
+@pytest.fixture
+def factory_hitl_client(temp_storage_db_file):
+    """Create a TestClient with a HITL workflow factory."""
+    db = SqliteDb(db_file=temp_storage_db_file)
+
+    def build_workflow(ctx):
+        return Workflow(
+            name="decision-tree-factory",
+            id="generated-decision-tree",
+            db=db,
+            metadata={"mode": getattr(ctx.input, "mode", None)},
+            steps=[
+                Step(name="gather", executor=_gather),
+                Condition(
+                    name="first_decision",
+                    requires_confirmation=True,
+                    confirmation_message="Run detailed analysis?",
+                    on_reject=OnReject.else_branch,
+                    steps=[Step(name="detailed", executor=_detailed)],
+                    else_steps=[Step(name="quick", executor=_quick)],
+                ),
+                Condition(
+                    name="second_decision",
+                    requires_confirmation=True,
+                    confirmation_message="Deep dive or surface review?",
+                    on_reject=OnReject.else_branch,
+                    steps=[Step(name="deep", executor=_deep)],
+                    else_steps=[Step(name="surface", executor=_surface)],
+                ),
+                Step(name="report", executor=_report),
+            ],
+        )
+
+    workflow_factory = WorkflowFactory(
+        db=db,
+        id="decision-tree-factory",
+        factory=build_workflow,
+        input_schema=WorkflowFactoryInput,
+    )
+    app = AgentOS(workflows=[workflow_factory]).get_app()
     return TestClient(app)
 
 
@@ -163,6 +212,41 @@ def test_continue_confirm_both(hitl_client):
     assert d3["status"] == "COMPLETED"
     assert d3["step_results"][1]["steps"][0]["content"] == "Detailed analysis complete"
     assert d3["step_results"][2]["steps"][0]["content"] == "Deep dive complete"
+
+
+def test_continue_factory_workflow_with_factory_input(factory_hitl_client):
+    """Factory workflows should be resumable through /continue."""
+    run_response = factory_hitl_client.post(
+        "/workflows/decision-tree-factory/runs",
+        data={
+            "message": "go",
+            "stream": "false",
+            "factory_input": json.dumps({"mode": "guided"}),
+        },
+    )
+    assert run_response.status_code == 200
+    run_data = run_response.json()
+    assert run_data["status"] == "PAUSED"
+
+    run_id = run_data["run_id"]
+    session_id = run_data["session_id"]
+    requirements = run_data["step_requirements"]
+    requirements[0]["confirmed"] = True
+
+    continue_response = factory_hitl_client.post(
+        f"/workflows/decision-tree-factory/runs/{run_id}/continue",
+        data={
+            "stream": "false",
+            "session_id": session_id,
+            "factory_input": json.dumps({"mode": "guided"}),
+            "step_requirements": json.dumps(requirements),
+        },
+    )
+    assert continue_response.status_code == 200
+    continue_data = continue_response.json()
+    assert continue_data["status"] == "PAUSED"
+    assert continue_data["run_id"] == run_id
+    assert continue_data["step_requirements"]
 
 
 def test_continue_409_on_completed_run(hitl_client):
