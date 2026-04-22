@@ -183,28 +183,6 @@ async def test_update_tool_catches_aupdate_exceptions():
 
 
 # ---------------------------------------------------------------------------
-# Tool self-describes — Function carries description + instructions so the
-# calling agent doesn't have to manually wire `instructions=p.instructions()`.
-# ---------------------------------------------------------------------------
-
-
-def test_query_tool_description_comes_from_docstring():
-    # @tool reads the wrapped function's docstring when description= isn't
-    # provided. Without this, the LLM sees only the tool name.
-    p = _EchoProvider(id="e")
-    query_tool = p._query_tool()
-    assert query_tool.description is not None
-    assert "natural-language question" in query_tool.description.lower()
-
-
-def test_update_tool_description_comes_from_docstring():
-    p = _WritableProvider(id="w")
-    update_tool = p._update_tool()
-    assert update_tool.description is not None
-    assert "natural-language write" in update_tool.description.lower()
-
-
-# ---------------------------------------------------------------------------
 # RunContext propagation — the wrapper should thread run_context from the
 # calling agent's auto-injection into provider.aquery / aupdate, and the
 # `_run_kwargs_for_sub_agent` helper should extract the right fields.

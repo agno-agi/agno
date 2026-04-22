@@ -196,20 +196,6 @@ class ContextProvider(ABC):
 
         @tool(name=self.query_tool_name)
         async def _query(question: str, run_context: RunContext | None = None) -> str:
-            """Ask a natural-language question of this context source.
-
-            The question is routed through a sub-agent that picks the
-            right underlying tool (file search, web search, SQL, etc.)
-            and returns the answer.
-
-            Args:
-                question: A specific question, in natural language.
-
-            Returns:
-                JSON with ``text`` (the answer) and ``results``
-                (optional structured citations). On failure, returns
-                ``{"error": "<ExceptionType>: <message>"}``.
-            """
             try:
                 answer = await provider.aquery(question, run_context=run_context)
             except Exception as exc:
@@ -226,22 +212,6 @@ class ContextProvider(ABC):
 
         @tool(name=self.update_tool_name)
         async def _update(instruction: str, run_context: RunContext | None = None) -> str:
-            """Apply a natural-language write to this context source.
-
-            The instruction is routed through a sub-agent that picks
-            the right underlying write tool. Fails cleanly on
-            read-only providers.
-
-            Args:
-                instruction: A natural-language description of the
-                    change to make.
-
-            Returns:
-                JSON with ``text`` (a summary of the write) and
-                ``results`` (optional structured results). On
-                read-only providers: ``{"error": "<name> is read-only"}``.
-                On other failures: ``{"error": "<ExceptionType>: <message>"}``.
-            """
             try:
                 answer = await provider.aupdate(instruction, run_context=run_context)
             except NotImplementedError:
