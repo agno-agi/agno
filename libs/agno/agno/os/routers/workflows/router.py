@@ -1032,6 +1032,10 @@ def get_workflow_router(
         session_id: Optional[str] = Form(None, description="Session ID for the paused run"),
         user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
         stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
+        factory_input: Optional[str] = Form(
+            None,
+            description="JSON object with factory-specific parameters for dynamic workflow reconstruction",
+        ),
     ):
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -1044,15 +1048,16 @@ def get_workflow_router(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON in step_requirements field")
 
-        workflow = get_workflow_by_id(
-            workflow_id=workflow_id,
-            workflows=os.workflows,
-            db=os.db,
-            registry=os.registry,
-            create_fresh=True,
+        workflow = await resolve_workflow(
+            workflow_id,
+            os.workflows,
+            os.db,
+            os.registry,
+            request=request,
+            user_id=user_id,
+            session_id=session_id,
+            factory_input=factory_input,
         )
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Workflow not found")
 
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Continue is not supported for remote workflows")
@@ -1173,8 +1178,19 @@ def get_workflow_router(
     async def get_workflow_run(
         workflow_id: str,
         run_id: str,
+        request: Request,
         session_id: str = Query(..., description="Session ID for the run"),
+        factory_input: Optional[str] = Query(
+            None,
+            description="JSON object with factory-specific parameters for dynamic workflow reconstruction",
+        ),
     ):
+        user_id = getattr(request.state, "user_id", None)
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            if session_id and session_id != request.state.session_id:
+                log_warning("Session ID parameter passed in both request state and query params, using request state")
+            session_id = request.state.session_id
+
         # Factory workflows: resolve to get a real workflow for session lookup
         factory = find_factory_by_id(workflow_id, os.workflows)
         if factory:
@@ -1182,7 +1198,10 @@ def get_workflow_router(
                 workflow_id,
                 os.workflows,
                 factory.db,
+                request=request,
+                user_id=user_id,
                 session_id=session_id,
+                factory_input=factory_input,
             )
         else:
             try:
@@ -1220,18 +1239,34 @@ def get_workflow_router(
     )
     async def list_workflow_runs(
         workflow_id: str,
+        request: Request,
         session_id: str = Query(..., description="Session ID to list runs for"),
         status: Optional[str] = Query(
             None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR, PAUSED)"
         ),
+        factory_input: Optional[str] = Query(
+            None,
+            description="JSON object with factory-specific parameters for dynamic workflow reconstruction",
+        ),
     ):
         from agno.os.schema import WorkflowRunSchema
 
-        workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+        user_id = getattr(request.state, "user_id", None)
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            if session_id and session_id != request.state.session_id:
+                log_warning("Session ID parameter passed in both request state and query params, using request state")
+            session_id = request.state.session_id
+
+        workflow = await resolve_workflow(
+            workflow_id,
+            os.workflows,
+            os.db,
+            os.registry,
+            request=request,
+            user_id=user_id,
+            session_id=session_id,
+            factory_input=factory_input,
         )
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Workflow not found")
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Run listing is not supported for remote workflows")
 
