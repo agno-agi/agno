@@ -42,6 +42,7 @@ slack = SlackContextProvider(model=provider_model)
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     tools=[*web.get_tools(), *slack.get_tools()],
+    instructions="\n".join([web.instructions(), slack.instructions()]),
     markdown=True,
 )
 

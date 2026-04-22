@@ -194,7 +194,7 @@ class ContextProvider(ABC):
     def _query_tool(self):
         provider = self
 
-        @tool(name=self.query_tool_name, instructions=self.instructions())
+        @tool(name=self.query_tool_name)
         async def _query(question: str, run_context: RunContext | None = None) -> str:
             """Ask a natural-language question of this context source.
 

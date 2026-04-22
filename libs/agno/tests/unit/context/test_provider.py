@@ -197,16 +197,6 @@ def test_query_tool_description_comes_from_docstring():
     assert "natural-language question" in query_tool.description.lower()
 
 
-def test_query_tool_carries_provider_instructions():
-    # Provider's instructions() flows onto the Function so Agent.parse_tools
-    # appends it to _tool_instructions automatically (no separate
-    # `instructions=p.instructions()` needed on the caller Agent).
-    p = _EchoProvider(id="e")
-    query_tool = p._query_tool()
-    assert query_tool.instructions == p.instructions()
-    assert query_tool.add_instructions is True
-
-
 def test_update_tool_description_comes_from_docstring():
     p = _WritableProvider(id="w")
     update_tool = p._update_tool()
