@@ -569,3 +569,65 @@ class TestTeamDeepCopyCallableFactories:
         offenders = [r.getMessage() for r in records if "Failed to process tools for deep copy" in r.getMessage()]
         assert not offenders, f"Unexpected warning(s) emitted: {offenders}"
         assert copied.members[0].tools is member_tools_factory
+
+    def test_deep_copy_callable_tools_still_resolves(self):
+        """After deep_copy, the tools factory must still resolve to the expected list."""
+        sentinel = _dummy_tool
+
+        def tools_factory():
+            return [sentinel]
+
+        team = _make_team(tools=tools_factory, cache_callables=False)
+        copy = team.deep_copy()
+
+        ctx = _make_run_context(user_id="u1")
+        resolve_callable_tools(copy, ctx)
+        assert ctx.tools == [sentinel]
+
+    def test_deep_copy_callable_members_still_resolves(self):
+        """After deep_copy, the members factory must still resolve to the expected list."""
+        agent = Agent(name="m")
+
+        def members_factory():
+            return [agent]
+
+        team = _make_team(members=members_factory, cache_callables=False)
+        copy = team.deep_copy()
+
+        ctx = _make_run_context(user_id="u1")
+        resolve_callable_members(copy, ctx)
+        assert ctx.members == [agent]
+
+    def test_deep_copy_async_tools_factory_preserved(self):
+        """An `async def` factory on team.tools must be shared by reference."""
+
+        async def afactory():
+            return [_dummy_tool]
+
+        team = _make_team(tools=afactory)
+        copy = team.deep_copy()
+        assert copy.tools is afactory
+
+    def test_deep_copy_partial_tools_factory_preserved(self):
+        """A functools.partial team tools factory must be shared by reference."""
+        from functools import partial
+
+        def _fac(extra):
+            return [_dummy_tool]
+
+        pf = partial(_fac, extra=1)
+        team = _make_team(tools=pf)
+        copy = team.deep_copy()
+        assert copy.tools is pf
+
+    def test_deep_copy_callable_instance_tools_factory_preserved(self):
+        """A callable class instance as team.tools must be shared by reference."""
+
+        class Factory:
+            def __call__(self):
+                return [_dummy_tool]
+
+        inst = Factory()
+        team = _make_team(tools=inst)
+        copy = team.deep_copy()
+        assert copy.tools is inst

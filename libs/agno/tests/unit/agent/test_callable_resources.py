@@ -790,3 +790,54 @@ class TestAgentDeepCopyCallable:
         copied = agent.deep_copy()
         assert isinstance(copied.tools, list)
         assert len(copied.tools) == 1
+        # The Toolkit must actually be deep-copied, not shared by reference.
+        assert copied.tools[0] is not tk
+        assert copied.tools is not agent.tools
+
+    def test_deep_copy_async_factory_preserved(self):
+        """An `async def` factory must be shared by reference, not deep-copied."""
+
+        async def afactory():
+            return [_dummy_tool]
+
+        agent = Agent(name="test", tools=afactory)
+        copied = agent.deep_copy()
+        assert copied.tools is afactory
+
+    def test_deep_copy_partial_factory_preserved(self):
+        """A functools.partial factory must be shared by reference."""
+        from functools import partial
+
+        def _fac(extra):
+            return [_dummy_tool]
+
+        pf = partial(_fac, extra=1)
+        agent = Agent(name="test", tools=pf)
+        copied = agent.deep_copy()
+        assert copied.tools is pf
+
+    def test_deep_copy_callable_instance_factory_preserved(self):
+        """A callable class instance (has __call__) must be shared by reference."""
+
+        class Factory:
+            def __call__(self):
+                return [_dummy_tool]
+
+        inst = Factory()
+        agent = Agent(name="test", tools=inst)
+        copied = agent.deep_copy()
+        assert copied.tools is inst
+
+    def test_deep_copy_bound_method_factory_preserved(self):
+        """A bound method factory is shared by reference and still resolves."""
+
+        class Builder:
+            def make(self):
+                return [_dummy_tool]
+
+        holder = Builder()
+        agent = Agent(name="test", tools=holder.make)
+        copied = agent.deep_copy()
+        # Bound methods are transient, so compare identity via the receiver
+        assert getattr(copied.tools, "__self__", None) is holder
+        assert copied.tools() == [_dummy_tool]
