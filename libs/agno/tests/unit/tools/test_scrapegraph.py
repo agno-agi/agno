@@ -6,7 +6,9 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from agno.tools.scrapegraph import ScrapeGraphTools
+pytest.importorskip("scrapegraph_py")
+
+from agno.tools.scrapegraph import ScrapeGraphTools  # noqa: E402
 
 
 @pytest.fixture
