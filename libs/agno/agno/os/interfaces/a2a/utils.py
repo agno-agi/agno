@@ -83,6 +83,20 @@ from agno.run.agent import (
 from agno.run.base import RunStatus
 
 
+def _stringify_content(content: Any) -> str:
+    """Stringify RunOutput/event content for an A2A TextPart.
+
+    When an agent is configured with an `output_schema`, `content` is a
+    Pydantic model instance. It must be JSON-encoded via `model_dump_json()`
+    so A2A clients can `json.loads` the TextPart text.
+    """
+    if hasattr(content, "model_dump_json"):
+        return content.model_dump_json()
+    if isinstance(content, str):
+        return content
+    return str(content)
+
+
 async def map_a2a_request_to_run_input(request_body: dict, stream: bool = True) -> RunInput:
     """Map A2A SendMessageRequest to Agno RunInput.
 
@@ -210,7 +224,7 @@ def map_run_output_to_a2a_task(run_output: Union[RunOutput, WorkflowRunOutput]) 
 
     # 1. Handle output content
     if run_output.content:
-        parts.append(Part(root=TextPart(text=str(run_output.content))))
+        parts.append(Part(root=TextPart(text=_stringify_content(run_output.content))))
 
     # 2. Handle output media
     artifacts: List[Artifact] = []
@@ -348,16 +362,7 @@ async def stream_a2a_response(
 
         # Send content events
         elif isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content:
-            # Serialize content to str: Pydantic models (from output_schema) must be
-            # converted before str-concatenation or TextPart construction, otherwise
-            # "TypeError: can only concatenate str (not <Model>) to str" is raised.
-            raw_content = event.content
-            if hasattr(raw_content, "model_dump_json"):
-                content_str = raw_content.model_dump_json()
-            elif not isinstance(raw_content, str):
-                content_str = str(raw_content)
-            else:
-                content_str = raw_content
+            content_str = _stringify_content(event.content)
             accumulated_content += content_str
             message = A2AMessage(
                 message_id=message_id,
@@ -814,7 +819,7 @@ async def stream_a2a_response(
 
         final_parts: List[Part] = []
         if final_content:
-            final_parts.append(Part(root=TextPart(text=str(final_content))))
+            final_parts.append(Part(root=TextPart(text=_stringify_content(final_content))))
 
         # Handle all media artifacts
         artifacts: List[Artifact] = []
@@ -949,3 +954,4 @@ async def stream_a2a_response_with_error_handling(
 
         response = SendStreamingMessageSuccessResponse(id=request_id, result=failed_task)
         yield f"event: Task\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+
