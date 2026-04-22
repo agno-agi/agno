@@ -5,9 +5,10 @@ Setup:
     export SGAI_API_KEY=<your key>  # https://scrapegraphai.com
     export OPENAI_API_KEY=<your key>
 
-This script exercises three tools in one run (smartscraper, markdownify, scrape).
-More variants (crawl, all=True + render_heavy_js) are listed below, commented out
-so you can try them one at a time.
+Running this file exercises three tools in sequence (smartscraper, markdownify,
+scrape). The primary `smartscraper_agent` is also importable from this module.
+Further variants (searchscraper, crawl, all=True + render_heavy_js) are listed
+at the bottom, commented out, for selective enabling.
 """
 
 from agno.agent import Agent
@@ -16,36 +17,43 @@ from agno.tools.scrapegraph import ScrapeGraphTools
 
 agent_model = OpenAIResponses(id="gpt-5.4")
 
+# Primary agent — structured extraction via an AI prompt.
+smartscraper_agent = Agent(
+    tools=[ScrapeGraphTools(enable_smartscraper=True)],
+    model=agent_model,
+    markdown=True,
+)
+
+# Additional demo agents (markdownify + scrape) — defined here so they're
+# importable too; executed at the bottom when this file is run directly.
+markdownify_agent = Agent(
+    tools=[ScrapeGraphTools(enable_smartscraper=False, enable_markdownify=True)],
+    model=agent_model,
+    markdown=True,
+)
+
+scrape_agent = Agent(
+    tools=[ScrapeGraphTools(enable_scrape=True, enable_smartscraper=False)],
+    model=agent_model,
+    markdown=True,
+)
+
+
 if __name__ == "__main__":
-    # 1. smartscraper — structured extraction via an AI prompt.
-    smartscraper_agent = Agent(
-        tools=[ScrapeGraphTools(enable_smartscraper=True)],
-        model=agent_model,
-        markdown=True,
-    )
+    # 1. smartscraper — URL + prompt -> structured JSON.
     smartscraper_agent.print_response(
         "Use smartscraper on https://example.com to extract the page title and main heading. "
         "Return them as JSON.",
         stream=True,
     )
 
-    # 2. markdownify — URL to markdown text.
-    markdownify_agent = Agent(
-        tools=[ScrapeGraphTools(enable_smartscraper=False, enable_markdownify=True)],
-        model=agent_model,
-        markdown=True,
-    )
+    # 2. markdownify — URL -> markdown text.
     markdownify_agent.print_response(
         "Fetch https://example.com and convert it to markdown. Paste the markdown in your reply.",
         stream=True,
     )
 
-    # 3. scrape — raw HTML.
-    scrape_agent = Agent(
-        tools=[ScrapeGraphTools(enable_scrape=True, enable_smartscraper=False)],
-        model=agent_model,
-        markdown=True,
-    )
+    # 3. scrape — URL -> raw HTML.
     scrape_agent.print_response(
         "Use the scrape tool on https://example.com and confirm whether the HTML contains 'Example Domain'.",
         stream=True,

@@ -71,11 +71,20 @@ def test_init_default_registers_smartscraper_only():
         assert names == ["smartscraper"]
 
 
-def test_init_falls_back_to_markdownify_when_smartscraper_disabled():
+def test_init_falls_back_to_markdownify_when_nothing_else_enabled():
     with _patch_client():
         tools = ScrapeGraphTools(enable_smartscraper=False)
         names = [func.__name__ for func in tools.tools]
-        assert "markdownify" in names
+        # Fallback ensures the toolkit always exposes at least one tool
+        assert names == ["markdownify"]
+
+
+def test_init_explicit_tool_suppresses_markdownify_fallback():
+    with _patch_client():
+        tools = ScrapeGraphTools(enable_smartscraper=False, enable_scrape=True)
+        names = [func.__name__ for func in tools.tools]
+        # Only `scrape` is registered — the fallback must NOT add markdownify
+        assert names == ["scrape"]
 
 
 def test_init_deprecated_enable_agentic_crawler_warns_and_is_ignored():

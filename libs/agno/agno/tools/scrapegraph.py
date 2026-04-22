@@ -94,9 +94,15 @@ class ScrapeGraphTools(Toolkit):
         self.client = ScrapeGraphAI(api_key=self.api_key)
         self.render_heavy_js = render_heavy_js
 
-        # When the caller disables smartscraper without opting into `all`, fall back
-        # to markdownify so the toolkit always exposes at least one tool.
-        if not enable_smartscraper and not all:
+        # Ensure the toolkit always exposes at least one tool: if the caller
+        # turned off smartscraper without enabling any other method, fall back
+        # to markdownify. (An explicit enable on any other tool suppresses the
+        # fallback, so `enable_scrape=True, enable_smartscraper=False` gives
+        # you just `scrape`, not `scrape + markdownify`.)
+        _any_tool_enabled = any(
+            [enable_smartscraper, enable_markdownify, enable_crawl, enable_searchscraper, enable_scrape, all]
+        )
+        if not _any_tool_enabled:
             enable_markdownify = True
 
         tools: List[Any] = []
