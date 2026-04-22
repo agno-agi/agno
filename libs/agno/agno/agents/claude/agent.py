@@ -119,34 +119,55 @@ class ClaudeAgent(BaseExternalAgent):
         opts.update(self.options_kwargs)
         return sdk.ClaudeAgentOptions(**opts)
 
+    @staticmethod
+    def _check_result_message(sdk: Any, message: Any) -> None:
+        """Raise if the SDK reported an error result so the base class can surface it."""
+        if not isinstance(message, sdk.ResultMessage):
+            return
+        is_error = bool(getattr(message, "is_error", False))
+        subtype = getattr(message, "subtype", None)
+        if is_error or (subtype and subtype != "success"):
+            # `message.result` carries the human-readable error text in the
+            # invalid-model case where subtype="success" but is_error=True.
+            detail = (
+                getattr(message, "errors", None)
+                or getattr(message, "result", None)
+                or getattr(message, "stop_reason", None)
+            )
+            raise RuntimeError(f"Claude SDK error (is_error={is_error}, subtype={subtype}): {detail}")
+
     async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> str:
         """Non-streaming: collect all messages and return final content."""
         sdk = _sdk()
 
         options = self._build_options(**kwargs)
         agno_session_id = kwargs.get("session_id")
-        result_text = ""
+        assistant_text = ""
+        final_result = ""
 
         async for message in sdk.query(prompt=str(input), options=options):
             if isinstance(message, sdk.SystemMessage):
                 if hasattr(message, "subtype") and message.subtype == "init":
                     data = getattr(message, "data", {}) or {}
-                    if "session_id" in data and agno_session_id:
-                        self._sdk_session_ids[agno_session_id] = data["session_id"]
+                    sdk_session_id = data.get("session_id")
+                    if sdk_session_id and agno_session_id:
+                        self._sdk_session_ids[agno_session_id] = sdk_session_id
 
             elif isinstance(message, sdk.AssistantMessage):
+                # Accumulate every text block; multiple blocks per message are valid
                 for block in message.content:
                     if isinstance(block, sdk.TextBlock):
-                        result_text = block.text
+                        assistant_text += block.text
 
             elif isinstance(message, sdk.ResultMessage):
+                self._check_result_message(sdk, message)
                 if hasattr(message, "session_id") and message.session_id and agno_session_id:
                     self._sdk_session_ids[agno_session_id] = message.session_id
-                # Use result text if available
                 if hasattr(message, "result") and message.result:
-                    result_text = str(message.result)
+                    final_result = str(message.result)
 
-        return result_text
+        # Prefer ResultMessage.result, fall back to accumulated assistant text
+        return final_result or assistant_text
 
     async def _arun_adapter_stream(
         self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any
@@ -196,8 +217,9 @@ class ClaudeAgent(BaseExternalAgent):
             elif isinstance(message, sdk.SystemMessage):
                 if hasattr(message, "subtype") and message.subtype == "init":
                     data = getattr(message, "data", {}) or {}
-                    if "session_id" in data and agno_session_id:
-                        self._sdk_session_ids[agno_session_id] = data["session_id"]
+                    sdk_session_id = data.get("session_id")
+                    if sdk_session_id and agno_session_id:
+                        self._sdk_session_ids[agno_session_id] = sdk_session_id
 
             elif isinstance(message, sdk.AssistantMessage):
                 # Always extract tool calls from complete AssistantMessage
@@ -257,5 +279,6 @@ class ClaudeAgent(BaseExternalAgent):
                             )
 
             elif isinstance(message, sdk.ResultMessage):
+                self._check_result_message(sdk, message)
                 if hasattr(message, "session_id") and message.session_id and agno_session_id:
                     self._sdk_session_ids[agno_session_id] = message.session_id

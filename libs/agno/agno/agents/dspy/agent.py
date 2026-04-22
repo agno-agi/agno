@@ -56,6 +56,28 @@ class DSPyAgent(BaseExternalAgent):
     program_kwargs: Dict[str, Any] = field(default_factory=dict)
     framework: str = "dspy"
 
+    @staticmethod
+    def _clone_lm_without_cache(lm: Any) -> Any:
+        """Clone `lm` with caching disabled.
+
+        Prefers `dspy.LM.copy(**overrides)` — the idiomatic path — which deep-copies
+        and preserves num_retries, callbacks, launch_kwargs, and other top-level LM
+        attributes that aren't in `lm.kwargs`. Falls back to rebuilding from `lm.kwargs`
+        for custom LM subclasses that don't implement copy().
+        """
+        copy_fn = getattr(lm, "copy", None)
+        if callable(copy_fn):
+            return copy_fn(cache=False)
+
+        import dspy
+
+        preserved = {k: v for k, v in (getattr(lm, "kwargs", {}) or {}).items() if v is not None}
+        preserved["cache"] = False
+        model_type = getattr(lm, "model_type", None)
+        if model_type is not None:
+            preserved.setdefault("model_type", model_type)
+        return dspy.LM(lm.model, **preserved)
+
     async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> str:
         """Non-streaming: run the DSPy program and return the output field."""
         try:
@@ -117,7 +139,7 @@ class DSPyAgent(BaseExternalAgent):
         # we temporarily scope a non-cached LM via dspy.context().
         current_lm = self.lm or dspy.settings.lm
         if current_lm and getattr(current_lm, "cache", True):
-            stream_lm = dspy.LM(current_lm.model, cache=False)
+            stream_lm = self._clone_lm_without_cache(current_lm)
         else:
             stream_lm = current_lm
 
@@ -127,21 +149,10 @@ class DSPyAgent(BaseExternalAgent):
             stream_listeners=[dspy.streaming.StreamListener(signature_field_name=self.output_field)],
         )
 
-        # Scope a cache-free LM so streaming always produces token chunks.
-        # Tool calls from ReAct are extracted from the final Prediction's
-        # trajectory dict (tool_name_N, tool_args_N, observation_N).
-        # We yield them before the streamed text content.
-        tool_events: List[RunOutputEvent] = []
-
+        # DSPy emits StreamResponse chunks first and Prediction last, so tool events land after text.
         with dspy.context(lm=stream_lm):
             async for chunk in streaming_program(**program_input):
                 if isinstance(chunk, dspy.streaming.StreamResponse):
-                    # Before first text token, flush any accumulated tool events
-                    if tool_events:
-                        for evt in tool_events:
-                            yield evt
-                        tool_events = []
-                    # Token-level text streaming
                     if chunk.chunk:
                         yield RunContentEvent(
                             run_id=run_id,
@@ -151,7 +162,6 @@ class DSPyAgent(BaseExternalAgent):
                         )
 
                 elif isinstance(chunk, dspy.Prediction):
-                    # Extract tool calls from the trajectory dict (ReAct pattern)
                     trajectory = getattr(chunk, "trajectory", {}) or {}
                     i = 0
                     while f"tool_name_{i}" in trajectory:
@@ -160,34 +170,26 @@ class DSPyAgent(BaseExternalAgent):
                         t_result = trajectory.get(f"observation_{i}", "")
                         if t_name != "finish":
                             t_id = str(uuid4())
-                            tool_events.append(
-                                ToolCallStartedEvent(
-                                    run_id=run_id,
-                                    agent_id=self.id,
-                                    agent_name=self.name or "",
-                                    tool=ToolExecution(
-                                        tool_call_id=t_id,
-                                        tool_name=str(t_name),
-                                        tool_args=t_args if isinstance(t_args, dict) else {"input": str(t_args)},
-                                    ),
-                                )
+                            yield ToolCallStartedEvent(
+                                run_id=run_id,
+                                agent_id=self.id,
+                                agent_name=self.name or "",
+                                tool=ToolExecution(
+                                    tool_call_id=t_id,
+                                    tool_name=str(t_name),
+                                    tool_args=t_args if isinstance(t_args, dict) else {"input": str(t_args)},
+                                ),
                             )
-                            tool_events.append(
-                                ToolCallCompletedEvent(
-                                    run_id=run_id,
-                                    agent_id=self.id,
-                                    agent_name=self.name or "",
-                                    tool=ToolExecution(
-                                        tool_call_id=t_id,
-                                        tool_name=str(t_name),
-                                        result=str(t_result),
-                                    ),
-                                )
+                            yield ToolCallCompletedEvent(
+                                run_id=run_id,
+                                agent_id=self.id,
+                                agent_name=self.name or "",
+                                tool=ToolExecution(
+                                    tool_call_id=t_id,
+                                    tool_name=str(t_name),
+                                    result=str(t_result),
+                                ),
                             )
                         i += 1
 
                 # StatusMessage — skip (internal DSPy execution status)
-
-        # Flush any tool events on the cache-hit path (no StreamResponse was yielded).
-        for evt in tool_events:
-            yield evt

@@ -1,4 +1,5 @@
 import asyncio
+import json
 from dataclasses import dataclass
 from time import time
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union
@@ -22,7 +23,7 @@ from agno.run.agent import (
 )
 from agno.run.base import RunStatus
 from agno.session.agent import AgentSession
-from agno.utils.log import logger
+from agno.utils.log import log_exception, log_warning
 
 
 @dataclass
@@ -468,20 +469,22 @@ class BaseExternalAgent:
     ) -> RunOutput:
         """Build a RunOutput with properly populated messages for chat history."""
         now = int(time())
-        messages: List[Message] = [
-            Message(role="user", content=str(input_text), created_at=now),
-        ]
+        messages: List[Message] = []
+        # Skip synthetic user messages for replay/fork (input is None)
+        if input_text is not None:
+            messages.append(Message(role="user", content=str(input_text), created_at=now))
 
         # Add tool call messages between user and assistant
         if tools:
             for tool in tools:
                 # Tool call request
+                tool_call_id = tool.tool_call_id or str(uuid4())
                 tool_call_data = {
-                    "id": tool.tool_call_id or str(uuid4()),
+                    "id": tool_call_id,
                     "type": "function",
                     "function": {
                         "name": tool.tool_name or "",
-                        "arguments": str(tool.tool_args or {}),
+                        "arguments": json.dumps(tool.tool_args or {}),
                     },
                 }
                 messages.append(
@@ -495,7 +498,7 @@ class BaseExternalAgent:
                 messages.append(
                     Message(
                         role="tool",
-                        tool_call_id=tool_call_data["id"],
+                        tool_call_id=tool_call_id,
                         content=str(tool.result or ""),
                         created_at=now,
                     )
@@ -511,7 +514,7 @@ class BaseExternalAgent:
             agent_name=self.name,
             session_id=session_id,
             user_id=user_id,
-            input=RunInput(input_content=str(input_text)),
+            input=RunInput(input_content=str(input_text)) if input_text is not None else None,
             content=content,
             messages=messages,
             tools=tools,
@@ -586,7 +589,7 @@ class BaseExternalAgent:
                 status=RunStatus.completed,
             )
         except Exception as e:
-            logger.error(f"Error in {self.framework} agent '{self.id}': {e}")
+            log_exception(f"Error in {self.framework} agent '{self.id}': {e}")
             run_output = self._build_run_output(
                 run_id=run_id,
                 session_id=session_id,
@@ -596,12 +599,16 @@ class BaseExternalAgent:
                 status=RunStatus.error,
             )
 
-        # Persist the run to the session
+        # Persist the run to the session. Swallow DB failures so the caller still
+        # receives the RunOutput — matching agent/_storage.aupsert_session semantics.
         if session is not None:
             if session.runs is None:
                 session.runs = []
             session.runs.append(run_output)
-            await self.aupsert_session(session)
+            try:
+                await self.aupsert_session(session)
+            except Exception as upsert_err:
+                log_warning(f"Failed to persist run for {self.framework} agent '{self.id}': {upsert_err}")
 
         return run_output
 
@@ -628,9 +635,11 @@ class BaseExternalAgent:
             session_id=session_id,
         )
 
+        accumulated_content = ""
+        accumulated_tools: List[ToolExecution] = []
+        run_error: Optional[Exception] = None
+
         try:
-            accumulated_content = ""
-            accumulated_tools: List[ToolExecution] = []
             # Map tool_call_id -> ToolExecution for merging started+completed
             tool_map: Dict[str, ToolExecution] = {}
 
@@ -653,38 +662,45 @@ class BaseExternalAgent:
                     else:
                         accumulated_tools.append(event.tool)
                 yield event
+        except Exception as e:
+            log_exception(f"Error in {self.framework} agent '{self.id}': {e}")
+            run_error = e
 
-            # Persist the run to the session
-            if session is not None:
-                run_output = self._build_run_output(
-                    run_id=run_id,
-                    session_id=session_id,
-                    user_id=user_id,
-                    input_text=input,
-                    content=accumulated_content,
-                    status=RunStatus.completed,
-                    tools=accumulated_tools if accumulated_tools else None,
-                )
-                if session.runs is None:
-                    session.runs = []
-                session.runs.append(run_output)
+        # Persist the run to the session. Swallow DB failures so the consumer
+        # still receives the terminal RunCompletedEvent / RunErrorEvent below.
+        if session is not None:
+            run_output = self._build_run_output(
+                run_id=run_id,
+                session_id=session_id,
+                user_id=user_id,
+                input_text=input,
+                content=str(run_error) if run_error is not None else accumulated_content,
+                status=RunStatus.error if run_error is not None else RunStatus.completed,
+                tools=accumulated_tools if accumulated_tools else None,
+            )
+            if session.runs is None:
+                session.runs = []
+            session.runs.append(run_output)
+            try:
                 await self.aupsert_session(session)
+            except Exception as upsert_err:
+                log_warning(f"Failed to persist run for {self.framework} agent '{self.id}': {upsert_err}")
 
+        if run_error is not None:
+            yield RunErrorEvent(
+                run_id=run_id,
+                agent_id=self.id,
+                agent_name=self.name or "",
+                session_id=session_id,
+                content=str(run_error),
+            )
+        else:
             yield RunCompletedEvent(
                 run_id=run_id,
                 agent_id=self.id,
                 agent_name=self.name or "",
                 session_id=session_id,
                 content=accumulated_content,
-            )
-        except Exception as e:
-            logger.error(f"Error in {self.framework} agent '{self.id}': {e}")
-            yield RunErrorEvent(
-                run_id=run_id,
-                agent_id=self.id,
-                agent_name=self.name or "",
-                session_id=session_id,
-                content=str(e),
             )
 
     def _run_stream(self, input: Any, **kwargs: Any) -> Iterator[RunOutputEvent]:
@@ -694,14 +710,21 @@ class BaseExternalAgent:
 
         event_queue: queue.Queue = queue.Queue()
         _sentinel = object()
+        thread_error: List[BaseException] = []
 
         def _run_async():
             async def _produce():
                 async for event in self._arun_stream(input, **kwargs):
                     event_queue.put(event)
-                event_queue.put(_sentinel)
 
-            asyncio.run(_produce())
+            # Sentinel goes out in finally so the consumer never blocks forever, even
+            # if anything above _arun_stream's own try/except raises (e.g. db load).
+            try:
+                asyncio.run(_produce())
+            except BaseException as e:
+                thread_error.append(e)
+            finally:
+                event_queue.put(_sentinel)
 
         thread = threading.Thread(target=_run_async, daemon=True)
         thread.start()
@@ -713,6 +736,8 @@ class BaseExternalAgent:
             yield item
 
         thread.join()
+        if thread_error:
+            raise thread_error[0]
 
     # ---------------------------------------------------------------------------
     # Subclass hooks (must be implemented by adapters)
