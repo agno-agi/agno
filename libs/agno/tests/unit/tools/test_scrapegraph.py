@@ -253,8 +253,11 @@ def test_crawl_polls_until_complete():
             _api_result(done),
         )
 
-        tools = ScrapeGraphTools(enable_crawl=True, crawl_poll_interval=2)
-        with patch("agno.tools.scrapegraph.time.sleep") as slept:
+        tools = ScrapeGraphTools(enable_crawl=True)
+        with (
+            patch("agno.tools.scrapegraph._CRAWL_POLL_INTERVAL", 2),
+            patch("agno.tools.scrapegraph.time.sleep") as slept,
+        ):
             result = tools.crawl("https://x.com", prompt="p", schema={"type": "object"})
 
         assert mock_client.crawl.get.call_count == 2
@@ -280,8 +283,9 @@ def test_crawl_times_out():
         with (
             patch("agno.tools.scrapegraph.time.monotonic", side_effect=lambda: next(times)),
             patch("agno.tools.scrapegraph.time.sleep"),
+            patch("agno.tools.scrapegraph._CRAWL_MAX_WAIT", 60),
         ):
-            tools = ScrapeGraphTools(enable_crawl=True, crawl_max_wait=60)
+            tools = ScrapeGraphTools(enable_crawl=True)
             result = tools.crawl("https://x.com", prompt="p", schema={"type": "object"})
 
         assert result.startswith("Error")

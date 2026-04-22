@@ -33,6 +33,11 @@ try:
 except ImportError:
     raise ImportError("`scrapegraph-py` not installed. Please install using `pip install scrapegraph-py`")
 
+# Upstream crawl runs as an async job; these govern the polling loop that
+# waits for it to finish. Hardcoded because tuning them isn't a user concern.
+_CRAWL_POLL_INTERVAL = 3
+_CRAWL_MAX_WAIT = 180
+
 
 class ScrapeGraphTools(Toolkit):
     def __init__(
@@ -44,8 +49,6 @@ class ScrapeGraphTools(Toolkit):
         enable_crawl: bool = False,
         enable_scrape: bool = False,
         render_heavy_js: bool = False,
-        crawl_poll_interval: int = 3,
-        crawl_max_wait: int = 180,
         all: bool = False,
         **kwargs,
     ):
@@ -59,8 +62,6 @@ class ScrapeGraphTools(Toolkit):
             enable_crawl (bool): Enable multi-page crawl with structured extraction. Defaults to False.
             enable_scrape (bool): Enable raw HTML scraping. Defaults to False.
             render_heavy_js (bool): Request JavaScript rendering on every call. Defaults to False.
-            crawl_poll_interval (int): Seconds between crawl status polls. Defaults to 3.
-            crawl_max_wait (int): Max seconds to wait for a crawl to complete. Defaults to 180.
             all (bool): Enable all tools. Defaults to False.
         """
         self.api_key: Optional[str] = api_key or getenv("SGAI_API_KEY")
@@ -69,8 +70,6 @@ class ScrapeGraphTools(Toolkit):
 
         self.client: ScrapeGraphAI = ScrapeGraphAI(api_key=self.api_key)
         self.render_heavy_js: bool = render_heavy_js
-        self.crawl_poll_interval: int = crawl_poll_interval
-        self.crawl_max_wait: int = crawl_max_wait
 
         tools: List[Any] = []
         if all or enable_smartscraper:
@@ -164,7 +163,7 @@ class ScrapeGraphTools(Toolkit):
     ) -> str:
         """Crawl a website and extract structured data across multiple pages.
 
-        Starts a crawl job upstream and polls until it completes or `crawl_max_wait` elapses.
+        Starts a crawl job upstream and polls until it completes (up to ~3 minutes).
 
         Args:
             url (str): The URL to crawl.
@@ -190,11 +189,11 @@ class ScrapeGraphTools(Toolkit):
 
             crawl_data = start_response.data
             crawl_id = crawl_data.id
-            deadline = time.monotonic() + self.crawl_max_wait
+            deadline = time.monotonic() + _CRAWL_MAX_WAIT
             while crawl_data.status == "running":
                 if time.monotonic() > deadline:
-                    return f"Error: crawl timed out after {self.crawl_max_wait}s (id={crawl_id})"
-                time.sleep(self.crawl_poll_interval)
+                    return f"Error: crawl timed out after {_CRAWL_MAX_WAIT}s (id={crawl_id})"
+                time.sleep(_CRAWL_POLL_INTERVAL)
                 status_response = self.client.crawl.get(crawl_id)
                 if status_response.status != "success" or status_response.data is None:
                     return f"Error polling crawl {crawl_id}: {status_response.error or 'unknown error'}"
