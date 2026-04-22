@@ -126,6 +126,7 @@ def _determine_tools_for_model(
         _search_past_sessions_function,
         _update_session_state_tool,
         create_knowledge_search_tool,
+        get_add_to_knowledge_function,
     )
     from agno.team._init import _connect_connectable_tools
     from agno.team._messages import _get_user_message
@@ -150,6 +151,7 @@ def _determine_tools_for_model(
 
     _connect_connectable_tools(
         team,
+        resolved_tools=resolved_tools,
     )
 
     # Prepare tools
@@ -220,7 +222,7 @@ def _determine_tools_for_model(
         )
 
     if resolved_knowledge is not None and team.update_knowledge:
-        _tools.append(team.add_to_knowledge)
+        _tools.append(get_add_to_knowledge_function(team, run_context=run_context))
 
     # Add tools for accessing skills
     if team.skills is not None:
@@ -509,8 +511,9 @@ def _find_member_by_id(
             return i, member
 
         # If this member is a team, search its members recursively
+        # Pass run_context=None so the sub-team reads its own members list, not the parent's
         if isinstance(member, Team):
-            result = member._find_member_by_id(member_id, run_context=run_context)
+            result = member._find_member_by_id(member_id, run_context=None)
             if result is not None:
                 return result
 
@@ -546,8 +549,9 @@ def _find_member_route_by_id(
         if url_safe_member_id == member_id:
             return i, member
 
+        # Pass run_context=None so the sub-team reads its own members list, not the parent's
         if isinstance(member, Team):
-            result = member._find_member_by_id(member_id, run_context=run_context)
+            result = member._find_member_by_id(member_id, run_context=None)
             if result is not None:
                 return i, member
 

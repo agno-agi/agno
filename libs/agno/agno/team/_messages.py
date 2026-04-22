@@ -93,8 +93,9 @@ def get_members_system_message_content(
             if member.description is not None:
                 content += f"{pad}  Description: {member.description}\n"
             if member.members is not None:
+                # Pass run_context=None so the sub-team reads its own members list, not the parent's
                 content += member.get_members_system_message_content(
-                    indent=indent + 2, run_context=run_context, async_mode=async_mode
+                    indent=indent + 2, run_context=None, async_mode=async_mode
                 )
             content += f"{pad}</member>\n"
         else:
