@@ -272,7 +272,6 @@ class MCPContextProvider(ContextProvider):
         return Agent(
             id=self.id,
             name=self.name,
-            role=f"Answer questions by calling the {self.server_name} MCP server",
             model=self.model,
             instructions=self._agent_instructions(),
             tools=[self._tools] if self._tools is not None else [],

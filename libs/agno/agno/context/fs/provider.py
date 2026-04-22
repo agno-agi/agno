@@ -92,7 +92,6 @@ class FilesystemContextProvider(ContextProvider):
         return Agent(
             id=self.id,
             name=self.name,
-            role="Answer questions by browsing files under a local root",
             model=self.model,
             instructions=self.instructions_text.replace("{root}", str(self.root)),
             tools=[_build_file_tools(self.root)],

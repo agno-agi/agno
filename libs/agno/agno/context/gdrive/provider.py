@@ -129,7 +129,6 @@ class GDriveContextProvider(ContextProvider):
         return Agent(
             id=self.id,
             name=self.name,
-            role="Answer questions by searching and reading Google Drive",
             model=self.model,
             instructions=self.instructions_text,
             tools=[self._ensure_tools()],

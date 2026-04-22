@@ -141,7 +141,6 @@ class DatabaseContextProvider(ContextProvider):
         return Agent(
             id=f"{self.id}-read",
             name=f"{self.name} Read",
-            role=f"Answer questions about data in the {schema_label}",
             model=self.model,
             instructions=self.read_instructions_text.replace("{schema}", schema_label),
             tools=[SQLTools(db_engine=self.readonly_engine, schema=self.schema)],
@@ -153,7 +152,6 @@ class DatabaseContextProvider(ContextProvider):
         return Agent(
             id=f"{self.id}-write",
             name=f"{self.name} Write",
-            role=f"Modify data in the {schema_label}",
             model=self.model,
             instructions=self.write_instructions_text.replace("{schema}", schema_label),
             tools=[SQLTools(db_engine=self.sql_engine, schema=self.schema)],

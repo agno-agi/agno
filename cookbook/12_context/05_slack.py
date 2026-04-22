@@ -63,19 +63,14 @@ async def main() -> None:
     # scales to huge workspaces — `list_channels` would page past
     # most of what's there.
     read_prompt = (
-        "Find the 3 most recent messages in this workspace mentioning "
-        "'agno'. For each, include channel, author, timestamp, and a "
-        "one-line quote. If nothing matches, say so."
+        "Find the 3 most recent messages in the engineering channel."
+        "For each, author, and a one-line quote."
     )
     print(f"> {read_prompt}\n")
     await agent.aprint_response(read_prompt)
 
     # --- Write path (opt in via env) ---
-    write_channel = os.getenv("SLACK_WRITE_CHANNEL")
-    if not write_channel:
-        print("\n(set SLACK_WRITE_CHANNEL=#channel to also demo the write path)")
-        return
-
+    write_channel = "#agents"
     write_prompt = f"Post the message 'Hello from agno.context' to {write_channel}."
     print(f"\n> {write_prompt}\n")
     await agent.aprint_response(write_prompt)

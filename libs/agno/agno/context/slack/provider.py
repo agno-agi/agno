@@ -172,7 +172,6 @@ class SlackContextProvider(ContextProvider):
         return Agent(
             id=f"{self.id}-read",
             name=f"{self.name} Read",
-            role="Answer questions by searching and reading Slack",
             model=self.model,
             instructions=self.read_instructions_text,
             tools=[self._ensure_read_tools()],
@@ -183,7 +182,6 @@ class SlackContextProvider(ContextProvider):
         return Agent(
             id=f"{self.id}-write",
             name=f"{self.name} Write",
-            role="Post messages to Slack on behalf of the caller",
             model=self.model,
             instructions=self.write_instructions_text,
             tools=[self._ensure_write_tools()],

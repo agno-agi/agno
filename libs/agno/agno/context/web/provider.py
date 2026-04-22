@@ -98,7 +98,6 @@ class WebContextProvider(ContextProvider):
         return Agent(
             id=self.id,
             name=self.name,
-            role="Research the web and return cited answers",
             model=self.model,
             instructions=self.instructions_text,
             tools=self.backend.get_tools(),
