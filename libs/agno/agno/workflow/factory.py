@@ -14,4 +14,3 @@ class WorkflowFactory(BaseFactory):
     def _post_resolve(self, component) -> None:
         super()._post_resolve(component)
         component.initialize_workflow()
-        component.store_events = True

@@ -39,14 +39,14 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    find_factory_by_id,
     format_sse_event,
+    get_agent_by_id,
     get_request_kwargs,
     process_audio,
     process_document,
     process_image,
     process_video,
-    find_factory_by_id,
-    get_agent_by_id,
     resolve_agent,
 )
 from agno.registry import Registry
@@ -485,11 +485,14 @@ def get_agent_router(
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
             from agno.agent._run import acancel_run
+
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
 
         try:
-            agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)  # type: ignore[assignment]
+            agent = get_agent_by_id(
+                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+            )  # type: ignore[assignment]
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -566,12 +569,18 @@ def get_agent_router(
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
             agent = await resolve_agent(  # type: ignore[assignment]
-                agent_id, os.agents, factory.db,
-                request=request, user_id=user_id, session_id=session_id,
+                agent_id,
+                os.agents,
+                factory.db,
+                request=request,
+                user_id=user_id,
+                session_id=session_id,
             )
         else:
             try:
-                agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)  # type: ignore[assignment]
+                agent = get_agent_by_id(
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -783,7 +792,9 @@ def get_agent_router(
             return AgentResponse.from_factory(factory)
 
         try:
-            agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)  # type: ignore[assignment]
+            agent = get_agent_by_id(
+                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+            )  # type: ignore[assignment]
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -819,11 +830,16 @@ def get_agent_router(
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
             agent = await resolve_agent(  # type: ignore[assignment]
-                agent_id, os.agents, factory.db if factory else os.db, session_id=session_id,
+                agent_id,
+                os.agents,
+                factory.db,
+                session_id=session_id,
             )
         else:
             try:
-                agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)  # type: ignore[assignment]
+                agent = get_agent_by_id(
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -864,11 +880,16 @@ def get_agent_router(
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
             agent = await resolve_agent(  # type: ignore[assignment]
-                agent_id, os.agents, factory.db if factory else os.db, session_id=session_id,
+                agent_id,
+                os.agents,
+                factory.db,
+                session_id=session_id,
             )
         else:
             try:
-                agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)  # type: ignore[assignment]
+                agent = get_agent_by_id(
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")

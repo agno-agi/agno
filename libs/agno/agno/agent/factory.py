@@ -14,4 +14,3 @@ class AgentFactory(BaseFactory):
     def _post_resolve(self, component) -> None:
         super()._post_resolve(component)
         component.initialize_agent()
-        component.store_events = True
