@@ -57,7 +57,6 @@ with engine.begin() as conn:
 # ---------------------------------------------------------------------------
 db = DatabaseContextProvider(
     id="contacts",
-    name="Contacts DB",
     sql_engine=engine,
     readonly_engine=engine,
     model=OpenAIResponses(id="gpt-5.4-mini"),

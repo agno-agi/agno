@@ -38,7 +38,7 @@ class DatabaseContextProvider(ContextProvider):
         self,
         *,
         id: str,
-        name: str,
+        name: str | None = None,
         sql_engine: Engine,
         readonly_engine: Engine,
         schema: str | None = None,
