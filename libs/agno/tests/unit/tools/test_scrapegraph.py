@@ -58,10 +58,10 @@ def test_scrape_basic_functionality():
 
         assert "<html>test</html>" in result
         mock_client.scrape.assert_called_once()
-        call_args = mock_client.scrape.call_args[0][0]
-        assert str(call_args.url).rstrip("/") == "https://example.com"
-        assert call_args.fetch_config is None
-        assert call_args.formats[0].type == "html"
+        args, kwargs = mock_client.scrape.call_args
+        assert args[0] == "https://example.com"
+        assert kwargs["fetch_config"] is None
+        assert kwargs["formats"][0].type == "html"
 
 
 def test_scrape_with_render_heavy_js():
@@ -79,9 +79,9 @@ def test_scrape_with_render_heavy_js():
         tools = ScrapeGraphTools(enable_scrape=True, render_heavy_js=True)
         tools.scrape("https://spa-site.com")
 
-        call_args = mock_client.scrape.call_args[0][0]
-        assert call_args.fetch_config is not None
-        assert call_args.fetch_config.mode == "js"
+        _, kwargs = mock_client.scrape.call_args
+        assert kwargs["fetch_config"] is not None
+        assert kwargs["fetch_config"].mode == "js"
 
 
 def test_scrape_error_handling():
@@ -119,9 +119,9 @@ def test_smartscraper_basic():
 
         assert json.loads(result) == {"title": "example"}
         mock_client.extract.assert_called_once()
-        call_args = mock_client.extract.call_args[0][0]
-        assert call_args.prompt == "extract title"
-        assert str(call_args.url).rstrip("/") == "https://example.com"
+        _, kwargs = mock_client.extract.call_args
+        assert kwargs["prompt"] == "extract title"
+        assert kwargs["url"] == "https://example.com"
 
 
 def test_markdownify_basic():
@@ -141,8 +141,9 @@ def test_markdownify_basic():
 
         assert result == "# Title\n\nContent"
         mock_client.scrape.assert_called_once()
-        call_args = mock_client.scrape.call_args[0][0]
-        assert call_args.formats[0].type == "markdown"
+        args, kwargs = mock_client.scrape.call_args
+        assert args[0] == "https://example.com"
+        assert kwargs["formats"][0].type == "markdown"
 
 
 def test_tool_selection():

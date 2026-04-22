@@ -1,4 +1,5 @@
 import json
+import time
 from os import getenv
 from typing import Any, List, Optional
 
@@ -7,18 +8,19 @@ from agno.utils.log import log_debug, log_error
 
 try:
     from scrapegraph_py import (
-        CrawlRequest,
-        ExtractRequest,
         FetchConfig,
         HtmlFormatConfig,
         JsonFormatConfig,
         MarkdownFormatConfig,
         ScrapeGraphAI,
-        ScrapeRequest,
-        SearchRequest,
     )
 except ImportError:
-    raise ImportError("`scrapegraph-py>=2.0.0` not installed. Please install using `pip install scrapegraph-py`")
+    raise ImportError("`scrapegraph-py` not installed. Please install using `pip install scrapegraph-py`")
+
+# Crawl is an async job upstream: start() returns immediately with a running
+# status; real pages are only available after polling get(id) to completion.
+_CRAWL_MAX_WAIT_SECONDS = 180
+_CRAWL_POLL_INTERVAL_SECONDS = 3
 
 
 def _unwrap(result: Any) -> Any:
@@ -81,7 +83,11 @@ class ScrapeGraphTools(Toolkit):
         """
         try:
             log_debug(f"ScrapeGraph smartscraper (extract) request for URL: {url}")
-            response = self.client.extract(ExtractRequest(url=url, prompt=prompt, fetch_config=self._fetch_config()))
+            response = self.client.extract(
+                prompt=prompt,
+                url=url,
+                fetch_config=self._fetch_config(),
+            )
             data = _unwrap(response)
             payload = data.json_data if data.json_data is not None else data.raw
             return json.dumps(payload)
@@ -102,11 +108,9 @@ class ScrapeGraphTools(Toolkit):
         try:
             log_debug(f"ScrapeGraph markdownify request for URL: {url}")
             response = self.client.scrape(
-                ScrapeRequest(
-                    url=url,
-                    formats=[MarkdownFormatConfig()],
-                    fetch_config=self._fetch_config(),
-                )
+                url,
+                formats=[MarkdownFormatConfig()],
+                fetch_config=self._fetch_config(),
             )
             data = _unwrap(response)
             markdown = data.results.get("markdown", {})
@@ -129,6 +133,8 @@ class ScrapeGraphTools(Toolkit):
     ) -> str:
         """Crawl a website and extract structured data.
 
+        Starts a crawl job upstream and polls until it completes or times out.
+
         Args:
             url (str): The URL to crawl
             prompt (str): Natural language prompt describing what to extract
@@ -137,21 +143,32 @@ class ScrapeGraphTools(Toolkit):
             max_pages (int): Max number of pages to crawl
 
         Returns:
-            The structured data extracted from the website (JSON string)
+            JSON string with the crawl result (pages and extracted data).
         """
         try:
-            log_debug(f"ScrapeGraph crawl request for URL: {url}")
-            response = self.client.crawl.start(
-                CrawlRequest(
-                    url=url,
-                    formats=[JsonFormatConfig(prompt=prompt, schema=schema)],
-                    max_depth=depth,
-                    max_pages=max_pages,
-                    fetch_config=self._fetch_config(),
-                )
+            log_debug(f"ScrapeGraph crawl start for URL: {url}")
+            start_response = self.client.crawl.start(
+                url,
+                formats=[JsonFormatConfig(prompt=prompt, schema=schema)],
+                max_depth=depth,
+                max_pages=max_pages,
+                fetch_config=self._fetch_config(),
             )
-            data = _unwrap(response)
-            return data.model_dump_json(indent=2, by_alias=True)
+            start_data = _unwrap(start_response)
+            crawl_id = start_data.id
+            status = start_data.status
+            crawl_data = start_data
+
+            deadline = time.monotonic() + _CRAWL_MAX_WAIT_SECONDS
+            while status == "running":
+                if time.monotonic() > deadline:
+                    return f"Error: Crawl timed out after {_CRAWL_MAX_WAIT_SECONDS}s (id={crawl_id})"
+                time.sleep(_CRAWL_POLL_INTERVAL_SECONDS)
+                status_response = self.client.crawl.get(crawl_id)
+                crawl_data = _unwrap(status_response)
+                status = crawl_data.status
+
+            return crawl_data.model_dump_json(indent=2, by_alias=True)
         except Exception as e:
             error_msg = f"Crawl failed: {str(e)}"
             log_error(error_msg)
@@ -168,7 +185,7 @@ class ScrapeGraphTools(Toolkit):
         """
         try:
             log_debug(f"ScrapeGraph searchscraper (search) request with prompt: {user_prompt}")
-            response = self.client.search(SearchRequest(query=user_prompt))
+            response = self.client.search(user_prompt)
             data = _unwrap(response)
             return data.model_dump_json(by_alias=True)
         except Exception as e:
@@ -199,11 +216,9 @@ class ScrapeGraphTools(Toolkit):
                     headers=headers,
                 )
             response = self.client.scrape(
-                ScrapeRequest(
-                    url=website_url,
-                    formats=[HtmlFormatConfig()],
-                    fetch_config=fetch_config,
-                )
+                website_url,
+                formats=[HtmlFormatConfig()],
+                fetch_config=fetch_config,
             )
             data = _unwrap(response)
             return data.model_dump_json(indent=2, by_alias=True)
