@@ -39,6 +39,7 @@ from agno.agent import Agent
 from agno.context._utils import answer_from_run
 from agno.context.mode import ContextMode
 from agno.context.provider import Answer, ContextProvider, Status, _sanitize_id
+from agno.run import RunContext
 from agno.tools.mcp import MCPTools
 from agno.utils.log import log_warning
 
@@ -111,14 +112,15 @@ class MCPContextProvider(ContextProvider):
             return Status(ok=False, detail=f"mcp {self.server_name}: {type(exc).__name__}: {exc}")
         return Status(ok=True, detail=self._detail_ok())
 
-    def query(self, question: str) -> Answer:
+    def query(self, question: str, *, run_context: RunContext | None = None) -> Answer:
         raise NotImplementedError(
             "MCPContextProvider does not support sync query(); use aquery() (MCP sessions are async-only)."
         )
 
-    async def aquery(self, question: str) -> Answer:
+    async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
         agent = await self._aensure_agent()
-        return answer_from_run(await agent.arun(question))
+        kwargs = self._sub_agent_run_kwargs(run_context)
+        return answer_from_run(await agent.arun(question, **kwargs))
 
     async def asetup(self) -> None:
         """Connect to the MCP server and load its tool catalog.
