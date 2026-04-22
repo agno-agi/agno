@@ -637,7 +637,7 @@ def get_agent_by_id(
 
 async def get_agent_by_id_async(
     agent_id: str,
-    agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentFactory]]] = None,
+    agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]] = None,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     registry: Optional[Registry] = None,
     version: Optional[int] = None,
@@ -1344,7 +1344,7 @@ def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any],
 
 async def resolve_agent(
     agent_id: str,
-    agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentFactory]]],
+    agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]],
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     registry: Optional[Registry] = None,
     version: Optional[int] = None,
@@ -1352,7 +1352,7 @@ async def resolve_agent(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
-) -> Union[Agent, RemoteAgent]:
+) -> Union[Agent, RemoteAgent, AgentProtocol]:
     """Resolve an agent by ID with proper error handling for both factory and non-factory paths.
 
     For factory agents: builds RequestContext, invokes factory, handles factory-specific errors.
