@@ -175,6 +175,11 @@ def create_approval_from_pause(
     if not _has_approval_requirement(tools, requirements):
         return None
 
+    # Skip if an approval_id is already stamped (avoids duplicates when pause hook fires twice)
+    for t in tools or []:
+        if getattr(t, "approval_type", None) == "required" and getattr(t, "approval_id", None) is not None:
+            return getattr(t, "approval_id", None)
+
     try:
         approval_data = _build_approval_dict(
             run_response,
@@ -225,6 +230,11 @@ async def acreate_approval_from_pause(
     requirements = getattr(run_response, "requirements", None)
     if not _has_approval_requirement(tools, requirements):
         return None
+
+    # Skip if an approval_id is already stamped (avoids duplicates when pause hook fires twice)
+    for t in tools or []:
+        if getattr(t, "approval_type", None) == "required" and getattr(t, "approval_id", None) is not None:
+            return getattr(t, "approval_id", None)
 
     try:
         approval_data = _build_approval_dict(
@@ -391,8 +401,48 @@ async def _aget_approval_for_run(db: Any, run_id: str) -> Optional[Dict[str, Any
         return None
 
 
+def _collect_all_run_ids(run_id: str, run_response: Any) -> List[str]:
+    """Gather all candidate run_ids when looking up an approval record.
+
+    Approvals may be stored under the team's run_id (team-level tools) or a
+    member agent's run_id (member-level tools where the agent created the
+    approval before the team propagated the pause). This returns the team
+    run_id first, followed by any member_run_id values from the requirements,
+    so the lookup can try each until a match is found.
+    """
+    ids = [run_id]
+    for req in getattr(run_response, "requirements", None) or []:
+        mid = getattr(req, "member_run_id", None)
+        if mid and mid not in ids:
+            ids.append(mid)
+    return ids
+
+
+def _collect_all_approval_tools(run_response: Any) -> List[Any]:
+    """Collect all tool executions that carry an approval_type from the run response.
+
+    Searches both run_response.tools (team-level tools) and
+    run_response.requirements[*].tool_execution (member-level tools propagated
+    via _propagate_member_pause). Deduplicates by tool_call_id.
+    """
+    result: List[Any] = []
+    for t in getattr(run_response, "tools", None) or []:
+        if getattr(t, "approval_type", None) is not None:
+            result.append(t)
+    for req in getattr(run_response, "requirements", None) or []:
+        te = getattr(req, "tool_execution", None)
+        if te and getattr(te, "approval_type", None) is not None:
+            # Avoid duplicates (same tool_call_id already in result)
+            if not any(getattr(r, "tool_call_id", None) == te.tool_call_id for r in result):
+                result.append(te)
+    return result
+
+
 def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any) -> None:
     """Gate: if any tool has approval_type='required', verify the approval is resolved before continuing.
+
+    Checks both run_response.tools AND requirements' tool_execution objects so that
+    member-level approvals (where run_response.tools = [delegate_task_to_member]) are found.
 
     Raises RuntimeError if the approval is still pending or not found.
     No-op if no tools require approval or if db is None.
@@ -400,11 +450,16 @@ def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any)
     if db is None:
         return
 
-    tools = getattr(run_response, "tools", None)
-    if not tools or not any(getattr(t, "approval_type", None) == "required" for t in tools):
+    all_approval_tools = _collect_all_approval_tools(run_response)
+    if not any(getattr(t, "approval_type", None) == "required" for t in all_approval_tools):
         return
 
-    approval = _get_approval_for_run(db, run_id)
+    all_run_ids = _collect_all_run_ids(run_id, run_response)
+    approval = None
+    for rid in all_run_ids:
+        approval = _get_approval_for_run(db, rid)
+        if approval is not None:
+            break
     if approval is None:
         raise RuntimeError(
             "No approval record found for this run. Cannot continue a run that requires external approval."
@@ -414,7 +469,8 @@ def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any)
     if status == "pending":
         raise RuntimeError("Approval is still pending. Resolve the approval before continuing this run.")
 
-    _apply_approval_to_tools(tools, status, approval.get("resolution_data"))
+    resolution_data = approval.get("resolution_data")
+    _apply_approval_to_tools(all_approval_tools, status, resolution_data)
 
 
 async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any) -> None:
@@ -422,11 +478,17 @@ async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_respons
     if db is None:
         return
 
-    tools = getattr(run_response, "tools", None)
-    if not tools or not any(getattr(t, "approval_type", None) == "required" for t in tools):
+    all_approval_tools = _collect_all_approval_tools(run_response)
+    if not any(getattr(t, "approval_type", None) == "required" for t in all_approval_tools):
         return
 
-    approval = await _aget_approval_for_run(db, run_id)
+    # Search by team run_id first, then fall back to member run_ids
+    all_run_ids = _collect_all_run_ids(run_id, run_response)
+    approval = None
+    for rid in all_run_ids:
+        approval = await _aget_approval_for_run(db, rid)
+        if approval is not None:
+            break
     if approval is None:
         raise RuntimeError(
             "No approval record found for this run. Cannot continue a run that requires external approval."
@@ -436,7 +498,8 @@ async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_respons
     if status == "pending":
         raise RuntimeError("Approval is still pending. Resolve the approval before continuing this run.")
 
-    _apply_approval_to_tools(tools, status, approval.get("resolution_data"))
+    resolution_data = approval.get("resolution_data")
+    _apply_approval_to_tools(all_approval_tools, status, resolution_data)
 
 
 async def acreate_audit_approval(
