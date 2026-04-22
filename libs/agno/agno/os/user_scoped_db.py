@@ -91,25 +91,23 @@ class UserScopedDb:
 
     def delete_session(self, session_id: str, **kwargs) -> bool:
         kwargs["user_id"] = self._user_id
-        return self._db.delete_session(session_id=session_id, **kwargs)
+        return self._db.delete_session(session_id, **kwargs)
 
     def delete_sessions(self, session_ids: List[str], **kwargs) -> None:
         kwargs["user_id"] = self._user_id
-        return self._db.delete_sessions(session_ids=session_ids, **kwargs)
+        return self._db.delete_sessions(session_ids, **kwargs)
 
     def get_session(self, session_id: str, session_type: SessionType, **kwargs):
         kwargs["user_id"] = self._user_id
-        return self._db.get_session(session_id=session_id, session_type=session_type, **kwargs)
+        return self._db.get_session(session_id, session_type, **kwargs)
 
     def get_sessions(self, session_type: SessionType, **kwargs):
         kwargs["user_id"] = self._user_id
-        return self._db.get_sessions(session_type=session_type, **kwargs)
+        return self._db.get_sessions(session_type, **kwargs)
 
     def rename_session(self, session_id: str, session_type: SessionType, session_name: str, **kwargs):
         kwargs["user_id"] = self._user_id
-        return self._db.rename_session(
-            session_id=session_id, session_type=session_type, session_name=session_name, **kwargs
-        )
+        return self._db.rename_session(session_id, session_type, session_name, **kwargs)
 
     def upsert_session(self, session: Session, **kwargs):
         session = _coerce_user_id(session, self._user_id, "session")
@@ -128,11 +126,11 @@ class UserScopedDb:
 
     def delete_user_memory(self, memory_id: str, **kwargs) -> None:
         kwargs["user_id"] = self._user_id
-        return self._db.delete_user_memory(memory_id=memory_id, **kwargs)
+        return self._db.delete_user_memory(memory_id, **kwargs)
 
     def delete_user_memories(self, memory_ids: List[str], **kwargs) -> None:
         kwargs["user_id"] = self._user_id
-        return self._db.delete_user_memories(memory_ids=memory_ids, **kwargs)
+        return self._db.delete_user_memories(memory_ids, **kwargs)
 
     def get_all_memory_topics(self, **kwargs) -> List[str]:
         kwargs["user_id"] = self._user_id
@@ -140,7 +138,7 @@ class UserScopedDb:
 
     def get_user_memory(self, memory_id: str, **kwargs):
         kwargs["user_id"] = self._user_id
-        return self._db.get_user_memory(memory_id=memory_id, **kwargs)
+        return self._db.get_user_memory(memory_id, **kwargs)
 
     def get_user_memories(self, **kwargs):
         kwargs["user_id"] = self._user_id
@@ -246,25 +244,23 @@ class AsyncUserScopedDb:
 
     async def delete_session(self, session_id: str, **kwargs) -> bool:
         kwargs["user_id"] = self._user_id
-        return await self._db.delete_session(session_id=session_id, **kwargs)
+        return await self._db.delete_session(session_id, **kwargs)
 
     async def delete_sessions(self, session_ids: List[str], **kwargs) -> None:
         kwargs["user_id"] = self._user_id
-        return await self._db.delete_sessions(session_ids=session_ids, **kwargs)
+        return await self._db.delete_sessions(session_ids, **kwargs)
 
     async def get_session(self, session_id: str, session_type: SessionType, **kwargs):
         kwargs["user_id"] = self._user_id
-        return await self._db.get_session(session_id=session_id, session_type=session_type, **kwargs)
+        return await self._db.get_session(session_id, session_type, **kwargs)
 
     async def get_sessions(self, session_type: SessionType, **kwargs):
         kwargs["user_id"] = self._user_id
-        return await self._db.get_sessions(session_type=session_type, **kwargs)
+        return await self._db.get_sessions(session_type, **kwargs)
 
     async def rename_session(self, session_id: str, session_type: SessionType, session_name: str, **kwargs):
         kwargs["user_id"] = self._user_id
-        return await self._db.rename_session(
-            session_id=session_id, session_type=session_type, session_name=session_name, **kwargs
-        )
+        return await self._db.rename_session(session_id, session_type, session_name, **kwargs)
 
     async def upsert_session(self, session: Session, **kwargs):
         session = _coerce_user_id(session, self._user_id, "session")
@@ -285,11 +281,11 @@ class AsyncUserScopedDb:
 
     async def delete_user_memory(self, memory_id: str, **kwargs) -> None:
         kwargs["user_id"] = self._user_id
-        return await self._db.delete_user_memory(memory_id=memory_id, **kwargs)
+        return await self._db.delete_user_memory(memory_id, **kwargs)
 
     async def delete_user_memories(self, memory_ids: List[str], **kwargs) -> None:
         kwargs["user_id"] = self._user_id
-        return await self._db.delete_user_memories(memory_ids=memory_ids, **kwargs)
+        return await self._db.delete_user_memories(memory_ids, **kwargs)
 
     async def get_all_memory_topics(self, **kwargs) -> List[str]:
         kwargs["user_id"] = self._user_id
@@ -297,7 +293,7 @@ class AsyncUserScopedDb:
 
     async def get_user_memory(self, memory_id: str, **kwargs):
         kwargs["user_id"] = self._user_id
-        return await self._db.get_user_memory(memory_id=memory_id, **kwargs)
+        return await self._db.get_user_memory(memory_id, **kwargs)
 
     async def get_user_memories(self, **kwargs):
         kwargs["user_id"] = self._user_id

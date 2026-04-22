@@ -20,7 +20,7 @@ Usage in a router:
     # Returns None for admins (no filtering), user_id for regular users
 """
 
-from typing import TYPE_CHECKING, Callable, List, Optional, Union
+from typing import TYPE_CHECKING, Callable, List, Optional, Union, cast
 
 from fastapi import HTTPException, Query, Request
 
@@ -67,7 +67,9 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
         return None
 
     scopes: List[str] = getattr(request.state, "scopes", [])
-    admin_scope: Optional[str] = getattr(request.state, "admin_scope", None)
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    # Ignore non-string values (e.g. MagicMock auto-attrs in tests).
+    admin_scope: Optional[str] = admin_scope_raw if isinstance(admin_scope_raw, str) else None
     if _has_admin_scope(scopes, admin_scope=admin_scope):
         return None
 
@@ -79,7 +81,7 @@ async def get_user_scoped_db(
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
     db_id: Optional[str] = None,
     table: Optional[str] = None,
-) -> Union[BaseDb, AsyncBaseDb, RemoteDb, UserScopedDb, AsyncUserScopedDb]:
+) -> Union[BaseDb, AsyncBaseDb, RemoteDb]:
     """Get a DB instance scoped to the authenticated user.
 
     If the request has a user_id in its state (set by JWT middleware)
@@ -110,12 +112,16 @@ async def get_user_scoped_db(
     if isinstance(db, RemoteDb):
         return db
 
+    # The wrappers are registered as virtual subclasses of AsyncBaseDb / BaseDb
+    # (see user_scoped_db.py), so `isinstance(wrapped, AsyncBaseDb)` returns
+    # True at runtime. `cast` communicates that to mypy without inheriting
+    # every abstract method on the wrapper.
     if isinstance(db, AsyncBaseDb):
         log_debug(f"Creating async user-scoped DB wrapper for user_id={user_id}")
-        return AsyncUserScopedDb(db, user_id)
+        return cast(AsyncBaseDb, AsyncUserScopedDb(db, user_id))
 
     log_debug(f"Creating user-scoped DB wrapper for user_id={user_id}")
-    return UserScopedDb(db, user_id)
+    return cast(BaseDb, UserScopedDb(db, user_id))
 
 
 # ----------------------------------------------------------------------------
