@@ -54,7 +54,7 @@ if __name__ == "__main__":
     prompt = (
         "I'm prepping a short briefing for our weekly engineering sync. "
         "Do this:\n"
-        "  1. Pull the 10 most recent messages from the #engineering Slack "
+        "  1. Pull the 10 most recent messages from the #agents Slack "
         "channel and identify 2 distinct topics under discussion.\n"
         "  2. For each topic, find one current (last ~month) article, "
         "release, or reference online that would be useful to link.\n"
