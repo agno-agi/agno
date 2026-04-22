@@ -33,7 +33,6 @@ Requires:
 from __future__ import annotations
 
 import asyncio
-import os
 
 from agno.agent import Agent
 from agno.context.slack import SlackContextProvider
@@ -63,7 +62,7 @@ async def main() -> None:
     # scales to huge workspaces — `list_channels` would page past
     # most of what's there.
     read_prompt = (
-        "Find the 3 most recent messages in the engineering channel."
+        "Find the 3 most recent messages in the #agents channel."
         "For each, author, and a one-line quote."
     )
     print(f"> {read_prompt}\n")
