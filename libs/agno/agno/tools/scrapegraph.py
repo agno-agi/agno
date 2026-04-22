@@ -1,13 +1,31 @@
+"""ScrapeGraphTools — web scraping, extraction, search, and crawl via the ScrapeGraphAI API.
+
+Setup:
+    pip install scrapegraph-py
+    export SGAI_API_KEY=<your key>
+
+Get an API key at: https://scrapegraphai.com
+
+Tools:
+    - smartscraper: one page -> structured JSON extracted via a prompt
+    - markdownify: one page -> markdown text
+    - scrape: one page -> raw HTML
+    - searchscraper: web search + content extraction across top results
+    - crawl: multi-page extraction with a JSON schema (polls until completion)
+"""
+
 import json
 import time
+import warnings
 from os import getenv
-from typing import Any, List, Optional
+from typing import Any, List, Optional, TypeVar
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, logger
 
 try:
     from scrapegraph_py import (
+        ApiResult,
         FetchConfig,
         HtmlFormatConfig,
         JsonFormatConfig,
@@ -17,20 +35,40 @@ try:
 except ImportError:
     raise ImportError("`scrapegraph-py` not installed. Please install using `pip install scrapegraph-py`")
 
-# Crawl is an async job upstream: start() returns immediately with a running
-# status; real pages are only available after polling get(id) to completion.
+# Upstream crawl is an async job: start() returns immediately with status="running";
+# real pages are available only after polling get(id) to completion.
 _CRAWL_MAX_WAIT_SECONDS = 180
 _CRAWL_POLL_INTERVAL_SECONDS = 3
 
+# v1 params removed in scrapegraph-py v2 rewrite; swallow with a DeprecationWarning
+# so existing user code doesn't TypeError on upgrade.
+_REMOVED_INIT_PARAMS = frozenset({"enable_agentic_crawler"})
+_REMOVED_CRAWL_PARAMS = frozenset({"cache_website", "same_domain_only", "batch_size", "use_session"})
 
-def _unwrap(result: Any) -> Any:
-    """Return result.data on success, otherwise raise with result.error."""
-    if getattr(result, "status", None) == "success":
+T = TypeVar("T")
+
+
+def _unwrap(result: "ApiResult[T]") -> T:
+    """Return result.data on success; raise RuntimeError with result.error otherwise."""
+    if getattr(result, "status", None) == "success" and result.data is not None:
         return result.data
     raise RuntimeError(getattr(result, "error", None) or "ScrapeGraphAI request failed")
 
 
 class ScrapeGraphTools(Toolkit):
+    """Tools for web scraping, extraction, search, and crawl via the ScrapeGraphAI API.
+
+    Args:
+        api_key: ScrapeGraphAI API key. Defaults to env var `SGAI_API_KEY`.
+        enable_smartscraper: Register `smartscraper` (structured extraction via prompt). Defaults to True.
+        enable_markdownify: Register `markdownify` (URL -> markdown). Defaults to False.
+        enable_crawl: Register `crawl` (multi-page extraction with schema). Defaults to False.
+        enable_searchscraper: Register `searchscraper` (web search + extraction). Defaults to False.
+        enable_scrape: Register `scrape` (URL -> raw HTML). Defaults to False.
+        render_heavy_js: Use JavaScript rendering mode for every request. Defaults to False.
+        all: Register all five tools. Defaults to False.
+    """
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -43,12 +81,21 @@ class ScrapeGraphTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
+        for removed in _REMOVED_INIT_PARAMS:
+            if kwargs.pop(removed, None) is not None:
+                warnings.warn(
+                    f"`{removed}` was removed in scrapegraph-py v2 (the agentic_crawler "
+                    "endpoint no longer exists). Ignoring.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+
         self.api_key: Optional[str] = api_key or getenv("SGAI_API_KEY")
         self.client = ScrapeGraphAI(api_key=self.api_key)
         self.render_heavy_js = render_heavy_js
 
-        # Start with smartscraper by default
-        # Only enable markdownify if smartscraper is False
+        # When the caller disables smartscraper without opting into `all`, fall back
+        # to markdownify so the toolkit always exposes at least one tool.
         if not enable_smartscraper and not all:
             enable_markdownify = True
 
@@ -64,7 +111,50 @@ class ScrapeGraphTools(Toolkit):
         if enable_scrape or all:
             tools.append(self.scrape)
 
+        tool_names = [t.__name__ for t in tools]
+        built_instructions = self._build_instructions(tool_names)
+        if built_instructions:
+            kwargs.setdefault("instructions", built_instructions)
+            kwargs.setdefault("add_instructions", True)
+
         super().__init__(name="scrapegraph_tools", tools=tools, **kwargs)
+
+    @staticmethod
+    def _build_instructions(tool_names: List[str]) -> str:
+        enabled = set(tool_names)
+        sections: List[str] = []
+
+        if "smartscraper" in enabled:
+            sections.append(
+                "**smartscraper** — one page, structured output. Pass a URL and a natural-language "
+                "extraction prompt; returns JSON shaped by the prompt."
+            )
+        if "markdownify" in enabled:
+            sections.append(
+                "**markdownify** — one page, converted to markdown. Use when you need the page text "
+                "for reading or downstream summarisation."
+            )
+        if "scrape" in enabled:
+            sections.append("**scrape** — one page, raw HTML. Use when you need the source markup (not the text).")
+        if "searchscraper" in enabled:
+            sections.append("**searchscraper** — web search with automatic content extraction across the top results.")
+        if "crawl" in enabled:
+            sections.append(
+                "**crawl** — multi-page extraction with a JSON schema. Expect up to ~3 minutes for larger "
+                "jobs (the tool polls the crawl job until it finishes)."
+            )
+
+        overlapping = {"smartscraper", "markdownify", "scrape"} & enabled
+        if len(overlapping) >= 2:
+            sections.append(
+                "When you have one URL and need structured fields → `smartscraper`. "
+                "When you need the page's prose → `markdownify`. "
+                "When you need the raw HTML markup → `scrape`."
+            )
+
+        if len(sections) < 2:
+            return ""
+        return "## ScrapeGraph tool selection\n\n" + "\n\n".join(sections)
 
     def _fetch_config(self) -> Optional[FetchConfig]:
         if self.render_heavy_js:
@@ -75,11 +165,11 @@ class ScrapeGraphTools(Toolkit):
         """Extract structured data from a webpage using AI.
 
         Args:
-            url (str): The URL to scrape
-            prompt (str): Natural language prompt describing what to extract
+            url: The URL to scrape.
+            prompt: Natural language prompt describing what to extract.
 
         Returns:
-            The structured data extracted from the webpage (JSON string)
+            JSON string with the extracted structured data, or an `error` key on failure.
         """
         try:
             log_debug(f"ScrapeGraph smartscraper (extract) request for URL: {url}")
@@ -88,22 +178,21 @@ class ScrapeGraphTools(Toolkit):
                 url=url,
                 fetch_config=self._fetch_config(),
             )
-            data = _unwrap(response)
-            payload = data.json_data if data.json_data is not None else data.raw
+            extracted = _unwrap(response)
+            payload = extracted.json_data if extracted.json_data is not None else extracted.raw
             return json.dumps(payload)
         except Exception as e:
-            error_msg = f"Smartscraper failed: {str(e)}"
-            log_error(error_msg)
-            return f"Error: {error_msg}"
+            logger.exception(f"Smartscraper failed for {url}")
+            return json.dumps({"error": str(e)})
 
     def markdownify(self, url: str) -> str:
         """Convert a webpage to markdown format.
 
         Args:
-            url (str): The URL to convert
+            url: The URL to convert.
 
         Returns:
-            The markdown version of the webpage
+            JSON string with `markdown` and `url` keys, or an `error` key on failure.
         """
         try:
             log_debug(f"ScrapeGraph markdownify request for URL: {url}")
@@ -112,16 +201,15 @@ class ScrapeGraphTools(Toolkit):
                 formats=[MarkdownFormatConfig()],
                 fetch_config=self._fetch_config(),
             )
-            data = _unwrap(response)
-            markdown = data.results.get("markdown", {})
-            value = markdown.get("data", "") if isinstance(markdown, dict) else markdown
+            scraped = _unwrap(response)
+            markdown_field = scraped.results.get("markdown", {})
+            value = markdown_field.get("data", "") if isinstance(markdown_field, dict) else markdown_field
             if isinstance(value, list):
                 value = "\n\n".join(str(v) for v in value)
-            return str(value)
+            return json.dumps({"markdown": str(value), "url": url})
         except Exception as e:
-            error_msg = f"Markdownify failed: {str(e)}"
-            log_error(error_msg)
-            return f"Error: {error_msg}"
+            logger.exception(f"Markdownify failed for {url}")
+            return json.dumps({"error": str(e)})
 
     def crawl(
         self,
@@ -130,21 +218,35 @@ class ScrapeGraphTools(Toolkit):
         schema: dict,
         depth: int = 2,
         max_pages: int = 2,
+        **kwargs,
     ) -> str:
         """Crawl a website and extract structured data.
 
-        Starts a crawl job upstream and polls until it completes or times out.
+        Starts a crawl job upstream and polls `crawl.get(id)` until the job completes
+        or the deadline (~3 minutes) is reached.
 
         Args:
-            url (str): The URL to crawl
-            prompt (str): Natural language prompt describing what to extract
-            schema (dict): JSON schema for extraction
-            depth (int): Crawl depth
-            max_pages (int): Max number of pages to crawl
+            url: The URL to crawl.
+            prompt: Natural language prompt describing what to extract.
+            schema: JSON schema for extraction.
+            depth: Max crawl depth.
+            max_pages: Max number of pages to crawl.
 
         Returns:
-            JSON string with the crawl result (pages and extracted data).
+            JSON string with the completed crawl response (pages + extracted data),
+            or an `error` key on failure or timeout.
         """
+        # v1 kwargs (cache_website, same_domain_only, batch_size, use_session) are no
+        # longer supported; silently ignore them with a one-time DeprecationWarning so
+        # pre-v2 user code doesn't TypeError on upgrade.
+        removed = set(kwargs) & _REMOVED_CRAWL_PARAMS
+        if removed:
+            warnings.warn(
+                f"crawl() kwargs {sorted(removed)} were removed in scrapegraph-py v2. Ignoring.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
         try:
             log_debug(f"ScrapeGraph crawl start for URL: {url}")
             start_response = self.client.crawl.start(
@@ -154,58 +256,62 @@ class ScrapeGraphTools(Toolkit):
                 max_pages=max_pages,
                 fetch_config=self._fetch_config(),
             )
-            start_data = _unwrap(start_response)
-            crawl_id = start_data.id
-            status = start_data.status
-            crawl_data = start_data
+            crawl_data = _unwrap(start_response)
+            crawl_id = crawl_data.id
+            status = crawl_data.status
 
             deadline = time.monotonic() + _CRAWL_MAX_WAIT_SECONDS
             while status == "running":
                 if time.monotonic() > deadline:
-                    return f"Error: Crawl timed out after {_CRAWL_MAX_WAIT_SECONDS}s (id={crawl_id})"
+                    return json.dumps(
+                        {
+                            "error": f"Crawl timed out after {_CRAWL_MAX_WAIT_SECONDS}s",
+                            "crawl_id": crawl_id,
+                        }
+                    )
                 time.sleep(_CRAWL_POLL_INTERVAL_SECONDS)
                 status_response = self.client.crawl.get(crawl_id)
                 crawl_data = _unwrap(status_response)
                 status = crawl_data.status
 
-            return crawl_data.model_dump_json(indent=2, by_alias=True)
+            return crawl_data.model_dump_json(by_alias=True)
         except Exception as e:
-            error_msg = f"Crawl failed: {str(e)}"
-            log_error(error_msg)
-            return f"Error: {error_msg}"
+            logger.exception(f"Crawl failed for {url}")
+            return json.dumps({"error": str(e)})
 
     def searchscraper(self, user_prompt: str) -> str:
-        """Search the web and extract information.
+        """Search the web and extract information from the top results.
 
         Args:
-            user_prompt (str): Search query
+            user_prompt: Search query.
 
         Returns:
-            JSON of the search results
+            JSON string with the search results, or an `error` key on failure.
         """
         try:
-            log_debug(f"ScrapeGraph searchscraper (search) request with prompt: {user_prompt}")
+            # Log the query length rather than its content — search queries can
+            # carry sensitive user context.
+            log_debug(f"ScrapeGraph searchscraper request (query_length={len(user_prompt)})")
             response = self.client.search(user_prompt)
-            data = _unwrap(response)
-            return data.model_dump_json(by_alias=True)
+            search_data = _unwrap(response)
+            return search_data.model_dump_json(by_alias=True)
         except Exception as e:
-            error_msg = f"Searchscraper failed: {str(e)}"
-            log_error(error_msg)
-            return f"Error: {error_msg}"
+            logger.exception("Searchscraper failed")
+            return json.dumps({"error": str(e)})
 
     def scrape(
         self,
         website_url: str,
         headers: Optional[dict] = None,
     ) -> str:
-        """Get raw HTML content from a website using the ScrapeGraphAI scrape API.
+        """Get raw HTML content from a webpage.
 
         Args:
-            website_url (str): The URL of the website to scrape
-            headers (Optional[dict]): Optional headers to send with the request
+            website_url: The URL to scrape.
+            headers: Optional HTTP headers to send with the request.
 
         Returns:
-            JSON string containing the HTML content and metadata
+            JSON string with the HTML content and metadata, or an `error` key on failure.
         """
         try:
             log_debug(f"ScrapeGraph scrape request for URL: {website_url}")
@@ -220,9 +326,8 @@ class ScrapeGraphTools(Toolkit):
                 formats=[HtmlFormatConfig()],
                 fetch_config=fetch_config,
             )
-            data = _unwrap(response)
-            return data.model_dump_json(indent=2, by_alias=True)
+            scraped = _unwrap(response)
+            return scraped.model_dump_json(by_alias=True)
         except Exception as e:
-            error_msg = f"Scrape failed: {str(e)}"
-            log_error(error_msg)
-            return f"Error: {error_msg}"
+            logger.exception(f"Scrape failed for {website_url}")
+            return json.dumps({"error": str(e)})

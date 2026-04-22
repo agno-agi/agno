@@ -4,6 +4,10 @@ Setup:
     pip install -U agno scrapegraph-py openai
     export SGAI_API_KEY=<your key>  # https://scrapegraphai.com
     export OPENAI_API_KEY=<your key>
+
+This script exercises three tools in one run (smartscraper, markdownify, scrape).
+More variants (crawl, all=True + render_heavy_js) are listed below, commented out
+so you can try them one at a time.
 """
 
 from agno.agent import Agent
@@ -11,65 +15,73 @@ from agno.models.openai import OpenAIResponses
 from agno.tools.scrapegraph import ScrapeGraphTools
 
 agent_model = OpenAIResponses(id="gpt-5.4")
-scrapegraph_smartscraper = ScrapeGraphTools(enable_smartscraper=True)
-
-agent = Agent(
-    tools=[scrapegraph_smartscraper],
-    model=agent_model,
-    markdown=True,
-    stream=True,
-)
 
 if __name__ == "__main__":
-    agent.print_response(
-        """
-        Use smartscraper to extract the following from https://www.wired.com/category/science/:
-        - News articles
-        - Headlines
-        - Images
-        - Links
-        - Author
-        """
+    # 1. smartscraper — structured extraction via an AI prompt.
+    smartscraper_agent = Agent(
+        tools=[ScrapeGraphTools(enable_smartscraper=True)],
+        model=agent_model,
+        markdown=True,
+    )
+    smartscraper_agent.print_response(
+        "Use smartscraper on https://example.com to extract the page title and main heading. "
+        "Return them as JSON.",
+        stream=True,
     )
 
-    # Example 2: Only markdownify enabled (by setting smartscraper=False)
-    # scrapegraph_md = ScrapeGraphTools(enable_smartscraper=False)
-    # md_agent = Agent(tools=[scrapegraph_md], model=agent_model, markdown=True)
-    # md_agent.print_response(
-    #     "Fetch and convert https://www.wired.com/category/science/ to markdown format"
+    # 2. markdownify — URL to markdown text.
+    markdownify_agent = Agent(
+        tools=[ScrapeGraphTools(enable_smartscraper=False, enable_markdownify=True)],
+        model=agent_model,
+        markdown=True,
+    )
+    markdownify_agent.print_response(
+        "Fetch https://example.com and convert it to markdown. Paste the markdown in your reply.",
+        stream=True,
+    )
+
+    # 3. scrape — raw HTML.
+    scrape_agent = Agent(
+        tools=[ScrapeGraphTools(enable_scrape=True, enable_smartscraper=False)],
+        model=agent_model,
+        markdown=True,
+    )
+    scrape_agent.print_response(
+        "Use the scrape tool on https://example.com and confirm whether the HTML contains 'Example Domain'.",
+        stream=True,
+    )
+
+    # 4. searchscraper — web search with extraction across top results.
+    # search_agent = Agent(
+    #     tools=[ScrapeGraphTools(enable_searchscraper=True, enable_smartscraper=False)],
+    #     model=agent_model,
+    #     markdown=True,
+    # )
+    # search_agent.print_response(
+    #     "Use searchscraper to find what example.com is used for and summarise the top results.",
+    #     stream=True,
     # )
 
-    # Example 3: Enable crawl (polls until the crawl job completes upstream)
-    # scrapegraph_crawl = ScrapeGraphTools(enable_crawl=True)
-    # crawl_agent = Agent(tools=[scrapegraph_crawl], model=agent_model, markdown=True)
+    # 5. crawl — multi-page extraction. Polls until the upstream job completes (up to ~3 minutes).
+    # crawl_agent = Agent(
+    #     tools=[ScrapeGraphTools(enable_crawl=True)],
+    #     model=agent_model,
+    #     markdown=True,
+    # )
     # crawl_agent.print_response(
-    #     "Use crawl to extract what the company does and get text content from privacy "
-    #     "and terms from https://scrapegraphai.com/ with a suitable schema."
+    #     "Use crawl on https://scrapegraphai.com/ with depth=1 and max_pages=1. "
+    #     'Prompt="what does this company do?" '
+    #     'Schema={"type": "object", "properties": {"summary": {"type": "string"}}}.',
+    #     stream=True,
     # )
 
-    # Example 4: Enable scrape method for raw HTML content
-    # scrapegraph_scrape = ScrapeGraphTools(enable_scrape=True, enable_smartscraper=False)
-    # scrape_agent = Agent(
-    #     tools=[scrapegraph_scrape], model=agent_model, markdown=True, stream=True
-    # )
-    # scrape_agent.print_response(
-    #     "Use the scrape tool to get the complete raw HTML content from "
-    #     "https://en.wikipedia.org/wiki/2025_FIFA_Club_World_Cup"
-    # )
-
-    # Example 5: Enable all ScrapeGraph functions; render_heavy_js=True uses JS rendering.
-    # scrapegraph_all = Agent(
+    # 6. all=True with JS rendering — one toolkit exposing every method.
+    # all_agent = Agent(
     #     tools=[ScrapeGraphTools(all=True, render_heavy_js=True)],
     #     model=agent_model,
     #     markdown=True,
-    #     stream=True,
     # )
-    # scrapegraph_all.print_response(
-    #     """
-    #     Use any appropriate scraping method to extract comprehensive information
-    #     from https://www.wired.com/category/science/:
-    #     - News articles and headlines
-    #     - Convert to markdown if needed
-    #     - Search for specific information
-    #     """
+    # all_agent.print_response(
+    #     "Pick the best ScrapeGraph tool to get the main heading of https://example.com.",
+    #     stream=True,
     # )
