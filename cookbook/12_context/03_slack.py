@@ -32,13 +32,13 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 # Create the provider (token read from SLACK_BOT_TOKEN / SLACK_TOKEN)
 # ---------------------------------------------------------------------------
-slack = SlackContextProvider()
+slack = SlackContextProvider(model=OpenAIResponses(id="gpt-5.4-mini"))
 
 # ---------------------------------------------------------------------------
 # Create the Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=slack.get_tools(),
     instructions=slack.instructions(),
     markdown=True,
@@ -50,6 +50,8 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     print(f"\nslack.status() = {slack.status()}\n")
-    prompt = "What's been discussed in the #general channel lately? Cite authors and timestamps."
+    # Channel / user lookups only need `channels:read` + `users:read` —
+    # broader search/history scopes aren't required for this prompt.
+    prompt = "List the public channels in this workspace. Include the channel name and a brief purpose where available."
     print(f"> {prompt}\n")
     asyncio.run(agent.aprint_response(prompt))

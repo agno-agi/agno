@@ -23,13 +23,13 @@ from agno.models.openai import OpenAIResponses
 # Create the provider
 # ---------------------------------------------------------------------------
 backend = ExaBackend()  # reads EXA_API_KEY from env
-web = WebContextProvider(backend=backend)
+web = WebContextProvider(backend=backend, model=OpenAIResponses(id="gpt-5.4-mini"))
 
 # ---------------------------------------------------------------------------
 # Create the Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=web.get_tools(),
     instructions=web.instructions() + "\nAlways cite URLs inline.",
     markdown=True,

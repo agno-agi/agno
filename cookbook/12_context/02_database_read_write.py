@@ -60,13 +60,14 @@ db = DatabaseContextProvider(
     name="Contacts DB",
     sql_engine=engine,
     readonly_engine=engine,
+    model=OpenAIResponses(id="gpt-5.4-mini"),
 )
 
 # ---------------------------------------------------------------------------
 # Create the Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=db.get_tools(),
     instructions=db.instructions(),
     markdown=True,

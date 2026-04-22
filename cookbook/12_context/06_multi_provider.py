@@ -17,6 +17,7 @@ Requires:
 from __future__ import annotations
 
 import asyncio
+import tempfile
 from pathlib import Path
 
 from agno.agent import Agent
@@ -26,22 +27,35 @@ from agno.context.web import ExaBackend, WebContextProvider
 from agno.models.openai import OpenAIResponses
 from sqlalchemy import create_engine, text
 
+# Every provider sub-agent in this cookbook shares the same small model.
+provider_model = OpenAIResponses(id="gpt-5.4-mini")
+
 # ---------------------------------------------------------------------------
 # Provider 1: filesystem (this cookbook's directory)
 # ---------------------------------------------------------------------------
 fs = FilesystemContextProvider(
-    root=Path(__file__).resolve().parent, id="cookbooks", name="Cookbooks"
+    root=Path(__file__).resolve().parent,
+    id="cookbooks",
+    name="Cookbooks",
+    model=provider_model,
 )
 
 # ---------------------------------------------------------------------------
 # Provider 2: web (Exa)
 # ---------------------------------------------------------------------------
-web = WebContextProvider(backend=ExaBackend())
+web = WebContextProvider(backend=ExaBackend(), model=provider_model)
 
 # ---------------------------------------------------------------------------
-# Provider 3: tiny in-memory DB with releases
+# Provider 3: tiny SQLite DB with releases
+#
+# Using a temp file rather than `sqlite:///:memory:` because the
+# in-memory DB is per-connection — the sub-agent opens its own
+# connection and would see an empty DB.
 # ---------------------------------------------------------------------------
-engine = create_engine("sqlite:///:memory:")
+DB_PATH = Path(tempfile.gettempdir()) / "agno_context_multi_provider.sqlite"
+if DB_PATH.exists():
+    DB_PATH.unlink()
+engine = create_engine(f"sqlite:///{DB_PATH}")
 with engine.begin() as conn:
     conn.execute(text("CREATE TABLE releases (version TEXT, notes TEXT)"))
     conn.execute(
@@ -52,7 +66,11 @@ with engine.begin() as conn:
         ],
     )
 db = DatabaseContextProvider(
-    id="releases", name="Release Notes DB", sql_engine=engine, readonly_engine=engine
+    id="releases",
+    name="Release Notes DB",
+    sql_engine=engine,
+    readonly_engine=engine,
+    model=provider_model,
 )
 
 # ---------------------------------------------------------------------------
@@ -62,7 +80,7 @@ tools = [*fs.get_tools(), *web.get_tools(), *db.get_tools()]
 guidance = "\n".join([fs.instructions(), web.instructions(), db.instructions()])
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=tools,
     instructions=(
         "You have three tools available — a filesystem over this cookbook "

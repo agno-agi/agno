@@ -26,13 +26,18 @@ ROOT = Path(__file__).resolve().parent
 # ---------------------------------------------------------------------------
 # Create the provider
 # ---------------------------------------------------------------------------
-fs = FilesystemContextProvider(root=ROOT, id="cookbooks", name="Cookbooks")
+fs = FilesystemContextProvider(
+    root=ROOT,
+    id="cookbooks",
+    name="Cookbooks",
+    model=OpenAIResponses(id="gpt-5.4-mini"),
+)
 
 # ---------------------------------------------------------------------------
 # Create the Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=fs.get_tools(),
     instructions=fs.instructions(),
     markdown=True,

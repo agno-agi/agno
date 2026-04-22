@@ -43,23 +43,23 @@ Providers ship in this package:
 
 ```bash
 # Self-contained (no external service)
-OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/context/00_filesystem.py
-OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/context/02_database_read_write.py
-OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/context/07_custom_provider.py
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/00_filesystem.py
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/02_database_read_write.py
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/07_custom_provider.py
 
 # Needs Exa
-OPENAI_API_KEY=... EXA_API_KEY=... .venvs/demo/bin/python cookbook/context/01_web_exa.py
+OPENAI_API_KEY=... EXA_API_KEY=... .venvs/demo/bin/python cookbook/12_context/01_web_exa.py
 
 # Needs Slack bot token (xoxb-...)
-OPENAI_API_KEY=... SLACK_BOT_TOKEN=xoxb-... .venvs/demo/bin/python cookbook/context/03_slack.py
+OPENAI_API_KEY=... SLACK_BOT_TOKEN=xoxb-... .venvs/demo/bin/python cookbook/12_context/03_slack.py
 
 # Needs `uvx` on PATH (ships with `uv`) — MCP time server is downloaded on first run
-OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/context/04_mcp_server.py
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/04_mcp_server.py
 
 # Needs a Google service-account JSON with at least one folder shared to its email
 OPENAI_API_KEY=... GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/sa.json \
-    .venvs/demo/bin/python cookbook/context/05_google_drive.py
+    .venvs/demo/bin/python cookbook/12_context/05_google_drive.py
 
 # Needs OpenAI + Exa
-OPENAI_API_KEY=... EXA_API_KEY=... .venvs/demo/bin/python cookbook/context/06_multi_provider.py
+OPENAI_API_KEY=... EXA_API_KEY=... .venvs/demo/bin/python cookbook/12_context/06_multi_provider.py
 ```

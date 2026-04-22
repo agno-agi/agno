@@ -53,7 +53,7 @@ class FAQContextProvider(ContextProvider):
 # ---------------------------------------------------------------------------
 faq = FAQContextProvider(id="faq")
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=faq.get_tools(),
     instructions=faq.instructions(),
     markdown=True,

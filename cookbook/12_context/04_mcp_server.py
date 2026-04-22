@@ -47,6 +47,7 @@ async def main() -> None:
         command="uvx",
         args=["mcp-server-time"],
         mode=ContextMode.tools,
+        model=OpenAIResponses(id="gpt-5.4-mini"),
     )
 
     # ------------------------------------------------------------------
@@ -58,7 +59,7 @@ async def main() -> None:
         print(f"astatus() = {await provider.astatus()}\n")
 
         agent = Agent(
-            model=OpenAIResponses(id="gpt-5.2"),
+            model=OpenAIResponses(id="gpt-5.4"),
             tools=provider.get_tools(),
             instructions=provider.instructions(),
             markdown=True,
