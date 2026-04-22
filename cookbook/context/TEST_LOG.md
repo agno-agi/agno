@@ -2,58 +2,76 @@
 
 ## 2026-04-22
 
-### 00_minimal_provider.py
+### 00_filesystem.py
 
-**Status:** Not yet run (requires OPENAI_API_KEY)
-
-**Description:** In-place `ContextProvider` subclass over an in-memory
-dict of quotes. Exercises `Answer`/`Status`/`get_tools()`.
-
----
-
-### 01_filesystem.py
-
-**Status:** Not yet run (requires OPENAI_API_KEY)
+**Status:** PASS
 
 **Description:** `FilesystemContextProvider` rooted at the cookbook
-directory; agent lists + reads files.
+directory; agent lists and reads files.
+
+**Result:** Agent listed all Python files, opened the custom-provider
+cookbook, and quoted its docstring verbatim.
 
 ---
 
-### 02_web_exa.py
+### 01_web_exa.py
 
-**Status:** Not yet run (requires OPENAI_API_KEY + EXA_API_KEY)
+**Status:** Not yet run (requires EXA_API_KEY not available locally)
 
 **Description:** `WebContextProvider` with `ExaBackend`; cited web
 research.
 
 ---
 
-### 03_database_read_write.py
+### 02_database_read_write.py
 
-**Status:** Not yet run (requires OPENAI_API_KEY)
+**Status:** PASS
 
 **Description:** `DatabaseContextProvider` against a freshly-seeded
 SQLite file. Round-trips: insert via `update_<id>`, read-back via
 `query_<id>`, then verifies at the SQL level.
 
+**Result:** Write tool inserted Grace Hopper; read tool returned
+both contacts; direct SQL check confirmed the row persisted.
+
 ---
 
-### 04_mcp_server.py
+### 03_slack.py
 
-**Status:** Not yet run (requires OPENAI_API_KEY)
+**Status:** Not yet run (requires SLACK_BOT_TOKEN)
 
-**Description:** `MCPContextProvider` against Exa's keyless MCP
-server. Exercises lazy connect, dynamic tool-description instructions,
-and `aclose()`.
+**Description:** `SlackContextProvider` — read-only workspace search
+via a bot token.
+
+---
+
+### 04_google_drive.py
+
+**Status:** Not yet run (requires GOOGLE_SERVICE_ACCOUNT_FILE)
+
+**Description:** `GDriveContextProvider` reading via a service
+account; exercises `AllDrivesGoogleDriveTools` for shared-folder
+coverage.
 
 ---
 
 ### 05_multi_provider.py
 
-**Status:** Not yet run (requires OPENAI_API_KEY + EXA_API_KEY)
+**Status:** Not yet run (requires EXA_API_KEY)
 
 **Description:** fs + web + db providers on one agent; exercises tool
 composition across providers.
+
+---
+
+### 06_custom_provider.py
+
+**Status:** PASS
+
+**Description:** Subclass `ContextProvider` in-place (in-memory FAQ).
+Exercises `Answer` / `Status` / `get_tools()` with minimal scaffolding.
+
+**Result:** Agent called `query_faq` and returned the refund policy
+matching the user's question.
 
 ---
