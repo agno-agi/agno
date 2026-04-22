@@ -869,7 +869,7 @@ def get_team_router(
         run_id: str,
         session_id: str = Query(..., description="Session ID for the run"),
     ):
-        # Factory teams: stub with factory.db for session lookup
+        # Factory teams
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
             team = await resolve_team(  # type: ignore[assignment]
