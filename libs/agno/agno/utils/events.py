@@ -1110,11 +1110,6 @@ def handle_event(
     events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
     store_events: bool = False,
 ) -> Union[RunOutputEvent, TeamRunOutputEvent]:
-    # Propagate factory_id from run_response to all events
-    factory_id = getattr(run_response, "factory_id", None)
-    if factory_id and hasattr(event, "factory_id"):
-        event.factory_id = factory_id  # type: ignore
-
     # We only store events that are not run_response_content events
     _events_to_skip: List[str] = [event.value for event in events_to_skip] if events_to_skip else []
     if store_events and event.event not in _events_to_skip:

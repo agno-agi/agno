@@ -55,7 +55,6 @@ def build_support_team(ctx: RequestContext) -> Team:
     )
 
     return Team(
-        id=f"support_team_{user_id}",
         name="Support Team",
         model=OpenAIResponses(id="gpt-5.4"),
         members=[billing_agent, tech_agent],
@@ -69,6 +68,7 @@ def build_support_team(ctx: RequestContext) -> Team:
 
 
 support_team_factory = TeamFactory(
+    db=db,
     id="support-team",
     name="Per-tenant Support Team",
     description="Builds a support team with billing and tech agents per tenant",

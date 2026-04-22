@@ -59,7 +59,6 @@ def build_article_pipeline(ctx: RequestContext) -> Workflow:
     """Build an article pipeline whose depth depends on subscription tier."""
     claims = ctx.trusted.claims
     tier = claims.get("tier", "free")
-    user_id = ctx.user_id or "anonymous"
     model_id = TIER_MODELS.get(tier, TIER_MODELS["free"])
 
     steps = []
@@ -88,7 +87,6 @@ def build_article_pipeline(ctx: RequestContext) -> Workflow:
     steps.append(Step(name="edit", description="Edit and finalize", agent=editor))
 
     return Workflow(
-        id=f"article_pipeline_{user_id}",
         name="Article Pipeline",
         description=f"Article pipeline ({len(steps)} steps, {tier} tier)",
         db=db,
@@ -97,6 +95,7 @@ def build_article_pipeline(ctx: RequestContext) -> Workflow:
 
 
 article_pipeline_factory = WorkflowFactory(
+    db=db,
     id="article-pipeline",
     name="Article Pipeline",
     description="Article pipeline -- depth and model quality scale with subscription tier",

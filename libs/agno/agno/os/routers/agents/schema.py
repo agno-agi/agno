@@ -60,6 +60,7 @@ class AgentResponse(BaseModel):
             id=factory.id,
             name=factory.name,
             description=factory.description,
+            db_id=factory.db.id if factory.db else None,
             is_factory=True,
             factory_input_schema=factory_input_schema,
         )

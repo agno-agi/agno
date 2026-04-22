@@ -396,8 +396,8 @@ class AgentOS:
             get_memory_router(dbs=self.dbs),
             get_eval_router(
                 dbs=self.dbs,
-                agents=self._agents or None,
-                teams=self._teams or None,
+                agents=self._agents or None,  # type: ignore[arg-type]
+                teams=self._teams or None,  # type: ignore[arg-type]
             ),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
@@ -470,9 +470,9 @@ class AgentOS:
             from agno.os.interfaces.a2a import A2A
 
             a2a_interface = A2A(
-                agents=self._agents or None,
-                teams=self._teams or None,
-                workflows=self._workflows or None,
+                agents=self._agents or None,  # type: ignore[arg-type]
+                teams=self._teams or None,  # type: ignore[arg-type]
+                workflows=self._workflows or None,  # type: ignore[arg-type]
             )
             self.interfaces.append(a2a_interface)
             self._add_router(app, a2a_interface.get_router())
@@ -756,8 +756,8 @@ class AgentOS:
             get_memory_router(dbs=self.dbs),
             get_eval_router(
                 dbs=self.dbs,
-                agents=self._agents or None,
-                teams=self._teams or None,
+                agents=self._agents or None,  # type: ignore[arg-type]
+                teams=self._teams or None,  # type: ignore[arg-type]
             ),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
@@ -1021,23 +1021,35 @@ class AgentOS:
             str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]
         ] = {}  # Track databases specifically used for knowledge
 
-        for agent in self._agents:
-            if agent.db:
-                self._register_db_with_validation(dbs, agent.db)
-            agent_contents_db = getattr(agent.knowledge, "contents_db", None) if agent.knowledge else None
-            if agent_contents_db:
-                self._register_db_with_validation(knowledge_dbs, agent_contents_db)
+        for entry in self.agents or []:
+            if isinstance(entry, AgentFactory):
+                if entry.db:
+                    self._register_db_with_validation(dbs, entry.db)
+            elif isinstance(entry, Agent):
+                if entry.db:
+                    self._register_db_with_validation(dbs, entry.db)
+                agent_contents_db = getattr(entry.knowledge, "contents_db", None) if entry.knowledge else None
+                if agent_contents_db:
+                    self._register_db_with_validation(knowledge_dbs, agent_contents_db)
 
-        for team in self._teams:
-            if team.db:
-                self._register_db_with_validation(dbs, team.db)
-            team_contents_db = getattr(team.knowledge, "contents_db", None) if team.knowledge else None
-            if team_contents_db:
-                self._register_db_with_validation(knowledge_dbs, team_contents_db)
+        for team_entry in self.teams or []:
+            if isinstance(team_entry, TeamFactory):
+                if team_entry.db:
+                    self._register_db_with_validation(dbs, team_entry.db)
+            elif isinstance(team_entry, Team):
+                if team_entry.db:
+                    self._register_db_with_validation(dbs, team_entry.db)
+                team_contents_db = getattr(team_entry.knowledge, "contents_db", None) if team_entry.knowledge else None
+                if team_contents_db:
+                    self._register_db_with_validation(knowledge_dbs, team_contents_db)
 
-        for workflow in self._workflows:
-            if workflow.db:
-                self._register_db_with_validation(dbs, workflow.db)
+        for wf_entry in self.workflows or []:
+            if isinstance(wf_entry, WorkflowFactory):
+                if wf_entry.db:
+                    self._register_db_with_validation(dbs, wf_entry.db)
+            elif isinstance(wf_entry, Workflow):
+                if wf_entry.db:
+                    self._register_db_with_validation(dbs, wf_entry.db)
 
         for knowledge_base in self.knowledge or []:
             if knowledge_base.contents_db:

@@ -26,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 import jwt as pyjwt
 
 from agno.agent import Agent, AgentFactory
+from agno.db.postgres import PostgresDb
 from agno.factory import RequestContext
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
@@ -36,6 +37,11 @@ from agno.os.middleware import JWTMiddleware
 # ---------------------------------------------------------------------------
 
 JWT_SECRET = "a-string-secret-at-least-256-bits-long"
+
+db = PostgresDb(
+    id="tiered-model-db",
+    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+)
 
 TIER_MODELS = {
     "free": "gpt-4.1-mini",
@@ -62,15 +68,12 @@ def build_tiered_agent(ctx: RequestContext) -> Agent:
     """Build an agent with model quality based on the caller's subscription tier."""
     claims = ctx.trusted.claims
     tier = claims.get("tier", "free")
-    org_id = claims.get("org_id", "unknown")
-    user_id = ctx.user_id or "anonymous"
 
     # Fall back to free tier for unknown values
     model_id = TIER_MODELS.get(tier, TIER_MODELS["free"])
     instructions = TIER_INSTRUCTIONS.get(tier, TIER_INSTRUCTIONS["free"])
 
     return Agent(
-        id=f"tiered_{org_id}_{user_id}",
         model=OpenAIResponses(id=model_id),
         instructions=instructions,
         add_datetime_to_context=True,
@@ -79,6 +82,7 @@ def build_tiered_agent(ctx: RequestContext) -> Agent:
 
 
 tiered_factory = AgentFactory(
+    db=db,
     id="tiered-agent",
     name="Tiered Assistant",
     description="Model quality scales with subscription tier (free/pro/enterprise)",

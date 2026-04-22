@@ -199,7 +199,6 @@ class BaseAgentRunEvent(BaseRunOutputEvent):
     event: str = ""
     agent_id: str = ""
     agent_name: str = ""
-    factory_id: Optional[str] = None  # Set when agent was produced by a factory
     run_id: Optional[str] = None
     parent_run_id: Optional[str] = None
     session_id: Optional[str] = None
@@ -614,7 +613,6 @@ class RunOutput:
     run_id: Optional[str] = None
     agent_id: Optional[str] = None
     agent_name: Optional[str] = None
-    factory_id: Optional[str] = None  # Set when agent was produced by a factory
     session_id: Optional[str] = None
     parent_run_id: Optional[str] = None
     workflow_id: Optional[str] = None

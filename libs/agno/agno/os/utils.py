@@ -552,14 +552,12 @@ def build_request_context(
     )
 
 
+
 def find_factory_by_id(
     component_id: str,
     components: Optional[Sequence[Any]],
 ) -> Optional[Any]:
-    """Find a factory entry by ID from a list of components.
-
-    Returns the factory object if found, None otherwise.
-    """
+    """Find a factory entry by ID from a list of components."""
     if not components:
         return None
     from agno.factory.base import BaseFactory
@@ -616,8 +614,7 @@ def get_agent_by_id(
                 if isinstance(agent, AgentFactory):
                     if ctx is None:
                         raise FactoryContextRequired(
-                            f"Agent '{agent_id}' is a factory and requires a RequestContext. "
-                            "Pass ctx= when calling get_agent_by_id from a request handler."
+                            f"Agent '{agent_id}' is a factory and requires a RequestContext."
                         )
                     return agent.resolve(ctx, expected_type=Agent)
                 # RemoteAgent or other
@@ -665,10 +662,10 @@ async def get_agent_by_id_async(
                 if isinstance(agent, AgentFactory):
                     if ctx is None:
                         raise FactoryContextRequired(
-                            f"Agent '{agent_id}' is a factory and requires a RequestContext. "
-                            "Pass ctx= when calling get_agent_by_id_async from a request handler."
+                            f"Agent '{agent_id}' is a factory and requires a RequestContext."
                         )
-                    return await agent.resolve_async(ctx, expected_type=Agent)
+                    result = await agent.resolve_async(ctx, expected_type=Agent)
+                    return result
                 # RemoteAgent or other
                 return agent
 
@@ -723,8 +720,11 @@ def get_team_by_id(
                     return team
                 if isinstance(team, TeamFactory):
                     if ctx is None:
-                        raise FactoryContextRequired(f"Team '{team_id}' is a factory and requires a RequestContext.")
-                    return team.resolve(ctx, expected_type=Team)
+                        raise FactoryContextRequired(
+                            f"Team '{team_id}' is a factory and requires a RequestContext."
+                        )
+                    result = team.resolve(ctx, expected_type=Team)
+                    return result
                 return team
 
     if db and isinstance(db, BaseDb):
@@ -762,8 +762,11 @@ async def get_team_by_id_async(
                     return team
                 if isinstance(team, TeamFactory):
                     if ctx is None:
-                        raise FactoryContextRequired(f"Team '{team_id}' is a factory and requires a RequestContext.")
-                    return await team.resolve_async(ctx, expected_type=Team)
+                        raise FactoryContextRequired(
+                            f"Team '{team_id}' is a factory and requires a RequestContext."
+                        )
+                    result = await team.resolve_async(ctx, expected_type=Team)
+                    return result
                 return team
 
     if db and isinstance(db, BaseDb):
@@ -823,7 +826,8 @@ def get_workflow_by_id(
                         raise FactoryContextRequired(
                             f"Workflow '{workflow_id}' is a factory and requires a RequestContext."
                         )
-                    return workflow.resolve(ctx, expected_type=Workflow)
+                    result = workflow.resolve(ctx, expected_type=Workflow)
+                    return result
                 return workflow
 
     if db and isinstance(db, BaseDb):
@@ -864,7 +868,8 @@ async def get_workflow_by_id_async(
                         raise FactoryContextRequired(
                             f"Workflow '{workflow_id}' is a factory and requires a RequestContext."
                         )
-                    return await workflow.resolve_async(ctx, expected_type=Workflow)
+                    result = await workflow.resolve_async(ctx, expected_type=Workflow)
+                    return result
                 return workflow
 
     if db and isinstance(db, BaseDb):

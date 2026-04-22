@@ -60,7 +60,6 @@ def build_content_pipeline(ctx: RequestContext) -> Workflow:
     )
 
     return Workflow(
-        id=f"content_pipeline_{user_id}",
         name="Content Pipeline",
         description="Draft then edit content",
         db=db,
@@ -72,6 +71,7 @@ def build_content_pipeline(ctx: RequestContext) -> Workflow:
 
 
 content_pipeline_factory = WorkflowFactory(
+    db=db,
     id="content-pipeline",
     name="Content Pipeline",
     description="Builds a draft-then-edit content workflow per tenant",
