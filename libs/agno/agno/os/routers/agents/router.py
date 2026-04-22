@@ -49,7 +49,6 @@ from agno.os.utils import (
     get_agent_by_id,
     resolve_agent,
 )
-from agno.factory import FactoryContextRequired
 from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.base import RunStatus
@@ -482,15 +481,15 @@ def get_agent_router(
         agent_id: str,
         run_id: str,
     ):
-        try:
-            agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
-        except FactoryContextRequired:
-            # Raised because get_agent_by_id found a factory but ctx is None
-            # (non-run endpoints don't build a RequestContext). Cancel is static
-            # — just marks the run as cancelled, no agent instance needed.
+        # Factory agents: cancel is static, no agent instance needed
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
             from agno.agent._run import acancel_run
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
+
+        try:
+            agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -562,20 +561,20 @@ def get_agent_router(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
 
-        try:
-            agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
-        except FactoryContextRequired:
-            # Raised because get_agent_by_id found a factory but ctx is None.
-            # Continue needs a real agent (with model/tools), so re-invoke the
-            # factory with available request context. factory_input is not available.
-            factory = find_factory_by_id(agent_id, os.agents)
+        # Factory agents: re-invoke factory to get a real agent for continue
+        # (needs model/tools to resume the paused run, factory_input not available)
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
             agent = await resolve_agent(
-                agent_id, os.agents, factory.db if factory else os.db,
+                agent_id, os.agents, factory.db,
                 request=request, user_id=user_id, session_id=session_id,
             )
-        except Exception as e:
-            log_error(f"Error resolving agent '{agent_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+        else:
+            try:
+                agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+            except Exception as e:
+                log_error(f"Error resolving agent '{agent_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -778,15 +777,13 @@ def get_agent_router(
         dependencies=[Depends(require_resource_access("agents", "read", "agent_id"))],
     )
     async def get_agent(agent_id: str, request: Request) -> AgentResponse:
+        # Factory agents: return factory metadata directly (no invocation needed)
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            return AgentResponse.from_factory(factory)
+
         try:
             agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
-        except FactoryContextRequired:
-            # Raised because get_agent_by_id found a factory but ctx is None.
-            # Config endpoints don't invoke factories — return factory metadata directly.
-            factory = find_factory_by_id(agent_id, os.agents)
-            if factory:
-                return AgentResponse.from_factory(factory)
-            raise HTTPException(status_code=404, detail="Agent not found")
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -818,20 +815,20 @@ def get_agent_router(
         run_id: str,
         session_id: str = Query(..., description="Session ID for the run"),
     ):
-        try:
-            agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
-        except FactoryContextRequired:
-            # Raised because get_agent_by_id found a factory but ctx is None.
-            # Session data is in the DB — create a stub agent with factory's DB for lookup.
-            factory = find_factory_by_id(agent_id, os.agents)
-            agent = Agent(id=agent_id, db=factory.db if factory else os.db)
-        except Exception as e:
-            log_error(f"Error resolving agent '{agent_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
-        if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
-        if isinstance(agent, RemoteAgent):
-            raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
+        # Factory agents: create stub with factory.db for session lookup
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            agent = resolve_agent(agent_id, os.agents, factory.db if factory else os.db, session_id=session_id)
+        else:
+            try:
+                agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+            except Exception as e:
+                log_error(f"Error resolving agent '{agent_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+            if agent is None:
+                raise HTTPException(status_code=404, detail="Agent not found")
+            if isinstance(agent, RemoteAgent):
+                raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
 
         run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)
         if run_output is None:
@@ -861,18 +858,20 @@ def get_agent_router(
     ):
         from agno.os.schema import RunSchema
 
-        try:
-            agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
-        except FactoryContextRequired:
-            factory = find_factory_by_id(agent_id, os.agents)
-            agent = Agent(id=agent_id, db=factory.db if factory else os.db)
-        except Exception as e:
-            log_error(f"Error resolving agent '{agent_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
-        if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
-        if isinstance(agent, RemoteAgent):
-            raise HTTPException(status_code=400, detail="Run listing is not supported for remote agents")
+        # For factory agents, get_agent_by_id returns a stub with factory.db for session lookup
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            agent = resolve_agent(agent_id, os.agents, factory.db if factory else os.db, session_id=session_id)
+        else:
+            try:
+                agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+            except Exception as e:
+                log_error(f"Error resolving agent '{agent_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+            if agent is None:
+                raise HTTPException(status_code=404, detail="Agent not found")
+            if isinstance(agent, RemoteAgent):
+                raise HTTPException(status_code=400, detail="Run listing is not supported for remote agents")
 
         # Load the session to get its runs
         from agno.agent._storage import aread_or_create_session

@@ -109,7 +109,7 @@ class AgentSummaryResponse(BaseModel):
     @classmethod
     def from_agent(cls, agent: Union[Agent, RemoteAgent, AgentFactory]) -> "AgentSummaryResponse":
         if isinstance(agent, AgentFactory):
-            return cls(id=agent.id, name=agent.name, description=agent.description)
+            return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
         return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
 
 
@@ -123,7 +123,7 @@ class TeamSummaryResponse(BaseModel):
     @classmethod
     def from_team(cls, team: Union[Team, RemoteTeam, TeamFactory]) -> "TeamSummaryResponse":
         if isinstance(team, TeamFactory):
-            return cls(id=team.id, name=team.name, description=team.description)
+            return cls(id=team.id, name=team.name, description=team.description, db_id=team.db.id if team.db else None)
         db_id = team.db.id if team.db else None
         mode = team.mode.value if hasattr(team, "mode") and team.mode else None
         return cls(id=team.id, name=team.name, description=team.description, db_id=db_id, mode=mode)
@@ -157,6 +157,7 @@ class WorkflowSummaryResponse(BaseModel):
                 id=workflow.id,
                 name=workflow.name,
                 description=workflow.description,
+                db_id=workflow.db.id if workflow.db else None,
                 is_factory=True,
                 factory_input_schema=factory_input_schema,
             )

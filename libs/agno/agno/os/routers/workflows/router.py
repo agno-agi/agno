@@ -835,13 +835,13 @@ def get_workflow_router(
         request: Request,
         version: Optional[int] = Query(None, description="Workflow version to retrieve"),
     ) -> WorkflowResponse:
+        # Factory workflows: return factory metadata directly
+        factory = find_factory_by_id(workflow_id, os.workflows)
+        if factory:
+            return WorkflowResponse.from_factory(factory)
+
         try:
             workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
-        except FactoryContextRequired:
-            factory = find_factory_by_id(workflow_id, os.workflows)
-            if factory:
-                return WorkflowResponse.from_factory(factory)
-            raise HTTPException(status_code=404, detail="Workflow not found")
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
@@ -1126,12 +1126,15 @@ def get_workflow_router(
         dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
     )
     async def cancel_workflow_run(workflow_id: str, run_id: str):
-        try:
-            workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
-        except FactoryContextRequired:
+        # Factory workflows: cancel is static, no workflow instance needed
+        factory = find_factory_by_id(workflow_id, os.workflows)
+        if factory:
             from agno.run.cancel import acancel_run
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
+
+        try:
+            workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
@@ -1163,16 +1166,18 @@ def get_workflow_router(
         run_id: str,
         session_id: str = Query(..., description="Session ID for the run"),
     ):
-        try:
-            workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
-        except FactoryContextRequired:
-            factory = find_factory_by_id(workflow_id, os.workflows)
+        # Factory workflows: stub with factory.db for session lookup
+        factory = find_factory_by_id(workflow_id, os.workflows)
+        if factory:
             workflow = Workflow(id=workflow_id, db=factory.db if factory else os.db)
-        except Exception as e:
-            logger.error(f"Error resolving workflow '{workflow_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Workflow not found")
+        else:
+            try:
+                workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
+            except Exception as e:
+                logger.error(f"Error resolving workflow '{workflow_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
+            if workflow is None:
+                raise HTTPException(status_code=404, detail="Workflow not found")
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Run polling is not supported for remote workflows")
 

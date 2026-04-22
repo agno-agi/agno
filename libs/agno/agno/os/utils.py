@@ -662,8 +662,7 @@ async def get_agent_by_id_async(
                 if isinstance(agent, AgentFactory):
                     if ctx is None:
                         raise FactoryContextRequired(
-                            f"Agent '{agent_id}' is a factory and requires a RequestContext. "
-                            "Pass ctx= when calling get_agent_by_id_async from a request handler."
+                            f"Agent '{agent_id}' is a factory and requires a RequestContext."
                         )
                     result = await agent.resolve_async(ctx, expected_type=Agent)
                     return result
