@@ -45,7 +45,21 @@ via a bot token.
 
 ---
 
-### 04_google_drive.py
+### 04_mcp_server.py
+
+**Status:** PASS
+
+**Description:** `MCPContextProvider` against the `uvx mcp-server-time`
+stdio MCP server. Exercises explicit `asetup` / `aclose` bracketing
+and `mode=ContextMode.tools` (flat tools on the calling agent).
+
+**Result:** Provider connected, discovered the server's tools, and the
+agent answered a timezone question via the MCP `get_current_time`
+tool. Session closed cleanly.
+
+---
+
+### 05_google_drive.py
 
 **Status:** Not yet run (requires GOOGLE_SERVICE_ACCOUNT_FILE)
 
@@ -55,7 +69,7 @@ coverage.
 
 ---
 
-### 05_multi_provider.py
+### 06_multi_provider.py
 
 **Status:** Not yet run (requires EXA_API_KEY)
 
@@ -64,7 +78,7 @@ composition across providers.
 
 ---
 
-### 06_custom_provider.py
+### 07_custom_provider.py
 
 **Status:** PASS
 

@@ -27,3 +27,20 @@ class ContextBackend(ABC):
 
     @abstractmethod
     def get_tools(self) -> list: ...
+
+    async def asetup(self) -> None:
+        """Eager async initialization. Default: no-op.
+
+        Override in backends that wrap a resource needing async setup
+        before ``get_tools()`` returns usable tools (e.g. an MCP client
+        whose tool list only populates after ``_connect()``).
+        """
+        return None
+
+    async def aclose(self) -> None:
+        """Release any resources the backend holds. Default: no-op.
+
+        Override in backends that keep long-lived state. Must be safe
+        to call even if the backend never finished setup.
+        """
+        return None

@@ -15,6 +15,7 @@ from sqlalchemy import create_engine
 from agno.context.database import DatabaseContextProvider
 from agno.context.fs import FilesystemContextProvider
 from agno.context.gdrive import GDriveContextProvider
+from agno.context.mcp import MCPContextProvider
 from agno.context.slack import SlackContextProvider
 from agno.context.web import ExaBackend, WebContextProvider
 
@@ -169,3 +170,108 @@ def test_gdrive_default_surface_is_single_query_tool(tmp_path):
     p = GDriveContextProvider(service_account_path=str(sa))
     tools = p.get_tools()
     assert [t.name for t in tools] == ["query_gdrive"]
+
+
+# ---------------------------------------------------------------------------
+# MCP
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_stdio_requires_command():
+    with pytest.raises(ValueError, match="transport=stdio requires `command`"):
+        MCPContextProvider("srv", transport="stdio")
+
+
+def test_mcp_http_requires_url():
+    with pytest.raises(ValueError, match="requires `url`"):
+        MCPContextProvider("srv", transport="streamable-http")
+
+
+def test_mcp_id_auto_sanitized_from_server_name():
+    p = MCPContextProvider("My.Server", transport="streamable-http", url="https://example.com/mcp")
+    assert p.id == "mcp_my_server"
+    assert p.query_tool_name == "query_mcp_my_server"
+
+
+def test_mcp_status_before_connect_reports_pending():
+    p = MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp")
+    status = p.status()
+    # Not yet connected — sync status() must not force an async connect.
+    assert status.ok is True
+    assert "not yet connected" in status.detail
+
+
+def test_mcp_sync_query_raises_not_implemented():
+    p = MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp")
+    with pytest.raises(NotImplementedError, match="sync query"):
+        p.query("anything")
+
+
+def test_mcp_kwargs_escape_hatch_forwards_to_mcptools():
+    p = MCPContextProvider(
+        "srv",
+        transport="streamable-http",
+        url="https://example.com/mcp",
+        timeout_seconds=5,
+        mcp_kwargs={"tool_name_prefix": "srv_", "timeout_seconds": 99},
+    )
+    tools = p._build_tools_instance()
+    # User-provided keys win over provider-computed ones (timeout 99 > 5).
+    assert tools.timeout_seconds == 99
+    assert tools.tool_name_prefix == "srv_"
+
+
+@pytest.mark.asyncio
+async def test_mcp_asetup_swallows_errors_and_is_retriable(monkeypatch):
+    p = MCPContextProvider(
+        "srv",
+        transport="streamable-http",
+        url="https://example.com/mcp",
+        timeout_seconds=1,
+    )
+
+    calls = {"n": 0}
+
+    async def _fail(self_):
+        calls["n"] += 1
+        raise RuntimeError("connect failed")
+
+    monkeypatch.setattr(MCPContextProvider, "_ensure_session", _fail)
+
+    # Must not raise — asetup logs and clears partial state.
+    await p.asetup()
+    assert p._tools is None
+    assert p._tool_descriptions == []
+
+    # Second call is also safe (idempotent under failure) and retries.
+    await p.asetup()
+    assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_mcp_asetup_timeout_bounded_by_timeout_seconds(monkeypatch):
+    """asetup must give up after timeout_seconds rather than hang forever."""
+    import asyncio as _asyncio
+
+    p = MCPContextProvider(
+        "srv",
+        transport="streamable-http",
+        url="https://example.com/mcp",
+        timeout_seconds=0,  # wait_for(timeout=0) → immediate TimeoutError
+    )
+
+    async def _hang(self_):
+        await _asyncio.sleep(60)  # would hang if not bounded
+
+    monkeypatch.setattr(MCPContextProvider, "_ensure_session", _hang)
+
+    # Must return promptly without raising.
+    await p.asetup()
+    assert p._tools is None
+
+
+@pytest.mark.asyncio
+async def test_mcp_aclose_noop_when_never_connected():
+    p = MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp")
+    # Must not raise even though asetup was never called.
+    await p.aclose()

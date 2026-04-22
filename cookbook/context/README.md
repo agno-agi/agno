@@ -10,6 +10,11 @@ A `ContextProvider` owns two things:
    this is a single `query_<id>` tool (plus `update_<id>` for writable
    providers) that routes through a scoped sub-agent.
 
+Providers that hold async resources (MCP sessions, watched inboxes,
+etc.) also implement `asetup()` / `aclose()`. Callers should bracket
+their use with these so the resource's lifetime is owned by a single
+task — typically wired into the application lifespan.
+
 Providers ship in this package:
 
 | Provider | Source | Tools |
@@ -18,6 +23,7 @@ Providers ship in this package:
 | `WebContextProvider` + `ExaBackend` | The open web via Exa | `query_<id>` (search + fetch sub-agent) |
 | `DatabaseContextProvider` | Any SQL database (SQLAlchemy) | `query_<id>`, `update_<id>` (separate read/write sub-agents) |
 | `SlackContextProvider` | A Slack workspace (read-only) | `query_<id>` (search / history / threads / users sub-agent) |
+| `MCPContextProvider` | One MCP server | `query_<id>` (sub-agent over the server's tools) or flat tools in `mode=tools` |
 | `GDriveContextProvider` | Google Drive via service account | `query_<id>` (list / search / read sub-agent; all-drives aware) |
 
 ## Cookbooks
@@ -28,9 +34,10 @@ Providers ship in this package:
 | `01_web_exa.py` | Web research via `WebContextProvider(backend=ExaBackend())` |
 | `02_database_read_write.py` | Read + write a SQLite DB; end-to-end round trip |
 | `03_slack.py` | Read-only Slack workspace search + channel history |
-| `04_google_drive.py` | Google Drive via a service account; reads a shared Doc |
-| `05_multi_provider.py` | Three providers on one agent; names compose cleanly |
-| `06_custom_provider.py` | Subclass `ContextProvider` for your own source |
+| `04_mcp_server.py` | Wrap an MCP server; explicit `asetup` / `aclose` lifecycle |
+| `05_google_drive.py` | Google Drive via a service account; reads a shared Doc |
+| `06_multi_provider.py` | Three providers on one agent; names compose cleanly |
+| `07_custom_provider.py` | Subclass `ContextProvider` for your own source |
 
 ## Run
 
@@ -38,7 +45,7 @@ Providers ship in this package:
 # Self-contained (no external service)
 OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/context/00_filesystem.py
 OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/context/02_database_read_write.py
-OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/context/06_custom_provider.py
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/context/07_custom_provider.py
 
 # Needs Exa
 OPENAI_API_KEY=... EXA_API_KEY=... .venvs/demo/bin/python cookbook/context/01_web_exa.py
@@ -46,10 +53,13 @@ OPENAI_API_KEY=... EXA_API_KEY=... .venvs/demo/bin/python cookbook/context/01_we
 # Needs Slack bot token (xoxb-...)
 OPENAI_API_KEY=... SLACK_BOT_TOKEN=xoxb-... .venvs/demo/bin/python cookbook/context/03_slack.py
 
+# Needs `uvx` on PATH (ships with `uv`) — MCP time server is downloaded on first run
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/context/04_mcp_server.py
+
 # Needs a Google service-account JSON with at least one folder shared to its email
 OPENAI_API_KEY=... GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/sa.json \
-    .venvs/demo/bin/python cookbook/context/04_google_drive.py
+    .venvs/demo/bin/python cookbook/context/05_google_drive.py
 
 # Needs OpenAI + Exa
-OPENAI_API_KEY=... EXA_API_KEY=... .venvs/demo/bin/python cookbook/context/05_multi_provider.py
+OPENAI_API_KEY=... EXA_API_KEY=... .venvs/demo/bin/python cookbook/context/06_multi_provider.py
 ```

@@ -45,6 +45,13 @@ class WebContextProvider(ContextProvider):
     async def astatus(self) -> Status:
         return await self.backend.astatus()
 
+    async def asetup(self) -> None:
+        await self.backend.asetup()
+
+    async def aclose(self) -> None:
+        self._agent = None
+        await self.backend.aclose()
+
     def query(self, question: str) -> Answer:
         agent = self._ensure_agent()
         return answer_from_run(agent.run(question))

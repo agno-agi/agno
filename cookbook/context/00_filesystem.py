@@ -46,7 +46,7 @@ if __name__ == "__main__":
     print(f"\nfs.status() = {fs.status()}\n")
     prompt = (
         "What Python files live in this directory, and what does "
-        "06_custom_provider.py demonstrate? Quote a few lines from "
+        "07_custom_provider.py demonstrate? Quote a few lines from "
         "its docstring so I know you actually read it."
     )
     print(f"> {prompt}\n")

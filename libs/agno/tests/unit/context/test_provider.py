@@ -182,7 +182,7 @@ async def test_update_tool_catches_aupdate_exceptions():
 
 
 # ---------------------------------------------------------------------------
-# Base aclose() is a safe no-op
+# Base asetup() / aclose() are safe no-ops
 # ---------------------------------------------------------------------------
 
 
@@ -191,3 +191,19 @@ async def test_base_aclose_is_noop():
     p = _EchoProvider(id="e")
     # Must not raise even though no session was ever opened.
     await p.aclose()
+
+
+@pytest.mark.asyncio
+async def test_base_asetup_is_noop():
+    p = _EchoProvider(id="e")
+    # Providers without async resources get a free pass on the hook.
+    await p.asetup()
+
+
+@pytest.mark.asyncio
+async def test_base_asetup_is_idempotent():
+    p = _EchoProvider(id="e")
+    # Calling asetup() multiple times must be safe so callers can wire it
+    # into a lifespan without tracking state themselves.
+    await p.asetup()
+    await p.asetup()
