@@ -701,12 +701,15 @@ def get_agent_router(
                 continue
             # External framework adapter: build a minimal response
             agent_db = getattr(agent, "db", None)
+            session_table = agent_db.session_table_name if agent_db and hasattr(agent_db, "session_table_name") else None
+            sessions = {"session_table": session_table} if session_table else None
             agents.append(
                 AgentResponse(
                     id=agent.id,
                     name=agent.name,
                     description=getattr(agent, "description", None),
                     db_id=agent_db.id if agent_db else None,
+                    sessions=sessions,
                     metadata={"framework": getattr(agent, "framework", "external")},
                 )
             )

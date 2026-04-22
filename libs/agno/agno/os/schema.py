@@ -102,15 +102,19 @@ class AgentSummaryResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the agent")
     description: Optional[str] = Field(None, description="Description of the agent")
     db_id: Optional[str] = Field(None, description="Database identifier")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
     @classmethod
     def from_agent(cls, agent: Union[Agent, AgentProtocol, RemoteAgent]) -> "AgentSummaryResponse":
         agent_db = getattr(agent, "db", None)
+        framework = getattr(agent, "framework", None)
+        metadata = {"framework": framework} if framework else None
         return cls(
             id=agent.id,
             name=agent.name,
             description=getattr(agent, "description", None),
             db_id=agent_db.id if agent_db else None,
+            metadata=metadata,
         )
 
 
