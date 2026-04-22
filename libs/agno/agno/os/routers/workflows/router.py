@@ -1166,9 +1166,8 @@ def get_workflow_router(
         try:
             workflow = get_workflow_by_id(workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True)
         except FactoryContextRequired:
-            if not os.db:
-                raise HTTPException(status_code=400, detail="Factory workflow run polling requires a database on AgentOS")
-            workflow = Workflow(id=workflow_id, db=os.db)
+            factory = find_factory_by_id(workflow_id, os.workflows)
+            workflow = Workflow(id=workflow_id, db=factory.db if factory else os.db)
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")

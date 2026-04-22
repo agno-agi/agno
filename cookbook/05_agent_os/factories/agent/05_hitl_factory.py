@@ -120,7 +120,6 @@ agent_os = AgentOS(
     id="hitl-factory-demo",
     description="Demo: factory agent with human-in-the-loop tool confirmation",
     agents=[hitl_factory],
-    db=db,
 )
 app = agent_os.get_app()
 

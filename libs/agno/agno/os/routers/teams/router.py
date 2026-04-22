@@ -533,11 +533,12 @@ def get_team_router(
         try:
             team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
         except FactoryContextRequired:
+            # Re-invoke factory for continue (no factory_input available)
+            factory = find_factory_by_id(team_id, os.teams)
             team = await resolve_team(
-                team_id, os.teams, os.db, registry,
+                team_id, os.teams, factory.db if factory else os.db,
                 request=request, user_id=user_id, session_id=session_id,
             )
-            raise HTTPException(status_code=400, detail="This team is a factory. Use the run endpoint to create an instance.")
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -868,9 +869,8 @@ def get_team_router(
         try:
             team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
         except FactoryContextRequired:
-            if not os.db:
-                raise HTTPException(status_code=400, detail="Factory team run polling requires a database on AgentOS")
-            team = Team(members=[], id=team_id, db=os.db)
+            factory = find_factory_by_id(team_id, os.teams)
+            team = Team(members=[], id=team_id, db=factory.db if factory else os.db)
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -911,9 +911,8 @@ def get_team_router(
         try:
             team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
         except FactoryContextRequired:
-            if not os.db:
-                raise HTTPException(status_code=400, detail="Factory team run listing requires a database on AgentOS")
-            team = Team(members=[], id=team_id, db=os.db)
+            factory = find_factory_by_id(team_id, os.teams)
+            team = Team(members=[], id=team_id, db=factory.db if factory else os.db)
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")

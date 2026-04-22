@@ -485,6 +485,9 @@ def get_agent_router(
         try:
             agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
         except FactoryContextRequired:
+            # Raised because get_agent_by_id found a factory but ctx is None
+            # (non-run endpoints don't build a RequestContext). Cancel is static
+            # — just marks the run as cancelled, no agent instance needed.
             from agno.agent._run import acancel_run
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
@@ -562,9 +565,12 @@ def get_agent_router(
         try:
             agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
         except FactoryContextRequired:
-            # Re-invoke factory for continue (no factory_input available)
+            # Raised because get_agent_by_id found a factory but ctx is None.
+            # Continue needs a real agent (with model/tools), so re-invoke the
+            # factory with available request context. factory_input is not available.
+            factory = find_factory_by_id(agent_id, os.agents)
             agent = await resolve_agent(
-                agent_id, os.agents, os.db, os.registry,
+                agent_id, os.agents, factory.db if factory else os.db,
                 request=request, user_id=user_id, session_id=session_id,
             )
         except Exception as e:
@@ -775,6 +781,8 @@ def get_agent_router(
         try:
             agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
         except FactoryContextRequired:
+            # Raised because get_agent_by_id found a factory but ctx is None.
+            # Config endpoints don't invoke factories — return factory metadata directly.
             factory = find_factory_by_id(agent_id, os.agents)
             if factory:
                 return AgentResponse.from_factory(factory)
@@ -813,9 +821,10 @@ def get_agent_router(
         try:
             agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
         except FactoryContextRequired:
-            if not os.db:
-                raise HTTPException(status_code=400, detail="Factory agent run polling requires a database on AgentOS")
-            agent = Agent(id=agent_id, db=os.db)
+            # Raised because get_agent_by_id found a factory but ctx is None.
+            # Session data is in the DB — create a stub agent with factory's DB for lookup.
+            factory = find_factory_by_id(agent_id, os.agents)
+            agent = Agent(id=agent_id, db=factory.db if factory else os.db)
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -855,9 +864,8 @@ def get_agent_router(
         try:
             agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
         except FactoryContextRequired:
-            if not os.db:
-                raise HTTPException(status_code=400, detail="Factory agent run listing requires a database on AgentOS")
-            agent = Agent(id=agent_id, db=os.db)
+            factory = find_factory_by_id(agent_id, os.agents)
+            agent = Agent(id=agent_id, db=factory.db if factory else os.db)
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
