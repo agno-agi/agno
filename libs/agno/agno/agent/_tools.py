@@ -626,8 +626,18 @@ def run_tool(
     tool: ToolExecution,
     functions: Optional[Dict[str, Function]] = None,
     stream_events: bool = False,
+    team_mode: bool = False,
 ) -> Iterator[RunOutputEvent]:
     from agno.run.agent import CustomEvent
+
+    # team_mode=True when called from team continue path with a TeamRunOutput.
+    # Team-level tools need team event creators since TeamRunOutput has team_id, not agent_id.
+    if team_mode:
+        from agno.utils.events import (
+            create_team_tool_call_completed_event,
+            create_team_tool_call_error_event,
+            create_team_tool_call_started_event,
+        )
 
     agent.model = cast(Model, agent.model)
     # Execute the tool
@@ -641,35 +651,66 @@ def run_tool(
         if isinstance(call_result, ModelResponse):
             if call_result.event == ModelResponseEvent.tool_call_started.value:
                 if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_tool_call_started_event(from_run_response=run_response, tool=tool),
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
+                    if team_mode:
+                        yield handle_event(  # type: ignore
+                            create_team_tool_call_started_event(from_run_response=run_response, tool=tool),  # type: ignore
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                    else:
+                        yield handle_event(  # type: ignore
+                            create_tool_call_started_event(from_run_response=run_response, tool=tool),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
 
             if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
                 tool_execution = call_result.tool_executions[0]
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
                 if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_tool_call_completed_event(
-                            from_run_response=run_response, tool=tool, content=call_result.content
-                        ),
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    if tool.tool_call_error:
+                    if team_mode:
                         yield handle_event(  # type: ignore
-                            create_tool_call_error_event(
-                                from_run_response=run_response, tool=tool, error=str(tool.result)
+                            create_team_tool_call_completed_event(
+                                from_run_response=run_response,  # type: ignore[arg-type]
+                                tool=tool,
+                                content=call_result.content,  # type: ignore
                             ),
                             run_response,
                             events_to_skip=agent.events_to_skip,  # type: ignore
                             store_events=agent.store_events,
                         )
+                        if tool.tool_call_error:
+                            yield handle_event(  # type: ignore
+                                create_team_tool_call_error_event(
+                                    from_run_response=run_response,  # type: ignore[arg-type]
+                                    tool=tool,
+                                    error=str(tool.result),  # type: ignore
+                                ),
+                                run_response,
+                                events_to_skip=agent.events_to_skip,  # type: ignore
+                                store_events=agent.store_events,
+                            )
+                    else:
+                        yield handle_event(  # type: ignore
+                            create_tool_call_completed_event(
+                                from_run_response=run_response, tool=tool, content=call_result.content
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                        if tool.tool_call_error:
+                            yield handle_event(  # type: ignore
+                                create_tool_call_error_event(
+                                    from_run_response=run_response, tool=tool, error=str(tool.result)
+                                ),
+                                run_response,
+                                events_to_skip=agent.events_to_skip,  # type: ignore
+                                store_events=agent.store_events,
+                            )
         # Yield CustomEvent instances from sync tool generators
         elif isinstance(call_result, CustomEvent):
             if stream_events:
@@ -699,8 +740,17 @@ async def arun_tool(
     tool: ToolExecution,
     functions: Optional[Dict[str, Function]] = None,
     stream_events: bool = False,
+    team_mode: bool = False,
 ) -> AsyncIterator[RunOutputEvent]:
     from agno.run.agent import CustomEvent
+
+    # team_mode=True when called from team continue path with a TeamRunOutput.
+    if team_mode:
+        from agno.utils.events import (
+            create_team_tool_call_completed_event,
+            create_team_tool_call_error_event,
+            create_team_tool_call_started_event,
+        )
 
     agent.model = cast(Model, agent.model)
 
@@ -716,34 +766,65 @@ async def arun_tool(
         if isinstance(call_result, ModelResponse):
             if call_result.event == ModelResponseEvent.tool_call_started.value:
                 if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_tool_call_started_event(from_run_response=run_response, tool=tool),
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
+                    if team_mode:
+                        yield handle_event(  # type: ignore
+                            create_team_tool_call_started_event(from_run_response=run_response, tool=tool),  # type: ignore
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                    else:
+                        yield handle_event(  # type: ignore
+                            create_tool_call_started_event(from_run_response=run_response, tool=tool),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
             if call_result.event == ModelResponseEvent.tool_call_completed.value and call_result.tool_executions:
                 tool_execution = call_result.tool_executions[0]
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
                 if stream_events:
-                    yield handle_event(  # type: ignore
-                        create_tool_call_completed_event(
-                            from_run_response=run_response, tool=tool, content=call_result.content
-                        ),
-                        run_response,
-                        events_to_skip=agent.events_to_skip,  # type: ignore
-                        store_events=agent.store_events,
-                    )
-                    if tool.tool_call_error:
+                    if team_mode:
                         yield handle_event(  # type: ignore
-                            create_tool_call_error_event(
-                                from_run_response=run_response, tool=tool, error=str(tool.result)
+                            create_team_tool_call_completed_event(
+                                from_run_response=run_response,  # type: ignore[arg-type]
+                                tool=tool,
+                                content=call_result.content,  # type: ignore
                             ),
                             run_response,
                             events_to_skip=agent.events_to_skip,  # type: ignore
                             store_events=agent.store_events,
                         )
+                        if tool.tool_call_error:
+                            yield handle_event(  # type: ignore
+                                create_team_tool_call_error_event(
+                                    from_run_response=run_response,  # type: ignore[arg-type]
+                                    tool=tool,
+                                    error=str(tool.result),  # type: ignore
+                                ),
+                                run_response,
+                                events_to_skip=agent.events_to_skip,  # type: ignore
+                                store_events=agent.store_events,
+                            )
+                    else:
+                        yield handle_event(  # type: ignore
+                            create_tool_call_completed_event(
+                                from_run_response=run_response, tool=tool, content=call_result.content
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                        if tool.tool_call_error:
+                            yield handle_event(  # type: ignore
+                                create_tool_call_error_event(
+                                    from_run_response=run_response, tool=tool, error=str(tool.result)
+                                ),
+                                run_response,
+                                events_to_skip=agent.events_to_skip,  # type: ignore
+                                store_events=agent.store_events,
+                            )
         # Yield CustomEvent instances from async tool generators
         elif isinstance(call_result, CustomEvent):
             if stream_events:
