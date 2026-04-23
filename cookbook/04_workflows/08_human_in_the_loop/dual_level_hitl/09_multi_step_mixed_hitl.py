@@ -153,7 +153,7 @@ workflow = Workflow(
 # HITL resolution helpers
 # ---------------------------------------------------------------------------
 def resolve_user_input(run_output):
-    for req in run_output.step_requirements or []:
+    for req in (run_output.step_requirements or [])[-1:]:
         if req.requires_user_input and not req.requires_executor_input:
             console.print(f"  [dim]{req.user_input_message}[/]")
             user_input = {}
@@ -167,7 +167,7 @@ def resolve_user_input(run_output):
 
 
 def resolve_confirmation(run_output):
-    for req in run_output.step_requirements or []:
+    for req in (run_output.step_requirements or [])[-1:]:
         if (
             req.requires_confirmation
             and not req.requires_executor_input
@@ -186,7 +186,7 @@ def resolve_confirmation(run_output):
 
 
 def resolve_output_review(run_output):
-    for req in run_output.step_requirements or []:
+    for req in (run_output.step_requirements or [])[-1:]:
         if req.requires_output_review and not req.requires_executor_input:
             console.print(f"  [dim]{req.output_review_message}[/]")
             if req.step_output:
@@ -204,7 +204,7 @@ def resolve_output_review(run_output):
 
 
 def resolve_executor_pause(run_output):
-    for req in run_output.step_requirements or []:
+    for req in (run_output.step_requirements or [])[-1:]:
         if req.requires_executor_input:
             console.print(f"  Executor: [cyan]{req.executor_name}[/]")
             for executor_req in req.executor_requirements or []:

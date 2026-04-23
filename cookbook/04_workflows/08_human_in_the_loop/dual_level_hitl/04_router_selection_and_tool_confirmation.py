@@ -113,7 +113,7 @@ workflow = Workflow(
 
 def resolve_router_pause(run_output):
     """Resolve router-level user selection."""
-    for req in run_output.step_requirements or []:
+    for req in (run_output.step_requirements or [])[-1:]:
         if req.requires_route_selection:
             console.print(f"  [dim]{req.user_input_message or 'Select a route'}[/]")
             console.print(f"  Available: {req.available_choices}")
@@ -124,7 +124,7 @@ def resolve_router_pause(run_output):
 
 def resolve_executor_pause(run_output):
     """Resolve executor-level tool confirmation."""
-    for req in run_output.step_requirements or []:
+    for req in (run_output.step_requirements or [])[-1:]:
         if req.requires_executor_input:
             console.print(f"  Executor: [cyan]{req.executor_name}[/]")
             for executor_req in req.executor_requirements or []:

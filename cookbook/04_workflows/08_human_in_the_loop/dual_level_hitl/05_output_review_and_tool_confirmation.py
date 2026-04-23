@@ -81,8 +81,8 @@ workflow = Workflow(
 
 
 def resolve_executor_pause(run_output):
-    """Resolve executor-level tool confirmation."""
-    for req in run_output.step_requirements or []:
+    """Resolve executor-level tool confirmation (active requirement only)."""
+    for req in (run_output.step_requirements or [])[-1:]:
         if req.requires_executor_input:
             console.print(f"  Executor: [cyan]{req.executor_name}[/]")
             for executor_req in req.executor_requirements or []:
@@ -124,9 +124,9 @@ def resolve_executor_pause(run_output):
 
 
 def resolve_output_review(run_output):
-    """Resolve step-level post-execution output review."""
-    for req in run_output.step_requirements or []:
-        if req.requires_output_review and not req.requires_executor_input:
+    """Resolve step-level post-execution output review (active requirement only)."""
+    for req in (run_output.step_requirements or [])[-1:]:
+        if req.requires_output_review and req.confirmed is None:
             console.print(
                 f"  [dim]{req.output_review_message or 'Review the output'}[/]"
             )

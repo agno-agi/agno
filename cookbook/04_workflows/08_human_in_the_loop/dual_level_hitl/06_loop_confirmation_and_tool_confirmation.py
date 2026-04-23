@@ -83,7 +83,7 @@ workflow = Workflow(
 
 def resolve_step_pause(run_output):
     """Resolve step/loop-level confirmation."""
-    for req in run_output.step_requirements or []:
+    for req in (run_output.step_requirements or [])[-1:]:
         if req.requires_confirmation and not req.requires_executor_input:
             console.print(f"  [dim]{req.confirmation_message}[/]")
             answer = (
@@ -100,7 +100,7 @@ def resolve_step_pause(run_output):
 
 def resolve_executor_pause(run_output):
     """Resolve executor-level tool confirmation."""
-    for req in run_output.step_requirements or []:
+    for req in (run_output.step_requirements or [])[-1:]:
         if req.requires_executor_input:
             console.print(f"  Executor: [cyan]{req.executor_name}[/]")
             for executor_req in req.executor_requirements or []:
