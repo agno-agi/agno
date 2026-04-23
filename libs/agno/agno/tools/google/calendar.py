@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, cast
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import google_authenticate
+from agno.tools.google.auth import get_token_db, google_authenticate, load_token, save_token
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
@@ -50,6 +50,8 @@ class GoogleCalendarTools(Toolkit):
 
     def __init__(
         self,
+        google_auth: Optional[Any] = None,
+        store_token_in_db: bool = False,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = "token.json",
@@ -103,6 +105,9 @@ class GoogleCalendarTools(Toolkit):
         else:
             self.instructions = instructions
 
+        self.google_auth = google_auth
+        self.store_token_in_db = store_token_in_db
+        self._db: Optional[Any] = None
         self.creds = creds
         self.service: Optional[Resource] = None
         self.calendar_id = calendar_id
@@ -155,6 +160,9 @@ class GoogleCalendarTools(Toolkit):
             **kwargs,
         )
 
+        if self.google_auth:
+            self.google_auth.register_service("calendar", self.scopes)
+
         # Validate that required scopes cover registered tools
         write_tools = {
             "create_event",
@@ -188,7 +196,7 @@ class GoogleCalendarTools(Toolkit):
     def _build_service(self):
         return build("calendar", "v3", credentials=self.creds)
 
-    def _auth(self) -> None:
+    def _auth(self, user_id=None, agent=None) -> None:
         """Authenticate with Google Calendar API using service account (priority) or OAuth flow."""
         if self.creds and self.creds.valid:
             return
@@ -209,6 +217,11 @@ class GoogleCalendarTools(Toolkit):
             self.creds = sa_creds
             return
 
+        if load_token(self, self.scopes, user_id=user_id, agent=agent):
+            return
+        if self.google_auth and self.google_auth._callback_configured and get_token_db(self, agent=agent):
+            raise PermissionError("Calendar not authenticated — user must complete OAuth via authenticate_google")
+
         # OAuth flow
         token_file = Path(self.token_path or "token.json")
         creds_file = Path(self.credentials_path or "credentials.json")
@@ -228,6 +241,11 @@ class GoogleCalendarTools(Toolkit):
                 self.creds = None
 
         if not self.creds or not self.creds.valid:
+            # Coordinator mode: request the union of all registered scopes in one consent flow
+            if self.google_auth is not None and self.google_auth._services:
+                consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
+            else:
+                consent_scopes = self.scopes
             client_config = {
                 "installed": {
                     "client_id": getenv("GOOGLE_CLIENT_ID"),
@@ -240,9 +258,9 @@ class GoogleCalendarTools(Toolkit):
                 }
             }
             if creds_file.exists():
-                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
+                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), consent_scopes)
             else:
-                flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
+                flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
             # prompt=consent forces Google to return a refresh_token every time
             oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
             if self.login_hint:
@@ -252,9 +270,12 @@ class GoogleCalendarTools(Toolkit):
 
         # Save the credentials for future use
         if self.creds and self.creds.valid:
-            token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
-            log_debug("Successfully authenticated with Google Calendar API.")
-            log_info(f"Token file path: {token_file}")
+            if save_token(self, self.creds, user_id=user_id, agent=agent):
+                log_debug("Calendar credentials saved to DB")
+            else:
+                token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
+                log_debug("Calendar credentials saved to file")
+                log_info(f"Token file path: {token_file}")
 
     @authenticate
     def list_events(self, limit: int = 10, start_date: Optional[str] = None) -> str:

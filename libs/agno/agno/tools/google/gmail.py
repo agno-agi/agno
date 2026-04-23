@@ -73,7 +73,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import google_authenticate
+from agno.tools.google.auth import get_token_db, google_authenticate, load_token, save_token
 from agno.utils.log import log_debug, log_error
 
 try:
@@ -129,13 +129,18 @@ class GmailTools(Toolkit):
 
     def __init__(
         self,
+        google_auth: Optional[Any] = None,
+        store_token_in_db: bool = False,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = None,
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
         scopes: Optional[List[str]] = None,
-        port: Optional[int] = None,
+        # Port 0 lets the OS pick a free port — supports parallel toolkit OAuth flows
+        # and matches sheets/slides. Google's installed-app OAuth accepts any localhost port.
+        oauth_port: int = 0,
+        port: Optional[int] = None,  # Legacy kwarg; prefer oauth_port.
         login_hint: Optional[str] = None,
         include_html: bool = False,
         max_body_length: Optional[int] = None,
@@ -192,7 +197,7 @@ class GmailTools(Toolkit):
             service_account_path (Optional[str]): Path to a service account JSON key file. When provided (or GOOGLE_SERVICE_ACCOUNT_FILE env var is set), service account auth is used instead of OAuth. Requires delegated_user for Gmail.
             delegated_user (Optional[str]): Email of the user to impersonate via domain-wide delegation. Required when using service account auth. Can also be set via GOOGLE_DELEGATED_USER env var.
             scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
-            port (Optional[int]): Port to use for OAuth authentication. Defaults to None.
+            oauth_port (int): Local port for the OAuth consent loopback server. Defaults to 0 (OS picks free port).
             login_hint (Optional[str]): Email to pre-select in the OAuth consent screen. Defaults to None.
             include_html (bool): If True, return raw HTML body instead of stripping tags. Defaults to False.
             max_body_length (Optional[int]): Truncate message bodies to this length. Defaults to None (no truncation).
@@ -206,6 +211,9 @@ class GmailTools(Toolkit):
         else:
             self.instructions = instructions
 
+        self.google_auth = google_auth
+        self.store_token_in_db = store_token_in_db
+        self._db: Optional[Any] = None
         self.creds = creds
         self.credentials_path = credentials_path
         self.token_path = token_path
@@ -213,7 +221,11 @@ class GmailTools(Toolkit):
         self.delegated_user = delegated_user
         self.service = None
         self.scopes = scopes or self.DEFAULT_SCOPES
-        self.port = port
+        # oauth_port is the canonical kwarg; port is kept for pre-existing callers.
+        # If oauth_port wasn't overridden from the 0 default, fall back to port.
+        if oauth_port == 0 and port is not None:
+            oauth_port = port
+        self.oauth_port = oauth_port
         self.login_hint = login_hint
         self.include_html = include_html
         self.max_body_length = max_body_length
@@ -303,6 +315,9 @@ class GmailTools(Toolkit):
             **kwargs,
         )
 
+        if self.google_auth:
+            self.google_auth.register_service("gmail", self.scopes)
+
         # Validate that required scopes are present for requested operations (only check registered functions)
         compose_tools = {"create_draft_email", "send_email", "send_email_reply", "send_draft", "update_draft"}
         if any(t in self.functions for t in compose_tools):
@@ -357,12 +372,11 @@ class GmailTools(Toolkit):
     def _build_service(self):
         return build("gmail", "v1", credentials=self.creds)
 
-    def _auth(self) -> None:
-        """Authenticate with Gmail API using service account (priority) or OAuth flow."""
+    def _auth(self, user_id=None, agent=None) -> None:
         if self.creds and self.creds.valid:
             return
 
-        # Service account authentication takes priority over OAuth
+        # Service account takes priority — never stored in GoogleAuth
         service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
         if service_account_path:
             delegated_user = self.delegated_user or getenv("GOOGLE_DELEGATED_USER")
@@ -377,11 +391,16 @@ class GmailTools(Toolkit):
                 scopes=self.scopes,
                 subject=delegated_user,
             )
-            # Eagerly fetch token so creds.valid=True and @authenticate won't re-enter _auth
             self.creds.refresh(Request())
             return
 
-        # OAuth flow
+        # Try loading token from DB
+        if load_token(self, self.scopes, user_id=user_id, agent=agent):
+            return
+        if self.google_auth and self.google_auth._callback_configured and get_token_db(self, agent=agent):
+            raise PermissionError("Gmail not authenticated — user must complete OAuth via authenticate_google")
+
+        # File-based OAuth flow
         token_file = Path(self.token_path or "token.json")
         creds_file = Path(self.credentials_path or "credentials.json")
 
@@ -389,17 +408,21 @@ class GmailTools(Toolkit):
             try:
                 self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
             except ValueError:
-                # Token file missing refresh_token — fall through to re-auth
                 self.creds = None
 
         if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore[union-attr]
             try:
                 self.creds.refresh(Request())
             except Exception:
-                # Refresh token revoked or expired — fall through to re-auth
                 self.creds = None
 
         if not self.creds or not self.creds.valid:
+            # In coordinator mode, request the union of all registered scopes so one consent
+            # flow covers gmail + calendar + drive + ... and the stored token serves every toolkit.
+            if self.google_auth is not None and self.google_auth._services:
+                consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
+            else:
+                consent_scopes = self.scopes
             client_config = {
                 "installed": {
                     "client_id": getenv("GOOGLE_CLIENT_ID"),
@@ -412,19 +435,20 @@ class GmailTools(Toolkit):
                 }
             }
             if creds_file.exists():
-                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
+                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), consent_scopes)
             else:
-                flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
-            # prompt=consent forces Google to return a refresh_token every time
+                flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
             oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
             if self.login_hint:
                 oauth_kwargs["login_hint"] = self.login_hint
-            self.creds = flow.run_local_server(port=self.port, **oauth_kwargs)
+            self.creds = flow.run_local_server(port=self.oauth_port, **oauth_kwargs)
 
-        # Save the credentials for future use
         if self.creds and self.creds.valid:
-            token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
-            log_debug("Gmail credentials saved")
+            if save_token(self, self.creds, user_id=user_id, agent=agent):
+                log_debug("Gmail credentials saved to DB")
+            else:
+                token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
+                log_debug("Gmail credentials saved to file")
 
     def _format_emails(self, emails: List[dict]) -> str:
         """Format list of email dictionaries into a readable string"""

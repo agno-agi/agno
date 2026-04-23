@@ -63,6 +63,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
+        auth_tokens_table: Optional[str] = None,
         create_schema: bool = True,
     ):
         """
@@ -121,6 +122,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
             approvals_table=approvals_table,
+            auth_tokens_table=auth_tokens_table,
         )
 
         _engine: Optional[AsyncEngine] = db_engine
@@ -182,6 +184,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             (self.schedule_runs_table_name, "schedule_runs"),
             (self.approvals_table_name, "approvals"),
         ]
+        # auth_tokens is opt-in via store_token_in_db=True — created lazily on first write
 
         for table_name, table_type in tables_to_create:
             await self._get_or_create_table(
@@ -415,6 +418,14 @@ class AsyncPostgresDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.approvals_table
+
+        if table_type == "auth_tokens":
+            self.auth_tokens_table = await self._get_or_create_table(
+                table_name=self.auth_tokens_table_name,
+                table_type="auth_tokens",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.auth_tokens_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -3609,3 +3620,10 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error updating approval run_status: {e}")
             return 0
+
+    # --- Auth Tokens ---
+    # Async CRUD intentionally not implemented: all callers (agno.tools.google.auth)
+    # invoke these synchronously, so routing them through an async backend would
+    # return coroutine objects instead of rows. Sync PostgresDb supports OAuth
+    # token storage; async support is tracked for a follow-up when the Google
+    # toolkit grows an async-aware auth decorator.

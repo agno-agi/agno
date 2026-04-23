@@ -33,7 +33,7 @@ def drive_tools(mock_creds, mock_service):
         patch.object(GoogleDriveTools, "_auth", return_value=None),
     ):
         mock_build.return_value = mock_service
-        tools = GoogleDriveTools(creds=mock_creds, auth_port=5050)
+        tools = GoogleDriveTools(creds=mock_creds, oauth_port=5050)
         tools.service = mock_service
         return tools
 
@@ -365,7 +365,7 @@ def test_auth_failure_returns_json(mock_creds, mock_service):
         patch.object(GoogleDriveTools, "_auth", side_effect=RuntimeError("token expired")),
     ):
         mock_build.return_value = mock_service
-        tools = GoogleDriveTools(creds=mock_creds, auth_port=5050)
+        tools = GoogleDriveTools(creds=mock_creds, oauth_port=5050)
         tools.creds = MagicMock(valid=False)
         tools.service = None
         result = json.loads(tools.search_files())

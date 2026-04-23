@@ -40,6 +40,13 @@ agent = Agent(
     ],
 )
 
+# Save OAuth token to DB instead of token.json
+# from agno.db.sqlite.sqlite import SqliteDb
+# db_agent = Agent(
+#     tools=[GoogleSheetsTools(store_token_in_db=True, spreadsheet_id=SAMPLE_SPREADSHEET_ID)],
+#     db=SqliteDb(db_file="tmp/sheets.db"),
+# )
+
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------

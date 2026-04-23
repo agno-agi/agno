@@ -60,7 +60,7 @@ except ImportError:
     )
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import google_authenticate
+from agno.tools.google.auth import get_token_db, google_authenticate, load_token, save_token
 from agno.utils.log import log_debug
 
 SLIDES_INSTRUCTIONS = textwrap.dedent("""\
@@ -89,6 +89,8 @@ class GoogleSlidesTools(Toolkit):
 
     def __init__(
         self,
+        google_auth: Optional[Any] = None,
+        store_token_in_db: bool = False,
         scopes: Optional[List[str]] = None,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         credentials_path: Optional[str] = None,
@@ -120,6 +122,9 @@ class GoogleSlidesTools(Toolkit):
         add_instructions: bool = True,
         **kwargs,
     ):
+        self.google_auth = google_auth
+        self.store_token_in_db = store_token_in_db
+        self._db: Optional[Any] = None
         self.creds = creds
         self.credentials_path = credentials_path
         self.token_path = token_path
@@ -183,13 +188,16 @@ class GoogleSlidesTools(Toolkit):
             **kwargs,
         )
 
+        if self.google_auth:
+            self.google_auth.register_service("slides", self.scopes)
+
     def _build_service(self):
         self.slides_service = build("slides", "v1", credentials=self.creds)
         self.drive_service = build("drive", "v3", credentials=self.creds)
         # Returned value stored as self.service by decorator (sentinel for "services built")
         return self.slides_service
 
-    def _auth(self) -> None:
+    def _auth(self, user_id=None, agent=None) -> None:
         """Authenticate with Google Slides API"""
         if self.creds and self.creds.valid:
             return
@@ -204,6 +212,11 @@ class GoogleSlidesTools(Toolkit):
             sa_creds.refresh(Request())
             self.creds = sa_creds
             return
+
+        if load_token(self, self.scopes, user_id=user_id, agent=agent):
+            return
+        if self.google_auth and self.google_auth._callback_configured and get_token_db(self, agent=agent):
+            raise PermissionError("Slides not authenticated — user must complete OAuth via authenticate_google")
 
         token_file = Path(self.token_path or "token.json")
         creds_file = Path(self.credentials_path or "credentials.json")
@@ -223,6 +236,11 @@ class GoogleSlidesTools(Toolkit):
                 self.creds = None
 
         if not self.creds or not self.creds.valid:
+            # Coordinator mode: request the union of all registered scopes in one consent flow
+            if self.google_auth is not None and self.google_auth._services:
+                consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
+            else:
+                consent_scopes = self.scopes
             client_config = {
                 "installed": {
                     "client_id": getenv("GOOGLE_CLIENT_ID"),
@@ -235,9 +253,9 @@ class GoogleSlidesTools(Toolkit):
                 }
             }
             if creds_file.exists():
-                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
+                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), consent_scopes)
             else:
-                flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
+                flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
 
             # prompt=consent forces Google to return a refresh_token every time
             oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
@@ -247,8 +265,11 @@ class GoogleSlidesTools(Toolkit):
             self.creds = flow.run_local_server(**oauth_kwargs)
         # Save the credentials for future use
         if self.creds and self.creds.valid:
-            token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
-            log_debug("Google Slides credentials saved")
+            if save_token(self, self.creds, user_id=user_id, agent=agent):
+                log_debug("Slides credentials saved to DB")
+            else:
+                token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
+                log_debug("Slides credentials saved to file")
 
     def _batch_update(self, presentation_id: str, requests: List[Dict[str, Any]]) -> dict:
         return (

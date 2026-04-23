@@ -31,8 +31,8 @@ from pathlib import Path
 from typing import Any, List, Optional, Tuple, Union, cast
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import google_authenticate
-from agno.utils.log import log_error
+from agno.tools.google.auth import get_token_db, google_authenticate, load_token, save_token
+from agno.utils.log import log_debug, log_error
 
 try:
     from google.auth.transport.requests import Request
@@ -129,8 +129,11 @@ class GoogleDriveTools(Toolkit):
 
     def __init__(
         self,
+        google_auth: Optional[Any] = None,
+        store_token_in_db: bool = False,
         # Authentication
-        auth_port: Optional[int] = 5050,
+        oauth_port: Optional[int] = 5050,
+        auth_port: Optional[int] = None,  # Legacy kwarg; prefer oauth_port.
         login_hint: Optional[str] = None,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         scopes: Optional[List[str]] = None,
@@ -164,6 +167,9 @@ class GoogleDriveTools(Toolkit):
         else:
             self.instructions = instructions
 
+        self.google_auth = google_auth
+        self.store_token_in_db = store_token_in_db
+        self._db: Optional[Any] = None
         self.include_trashed = include_trashed
         self.max_read_size = max_read_size
         self.download_dir = Path(download_dir).resolve()
@@ -179,7 +185,11 @@ class GoogleDriveTools(Toolkit):
         self.login_hint = login_hint
         self.quota_project_id = quota_project_id or getenv("GOOGLE_CLOUD_QUOTA_PROJECT_ID")
 
-        self.auth_port = auth_port
+        # oauth_port is the canonical kwarg; auth_port is kept for pre-existing callers.
+        # If oauth_port wasn't overridden from the 5050 default, fall back to auth_port.
+        if oauth_port == 5050 and auth_port is not None:
+            oauth_port = auth_port
+        self.oauth_port = oauth_port
 
         read_tools_enabled = any([list_files, search_files, read_file, download_file])
 
@@ -235,7 +245,10 @@ class GoogleDriveTools(Toolkit):
             **kwargs,
         )
 
-    def _auth(self) -> None:
+        if self.google_auth:
+            self.google_auth.register_service("drive", self.scopes)
+
+    def _auth(self, user_id=None, agent=None) -> None:
         """Authenticate with Google Drive API using service account or OAuth."""
         if self.creds and self.creds.valid:
             return
@@ -254,6 +267,11 @@ class GoogleDriveTools(Toolkit):
             self.creds.refresh(Request())
             return
 
+        if load_token(self, self.scopes, user_id=user_id, agent=agent):
+            return
+        if self.google_auth and self.google_auth._callback_configured and get_token_db(self, agent=agent):
+            raise PermissionError("Drive not authenticated — user must complete OAuth via authenticate_google")
+
         # OAuth flow
         token_file = Path(self.token_path or "token.json")
         creds_file = Path(self.credentials_path or "credentials.json")
@@ -271,6 +289,11 @@ class GoogleDriveTools(Toolkit):
                 self.creds = None
 
         if not self.creds or not self.creds.valid:
+            # Coordinator mode: request the union of all registered scopes in one consent flow
+            if self.google_auth is not None and self.google_auth._services:
+                consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
+            else:
+                consent_scopes = self.scopes
             client_config = {
                 "installed": {
                     "client_id": getenv("GOOGLE_CLIENT_ID"),
@@ -283,16 +306,20 @@ class GoogleDriveTools(Toolkit):
                 }
             }
             if creds_file.exists():
-                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
+                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), consent_scopes)
             else:
-                flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
-            run_kwargs: dict = {"port": self.auth_port, "prompt": "consent"}
+                flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
+            run_kwargs: dict = {"port": self.oauth_port, "prompt": "consent"}
             if self.login_hint:
                 run_kwargs["login_hint"] = self.login_hint
             self.creds = flow.run_local_server(**run_kwargs)
 
         if self.creds and self.creds.valid:
-            token_file.write_text(self.creds.to_json())
+            if save_token(self, self.creds, user_id=user_id, agent=agent):
+                log_debug("Drive credentials saved to DB")
+            else:
+                token_file.write_text(self.creds.to_json())
+                log_debug("Drive credentials saved to file")
 
     def _build_service(self):
         creds_to_use = self.creds

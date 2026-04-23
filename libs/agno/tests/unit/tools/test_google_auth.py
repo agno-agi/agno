@@ -12,7 +12,8 @@ from agno.tools.google.gmail import GmailTools
 
 @pytest.fixture
 def google_auth():
-    return GoogleAuth(client_id="test-client-id")
+    # authenticate_google requires a state signing secret; provide a test-only value
+    return GoogleAuth(client_id="test-client-id", state_secret="test-state-secret")
 
 
 @pytest.fixture
@@ -98,6 +99,22 @@ def test_authenticate_google_includes_oauth_params(google_auth):
     assert params["response_type"] == ["code"]
     assert params["access_type"] == ["offline"]
     assert params["prompt"] == ["consent"]
+    # Default is False (privacy-first); see test_include_granted_scopes_opt_in for True case
+    assert params["include_granted_scopes"] == ["false"]
+
+
+def test_include_granted_scopes_opt_in(tmp_path):
+    from agno.db.sqlite.sqlite import SqliteDb
+
+    ga = GoogleAuth(
+        client_id="id",
+        state_secret="secret",
+        db=SqliteDb(db_file=str(tmp_path / "t.db")),
+        include_granted_scopes=True,
+    )
+    ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
+    result = json.loads(ga.authenticate_google(services=["gmail"]))
+    params = parse_qs(urlparse(result["url"]).query)
     assert params["include_granted_scopes"] == ["true"]
 
 
@@ -172,3 +189,53 @@ def test_backward_compat_custom_scopes():
         include_tools=["get_latest_emails"],
     )
     assert gmail.scopes == custom
+
+
+def test_get_token_db_reads_agent_db_without_mutating_toolkit(tmp_path):
+    # store_token_in_db opt-in path: agent.db resolves via injection, toolkit stays clean
+    from agno.db.sqlite.sqlite import SqliteDb
+    from agno.tools.google.auth import get_token_db
+
+    db = SqliteDb(db_file=str(tmp_path / "t.db"))
+    agent = Mock(db=db)
+    gmail = GmailTools(store_token_in_db=True)
+
+    assert gmail._db is None
+    assert get_token_db(gmail, agent=agent) is db
+    assert gmail._db is None
+
+
+def test_get_token_db_with_coordinator_uses_agent_db_without_mutation(tmp_path):
+    # Coordinator path: GoogleAuth(db=None) + GmailTools(google_auth=...) + agent.db
+    from agno.db.sqlite.sqlite import SqliteDb
+    from agno.tools.google.auth import get_token_db
+
+    db = SqliteDb(db_file=str(tmp_path / "t.db"))
+    agent = Mock(db=db)
+    ga = GoogleAuth(client_id="id", state_secret="s")
+    gmail = GmailTools(google_auth=ga)
+
+    assert ga._db is None
+    assert gmail._db is None
+    assert get_token_db(gmail, agent=agent) is db
+    assert ga._db is None
+    assert gmail._db is None
+
+
+def test_oauth_state_registry_bridges_agent_db_to_callback(tmp_path):
+    # authenticate_google(agent=...) stores agent.db under the signed state so the
+    # callback (outside agent.run) can persist tokens without toolkit mutation.
+    from agno.db.sqlite.sqlite import SqliteDb
+    from agno.tools.google.auth import _OAUTH_STATE_DBS, _get_oauth_state_db
+
+    db = SqliteDb(db_file=str(tmp_path / "t.db"))
+    agent = Mock(db=db)
+    ga = GoogleAuth(client_id="id", state_secret="s")
+    ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
+
+    _OAUTH_STATE_DBS.clear()
+    result = json.loads(ga.authenticate_google(services=["gmail"], agent=agent))
+    state = parse_qs(urlparse(result["url"]).query)["state"][0]
+
+    assert _get_oauth_state_db(state) is db
+    assert ga._db is None

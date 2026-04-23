@@ -50,7 +50,8 @@ from pathlib import Path
 from typing import Any, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import google_authenticate
+from agno.tools.google.auth import get_token_db, google_authenticate, load_token, save_token
+from agno.utils.log import log_debug
 
 try:
     from google.auth.transport.requests import Request
@@ -78,6 +79,8 @@ class GoogleSheetsTools(Toolkit):
 
     def __init__(
         self,
+        google_auth: Optional[Any] = None,
+        store_token_in_db: bool = False,
         scopes: Optional[List[str]] = None,
         spreadsheet_id: Optional[str] = None,
         spreadsheet_range: Optional[str] = None,
@@ -127,6 +130,9 @@ class GoogleSheetsTools(Toolkit):
             enable_create_duplicate_sheet if enable_create_duplicate_sheet is not None else create_duplicate_sheet
         )
 
+        self.google_auth = google_auth
+        self.store_token_in_db = store_token_in_db
+        self._db: Optional[Any] = None
         self.spreadsheet_id = spreadsheet_id
         self.spreadsheet_range = spreadsheet_range
         self.creds = creds
@@ -172,10 +178,13 @@ class GoogleSheetsTools(Toolkit):
 
         super().__init__(name="google_sheets_tools", tools=tools, **kwargs)
 
+        if self.google_auth:
+            self.google_auth.register_service("sheets", self.scopes)
+
     def _build_service(self):
         return build("sheets", "v4", credentials=self.creds)
 
-    def _auth(self) -> None:
+    def _auth(self, user_id=None, agent=None) -> None:
         """
         Authenticate with Google Sheets API
         """
@@ -193,35 +202,55 @@ class GoogleSheetsTools(Toolkit):
                 self.creds.refresh(Request())
             return
 
+        if load_token(self, self.scopes, user_id=user_id, agent=agent):
+            return
+        if self.google_auth and self.google_auth._callback_configured and get_token_db(self, agent=agent):
+            raise PermissionError("Sheets not authenticated — user must complete OAuth via authenticate_google")
+
         token_file = Path(self.token_path or "token.json")
         creds_file = Path(self.credentials_path or "credentials.json")
 
         if token_file.exists():
-            self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
+            try:
+                self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
+            except ValueError:
+                self.creds = None
+
+        if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore
+            try:
+                self.creds.refresh(Request())
+            except Exception:
+                self.creds = None
 
         if not self.creds or not self.creds.valid:
-            if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore
-                self.creds.refresh(Request())
+            # Coordinator mode: request the union of all registered scopes in one consent flow
+            if self.google_auth is not None and self.google_auth._services:
+                consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
             else:
-                client_config = {
-                    "installed": {
-                        "client_id": getenv("GOOGLE_CLIENT_ID"),
-                        "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
-                        "project_id": getenv("GOOGLE_PROJECT_ID"),
-                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                        "token_uri": "https://oauth2.googleapis.com/token",
-                        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                        "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
-                    }
+                consent_scopes = self.scopes
+            client_config = {
+                "installed": {
+                    "client_id": getenv("GOOGLE_CLIENT_ID"),
+                    "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
+                    "project_id": getenv("GOOGLE_PROJECT_ID"),
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                    "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
                 }
-                # File based authentication
-                if creds_file.exists():
-                    flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
-                else:
-                    flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
-                # Opens up a browser window for OAuth authentication
-                self.creds = flow.run_local_server(port=self.oauth_port)
-            token_file.write_text(self.creds.to_json()) if self.creds else None  # type: ignore
+            }
+            if creds_file.exists():
+                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), consent_scopes)
+            else:
+                flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
+            self.creds = flow.run_local_server(port=self.oauth_port, prompt="consent")
+
+        if self.creds and self.creds.valid:
+            if save_token(self, self.creds, user_id=user_id, agent=agent):
+                log_debug("Sheets credentials saved to DB")
+            else:
+                token_file.write_text(self.creds.to_json())  # type: ignore
+                log_debug("Sheets credentials saved to file")
 
     @authenticate
     def read_sheet(self, spreadsheet_id: Optional[str] = None, spreadsheet_range: Optional[str] = None) -> str:
