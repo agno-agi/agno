@@ -369,6 +369,8 @@ async def _resume_stream_generator(
             # Dedup: skip events already replayed during catch-up
             if ev_idx >= 0 and ev_idx <= last_replayed_index:
                 continue
+            if ev_idx >= 0:
+                last_replayed_index = ev_idx
             yield sse_data
     finally:
         sse_subscriber_manager.unsubscribe(run_id, queue)
