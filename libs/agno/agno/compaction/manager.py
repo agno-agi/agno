@@ -220,6 +220,8 @@ class CompactionManager:
             for msg in run.messages:
                 if not msg.add_to_agent_memory:
                     continue
+                if msg.role == "system":
+                    continue
                 msg_copy = deepcopy(msg)
                 msg_copy.from_history = True
                 all_messages.append(msg_copy)
