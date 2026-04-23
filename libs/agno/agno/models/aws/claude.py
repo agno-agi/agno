@@ -6,7 +6,6 @@ import httpx
 from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
-from agno.models.message import SystemPromptBlock
 from agno.utils.log import log_debug, log_warning
 from agno.utils.models.claude import build_system_blocks, format_tools_for_model
 
@@ -226,7 +225,7 @@ class Claude(AnthropicClaude):
 
     def _prepare_request_kwargs(
         self,
-        system_message: Union[str, List[SystemPromptBlock]],
+        system_message: str,
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         messages: Optional[List[Any]] = None,
@@ -235,8 +234,7 @@ class Claude(AnthropicClaude):
         Prepare the request keyword arguments for the API call.
 
         Args:
-            system_message: The concatenated system messages string, or a list of
-                SystemPromptBlock for multi-block caching.
+            system_message (str): The concatenated system messages.
             tools: Optional list of tools
             response_format: Optional response format (Pydantic model or dict)
             messages: Optional list of Message objects for the conversation.
@@ -246,7 +244,14 @@ class Claude(AnthropicClaude):
         """
         # Pass response_format and tools to get_request_params for beta header handling
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools).copy()
-        if system_message:
+        # system_prompt_blocks takes precedence over the agent-built string.
+        if self.system_prompt_blocks:
+            request_kwargs["system"] = build_system_blocks(
+                self.system_prompt_blocks,
+                cache_system_prompt=bool(self.cache_system_prompt),
+                extended_cache_time=bool(self.extended_cache_time),
+            )
+        elif system_message:
             request_kwargs["system"] = build_system_blocks(
                 system_message,
                 cache_system_prompt=bool(self.cache_system_prompt),

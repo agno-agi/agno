@@ -8,15 +8,18 @@ Demonstrates two Anthropic caching features:
 2. Tool caching: Opt in to caching tool definitions by setting cache_tools=True.
    Anthropic caches all tools as a prefix when cache_control is on the last tool.
 
+Blocks live on the Claude model (not on Agent.system_message) because this is a
+Claude-specific feature. When set, the blocks replace the agent-built system
+string entirely, so include any static instructions you want cached yourself.
+
 Docs: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
 """
 
-from agno.agent import Agent
-from agno.models.anthropic import Claude
-from agno.models.message import SystemPromptBlock
-from agno.tools.duckduckgo import DuckDuckGoTools
+from datetime import datetime
 
-# -- Manual multi-block approach --
+from agno.agent import Agent
+from agno.models.anthropic import Claude, SystemPromptBlock
+from agno.tools.duckduckgo import DuckDuckGoTools
 
 blocks = [
     # Static instructions, cached for 1 hour (2x cost but survives much longer)
@@ -32,7 +35,7 @@ blocks = [
     ),
     # Dynamic per-user context, never cached (changes every request)
     SystemPromptBlock(
-        text=f"The user is on the Enterprise plan and prefers Python examples. Current time: {__import__('datetime').datetime.now().isoformat()}",
+        text=f"The user is on the Enterprise plan and prefers Python examples. Current time: {datetime.now().isoformat()}",
         cache=False,
     ),
 ]
@@ -42,8 +45,8 @@ agent = Agent(
         id="claude-sonnet-4-5-20250929",
         cache_system_prompt=True,
         cache_tools=True,
+        system_prompt_blocks=blocks,
     ),
-    system_message=blocks,
     tools=[DuckDuckGoTools()],
     markdown=True,
 )

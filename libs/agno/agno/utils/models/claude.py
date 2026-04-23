@@ -1,10 +1,13 @@
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from agno.media import File, Image
-from agno.models.message import Message, SystemPromptBlock
+from agno.models.message import Message
 from agno.utils.log import log_error, log_info, log_warning
+
+if TYPE_CHECKING:
+    from agno.models.anthropic.claude import SystemPromptBlock
 
 # Models that support assistant message prefill. This is a closed set —
 # prefill was deprecated starting with Claude 4.6 and all future models
@@ -327,7 +330,7 @@ def _format_file_for_message(file: File, enable_citations: bool = True) -> Optio
 
 
 def build_system_blocks(
-    system_message: Union[str, List[SystemPromptBlock]],
+    system_message: Union[str, List["SystemPromptBlock"]],
     cache_system_prompt: bool,
     extended_cache_time: bool = False,
 ) -> List[Dict[str, Any]]:
@@ -371,7 +374,7 @@ def format_messages(
     append_trailing_user_message: Optional[bool] = False,
     trailing_user_message_content: str = "continue",
     enable_citations: bool = True,
-) -> Tuple[List[Dict[str, Union[str, list]]], Union[str, List[SystemPromptBlock]]]:
+) -> Tuple[List[Dict[str, Union[str, list]]], str]:
     """
     Process the list of messages and separate them into API messages and system messages.
 
@@ -384,8 +387,7 @@ def format_messages(
         enable_citations: Default for document citation attachment.
 
     Returns:
-        Tuple containing the list of API messages and either a plain string or
-        List[SystemPromptBlock] when multi-block caching is in use.
+        Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
     """
     from agno.utils.message import normalize_tool_messages
 
@@ -394,15 +396,12 @@ def format_messages(
 
     chat_messages: List[Dict[str, Union[str, list]]] = []
     system_messages: List[str] = []
-    system_blocks: Optional[List[SystemPromptBlock]] = None
 
     for message in messages:
         content = message.content or ""
         # Both "system" and "developer" roles should be extracted as system messages
         if message.role in ("system", "developer"):
-            if message.system_prompt_blocks is not None:
-                system_blocks = message.system_prompt_blocks
-            elif content is not None:
+            if content is not None:
                 system_messages.append(content)  # type: ignore
             continue
         elif message.role == "user":
@@ -523,14 +522,6 @@ def format_messages(
         log_info("Appending trailing user message because this model does not support assistant message prefill")
         merged_messages.append({"role": "user", "content": [{"type": "text", "text": trailing_user_message_content}]})
 
-    if system_blocks is not None:
-        if system_messages:
-            log_warning(
-                "Both system_prompt_blocks and plain system messages are present. "
-                "Plain system messages will be dropped. Consolidate all system "
-                "content into SystemPromptBlock entries to avoid silent content loss."
-            )
-        return merged_messages, system_blocks
     return merged_messages, " ".join(system_messages)
 
 

@@ -46,7 +46,7 @@ from agno.memory import MemoryManager
 from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
-from agno.models.message import Message, SystemPromptBlock
+from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
@@ -220,8 +220,8 @@ class Agent:
     store_history_messages: bool = False
 
     # --- System message settings ---
-    # Provide the system message as a string, function, Message, or list of SystemPromptBlock
-    system_message: Optional[Union[str, Callable, Message, List[SystemPromptBlock]]] = None
+    # Provide the system message as a string or function
+    system_message: Optional[Union[str, Callable, Message]] = None
     # Role for the system message
     system_message_role: str = "system"
     # Provide the introduction as the first message from the Agent
@@ -439,7 +439,7 @@ class Agent:
         update_knowledge: bool = False,
         read_tool_call_history: bool = False,
         send_media_to_model: bool = True,
-        system_message: Optional[Union[str, Callable, Message, List[SystemPromptBlock]]] = None,
+        system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
         introduction: Optional[str] = None,
         build_context: bool = True,

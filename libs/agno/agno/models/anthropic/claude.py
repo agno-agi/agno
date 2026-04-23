@@ -2,14 +2,14 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
 from os import getenv
-from typing import Any, Dict, List, NoReturn, Optional, Type, Union
+from typing import Any, Dict, List, Literal, NoReturn, Optional, Type, Union
 
 import httpx
 from pydantic import BaseModel, ValidationError
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
-from agno.models.message import Citations, DocumentCitation, Message, SystemPromptBlock, UrlCitation
+from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
 from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
@@ -68,6 +68,20 @@ except ImportError as e:
     ) from e
 
 
+class SystemPromptBlock(BaseModel):
+    """A block of system prompt content with Anthropic cache control metadata.
+
+    Used with ``Claude.system_prompt_blocks`` to split the system prompt into
+    independently-cacheable segments. ``cache=True`` adds ``cache_control`` to
+    the block when the model has ``cache_system_prompt=True``. ``ttl`` overrides
+    the model-level ``extended_cache_time`` flag for that block only.
+    """
+
+    text: str
+    cache: bool = True
+    ttl: Optional[Literal["5m", "1h"]] = None
+
+
 @dataclass
 class Claude(Model):
     """
@@ -117,6 +131,10 @@ class Claude(Model):
     cache_system_prompt: Optional[bool] = False
     extended_cache_time: Optional[bool] = False
     cache_tools: bool = False
+    # Optional multi-block system prompt with per-block cache control.
+    # When set, replaces the agent-built system string and is sent to Anthropic
+    # as the ``system`` array. See SystemPromptBlock for cache/ttl semantics.
+    system_prompt_blocks: Optional[List[SystemPromptBlock]] = None
     request_params: Optional[Dict[str, Any]] = None
 
     # Anthropic beta and experimental features
@@ -573,7 +591,7 @@ class Claude(Model):
 
     def _prepare_request_kwargs(
         self,
-        system_message: Union[str, List[SystemPromptBlock]],
+        system_message: str,
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         messages: Optional[List["Message"]] = None,
@@ -582,8 +600,7 @@ class Claude(Model):
         Prepare the request keyword arguments for the API call.
 
         Args:
-            system_message: The concatenated system messages string, or a list of
-                SystemPromptBlock for multi-block caching.
+            system_message (str): The concatenated system messages.
             tools: Optional list of tools
             response_format: Optional response format (Pydantic model or dict)
             messages: Original Message objects — used to extract container ID for reuse.
@@ -604,7 +621,16 @@ class Claude(Model):
             container_id = self._extract_container_id_from_messages(messages)
             if container_id:
                 request_kwargs["container"] = {**request_kwargs["container"], "id": container_id}
-        if system_message:
+        # system_prompt_blocks takes precedence over the agent-built string. Users
+        # who need per-block cache control pass blocks on the model; the agent-built
+        # system_message is ignored in that case.
+        if self.system_prompt_blocks:
+            request_kwargs["system"] = build_system_blocks(
+                self.system_prompt_blocks,
+                cache_system_prompt=bool(self.cache_system_prompt),
+                extended_cache_time=bool(self.extended_cache_time),
+            )
+        elif system_message:
             request_kwargs["system"] = build_system_blocks(
                 system_message,
                 cache_system_prompt=bool(self.cache_system_prompt),
