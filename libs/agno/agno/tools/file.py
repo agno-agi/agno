@@ -14,7 +14,14 @@ class _ReadState:
     """Tracks the last-observed mtime of a file and whether the agent saw it
     in full. ``edit_file`` uses both: staleness is detected via mtime, and
     partial reads are rejected because the agent may pick an ``old_text``
-    that exists only in unseen lines."""
+    that exists only in unseen lines.
+
+    mtime is stored in nanoseconds because filesystems with coarse mtime
+    granularity (HFS+ with 1s precision, some network mounts, older ext4)
+    can produce identical mtime values for two writes within the same tick,
+    letting a real change slip past the staleness check. Nanosecond precision
+    widens the detection window on Linux/modern macOS (APFS) — do not
+    downgrade this to seconds without replacing it with a content hash."""
 
     mtime_ns: int
     is_partial: bool
