@@ -795,14 +795,17 @@ class TestTeamAddToKnowledgeWithFactory:
         assert len(mock_kb.inserted) == 1
         assert mock_kb.inserted[0]["name"] == "test-query"
 
-    def test_old_add_to_knowledge_still_works_with_static_knowledge(self):
+    def test_static_knowledge_accessible_via_function(self):
         from agno.team import _default_tools as team_default_tools
 
         mock_kb = _InsertableKnowledge()
         team = _make_team(knowledge=mock_kb)
 
-        result = team_default_tools.add_to_knowledge(team, query="test", result="data")
+        rc = _make_run_context(user_id="user1")
+        func = team_default_tools.get_add_to_knowledge_function(team, run_context=rc)
+        result = func.entrypoint(query="test", result="data")
         assert "successfully" in result.lower()
+        assert len(mock_kb.inserted) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -847,3 +850,135 @@ class TestGetMembersSystemMessageWithFactory:
         content = get_members_system_message_content(parent)
         assert "subteam" in content.lower()
         assert "child-agent" in content.lower()
+
+
+# ---------------------------------------------------------------------------
+# Parent factory members + sub-team factory members (nested factories)
+# ---------------------------------------------------------------------------
+
+
+class TestNestedFactoryMembers:
+    """Parent and sub-team both use callable-factory members. The sub-team's
+    factory must be resolved in its own scope so its children are visible to
+    recursive lookups and to the system-message builder.
+    """
+
+    def _build_nested(self, cache_callables: bool = True):
+        from agno.team.team import Team
+
+        child_agent = Agent(name="nested-child")
+
+        def subteam_members_factory(session_state: dict):
+            return [child_agent]
+
+        subteam = Team(
+            name="nested-subteam",
+            members=subteam_members_factory,
+            cache_callables=cache_callables,
+        )
+
+        def parent_members_factory(session_state: dict):
+            return [subteam]
+
+        parent = Team(
+            name="nested-parent",
+            members=parent_members_factory,
+            cache_callables=cache_callables,
+        )
+        return parent, subteam, child_agent
+
+    def test_find_nested_child_when_both_use_factories(self):
+        from agno.team._tools import get_member_id
+
+        parent, _subteam, child = self._build_nested()
+
+        rc = _make_run_context(user_id="u1")
+        resolve_callable_members(parent, rc)
+
+        result = parent._find_member_by_id(get_member_id(child), run_context=rc)
+        assert result is not None
+        _idx, member = result
+        assert member is child
+
+    def test_find_route_by_id_returns_subteam_for_nested_match(self):
+        from agno.team._tools import _find_member_route_by_id, get_member_id
+
+        parent, subteam, child = self._build_nested()
+
+        rc = _make_run_context(user_id="u1")
+        resolve_callable_members(parent, rc)
+
+        result = _find_member_route_by_id(parent, get_member_id(child), run_context=rc)
+        assert result is not None
+        _idx, member = result
+        assert member is subteam  # route returns the direct sub-team, not the deep child
+
+    def test_system_message_includes_nested_factory_children(self):
+        from agno.team._messages import get_members_system_message_content
+
+        parent, _subteam, _child = self._build_nested()
+
+        rc = _make_run_context(user_id="u1")
+        resolve_callable_members(parent, rc)
+
+        content = get_members_system_message_content(parent, run_context=rc)
+        assert "nested-subteam" in content.lower()
+        assert "nested-child" in content.lower()
+
+    def test_subteam_factory_is_cache_hit_on_repeat(self):
+        """Sub-team factory is invoked once per cache key across repeated lookups."""
+        from agno.team._tools import get_member_id
+        from agno.team.team import Team
+
+        call_count = {"n": 0}
+
+        child = Agent(name="hit-child")
+
+        def subteam_factory(session_state: dict):
+            call_count["n"] += 1
+            return [child]
+
+        subteam = Team(name="hit-subteam", members=subteam_factory, cache_callables=True)
+
+        def parent_factory(session_state: dict):
+            return [subteam]
+
+        parent = Team(name="hit-parent", members=parent_factory, cache_callables=True)
+
+        rc = _make_run_context(user_id="u1")
+        resolve_callable_members(parent, rc)
+
+        child_id = get_member_id(child)
+        parent._find_member_by_id(child_id, run_context=rc)
+        parent._find_member_by_id(child_id, run_context=rc)
+        parent._find_member_by_id(child_id, run_context=rc)
+
+        assert call_count["n"] == 1, f"sub-team factory invoked {call_count['n']} times, expected 1"
+
+    def test_parent_rc_none_preserves_prior_behavior(self):
+        """No run_context at the top: parent's factory isn't resolved and lookup returns None."""
+        parent, _subteam, child = self._build_nested()
+
+        result = parent._find_member_by_id("any-id", run_context=None)
+        assert result is None
+
+    def test_static_subteam_still_works_under_factory_parent(self):
+        """Factory parent + static sub-team: lookup still resolves the sub-team's children."""
+        from agno.team._tools import get_member_id
+        from agno.team.team import Team
+
+        static_child = Agent(name="static-child")
+        subteam = Team(name="static-subteam", members=[static_child])
+
+        def parent_factory(session_state: dict):
+            return [subteam]
+
+        parent = Team(name="mixed-parent", members=parent_factory)
+
+        rc = _make_run_context(user_id="u1")
+        resolve_callable_members(parent, rc)
+
+        result = parent._find_member_by_id(get_member_id(static_child), run_context=rc)
+        assert result is not None
+        _idx, member = result
+        assert member is static_child

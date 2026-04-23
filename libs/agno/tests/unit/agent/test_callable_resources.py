@@ -966,14 +966,17 @@ class TestAgentAddToKnowledgeWithFactory:
         assert "successfully" in result.lower()
         assert len(mock_kb.inserted) == 1
 
-    def test_old_add_to_knowledge_still_works_with_static_knowledge(self):
+    def test_static_knowledge_accessible_via_function(self):
         from agno.agent import _default_tools as agent_default_tools
 
         mock_kb = _InsertableKnowledge()
         agent = Agent(name="test", knowledge=mock_kb)
 
-        result = agent_default_tools.add_to_knowledge(agent, query="test", result="data")
+        rc = _make_run_context(user_id="user1")
+        func = agent_default_tools.get_add_to_knowledge_function(agent, run_context=rc)
+        result = func.entrypoint(query="test", result="data")
         assert "successfully" in result.lower()
+        assert len(mock_kb.inserted) == 1
 
     def test_agent_knowledge_field_unchanged(self):
         mock_kb = _InsertableKnowledge()

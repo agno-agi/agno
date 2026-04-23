@@ -52,12 +52,32 @@ from agno.utils.team import (
 from agno.utils.timer import Timer
 
 
-def _get_tool_names(member: Any, async_mode: bool = False) -> List[str]:
+def _get_tool_names(
+    member: Any, async_mode: bool = False, parent_run_context: Optional["RunContext"] = None
+) -> List[str]:
     """Extract tool names from a member's tools list."""
+    from agno.utils.callables import is_callable_factory
+
     tool_names: List[str] = []
-    if member.tools is None or not isinstance(member.tools, list):
+    tools_list: Optional[List[Any]] = None
+    if isinstance(member.tools, list):
+        tools_list = member.tools
+    # Resolve callable-factory tools so the leader's system prompt reflects the member's real tool set.
+    elif member.tools is not None and parent_run_context is not None and is_callable_factory(member.tools):
+        from dataclasses import replace
+
+        from agno.utils.callables import resolve_callable_tools
+
+        member_rc = replace(parent_run_context, tools=None, knowledge=None, members=None)
+        try:
+            resolve_callable_tools(member, member_rc)
+            tools_list = member_rc.tools
+        except Exception as e:
+            log_warning(f"Could not resolve member tools for system message: {e}")
+
+    if not tools_list:
         return tool_names
-    for _tool in member.tools:
+    for _tool in tools_list:
         if isinstance(_tool, Toolkit):
             toolkit_functions = _tool.get_async_functions() if async_mode else _tool.get_functions()
             for _func in toolkit_functions.values():
@@ -77,6 +97,7 @@ def _get_tool_names(member: Any, async_mode: bool = False) -> List[str]:
 def get_members_system_message_content(
     team: "Team", indent: int = 0, run_context: Optional["RunContext"] = None, async_mode: bool = False
 ) -> str:
+    from agno.team._tools import _build_subteam_run_context
     from agno.team.team import Team
     from agno.utils.callables import get_resolved_members
 
@@ -93,9 +114,10 @@ def get_members_system_message_content(
             if member.description is not None:
                 content += f"{pad}  Description: {member.description}\n"
             if member.members is not None:
-                # Pass run_context=None so the sub-team reads its own members list, not the parent's
+                # Recurse in a sub-team-scoped run_context so the sub-team resolves its own members.
+                subteam_run_context = _build_subteam_run_context(member, run_context)
                 content += member.get_members_system_message_content(
-                    indent=indent + 2, run_context=None, async_mode=async_mode
+                    indent=indent + 2, run_context=subteam_run_context, async_mode=async_mode
                 )
             content += f"{pad}</member>\n"
         else:
@@ -105,7 +127,7 @@ def get_members_system_message_content(
             if member.description is not None:
                 content += f"{pad}  Description: {member.description}\n"
             if team.add_member_tools_to_context:
-                tool_names = _get_tool_names(member, async_mode=async_mode)
+                tool_names = _get_tool_names(member, async_mode=async_mode, parent_run_context=run_context)
                 if tool_names:
                     content += f"{pad}  Tools: {', '.join(tool_names)}\n"
             content += f"{pad}</member>\n"
@@ -472,8 +494,12 @@ def get_system_message(
     system_message_content += _build_identity_sections(team, instructions)
 
     # 2.3 Knowledge base instructions
-    if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
-        build_context_fn = getattr(team.knowledge, "build_context", None)
+    # Resolve knowledge via run_context so callable-factory knowledge is reachable.
+    from agno.utils.callables import get_resolved_knowledge
+
+    resolved_knowledge = get_resolved_knowledge(team, run_context)
+    if resolved_knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
+        build_context_fn = getattr(resolved_knowledge, "build_context", None)
         if callable(build_context_fn):
             knowledge_context = build_context_fn(
                 enable_agentic_filters=team.enable_agentic_knowledge_filters,
@@ -693,8 +719,12 @@ async def aget_system_message(
     system_message_content += _build_identity_sections(team, instructions)
 
     # 2.3 Knowledge base instructions
-    if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
-        build_context_fn = getattr(team.knowledge, "build_context", None)
+    # Resolve knowledge via run_context so callable-factory knowledge is reachable.
+    from agno.utils.callables import get_resolved_knowledge
+
+    resolved_knowledge = get_resolved_knowledge(team, run_context)
+    if resolved_knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
+        build_context_fn = getattr(resolved_knowledge, "build_context", None)
         if callable(build_context_fn):
             knowledge_context = build_context_fn(
                 enable_agentic_filters=team.enable_agentic_knowledge_filters,

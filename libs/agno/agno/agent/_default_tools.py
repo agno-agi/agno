@@ -409,13 +409,10 @@ def add_to_knowledge(agent: Agent, query: str, result: str) -> str:
 
 
 def get_add_to_knowledge_function(agent: Agent, run_context: Optional[RunContext] = None) -> Function:
-    """Create an add_to_knowledge function that captures run_context in a closure.
-
-    This ensures factory-resolved knowledge is accessible via the run_context.
-    """
+    """Build an add_to_knowledge tool that reaches factory-resolved knowledge via a run_context closure."""
     from agno.utils.callables import get_resolved_knowledge
 
-    def add_to_knowledge_inner(query: str, result: str) -> str:
+    def add_to_knowledge(query: str, result: str) -> str:
         """Use this function to add information to the knowledge base for future use.
 
         Args:
@@ -442,7 +439,7 @@ def get_add_to_knowledge_function(agent: Agent, run_context: Optional[RunContext
         insert_fn(name=document_name, text_content=document_content, reader=TextReader())
         return "Successfully added to knowledge base"
 
-    return Function.from_callable(add_to_knowledge_inner, name="add_to_knowledge")
+    return Function.from_callable(add_to_knowledge, name="add_to_knowledge")
 
 
 def _get_message_text(msg: Message) -> Optional[str]:

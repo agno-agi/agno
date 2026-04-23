@@ -54,7 +54,7 @@ from agno.utils.team import (
 
 
 async def _aresolve_callable_resources(team: "Team", run_context: "RunContext") -> None:
-    """Resolve all callable factories (tools, knowledge, members) asynchronously."""
+    """Resolve callable factories (tools, knowledge, members)."""
     from agno.utils.callables import aresolve_callable_knowledge, aresolve_callable_members, aresolve_callable_tools
 
     await aresolve_callable_tools(team, run_context)
@@ -482,6 +482,19 @@ def _determine_team_member_interactions(
     return team_member_interactions_str
 
 
+def _build_subteam_run_context(subteam: "Team", parent_run_context: Optional["RunContext"]) -> Optional["RunContext"]:
+    """Return a sub-team-scoped RunContext with the sub-team's own members factory resolved."""
+    if parent_run_context is None:
+        return None
+    from dataclasses import replace
+
+    from agno.utils.callables import resolve_callable_members
+
+    subteam_run_context = replace(parent_run_context, members=None, tools=None, knowledge=None)
+    resolve_callable_members(subteam, subteam_run_context)
+    return subteam_run_context
+
+
 def _find_member_by_id(
     team: "Team", member_id: str, run_context: Optional["RunContext"] = None
 ) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
@@ -510,10 +523,10 @@ def _find_member_by_id(
         if url_safe_member_id == member_id:
             return i, member
 
-        # If this member is a team, search its members recursively
-        # Pass run_context=None so the sub-team reads its own members list, not the parent's
+        # Recurse in a sub-team-scoped run_context so the sub-team resolves its own members.
         if isinstance(member, Team):
-            result = member._find_member_by_id(member_id, run_context=None)
+            subteam_run_context = _build_subteam_run_context(member, run_context)
+            result = member._find_member_by_id(member_id, run_context=subteam_run_context)
             if result is not None:
                 return result
 
@@ -549,9 +562,10 @@ def _find_member_route_by_id(
         if url_safe_member_id == member_id:
             return i, member
 
-        # Pass run_context=None so the sub-team reads its own members list, not the parent's
+        # Recurse in a sub-team-scoped run_context so the sub-team resolves its own members.
         if isinstance(member, Team):
-            result = member._find_member_by_id(member_id, run_context=None)
+            subteam_run_context = _build_subteam_run_context(member, run_context)
+            result = member._find_member_by_id(member_id, run_context=subteam_run_context)
             if result is not None:
                 return i, member
 

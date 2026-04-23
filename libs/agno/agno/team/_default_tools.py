@@ -1182,14 +1182,11 @@ def add_to_knowledge(team: "Team", query: str, result: str) -> str:
     Returns:
         str: A string indicating the status of the addition.
     """
-    from agno.utils.callables import get_resolved_knowledge
-
-    knowledge = get_resolved_knowledge(team, None)
-    if knowledge is None:
+    if team.knowledge is None:
         log_warning("Knowledge is not set, cannot add to knowledge")
         return "Knowledge is not set, cannot add to knowledge"
 
-    insert_method = getattr(knowledge, "insert", None)
+    insert_method = getattr(team.knowledge, "insert", None)
     if not callable(insert_method):
         log_warning("Knowledge base does not support adding content")
         return "Knowledge base does not support adding content"
@@ -1204,13 +1201,10 @@ def add_to_knowledge(team: "Team", query: str, result: str) -> str:
 
 
 def get_add_to_knowledge_function(team: "Team", run_context: Optional[RunContext] = None) -> Function:
-    """Create an add_to_knowledge function that captures run_context in a closure.
-
-    This ensures factory-resolved knowledge is accessible via the run_context.
-    """
+    """Build an add_to_knowledge tool that reaches factory-resolved knowledge via a run_context closure."""
     from agno.utils.callables import get_resolved_knowledge
 
-    def add_to_knowledge_inner(query: str, result: str) -> str:
+    def add_to_knowledge(query: str, result: str) -> str:
         """Use this function to add information to the knowledge base for future use.
 
         Args:
@@ -1238,7 +1232,7 @@ def get_add_to_knowledge_function(team: "Team", run_context: Optional[RunContext
         insert_method(name=document_name, text_content=document_content, reader=TextReader())
         return "Successfully added to knowledge base"
 
-    return Function.from_callable(add_to_knowledge_inner, name="add_to_knowledge")
+    return Function.from_callable(add_to_knowledge, name="add_to_knowledge")
 
 
 def create_knowledge_search_tool(
