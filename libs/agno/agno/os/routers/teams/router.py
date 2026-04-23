@@ -26,6 +26,7 @@ from agno.os.auth import (
     require_approval_resolved,
     require_resource_access,
 )
+from agno.os.managers import event_buffer, sse_subscriber_manager
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -52,7 +53,8 @@ from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
-from agno.utils.log import log_warning, logger
+from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.serialize import json_serializer
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -124,6 +126,259 @@ async def team_response_streamer(
         return
 
 
+async def team_resumable_response_streamer(
+    team: Union[Team, RemoteTeam],
+    message: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    images: Optional[List[Image]] = None,
+    audio: Optional[List[Audio]] = None,
+    videos: Optional[List[Video]] = None,
+    files: Optional[List[FileMedia]] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
+    auth_token: Optional[str] = None,
+    **kwargs: Any,
+) -> AsyncGenerator:
+    """Resumable SSE generator for background=True, stream=True.
+
+    Delegates to team.arun(background=True, stream=True) which handles:
+    - Persisting RUNNING status in DB
+    - Running team in a detached asyncio.Task (survives client disconnect)
+    - Buffering events for reconnection via /resume
+    - Publishing to SSE subscribers for resumed clients
+    - Yielding SSE-formatted strings via a queue
+    """
+    if background_tasks is not None:
+        kwargs["background_tasks"] = background_tasks
+
+    if "stream_events" in kwargs:
+        stream_events = kwargs.pop("stream_events")
+    else:
+        stream_events = True
+
+    if auth_token and isinstance(team, RemoteTeam):
+        kwargs["auth_token"] = auth_token
+
+    try:
+        async for sse_data in team.arun(
+            input=message,
+            session_id=session_id,
+            user_id=user_id,
+            images=images,
+            audio=audio,
+            videos=videos,
+            files=files,
+            stream=True,
+            stream_events=stream_events,
+            background=True,
+            **kwargs,
+        ):
+            yield sse_data
+    except (InputCheckError, OutputCheckError) as e:
+        error_response = TeamRunErrorEvent(
+            content=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+            additional_data=e.additional_data,
+        )
+        yield format_sse_event(error_response)
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        error_response = TeamRunErrorEvent(
+            content=str(e),
+            error_type=e.type if hasattr(e, "type") else None,
+            error_id=e.error_id if hasattr(e, "error_id") else None,
+        )
+        yield format_sse_event(error_response)
+
+
+async def _resume_stream_generator(
+    team: Union[Team, RemoteTeam],
+    run_id: str,
+    last_event_index: Optional[int],
+    session_id: Optional[str],
+) -> AsyncGenerator:
+    """SSE generator for the /resume endpoint.
+
+    Three reconnection paths:
+    1. Run still active (in buffer): replay missed events + subscribe for live events via Queue
+    2. Run completed (in buffer): replay all events since last_event_index
+    3. Not in buffer: fall back to database replay
+    """
+    buffer_status = event_buffer.get_run_status(run_id)
+
+    if buffer_status is None:
+        # PATH 3: Not in buffer -- fall back to database
+        if session_id and not isinstance(team, RemoteTeam):
+            try:
+                run_output = await team.aget_run_output(run_id=run_id, session_id=session_id)
+            except Exception as e:
+                error = {"event": "error", "error": f"Failed to fetch run from database: {str(e)}"}
+                yield f"event: error\ndata: {json.dumps(error)}\n\n"
+                return
+            if run_output and run_output.events:
+                meta: dict = {
+                    "event": "replay",
+                    "run_id": run_id,
+                    "status": run_output.status.value if run_output.status else "unknown",
+                    "total_events": len(run_output.events),
+                    "message": "Run completed. Replaying all events from database.",
+                }
+                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+
+                for idx, event in enumerate(run_output.events):
+                    event_dict = event.to_dict()
+                    event_dict["event_index"] = idx
+                    if "run_id" not in event_dict:
+                        event_dict["run_id"] = run_id
+                    event_type = event_dict.get("event", "message")
+                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                return
+            elif run_output:
+                meta = {
+                    "event": "replay",
+                    "run_id": run_id,
+                    "status": run_output.status.value if run_output.status else "unknown",
+                    "total_events": 0,
+                    "message": "Run completed but no events stored.",
+                }
+                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+                return
+
+        # Run not found anywhere
+        error = {"event": "error", "error": f"Run {run_id} not found in buffer or database"}
+        yield f"event: error\ndata: {json.dumps(error)}\n\n"
+        return
+
+    if buffer_status in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
+        # PATH 2: Run finished -- replay missed events from buffer
+        total_buffered = event_buffer.get_event_count(run_id)
+        missed_events = event_buffer.get_events(run_id, last_event_index=last_event_index)
+        log_debug(
+            f"Resume PATH 2: run_id={run_id}, status={buffer_status.value}, "
+            f"last_event_index={last_event_index}, total_buffered={total_buffered}, "
+            f"missed_events={len(missed_events)}"
+        )
+
+        meta = {
+            "event": "replay",
+            "run_id": run_id,
+            "status": buffer_status.value,
+            "total_events": len(missed_events),
+            "total_buffered": total_buffered,
+            "last_event_index_requested": last_event_index if last_event_index is not None else -1,
+            "message": f"Run {buffer_status.value}. Replaying {len(missed_events)} missed events (of {total_buffered} total).",
+        }
+        yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+
+        for ev_index, buffered_event in missed_events:
+            event_dict = buffered_event.to_dict()
+            event_dict["event_index"] = ev_index
+            if "run_id" not in event_dict:
+                event_dict["run_id"] = run_id
+            event_type = event_dict.get("event", "message")
+            yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+        return
+
+    # PATH 1: Run still active -- subscribe FIRST (to avoid race condition), then replay missed events
+    queue = sse_subscriber_manager.subscribe(run_id)
+
+    try:
+        missed_events = event_buffer.get_events(run_id, last_event_index)
+        current_count = event_buffer.get_event_count(run_id)
+
+        # Track the highest replayed event_index for dedup against queue events
+        last_replayed_index = last_event_index if last_event_index is not None else -1
+
+        if missed_events:
+            meta = {
+                "event": "catch_up",
+                "run_id": run_id,
+                "status": "running",
+                "missed_events": len(missed_events),
+                "current_event_count": current_count,
+                "message": f"Catching up on {len(missed_events)} missed events.",
+            }
+            yield f"event: catch_up\ndata: {json.dumps(meta)}\n\n"
+
+            for ev_index, buffered_event in missed_events:
+                event_dict = buffered_event.to_dict()
+                event_dict["event_index"] = ev_index
+                if "run_id" not in event_dict:
+                    event_dict["run_id"] = run_id
+                event_type = event_dict.get("event", "message")
+                yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                last_replayed_index = ev_index
+
+        # Re-check buffer status after subscribing: the run may have completed
+        # between our initial status check and now. If so, replay remaining events
+        # from buffer instead of waiting on the queue (the sentinel was already pushed
+        # before our subscription existed).
+        updated_status = event_buffer.get_run_status(run_id)
+        if updated_status is not None and updated_status != RunStatus.running:
+            # Run completed while we were catching up -- replay remaining from buffer
+            remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
+            if remaining:
+                for ev_index, buffered_event in remaining:
+                    event_dict = buffered_event.to_dict()
+                    event_dict["event_index"] = ev_index
+                    if "run_id" not in event_dict:
+                        event_dict["run_id"] = run_id
+                    event_type = event_dict.get("event", "message")
+                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+            return
+
+        # Confirm subscription for live events
+        subscribed = {
+            "event": "subscribed",
+            "run_id": run_id,
+            "status": "running",
+            "current_event_count": current_count,
+            "message": "Subscribed to team run. Receiving live events.",
+        }
+        yield f"event: subscribed\ndata: {json.dumps(subscribed)}\n\n"
+
+        log_debug(f"SSE client subscribed to team run {run_id} (last_event_index: {last_event_index})")
+
+        # Read from queue, dedup events already replayed by event_index
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                # Check if run ended without sending sentinel
+                status = event_buffer.get_run_status(run_id)
+                if status is None or status != RunStatus.running:
+                    # Run ended - replay any remaining events from buffer
+                    remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
+                    for ev_index, buffered_event in remaining:
+                        event_dict = buffered_event.to_dict()
+                        event_dict["event_index"] = ev_index
+                        if "run_id" not in event_dict:
+                            event_dict["run_id"] = run_id
+                        event_type = event_dict.get("event", "message")
+                        yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                    break
+                # Still running - send heartbeat to keep connection alive
+                yield ": heartbeat\n\n"
+                continue
+            if item is None:
+                # Sentinel: run completed
+                break
+            ev_idx, sse_data = item
+            # Dedup: skip events already replayed during catch-up
+            if ev_idx >= 0 and ev_idx <= last_replayed_index:
+                continue
+            if ev_idx >= 0:
+                last_replayed_index = ev_idx
+            yield sse_data
+    finally:
+        sse_subscriber_manager.unsubscribe(run_id, queue)
+
+
 async def team_continue_response_streamer(
     team: Union[Team, RemoteTeam],
     run_id: str,
@@ -172,6 +427,64 @@ async def team_continue_response_streamer(
         )
         yield format_sse_event(error_response)
         return
+
+
+async def team_resumable_continue_response_streamer(
+    team: Union[Team, RemoteTeam],
+    run_id: str,
+    requirements: Optional[List] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
+    auth_token: Optional[str] = None,
+) -> AsyncGenerator:
+    """Resumable SSE generator for continue_run with background=True, stream=True.
+
+    Delegates to team.acontinue_run(background=True, stream=True) which handles:
+    - Running continue-run in a detached asyncio.Task (survives client disconnect)
+    - Buffering events for reconnection via /resume
+    - Publishing to SSE subscribers for resumed clients
+    - Yielding SSE-formatted strings via a queue
+    """
+    extra_kwargs: dict = {}
+    if auth_token and isinstance(team, RemoteTeam):
+        extra_kwargs["auth_token"] = auth_token
+
+    if background_tasks is not None:
+        extra_kwargs["background_tasks"] = background_tasks
+
+    try:
+        async for sse_data in team.acontinue_run(
+            run_id=run_id,
+            requirements=requirements or [],
+            session_id=session_id,
+            user_id=user_id,
+            stream=True,
+            stream_events=True,
+            background=True,
+            **extra_kwargs,
+        ):
+            yield sse_data
+    except (InputCheckError, OutputCheckError) as e:
+        error_response = TeamRunErrorEvent(
+            content=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+            additional_data=e.additional_data,
+        )
+        yield format_sse_event(error_response)
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        error_response = TeamRunErrorEvent(
+            content=str(e),
+            error_type=e.type if hasattr(e, "type") else None,
+            error_id=e.error_id if hasattr(e, "error_id") else None,
+        )
+        yield format_sse_event(error_response)
 
 
 def get_team_router(
@@ -360,10 +673,33 @@ def get_team_router(
         # Extract auth token for remote teams
         auth_token = get_auth_token_from_request(request)
 
-        # Background execution: return 202 immediately with run metadata
+        # Background execution
         if background:
             if isinstance(team, RemoteTeam):
                 raise HTTPException(status_code=400, detail="Background execution is not supported for remote teams")
+
+            if stream:
+                # background=True, stream=True: resumable SSE streaming
+                # Team runs in a detached asyncio.Task that survives client disconnections.
+                # Events are buffered for reconnection via /resume endpoint.
+                return StreamingResponse(
+                    team_resumable_response_streamer(
+                        team,
+                        message,
+                        session_id=session_id,
+                        user_id=user_id,
+                        images=base64_images if base64_images else None,
+                        audio=base64_audios if base64_audios else None,
+                        videos=base64_videos if base64_videos else None,
+                        files=document_files if document_files else None,
+                        background_tasks=background_tasks,
+                        auth_token=auth_token,
+                        **kwargs,
+                    ),
+                    media_type="text/event-stream",
+                )
+
+            # background=True, stream=False: return 202 immediately with run metadata
             if not team.db:
                 raise HTTPException(
                     status_code=400, detail="Background execution requires a database to be configured on the team"
@@ -473,6 +809,50 @@ def get_team_router(
         return JSONResponse(content={}, status_code=200)
 
     @router.post(
+        "/teams/{team_id}/runs/{run_id}/resume",
+        tags=["Teams"],
+        operation_id="resume_team_run_stream",
+        summary="Resume Team Run Stream",
+        description=(
+            "Resume an SSE stream for a team run after disconnection.\n\n"
+            "Sends missed events since `last_event_index`, then continues streaming "
+            "live events if the run is still active.\n\n"
+            "**Three reconnection paths:**\n"
+            "1. **Run still active**: Sends catch-up events + continues live streaming\n"
+            "2. **Run completed (in buffer)**: Replays missed buffered events\n"
+            "3. **Run completed (in database)**: Replays events from database\n\n"
+            "**Client usage:**\n"
+            "Track `event_index` from each SSE event. On reconnection, pass the last "
+            "received `event_index` as `last_event_index`."
+        ),
+        responses={
+            200: {
+                "description": "SSE stream of catch-up and/or live events",
+                "content": {"text/event-stream": {}},
+            },
+            400: {"description": "Not supported for remote teams", "model": BadRequestResponse},
+            404: {"description": "Team not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
+    )
+    async def resume_team_run_stream(
+        team_id: str,
+        run_id: str,
+        last_event_index: Optional[int] = Form(None, description="Index of last event received by client (0-based)"),
+        session_id: Optional[str] = Form(None, description="Session ID for database fallback"),
+    ):
+        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+        if isinstance(team, RemoteTeam):
+            raise HTTPException(status_code=400, detail="Stream resumption is not supported for remote teams")
+
+        return StreamingResponse(
+            _resume_stream_generator(team, run_id, last_event_index, session_id),
+            media_type="text/event-stream",
+        )
+
+    @router.post(
         "/teams/{team_id}/runs/{run_id}/continue",
         tags=["Teams"],
         operation_id="continue_team_run",
@@ -521,6 +901,7 @@ def get_team_router(
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         stream: bool = Form(True),
+        background: bool = Form(False),
     ):
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -598,7 +979,25 @@ def get_team_router(
         # Extract auth token for remote teams
         auth_token = get_auth_token_from_request(request)
 
-        if stream:
+        if stream and background:
+            # background=True, stream=True: resumable SSE streaming
+            # Continue-run runs in a detached asyncio.Task that survives client disconnections.
+            # Events are buffered for reconnection via /resume endpoint.
+            if isinstance(team, RemoteTeam):
+                raise HTTPException(status_code=400, detail="Background execution is not supported for remote teams")
+            return StreamingResponse(
+                team_resumable_continue_response_streamer(
+                    team,
+                    run_id=run_id,
+                    requirements=updated_requirements or [],
+                    session_id=session_id,
+                    user_id=user_id,
+                    background_tasks=background_tasks,
+                    auth_token=auth_token,
+                ),
+                media_type="text/event-stream",
+            )
+        elif stream:
             return StreamingResponse(
                 team_continue_response_streamer(
                     team,
