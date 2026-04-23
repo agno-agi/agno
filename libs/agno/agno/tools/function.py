@@ -1331,6 +1331,7 @@ class ToolResult(BaseModel):
     """Result from a tool that can include media artifacts."""
 
     content: str
+    meta: Optional[Dict[str, Any]] = None
     images: Optional[List[Image]] = None
     videos: Optional[List[Video]] = None
     audios: Optional[List[Audio]] = None

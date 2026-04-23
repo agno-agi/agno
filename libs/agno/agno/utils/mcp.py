@@ -160,6 +160,7 @@ def get_entrypoint_for_tool(
 
             return ToolResult(
                 content=response_str.strip(),
+                meta=result.meta,
                 images=images if images else None,
             )
         except Exception as e:
