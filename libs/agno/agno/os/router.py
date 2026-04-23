@@ -42,7 +42,7 @@ def get_base_router(
     Create the base FastAPI router with comprehensive OpenAPI documentation.
 
     This router provides endpoints for:
-    - Core system operations (health, config, models)
+    - Core system operations (config)
     - Agent management and execution
     - Team collaboration and coordination
     - Workflow automation and orchestration
@@ -83,7 +83,10 @@ def get_base_router(
                         "example": {
                             "id": "demo",
                             "description": "Example AgentOS configuration",
-                            "available_models": [],
+                            "available_models": [
+                                {"id": "gpt-4", "provider": "openai"},
+                                {"id": "claude-3-sonnet", "provider": "anthropic"},
+                            ],
                             "databases": ["9c884dc4-9066-448c-9074-ef49ec7eb73c"],
                             "session": {
                                 "dbs": [
@@ -166,7 +169,7 @@ def get_base_router(
         return ConfigResponse(
             os_id=os.id or "Unnamed OS",
             description=os.description,
-            available_models=os.config.available_models if os.config else [],
+            available_models=_collect_unique_models(os),
             os_database=os.db.id if os.db else None,
             databases=list({db.id for db_id, dbs in os.dbs.items() for db in dbs}),
             chat=os.config.chat if os.config else None,
@@ -185,56 +188,20 @@ def get_base_router(
             ],
         )
 
-    @router.get(
-        "/models",
-        response_model=List[Model],
-        response_model_exclude_none=True,
-        tags=["Core"],
-        operation_id="get_models",
-        summary="Get Available Models",
-        description=(
-            "Retrieve a list of all unique models currently used by agents and teams in this OS instance. "
-            "This includes the model ID and provider information for each model."
-        ),
-        responses={
-            200: {
-                "description": "List of models retrieved successfully",
-                "content": {
-                    "application/json": {
-                        "example": [
-                            {"id": "gpt-4", "provider": "openai"},
-                            {"id": "claude-3-sonnet", "provider": "anthropic"},
-                        ]
-                    }
-                },
-            }
-        },
-    )
-    async def get_models() -> List[Model]:
-        """Return the list of all models used by agents and teams in the contextual OS"""
-        unique_models = {}
-
-        # Collect models from local agents
-        if os.agents:
-            for agent in os.agents:
-                model = cast(Model, agent.model)
-                if model and model.id is not None and model.provider is not None:
-                    key = (model.id, model.provider)
-                    if key not in unique_models:
-                        unique_models[key] = Model(id=model.id, provider=model.provider)
-
-        # Collect models from local teams
-        if os.teams:
-            for team in os.teams:
-                model = cast(Model, team.model)
-                if model and model.id is not None and model.provider is not None:
-                    key = (model.id, model.provider)
-                    if key not in unique_models:
-                        unique_models[key] = Model(id=model.id, provider=model.provider)
-
-        return list(unique_models.values())
-
     return router
+
+
+def _collect_unique_models(os: "AgentOS") -> List[Model]:
+    """Return unique (id, provider) models in use across agents and teams."""
+    unique_models: dict = {}
+    for source in (os.agents or [], os.teams or []):
+        for entity in source:
+            model = cast(Model, getattr(entity, "model", None))
+            if model and model.id is not None and model.provider is not None:
+                key = (model.id, model.provider)
+                if key not in unique_models:
+                    unique_models[key] = Model(id=model.id, provider=model.provider)
+    return list(unique_models.values())
 
 
 def get_info_router(os: "AgentOS") -> APIRouter:
@@ -252,6 +219,9 @@ def get_info_router(os: "AgentOS") -> APIRouter:
     )
     async def get_info() -> InfoResponse:
         return InfoResponse(
+            name="AgentOS API",
+            id=os.id or "agno-agentos",
+            os_version=os.version or "1.0.0",
             agno_version=agno_version,
             agent_count=len(os.agents or []),
             team_count=len(os.teams or []),

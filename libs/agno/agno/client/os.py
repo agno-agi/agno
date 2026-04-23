@@ -50,7 +50,6 @@ from agno.os.schema import (
     ConfigResponse,
     CreateSessionRequest,
     DeleteSessionRequest,
-    Model,
     PaginatedResponse,
     PaginationInfo,
     RunSchema,
@@ -449,21 +448,6 @@ class AgentOSClient:
         """
         data = await self._aget("/config", headers=headers)
         return ConfigResponse.model_validate(data)
-
-    async def get_models(self, headers: Optional[Dict[str, str]] = None) -> List[Model]:
-        """Get list of all models used by agents and teams.
-
-        Args:
-            headers: HTTP headers to include in the request (optional)
-
-        Returns:
-            List[Model]: List of model configurations
-
-        Raises:
-            HTTPStatusError: On HTTP errors
-        """
-        data = await self._aget("/models", headers=headers)
-        return [Model.model_validate(item) for item in data]
 
     async def migrate_database(
         self, db_id: str, target_version: Optional[str] = None, headers: Optional[Dict[str, str]] = None

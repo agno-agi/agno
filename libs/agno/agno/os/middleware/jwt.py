@@ -519,7 +519,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
     def _get_default_excluded_routes(self) -> List[str]:
         """Get default routes that should be excluded from RBAC checks."""
         return [
-            "/",
             "/health",
             "/info",
             "/docs",
