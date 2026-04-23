@@ -1,11 +1,25 @@
+import bisect
 import json
 import os
+import re
+import shutil
+import subprocess
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Literal, Optional, Tuple
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
+
+GrepOutputMode = Literal["files_with_matches", "content", "count"]
+_GREP_OUTPUT_MODES = ("files_with_matches", "content", "count")
+
+# Absolute cap on how many results grep will return in a single call, even
+# when limit is set higher. Prevents accidental context blow-up.
+GREP_MAX_LIMIT = 1000
+# Timeout for the ripgrep subprocess. Ripgrep is fast; anything longer
+# than 20s on a project usually means a pathological regex.
+GREP_RG_TIMEOUT_S = 20
 
 TEXT_EXTENSIONS = {
     ".md",
@@ -149,6 +163,7 @@ class FileTools(Toolkit):
         enable_read_file_chunk: bool = True,
         enable_replace_file_chunk: bool = True,
         enable_search_content: bool = True,
+        enable_grep: bool = True,
         expose_base_directory: bool = False,
         max_file_length: int = 10000000,
         max_file_lines: int = 100000,
@@ -167,6 +182,9 @@ class FileTools(Toolkit):
         self.exclude_patterns: List[str] = (
             exclude_patterns if exclude_patterns is not None else list(DEFAULT_EXCLUDE_PATTERNS)
         )
+        # Cache the ripgrep binary path so grep does not repeat the PATH
+        # lookup on every call. ``None`` means ripgrep is not installed.
+        self._rg_path: Optional[str] = shutil.which("rg")
         if all or enable_save_file:
             tools.append(self.save_file)
         if all or enable_read_file:
@@ -183,6 +201,8 @@ class FileTools(Toolkit):
             tools.append(self.replace_file_chunk)
         if all or enable_search_content:
             tools.append(self.search_content)
+        if all or enable_grep:
+            tools.append(self.grep)
 
         super().__init__(name="file_tools", tools=tools, **kwargs)
 
@@ -473,3 +493,340 @@ class FileTools(Toolkit):
             error_msg = f"Error searching content for '{query}': {e}"
             log_error(error_msg)
             return error_msg
+
+    def grep(
+        self,
+        pattern: str,
+        path: Optional[str] = None,
+        output_mode: GrepOutputMode = "files_with_matches",
+        include: Optional[str] = None,
+        ignore_case: bool = False,
+        context: int = 0,
+        limit: int = 250,
+        multiline: bool = False,
+    ) -> str:
+        """Regex-based content search across the base directory.
+
+        Prefers the ripgrep (``rg``) binary when it is on PATH for speed,
+        and falls back to a pure-Python walk when it is not. The output
+        shape does not depend on which backend ran.
+
+        Return JSON shape varies by ``output_mode``:
+
+        - ``"files_with_matches"``: ``{"pattern", "mode", "matches_found", "files": [...], "truncated"}``
+        - ``"content"``: ``{"pattern", "mode", "matches_found", "lines": [{"file", "line", "text"}, ...], "truncated"}``
+        - ``"count"``: ``{"pattern", "mode", "matches_found", "counts": [{"file", "count"}, ...], "truncated"}``
+
+        :param pattern: Regex to search for. Uses ripgrep syntax when ``rg``
+            is available, Python's ``re`` syntax otherwise. Simple patterns
+            work the same in both.
+        :param path: Optional subdirectory (relative to ``base_dir``) to
+            scope the search to. Defaults to the whole base directory.
+        :param output_mode: ``"files_with_matches"`` (default, paths only),
+            ``"content"`` (matching lines with line numbers), or ``"count"``
+            (match count per file).
+        :param include: Optional filename filter such as ``"*.py"`` or
+            ``"**/*.tsx"``. Matched against paths relative to ``base_dir``.
+        :param ignore_case: If ``True``, ignore case when matching.
+        :param context: Number of context lines to show before and after each
+            match. Only applies when ``output_mode='content'`` and the
+            ripgrep backend is active; the Python fallback ignores it.
+        :param limit: Maximum number of results to return. Capped at
+            ``GREP_MAX_LIMIT`` regardless of caller input.
+        :param multiline: If ``True``, the pattern can match across line
+            boundaries (``.`` matches newlines). Off by default.
+        :return: JSON document with the shape shown above.
+        """
+        try:
+            if not pattern or not pattern.strip():
+                return "Error: Pattern cannot be empty"
+            if output_mode not in _GREP_OUTPUT_MODES:
+                return f"Error: output_mode must be one of {_GREP_OUTPUT_MODES}, got {output_mode!r}"
+
+            search_dir = self.base_dir
+            if path:
+                safe, search_dir = self.check_escape(path)
+                if not safe:
+                    log_error(f"Attempted to grep outside base directory: {path}")
+                    return "Error: path is outside the allowed base directory"
+            if not search_dir.is_dir():
+                return f"Error: '{path}' is not a directory"
+
+            effective_limit = min(max(limit, 1), GREP_MAX_LIMIT)
+
+            if self._rg_path is not None:
+                log_debug(f"grep: using ripgrep at {self._rg_path}")
+                return self._grep_ripgrep(
+                    rg_path=self._rg_path,
+                    pattern=pattern,
+                    search_dir=search_dir,
+                    output_mode=output_mode,
+                    include=include,
+                    ignore_case=ignore_case,
+                    context=context,
+                    limit=effective_limit,
+                    multiline=multiline,
+                )
+
+            log_debug("grep: ripgrep not found, using Python fallback")
+            return self._grep_python(
+                pattern=pattern,
+                search_dir=search_dir,
+                output_mode=output_mode,
+                include=include,
+                ignore_case=ignore_case,
+                context=context,
+                limit=effective_limit,
+                multiline=multiline,
+            )
+        except Exception as e:
+            error_msg = f"Error running grep for '{pattern}': {e}"
+            log_error(error_msg)
+            return error_msg
+
+    def _grep_ripgrep(
+        self,
+        *,
+        rg_path: str,
+        pattern: str,
+        search_dir: Path,
+        output_mode: GrepOutputMode,
+        include: Optional[str],
+        ignore_case: bool,
+        context: int,
+        limit: int,
+        multiline: bool,
+    ) -> str:
+        """Invoke ripgrep and normalize its output into the shared JSON shape."""
+        args: List[str] = [rg_path, "--hidden", "--max-columns", "500"]
+        # Our exclude_patterns are fnmatch-style; ripgrep accepts the same
+        # globbing syntax for --glob, so pass them through directly.
+        for pat in self.exclude_patterns:
+            args.extend(["--glob", f"!{pat}"])
+
+        if ignore_case:
+            args.append("-i")
+        if multiline:
+            args.extend(["-U", "--multiline-dotall"])
+        if include:
+            args.extend(["--glob", include])
+
+        if output_mode == "files_with_matches":
+            args.append("-l")
+        elif output_mode == "count":
+            args.append("-c")
+        else:  # content
+            args.append("-n")
+            if context > 0:
+                args.extend(["-C", str(context)])
+
+        # Use -e so patterns starting with '-' are not treated as flags.
+        args.extend(["-e", pattern, str(search_dir)])
+
+        try:
+            completed = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=GREP_RG_TIMEOUT_S,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return f"Error: ripgrep exceeded {GREP_RG_TIMEOUT_S}s; refine the pattern or narrow the path"
+
+        # ripgrep exit codes: 0 = matches, 1 = no matches, 2+ = error.
+        if completed.returncode >= 2:
+            stderr = completed.stderr.strip() or "ripgrep failed"
+            return f"Error: {stderr}"
+
+        lines = [line for line in completed.stdout.splitlines() if line]
+        truncated = len(lines) > limit
+        lines = lines[:limit]
+
+        if output_mode == "files_with_matches":
+            files = [self._relativize(line) for line in lines]
+            result: Dict[str, Any] = {
+                "pattern": pattern,
+                "mode": output_mode,
+                "matches_found": len(files),
+                "files": files,
+                "truncated": truncated,
+            }
+        elif output_mode == "count":
+            counts: List[dict] = []
+            total = 0
+            for line in lines:
+                file_part, _, num_part = line.rpartition(":")
+                try:
+                    n = int(num_part)
+                except ValueError:
+                    continue
+                counts.append({"file": self._relativize(file_part), "count": n})
+                total += n
+            result = {
+                "pattern": pattern,
+                "mode": output_mode,
+                "matches_found": total,
+                "counts": counts,
+                "truncated": truncated,
+            }
+        else:  # content
+            content_lines: List[dict] = []
+            for line in lines:
+                parts = line.split(":", 2)
+                if len(parts) < 3:
+                    continue
+                file_part, line_no, text = parts
+                try:
+                    n = int(line_no)
+                except ValueError:
+                    continue
+                content_lines.append({"file": self._relativize(file_part), "line": n, "text": text})
+            result = {
+                "pattern": pattern,
+                "mode": output_mode,
+                "matches_found": len(content_lines),
+                "lines": content_lines,
+                "truncated": truncated,
+            }
+
+        return json.dumps(result, indent=2)
+
+    def _grep_python(
+        self,
+        *,
+        pattern: str,
+        search_dir: Path,
+        output_mode: GrepOutputMode,
+        include: Optional[str],
+        ignore_case: bool,
+        context: int,
+        limit: int,
+        multiline: bool,
+    ) -> str:
+        """Pure-Python fallback used when ripgrep is unavailable.
+
+        Slower than ripgrep and uses Python regex syntax, but supports the
+        same output modes so callers don't need to special-case the absence
+        of ``rg``.
+        """
+        flags = 0
+        if ignore_case:
+            flags |= re.IGNORECASE
+        if multiline:
+            flags |= re.DOTALL
+        try:
+            compiled = re.compile(pattern, flags)
+        except re.error as exc:
+            return f"Error: invalid regex {pattern!r}: {exc}"
+
+        per_file_counts: List[Tuple[Path, int]] = []
+        content_hits: List[Dict[str, Any]] = []
+        max_file_size = 1_000_000  # 1MB; mirrors search_content's safety rail
+
+        for file_path in self._iter_candidate_files(search_dir, include):
+            try:
+                if file_path.stat().st_size > max_file_size:
+                    continue
+                text = file_path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+
+            if multiline:
+                hits = list(compiled.finditer(text))
+                if not hits:
+                    continue
+                per_file_counts.append((file_path, len(hits)))
+                if output_mode == "content":
+                    # Precompute newline offsets so every match resolves its
+                    # line number in O(log n) via bisect, instead of re-counting
+                    # the prefix per match (which was O(offset) per hit).
+                    newline_offsets = [i for i, c in enumerate(text) if c == "\n"]
+                    rel = self._relativize(str(file_path))
+                    for match in hits:
+                        line_no = bisect.bisect_right(newline_offsets, match.start()) + 1
+                        snippet = text[match.start() : match.end()].splitlines()[0]
+                        content_hits.append({"file": rel, "line": line_no, "text": snippet})
+            elif output_mode == "count":
+                # Skip the line-by-line loop when we only need a total count.
+                total = len(compiled.findall(text))
+                if total:
+                    per_file_counts.append((file_path, total))
+            else:
+                file_hits = 0
+                rel = self._relativize(str(file_path))
+                for idx, line in enumerate(text.splitlines()):
+                    if compiled.search(line):
+                        file_hits += 1
+                        if output_mode == "content":
+                            content_hits.append({"file": rel, "line": idx + 1, "text": line})
+                if file_hits:
+                    per_file_counts.append((file_path, file_hits))
+
+            if output_mode == "content" and len(content_hits) >= limit:
+                break
+            if output_mode != "content" and len(per_file_counts) >= limit:
+                break
+
+        if output_mode == "files_with_matches":
+            truncated = len(per_file_counts) >= limit
+            files = [self._relativize(str(p)) for p, _ in per_file_counts[:limit]]
+            result: Dict[str, Any] = {
+                "pattern": pattern,
+                "mode": output_mode,
+                "matches_found": len(files),
+                "files": files,
+                "truncated": truncated,
+            }
+        elif output_mode == "count":
+            truncated = len(per_file_counts) >= limit
+            counts = [{"file": self._relativize(str(p)), "count": n} for p, n in per_file_counts[:limit]]
+            result = {
+                "pattern": pattern,
+                "mode": output_mode,
+                "matches_found": sum(n for _, n in per_file_counts[:limit]),
+                "counts": counts,
+                "truncated": truncated,
+            }
+        else:  # content
+            truncated = len(content_hits) >= limit
+            trimmed = content_hits[:limit]
+            # Context lines require re-reading files with surrounding context,
+            # which the ripgrep backend already does natively. Skipping it here
+            # keeps the fallback simple without a silent divergence — the
+            # docstring calls this out.
+            if context > 0:
+                log_debug("grep Python fallback ignores context; install ripgrep for context support")
+            result = {
+                "pattern": pattern,
+                "mode": output_mode,
+                "matches_found": len(trimmed),
+                "lines": trimmed,
+                "truncated": truncated,
+            }
+
+        return json.dumps(result, indent=2)
+
+    def _iter_candidate_files(self, search_dir: Path, include: Optional[str]) -> Iterator[Path]:
+        """Yield files under ``search_dir`` honoring exclude_patterns and include."""
+        for dirpath, dirnames, filenames in os.walk(search_dir):
+            dirnames[:] = [d for d in dirnames if not self._is_excluded(Path(dirpath) / d)]
+            for filename in filenames:
+                file_path = Path(dirpath) / filename
+                if self._is_excluded(file_path):
+                    continue
+                if include is not None:
+                    try:
+                        rel = file_path.relative_to(self.base_dir)
+                    except ValueError:
+                        continue
+                    if not (fnmatch(str(rel), include) or fnmatch(filename, include)):
+                        continue
+                yield file_path
+
+    def _relativize(self, p: str) -> str:
+        """Return ``p`` relative to ``base_dir`` when possible, else as given."""
+        try:
+            return str(Path(p).relative_to(self.base_dir))
+        except ValueError:
+            return p
