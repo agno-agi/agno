@@ -43,7 +43,6 @@ from agno.os.routers.components import get_components_router
 from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
-from agno.os.routers.home import get_home_router
 from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
@@ -391,7 +390,6 @@ class AgentOS:
     def _reprovision_routers(self, app: FastAPI) -> None:
         """Re-provision all routes for the AgentOS."""
         updated_routers = [
-            get_home_router(self),
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
             get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
@@ -443,10 +441,6 @@ class AgentOS:
 
     def _add_built_in_routes(self, app: FastAPI) -> None:
         """Add all AgentOSbuilt-in routes to the given app."""
-        # Add the home router if MCP server is not enabled
-        if not self.enable_mcp_server:
-            self._add_router(app, get_home_router(self))
-
         self._add_router(app, get_health_router(health_endpoint="/health"))
         self._add_router(app, get_info_router(self))
         self._add_router(app, get_base_router(self, settings=self.settings))
