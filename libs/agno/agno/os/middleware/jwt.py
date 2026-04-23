@@ -317,12 +317,12 @@ class JWTMiddleware(BaseHTTPMiddleware):
     2. Decodes and validates the token
     3. Validates the `aud` (audience) claim matches the AgentOS ID (if configured)
     4. Stores JWT claims (user_id, session_id, scopes) in request.state
-    5. Optionally checks if the request path requires specific scopes (if scope_mappings provided)
+    5. Checks if the request path requires specific scopes (using default + custom scope_mappings)
     6. Validates that the authenticated user has the required scopes
     7. Returns 401 for invalid tokens, 403 for insufficient scopes
 
-    RBAC is opt-in: Only enabled when authorization=True or scope_mappings are provided.
-    Without authorization enabled, the middleware only extracts and validates JWT tokens.
+    RBAC is enabled by default. Pass `authorization=False` to disable scope checks
+    and use the middleware purely for JWT extraction/validation.
 
     Audience Verification:
     - The `aud` claim in JWT tokens should contain the AgentOS ID
@@ -429,7 +429,9 @@ class JWTMiddleware(BaseHTTPMiddleware):
             validate: Whether to validate the JWT signature (default: True). If False, tokens are decoded
                      without signature verification and no verification key is required. Useful when
                      JWT verification is handled upstream (API Gateway, etc.).
-            authorization: Whether to add authorization checks to the request (i.e. validation of scopes)
+            authorization: Whether to enforce RBAC scope checks. Defaults to True so manually
+                          mounted middleware protects endpoints by default. Pass False to
+                          validate JWTs without enforcing scopes.
             token_source: Where to extract JWT token from (header, cookie, or both)
             token_header_key: Header key for Authorization (default: "Authorization")
             cookie_name: Cookie name for JWT token (default: "access_token")
@@ -493,12 +495,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
         self.audience = audience
 
-        # RBAC configuration (opt-in via scope_mappings)
+        # RBAC configuration. Default to enabled so manual
+        # `app.add_middleware(JWTMiddleware, ...)` calls don't silently leave
+        # endpoints unguarded. Callers that want JWT validation without RBAC
+        # must pass `authorization=False` explicitly.
+        if authorization is None:
+            authorization = True
         self.authorization = authorization
-
-        # If scope_mappings are provided, enable authorization
-        if scope_mappings is not None and self.authorization is None:
-            self.authorization = True
 
         # Build final scope mappings (additive approach)
         if self.authorization:
@@ -669,11 +672,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
         # (app.add_middleware(JWTMiddleware, ...)) setup paths.
         if not getattr(request.app.state, "jwt_validator", None):
             request.app.state.jwt_validator = self.validator
-        # Expose the configured admin_scope so WebSocket endpoints (which bypass
-        # this middleware) can honour custom admin-scope strings when deciding
-        # whether a caller is an admin.
-        if not getattr(request.app.state, "admin_scope", None):
-            request.app.state.admin_scope = self.admin_scope
 
         path = request.url.path
         method = request.method
@@ -708,7 +706,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
             internal_scopes = list(INTERNAL_SERVICE_SCOPES)
             request.state.scopes = internal_scopes
             request.state.authorization_enabled = self.authorization or False
-            request.state.admin_scope = self.admin_scope
 
             # Enforce RBAC for internal token (do not skip scope checks)
             if self.authorization:
@@ -755,7 +752,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.scopes = scopes
             request.state.audience = audience
             request.state.authorization_enabled = self.authorization or False
-            request.state.admin_scope = self.admin_scope
 
             # Extract dependencies claims
             dependencies = {}

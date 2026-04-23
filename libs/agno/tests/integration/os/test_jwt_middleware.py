@@ -183,6 +183,7 @@ def test_validation_disabled(jwt_test_agent):
     app.add_middleware(
         JWTMiddleware,
         validate=False,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -220,6 +221,7 @@ def test_custom_claims_configuration(jwt_test_agent):
         session_id_claim="custom_session",  # Different claim name
         dependencies_claims=["department", "level"],  # Different dependency claims
         validate=True,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -276,6 +278,7 @@ def test_excluded_routes(jwt_test_agent):
             "/sessions",  # Exclude sessions endpoint
             "/sessions/*",  # Exclude sessions endpoint with wildcard
         ],
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -317,6 +320,7 @@ def test_cookie_token_source(jwt_test_agent, jwt_token):
         session_id_claim="session_id",
         dependencies_claims=["name", "email", "roles", "org_id"],
         validate=True,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -359,6 +363,7 @@ def test_cookie_missing_token_fails(jwt_test_agent):
         token_source=TokenSource.COOKIE,
         cookie_name="jwt_token",
         validate=True,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -387,6 +392,7 @@ def test_both_token_sources_header_first(jwt_test_agent, jwt_token):
         cookie_name="jwt_cookie",
         user_id_claim="sub",
         validate=True,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -433,6 +439,7 @@ def test_both_token_sources_cookie_fallback(jwt_test_agent, jwt_token):
         cookie_name="jwt_cookie",
         user_id_claim="sub",
         validate=True,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -466,6 +473,7 @@ def test_both_token_sources_missing_both_fails(jwt_test_agent):
         token_source=TokenSource.BOTH,
         cookie_name="jwt_cookie",
         validate=True,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -495,6 +503,7 @@ def test_custom_cookie_name(jwt_test_agent, jwt_token):
         cookie_name=custom_cookie_name,
         user_id_claim="sub",
         validate=True,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -531,6 +540,7 @@ def test_cookie_invalid_token_fails(jwt_test_agent):
         token_source=TokenSource.COOKIE,
         cookie_name="jwt_token",
         validate=True,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -559,6 +569,7 @@ def test_scopes_string_format(jwt_test_agent):
         scopes_claim="scope",  # Standard OAuth2 scope claim
         user_id_claim="sub",
         validate=True,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -600,6 +611,7 @@ def test_scopes_list_format(jwt_test_agent):
         scopes_claim="permissions",  # Custom scope claim name
         user_id_claim="sub",
         validate=True,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -641,6 +653,7 @@ def test_no_scopes_claim(jwt_test_agent):
         scopes_claim=None,  # No scopes extraction
         user_id_claim="sub",
         validate=True,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -682,6 +695,7 @@ def test_session_state_claims(jwt_test_agent):
         user_id_claim="sub",
         session_state_claims=["session_data", "user_preferences", "theme"],
         validate=True,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -727,6 +741,7 @@ def test_custom_token_header_key(jwt_test_agent):
         token_header_key=custom_header_key,
         user_id_claim="sub",
         validate=True,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -777,6 +792,7 @@ def test_malformed_authorization_header(jwt_test_agent):
         algorithm="HS256",
         user_id_claim="sub",
         validate=True,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -819,6 +835,7 @@ def test_missing_session_id_claim(jwt_test_agent):
         user_id_claim="sub",
         session_id_claim="missing_session_claim",  # Claim that won't exist
         validate=True,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -866,6 +883,7 @@ def test_general_exception_during_decode(jwt_test_agent):
         algorithm="HS256",
         user_id_claim="sub",
         validate=True,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -913,6 +931,7 @@ def test_different_algorithm_rs256(jwt_test_agent):
         algorithm="RS256",
         user_id_claim="sub",
         validate=True,
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -962,6 +981,7 @@ def test_request_state_token_storage(jwt_test_agent):
         algorithm="HS256",
         user_id_claim="sub",
         validate=False,  # Don't fail on validation errors, just set authenticated=False
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -1483,6 +1503,7 @@ def test_validate_false_extracts_scopes(jwt_test_agent):
         scope_mappings={
             "GET /test-scopes": [],
         },
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -1554,6 +1575,7 @@ def test_audience_verification_with_explicit_audience_success(jwt_test_agent):
         validate=True,
         verify_audience=True,
         audience="test-audience-123",  # Explicit audience
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -1596,6 +1618,7 @@ def test_audience_verification_with_explicit_audience_failure(jwt_test_agent):
         validate=True,
         verify_audience=True,
         audience="test-audience-123",  # Explicit audience
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -1634,6 +1657,7 @@ def test_audience_verification_with_agent_os_id(jwt_test_agent):
         validate=True,
         verify_audience=True,
         # No explicit audience - should use agent_os_id
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -1677,6 +1701,7 @@ def test_audience_verification_with_agent_os_id_failure(jwt_test_agent):
         validate=True,
         verify_audience=True,
         # No explicit audience - should use agent_os_id
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -1714,6 +1739,7 @@ def test_audience_verification_disabled(jwt_test_agent):
         validate=True,
         verify_audience=False,  # Audience verification disabled
         audience="test-audience-123",
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -1757,6 +1783,7 @@ def test_audience_verification_with_custom_audience_claim(jwt_test_agent):
         verify_audience=True,
         audience="test-audience-123",
         audience_claim="custom_aud",  # Custom audience claim name
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -1801,6 +1828,7 @@ def test_audience_verification_with_multiple_audiences(jwt_test_agent):
         validate=True,
         verify_audience=True,
         audience=["test-audience-123", "test-audience-456"],  # Multiple audiences
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -1843,6 +1871,7 @@ def test_audience_verification_with_multiple_audiences_failure(jwt_test_agent):
         validate=True,
         verify_audience=True,
         audience=["test-audience-123", "test-audience-456"],  # Multiple audiences
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -1881,6 +1910,7 @@ def test_audience_verification_explicit_overrides_agent_os_id(jwt_test_agent):
         validate=True,
         verify_audience=True,
         audience="explicit-audience-123",  # Explicit audience should override agent_os_id
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -1948,6 +1978,7 @@ def test_audience_stored_in_request_state(jwt_test_agent):
         user_id_claim="sub",
         validate=True,
         verify_audience=False,  # Don't verify, just extract
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -1981,6 +2012,7 @@ def test_audience_verification_missing_aud_claim(jwt_test_agent):
         validate=True,
         verify_audience=True,
         audience="test-audience-123",
+        authorization=False,
     )
 
     client = TestClient(app)
@@ -2020,6 +2052,7 @@ def test_audience_verification_missing_custom_audience_claim(jwt_test_agent):
         verify_audience=True,
         audience="test-audience-123",
         audience_claim="custom_aud",  # Custom audience claim name
+        authorization=False,
     )
 
     client = TestClient(app)
