@@ -536,6 +536,13 @@ class FileTools(Toolkit):
         :param multiline: If ``True``, the pattern can match across line
             boundaries (``.`` matches newlines). Off by default.
         :return: JSON document with the shape shown above.
+
+        When the result contains ``"truncated": true``, more matches
+        exist than were returned. The caller should narrow the search
+        (tighten ``pattern``, set ``include`` to a filename glob, or
+        pass ``path`` to scope to a subdirectory) and retry rather than
+        raise ``limit`` — ``GREP_MAX_LIMIT`` is a hard cap that protects
+        the agent's context from accidental blow-up.
         """
         try:
             if not pattern or not pattern.strip():
