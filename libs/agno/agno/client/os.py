@@ -1702,8 +1702,10 @@ class AgentOSClient:
             return AgentSessionDetailSchema.model_validate(data)
         elif session_type == SessionType.TEAM:
             return TeamSessionDetailSchema.model_validate(data)
-        else:
+        elif session_type == SessionType.WORKFLOW:
             return WorkflowSessionDetailSchema.model_validate(data)
+        else:
+            raise ValueError(f"Invalid session type: {session_type}")
 
     async def get_sessions(
         self,
@@ -1719,7 +1721,7 @@ class AgentOSClient:
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
     ) -> PaginatedResponse[SessionSchema]:
-        """Get a specific session by ID.
+        """Get a paginated list of sessions.
 
         Args:
             session_type: Type of session (agent, team, or workflow)
@@ -1763,7 +1765,7 @@ class AgentOSClient:
     async def get_session(
         self,
         session_id: str,
-        session_type: SessionType = SessionType.AGENT,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
@@ -1773,7 +1775,7 @@ class AgentOSClient:
 
         Args:
             session_id: ID of the session to retrieve
-            session_type: Type of session (agent, team, or workflow)
+            session_type: Type of session (agent, team, or workflow). If None, auto-detected by the server.
             user_id: Optional user ID filter
             db_id: Optional database ID to use
             table: Optional table name to use
@@ -1786,7 +1788,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
         params: Dict[str, Any] = {
-            "type": session_type.value,
+            "type": session_type.value if session_type else None,
             "user_id": user_id,
             "db_id": db_id,
             "table": table,
@@ -1795,17 +1797,20 @@ class AgentOSClient:
 
         data = await self._aget(f"/sessions/{session_id}", params=params, headers=headers)
 
-        if session_type == SessionType.AGENT:
+        # Pick the right schema based on type or response fields
+        if session_type == SessionType.AGENT or (session_type is None and data.get("agent_id") is not None):
             return AgentSessionDetailSchema.model_validate(data)
-        elif session_type == SessionType.TEAM:
+        elif session_type == SessionType.TEAM or (session_type is None and data.get("team_id") is not None):
             return TeamSessionDetailSchema.model_validate(data)
-        else:
+        elif session_type == SessionType.WORKFLOW or (session_type is None and data.get("workflow_id") is not None):
             return WorkflowSessionDetailSchema.model_validate(data)
+        else:
+            raise ValueError(f"Could not determine session type for session {session_id}")
 
     async def get_session_runs(
         self,
         session_id: str,
-        session_type: SessionType = SessionType.AGENT,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         created_after: Optional[int] = None,
         created_before: Optional[int] = None,
@@ -1817,7 +1822,7 @@ class AgentOSClient:
 
         Args:
             session_id: ID of the session
-            session_type: Type of session (agent, team, or workflow)
+            session_type: Type of session (agent, team, or workflow). If None, auto-detected by the server.
             user_id: Optional user ID filter
             created_after: Filter runs created after this Unix timestamp
             created_before: Filter runs created before this Unix timestamp
@@ -1832,7 +1837,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         params: Dict[str, Any] = {
-            "type": session_type.value,
+            "type": session_type.value if session_type else None,
             "user_id": user_id,
             "created_after": created_after,
             "created_before": created_before,
@@ -1858,7 +1863,7 @@ class AgentOSClient:
         self,
         session_id: str,
         run_id: str,
-        session_type: SessionType = SessionType.AGENT,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
@@ -1869,7 +1874,7 @@ class AgentOSClient:
         Args:
             session_id: ID of the session
             run_id: ID of the run to retrieve
-            session_type: Type of session (agent, team, or workflow)
+            session_type: Type of session (agent, team, or workflow). If None, auto-detected by the server.
             user_id: Optional user ID filter
             db_id: Optional database ID to use
             table: Optional table name to use
@@ -1882,7 +1887,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
         params: Dict[str, Any] = {
-            "type": session_type.value,
+            "type": session_type.value if session_type else None,
             "user_id": user_id,
             "db_id": db_id,
             "table": table,
@@ -1965,7 +1970,7 @@ class AgentOSClient:
         self,
         session_id: str,
         session_name: str,
-        session_type: SessionType = SessionType.AGENT,
+        session_type: Optional[SessionType] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
@@ -1976,7 +1981,7 @@ class AgentOSClient:
         Args:
             session_id: ID of the session to rename
             session_name: New name for the session
-            session_type: Type of session (agent, team, or workflow)
+            session_type: Type of session (agent, team, or workflow). If None, auto-detected by the server.
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
@@ -1988,7 +1993,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
         params: Dict[str, Any] = {
-            "type": session_type.value,
+            "type": session_type.value if session_type else None,
             "user_id": user_id,
             "db_id": db_id,
             "table": table,
@@ -1998,17 +2003,20 @@ class AgentOSClient:
         payload = {"session_name": session_name}
         data = await self._apost(f"/sessions/{session_id}/rename", payload, params=params, headers=headers)
 
-        if session_type == SessionType.AGENT:
+        # Pick the right schema based on type or response fields
+        if session_type == SessionType.AGENT or (session_type is None and data.get("agent_id") is not None):
             return AgentSessionDetailSchema.model_validate(data)
-        elif session_type == SessionType.TEAM:
+        elif session_type == SessionType.TEAM or (session_type is None and data.get("team_id") is not None):
             return TeamSessionDetailSchema.model_validate(data)
-        else:
+        elif session_type == SessionType.WORKFLOW or (session_type is None and data.get("workflow_id") is not None):
             return WorkflowSessionDetailSchema.model_validate(data)
+        else:
+            raise ValueError(f"Could not determine session type for session {session_id}")
 
     async def update_session(
         self,
         session_id: str,
-        session_type: SessionType = SessionType.AGENT,
+        session_type: Optional[SessionType] = None,
         session_name: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -2022,7 +2030,7 @@ class AgentOSClient:
 
         Args:
             session_id: ID of the session to update
-            session_type: Type of session (agent, team, or workflow)
+            session_type: Type of session (agent, team, or workflow). If None, auto-detected by the server.
             session_name: Optional new session name
             session_state: Optional new session state
             metadata: Optional new metadata
@@ -2039,7 +2047,7 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors (404 if not found)
         """
         params: Dict[str, Any] = {
-            "type": session_type.value,
+            "type": session_type.value if session_type else None,
             "user_id": user_id,
             "db_id": db_id,
             "table": table,
@@ -2058,12 +2066,15 @@ class AgentOSClient:
             f"/sessions/{session_id}", payload.model_dump(exclude_none=True), params=params, headers=headers
         )
 
-        if session_type == SessionType.AGENT:
+        # Pick the right schema based on type or response fields
+        if session_type == SessionType.AGENT or (session_type is None and data.get("agent_id") is not None):
             return AgentSessionDetailSchema.model_validate(data)
-        elif session_type == SessionType.TEAM:
+        elif session_type == SessionType.TEAM or (session_type is None and data.get("team_id") is not None):
             return TeamSessionDetailSchema.model_validate(data)
-        else:
+        elif session_type == SessionType.WORKFLOW or (session_type is None and data.get("workflow_id") is not None):
             return WorkflowSessionDetailSchema.model_validate(data)
+        else:
+            raise ValueError(f"Could not determine session type for session {session_id}")
 
     # Eval Operations
 

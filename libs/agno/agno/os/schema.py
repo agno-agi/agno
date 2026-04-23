@@ -9,6 +9,7 @@ from agno.agent.factory import AgentFactory
 from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.db.base import SessionType
+from agno.db.utils import detect_session_type
 from agno.os.config import (
     ChatConfig,
     EvalsConfig,
@@ -241,6 +242,7 @@ class SessionSchema(BaseModel):
     created_at: Optional[datetime] = Field(None, description="Timestamp when session was created")
     updated_at: Optional[datetime] = Field(None, description="Timestamp when session was last updated")
     # Enhanced fields for richer list responses
+    session_type: Optional[str] = Field(None, description="Type of session: agent, team, or workflow")
     user_id: Optional[str] = Field(None, description="User ID associated with the session")
     agent_id: Optional[str] = Field(None, description="Agent ID if this is an agent session")
     team_id: Optional[str] = Field(None, description="Team ID if this is a team session")
@@ -269,12 +271,16 @@ class SessionSchema(BaseModel):
         if summary and hasattr(summary, "to_dict"):
             summary = summary.to_dict()
 
+        # Determine session_type using shared util
+        session_type_str: Optional[str] = detect_session_type(session)
+
         return cls(
             session_id=session.get("session_id", ""),
             session_name=session_name,
             session_state=session_data.get("session_state", None),
             created_at=created_at,
             updated_at=updated_at,
+            session_type=session_type_str,
             user_id=session.get("user_id"),
             agent_id=session.get("agent_id"),
             team_id=session.get("team_id"),
