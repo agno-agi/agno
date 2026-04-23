@@ -229,7 +229,9 @@ def test_system_prompt_blocks_augment_agent_system_message():
         SystemPromptBlock(text="User-added static.", cache=True, ttl="1h"),
         SystemPromptBlock(text="User-added dynamic.", cache=False),
     ]
-    claude = Claude(cache_system_prompt=True, system_prompt_blocks=blocks)
+    # extended_cache_time=True so the agent block matches the 1h user block's TTL
+    # (Anthropic requires 1h cache_control to not follow a 5m one).
+    claude = Claude(cache_system_prompt=True, extended_cache_time=True, system_prompt_blocks=blocks)
     kwargs = claude._prepare_request_kwargs("You are a helpful assistant.")
 
     # Agent content is the first block (cached per cache_system_prompt), then user blocks
@@ -237,7 +239,7 @@ def test_system_prompt_blocks_augment_agent_system_message():
     assert kwargs["system"][0] == {
         "text": "You are a helpful assistant.",
         "type": "text",
-        "cache_control": {"type": "ephemeral"},
+        "cache_control": {"type": "ephemeral", "ttl": "1h"},
     }
     assert kwargs["system"][1] == {
         "text": "User-added static.",
@@ -248,6 +250,62 @@ def test_system_prompt_blocks_augment_agent_system_message():
         "text": "User-added dynamic.",
         "type": "text",
     }
+
+
+def test_build_system_raises_on_invalid_ttl_ordering():
+    """Anthropic rejects 5m-cached-block before 1h-cached-block. _build_system
+    must catch this at assembly time with an actionable ValueError."""
+    blocks = [SystemPromptBlock(text="User 1h.", cache=True, ttl="1h")]
+    # cache_system_prompt=True with extended_cache_time=False → agent block is 5m,
+    # then a 1h user block follows. Invalid per Anthropic's mixed-TTL rule.
+    claude = Claude(cache_system_prompt=True, extended_cache_time=False, system_prompt_blocks=blocks)
+
+    with pytest.raises(ValueError, match="Invalid Anthropic cache TTL ordering"):
+        claude._build_system("Agent content.")
+
+
+def test_build_system_valid_when_extended_cache_time_matches():
+    """Setting extended_cache_time=True aligns the agent block to 1h, fixing the order."""
+    blocks = [SystemPromptBlock(text="User 1h.", cache=True, ttl="1h")]
+    claude = Claude(cache_system_prompt=True, extended_cache_time=True, system_prompt_blocks=blocks)
+
+    result = claude._build_system("Agent content.")
+    assert result[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    assert result[1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+
+def test_build_system_valid_when_agent_block_uncached():
+    """cache_system_prompt=False disables caching on every block, so TTL
+    ordering is vacuously satisfied (no cache_control anywhere)."""
+    blocks = [SystemPromptBlock(text="User 1h.", cache=True, ttl="1h")]
+    claude = Claude(cache_system_prompt=False, system_prompt_blocks=blocks)
+
+    result = claude._build_system("Agent content.")
+    assert "cache_control" not in result[0]
+    assert "cache_control" not in result[1]
+
+
+def test_tools_sorted_in_claude_formatter():
+    """format_tools_for_model returns tools sorted by name for cache stability.
+    Scoped to Claude (not base.Model) so other providers are unaffected."""
+    from agno.utils.models.claude import format_tools_for_model
+
+    tools = [
+        {
+            "type": "function",
+            "function": {"name": "zeta", "description": "Z", "parameters": {"type": "object", "properties": {}}},
+        },
+        {
+            "type": "function",
+            "function": {"name": "alpha", "description": "A", "parameters": {"type": "object", "properties": {}}},
+        },
+        {
+            "type": "function",
+            "function": {"name": "mu", "description": "M", "parameters": {"type": "object", "properties": {}}},
+        },
+    ]
+    result = format_tools_for_model(tools)
+    assert [t["name"] for t in result] == ["alpha", "mu", "zeta"]
 
 
 def test_build_system_shared_between_request_and_count_tokens():
@@ -261,7 +319,7 @@ def test_build_system_shared_between_request_and_count_tokens():
         SystemPromptBlock(text="User static.", cache=True, ttl="1h"),
         SystemPromptBlock(text="User dynamic.", cache=False),
     ]
-    claude = Claude(cache_system_prompt=True, system_prompt_blocks=blocks)
+    claude = Claude(cache_system_prompt=True, extended_cache_time=True, system_prompt_blocks=blocks)
 
     request_system = claude._prepare_request_kwargs("Agent content.")["system"]
     # _build_system is what count_tokens calls; assert same output shape
@@ -323,16 +381,22 @@ def test_mixed_ttl_blocks():
 
 
 def test_explicit_block_ttl_overrides_model_extended_cache_time():
-    """Explicit block-level ttl='5m' stays 5m even with extended_cache_time=True."""
+    """Explicit block-level ttl='5m' stays 5m even with extended_cache_time=True.
+
+    Ordered 1h-first-then-5m to respect Anthropic's mixed-TTL rule: the block
+    inheriting 1h must precede the explicit-5m block.
+    """
     blocks = [
-        SystemPromptBlock(text="Explicit 5m.", cache=True, ttl="5m"),
         SystemPromptBlock(text="Default (inherits model).", cache=True),
+        SystemPromptBlock(text="Explicit 5m.", cache=True, ttl="5m"),
     ]
     claude = Claude(cache_system_prompt=True, extended_cache_time=True, system_prompt_blocks=blocks)
     kwargs = claude._prepare_request_kwargs("")
 
-    assert kwargs["system"][0]["cache_control"] == {"type": "ephemeral"}
-    assert kwargs["system"][1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    # ttl=None falls back to model-level extended_cache_time=True => 1h
+    assert kwargs["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    # Explicit ttl="5m" overrides model-level extended_cache_time
+    assert kwargs["system"][1]["cache_control"] == {"type": "ephemeral"}
 
 
 def test_cache_false_ignores_ttl():

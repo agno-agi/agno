@@ -14,6 +14,13 @@ which itself becomes the first cached block when cache_system_prompt=True. This
 preserves your agent's description, instructions, and tool hints while letting
 you add per-request static or dynamic blocks with their own cache settings.
 
+Note on mixed TTLs: Anthropic requires any 1h cached block to appear before any
+5m cached block in the request. Because the agent-built block comes first and
+inherits the model-level TTL, you must set extended_cache_time=True whenever
+any SystemPromptBlock uses ttl="1h". Otherwise the request would be
+5m (agent) -> 1h (block), which the API rejects. Agno validates this at
+assembly time with a clear error.
+
 Docs: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
 """
 
@@ -46,6 +53,10 @@ agent = Agent(
     model=Claude(
         id="claude-sonnet-4-5-20250929",
         cache_system_prompt=True,
+        # Required when any SystemPromptBlock uses ttl="1h": the agent-built
+        # block would otherwise be cached at 5m and precede a 1h block, which
+        # violates Anthropic's mixed-TTL ordering rule.
+        extended_cache_time=True,
         cache_tools=True,
         system_prompt_blocks=blocks,
     ),

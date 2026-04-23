@@ -17,6 +17,7 @@ from agno.tools.function import Function
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import (
     MCPServerConfiguration,
+    _validate_cache_ttl_order,
     build_system_blocks,
     format_messages,
     format_tools_for_model,
@@ -602,6 +603,9 @@ class Claude(Model):
 
         Used by both ``_prepare_request_kwargs`` and ``count_tokens`` so the
         two paths cannot diverge.
+
+        Raises ``ValueError`` if the assembled order would violate Anthropic's
+        mixed-TTL rule (a 1h cache_control block cannot appear after a 5m one).
         """
         blocks: List[Dict[str, Any]] = []
         if system_message:
@@ -620,6 +624,7 @@ class Claude(Model):
                     extended_cache_time=bool(self.extended_cache_time),
                 )
             )
+        _validate_cache_ttl_order(blocks)
         return blocks
 
     def _prepare_request_kwargs(

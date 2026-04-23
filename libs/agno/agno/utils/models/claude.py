@@ -368,6 +368,33 @@ def build_system_blocks(
     return result
 
 
+def _validate_cache_ttl_order(blocks: List[Dict[str, Any]]) -> None:
+    """Validate that no 5m-cached block appears before a 1h-cached block.
+
+    Anthropic's prompt caching rejects requests where a longer-TTL cache entry
+    follows a shorter-TTL one in the cached prefix. Catch this at assembly
+    time with an actionable error rather than letting the API reject it.
+    """
+    seen_5m = False
+    for block in blocks:
+        cc = block.get("cache_control")
+        if cc is None:
+            continue
+        if cc.get("ttl") == "1h":
+            if seen_5m:
+                raise ValueError(
+                    "Invalid Anthropic cache TTL ordering: a 1h cached block cannot "
+                    "follow a 5m cached block. This usually means cache_system_prompt=True "
+                    "(so the agent-built block is cached at 5m by default) together with "
+                    "a SystemPromptBlock(ttl='1h'). Fix with one of:\n"
+                    "  - Claude(extended_cache_time=True) so the agent-built block is 1h too\n"
+                    "  - Change your block ttl to '5m' or None\n"
+                    "  - Set cache_system_prompt=False so the agent-built block is uncached"
+                )
+        else:
+            seen_5m = True
+
+
 def format_messages(
     messages: List[Message],
     compress_tool_results: bool = False,
@@ -606,4 +633,9 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
             tool["strict"] = True
 
         parsed_tools.append(tool)
+    # Deterministic ordering for Anthropic prompt caching: tool order contributes
+    # to the cached prefix, so dict-iteration / MCP / registration-order noise
+    # would otherwise invalidate cache hits. Non-function tools (built-ins) keep
+    # their declared position relative to other non-function tools.
+    parsed_tools.sort(key=lambda t: t.get("name", ""))
     return parsed_tools
