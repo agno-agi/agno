@@ -153,14 +153,14 @@ def test_continue_confirm_then_reject(hitl_client):
     assert r.status_code == 200
     d = r.json()
     assert d["status"] == "PAUSED"
-    assert d["step_requirements"][0]["step_name"] == "first_decision"
+    assert d["step_requirements"][-1]["step_name"] == "first_decision"
 
     run_id = d["run_id"]
     session_id = d["session_id"]
 
     # 2. Confirm first decision — should pause at second Condition
     reqs = d["step_requirements"]
-    reqs[0]["confirmed"] = True
+    reqs[-1]["confirmed"] = True
     r2 = hitl_client.post(
         f"/workflows/decision-tree/runs/{run_id}/continue",
         data={"stream": "false", "session_id": session_id, "step_requirements": json.dumps(reqs)},
@@ -168,11 +168,11 @@ def test_continue_confirm_then_reject(hitl_client):
     assert r2.status_code == 200
     d2 = r2.json()
     assert d2["status"] == "PAUSED"
-    assert d2["step_requirements"][0]["step_name"] == "second_decision"
+    assert d2["step_requirements"][-1]["step_name"] == "second_decision"
 
     # 3. Reject second decision — should complete with else branch
     reqs2 = d2["step_requirements"]
-    reqs2[0]["confirmed"] = False
+    reqs2[-1]["confirmed"] = False
     r3 = hitl_client.post(
         f"/workflows/decision-tree/runs/{run_id}/continue",
         data={"stream": "false", "session_id": session_id, "step_requirements": json.dumps(reqs2)},
@@ -193,7 +193,7 @@ def test_continue_confirm_both(hitl_client):
 
     # Confirm first
     reqs = d["step_requirements"]
-    reqs[0]["confirmed"] = True
+    reqs[-1]["confirmed"] = True
     r2 = hitl_client.post(
         f"/workflows/decision-tree/runs/{run_id}/continue",
         data={"stream": "false", "session_id": session_id, "step_requirements": json.dumps(reqs)},
@@ -201,9 +201,9 @@ def test_continue_confirm_both(hitl_client):
     d2 = r2.json()
     assert d2["status"] == "PAUSED"
 
-    # Confirm second
+    # Confirm second (active requirement is the last one)
     reqs2 = d2["step_requirements"]
-    reqs2[0]["confirmed"] = True
+    reqs2[-1]["confirmed"] = True
     r3 = hitl_client.post(
         f"/workflows/decision-tree/runs/{run_id}/continue",
         data={"stream": "false", "session_id": session_id, "step_requirements": json.dumps(reqs2)},
@@ -231,7 +231,7 @@ def test_continue_factory_workflow_with_factory_input(factory_hitl_client):
     run_id = run_data["run_id"]
     session_id = run_data["session_id"]
     requirements = run_data["step_requirements"]
-    requirements[0]["confirmed"] = True
+    requirements[-1]["confirmed"] = True
 
     continue_response = factory_hitl_client.post(
         f"/workflows/decision-tree-factory/runs/{run_id}/continue",
@@ -258,15 +258,15 @@ def test_continue_409_on_completed_run(hitl_client):
 
     # Confirm first
     reqs = d["step_requirements"]
-    reqs[0]["confirmed"] = True
+    reqs[-1]["confirmed"] = True
     r2 = hitl_client.post(
         f"/workflows/decision-tree/runs/{run_id}/continue",
         data={"stream": "false", "session_id": session_id, "step_requirements": json.dumps(reqs)},
     )
 
-    # Confirm second
+    # Confirm second (active is last)
     reqs2 = r2.json()["step_requirements"]
-    reqs2[0]["confirmed"] = True
+    reqs2[-1]["confirmed"] = True
     hitl_client.post(
         f"/workflows/decision-tree/runs/{run_id}/continue",
         data={"stream": "false", "session_id": session_id, "step_requirements": json.dumps(reqs2)},
