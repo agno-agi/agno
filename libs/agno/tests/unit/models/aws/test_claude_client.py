@@ -249,3 +249,54 @@ class TestSessionNullCredentials:
 
         with pytest.raises(ValueError, match="boto3 session has no credentials"):
             model._get_client_params()
+
+
+class TestStructuredOutputs:
+    """Verify that the Bedrock Claude override suppresses the spurious structured-output
+    warning that the parent AnthropicClaude emits when response_format is passed to a
+    model with supports_native_structured_outputs=False.
+    """
+
+    def test_returns_false_and_no_warning_when_response_format_given(self):
+        from pydantic import BaseModel as PydanticBaseModel
+
+        class MySchema(PydanticBaseModel):
+            answer: str
+
+        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0")
+
+        with patch("agno.models.anthropic.claude.log_warning") as mock_warn:
+            result = model._using_structured_outputs(response_format=MySchema)
+
+        assert result is False
+        mock_warn.assert_not_called()
+
+    def test_returns_false_when_no_response_format(self):
+        model = Claude(id="anthropic.claude-3-sonnet-20240229-v1:0")
+
+        with patch("agno.models.anthropic.claude.log_warning") as mock_warn:
+            result = model._using_structured_outputs(response_format=None)
+
+        assert result is False
+        mock_warn.assert_not_called()
+
+    def test_parent_would_warn_without_override(self):
+        """Regression guard: confirm the parent path does emit a warning when
+        supports_native_structured_outputs is False and response_format is given.
+        This documents that the override is load-bearing - if the parent ever stops
+        warning, the override is harmless but the bug is gone upstream.
+        """
+        from agno.models.anthropic import Claude as AnthropicClaude
+        from pydantic import BaseModel as PydanticBaseModel
+
+        class MySchema(PydanticBaseModel):
+            answer: str
+
+        parent = AnthropicClaude(id="claude-3-sonnet-20240229")
+        parent.supports_native_structured_outputs = False
+
+        with patch("agno.models.anthropic.claude.log_warning") as mock_warn:
+            result = parent._using_structured_outputs(response_format=MySchema)
+
+        assert result is False
+        mock_warn.assert_called_once()
