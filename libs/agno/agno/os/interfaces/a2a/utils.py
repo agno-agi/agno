@@ -89,6 +89,9 @@ def _stringify_content(content: Any) -> str:
     When an agent is configured with an `output_schema`, `content` is a
     Pydantic model instance. It must be JSON-encoded via `model_dump_json()`
     so A2A clients can `json.loads` the TextPart text.
+
+    Note: only Pydantic v2 models (those with ``model_dump_json()``) are handled;
+    Pydantic v1 models fall through to ``str()``.
     """
     if hasattr(content, "model_dump_json"):
         return content.model_dump_json()
