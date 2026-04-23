@@ -373,6 +373,7 @@ def __init__(
         team.events_to_skip = [
             RunEvent.run_content,
             TeamRunEvent.run_content,
+            TeamRunEvent.run_intermediate_content,
         ]
     team.stream_member_events = stream_member_events
 
