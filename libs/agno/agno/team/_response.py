@@ -940,10 +940,9 @@ def _handle_model_response_stream(
     output_schema = run_context.output_schema if run_context else None
     should_parse_structured_output = output_schema is not None and team.parse_response and team.parser_model is None
 
+    # Keep model-level streaming enabled even when parse_response=True so that
+    # long-running responses still emit incremental output.
     stream_model_response = True
-    if should_parse_structured_output:
-        log_debug("Response model set, model response is not streamed.")
-        stream_model_response = False
 
     full_model_response = ModelResponse()
     for model_response_event in call_model_stream_with_fallback(
@@ -1031,10 +1030,27 @@ def _handle_model_response_stream(
             model_response_event=model_response_event,
             reasoning_state=reasoning_state,
             stream_events=stream_events,
-            parse_structured_output=should_parse_structured_output,
+            parse_structured_output=False,
             session_state=session_state,
             run_context=run_context,
         )
+
+    # Parse final accumulated content once streaming completes.
+    if should_parse_structured_output and full_model_response.content is not None:
+        _convert_response_to_structured_format(team, full_model_response, run_context=run_context)
+        content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
+        run_response.content_type = content_type
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_team_run_output_content_event(
+                    from_run_response=run_response,
+                    content=full_model_response.content,
+                    content_type=content_type,
+                ),
+                run_response,
+                events_to_skip=team.events_to_skip,
+                store_events=team.store_events,
+            )
 
     # 3. Update TeamRunOutput
     if full_model_response.content is not None:
@@ -1094,10 +1110,9 @@ async def _ahandle_model_response_stream(
     output_schema = run_context.output_schema if run_context else None
     should_parse_structured_output = output_schema is not None and team.parse_response and team.parser_model is None
 
+    # Keep model-level streaming enabled even when parse_response=True so that
+    # long-running responses still emit incremental output.
     stream_model_response = True
-    if should_parse_structured_output:
-        log_debug("Response model set, model response is not streamed.")
-        stream_model_response = False
 
     full_model_response = ModelResponse()
     model_stream = acall_model_stream_with_fallback(
@@ -1186,11 +1201,28 @@ async def _ahandle_model_response_stream(
             model_response_event=model_response_event,
             reasoning_state=reasoning_state,
             stream_events=stream_events,
-            parse_structured_output=should_parse_structured_output,
+            parse_structured_output=False,
             session_state=session_state,
             run_context=run_context,
         ):
             yield event
+
+    # Parse final accumulated content once streaming completes.
+    if should_parse_structured_output and full_model_response.content is not None:
+        _convert_response_to_structured_format(team, full_model_response, run_context=run_context)
+        content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
+        run_response.content_type = content_type
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_team_run_output_content_event(
+                    from_run_response=run_response,
+                    content=full_model_response.content,
+                    content_type=content_type,
+                ),
+                run_response,
+                events_to_skip=team.events_to_skip,
+                store_events=team.store_events,
+            )
 
     # Update TeamRunOutput
     if full_model_response.content is not None:
