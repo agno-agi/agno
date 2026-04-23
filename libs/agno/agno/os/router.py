@@ -10,6 +10,7 @@ from fastapi import (
 
 from agno.agent.protocol import AgentProtocol
 from agno.agent.factory import AgentFactory
+from agno import __version__ as agno_version
 from agno.exceptions import RemoteServerUnavailableError
 from agno.team.factory import TeamFactory
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
@@ -251,6 +252,7 @@ def get_info_router(os: "AgentOS") -> APIRouter:
     )
     async def get_info() -> InfoResponse:
         return InfoResponse(
+            agno_version=agno_version,
             agent_count=len(os.agents or []),
             team_count=len(os.teams or []),
             workflow_count=len(os.workflows or []),
