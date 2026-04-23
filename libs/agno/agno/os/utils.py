@@ -7,8 +7,9 @@ from fastapi.routing import APIRoute, APIRouter
 from pydantic import BaseModel, create_model
 from starlette.middleware.cors import CORSMiddleware
 
-from agno.agent.protocol import AgentProtocol
 from agno.agent import Agent, AgentFactory, RemoteAgent
+from agno.agent.protocol import AgentProtocol
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.factory import (
     FactoryContextRequired,
     FactoryError,
@@ -16,7 +17,6 @@ from agno.factory import (
     FactoryValidationError,
     RequestContext,
 )
-from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
@@ -589,7 +589,6 @@ def build_request_context(
     )
 
 
-
 def find_factory_by_id(
     component_id: str,
     components: Optional[Sequence[Any]],
@@ -650,9 +649,7 @@ def get_agent_by_id(
                 # Factory path
                 if isinstance(agent, AgentFactory):
                     if ctx is None:
-                        raise FactoryContextRequired(
-                            f"Agent '{agent_id}' is a factory and requires a RequestContext."
-                        )
+                        raise FactoryContextRequired(f"Agent '{agent_id}' is a factory and requires a RequestContext.")
                     return agent.resolve(ctx, expected_type=Agent)
                 # RemoteAgent or other
                 return agent
@@ -698,9 +695,7 @@ async def get_agent_by_id_async(
                 # Factory path
                 if isinstance(agent, AgentFactory):
                     if ctx is None:
-                        raise FactoryContextRequired(
-                            f"Agent '{agent_id}' is a factory and requires a RequestContext."
-                        )
+                        raise FactoryContextRequired(f"Agent '{agent_id}' is a factory and requires a RequestContext.")
                     result = await agent.resolve_async(ctx, expected_type=Agent)
                     return result
                 # RemoteAgent or other
@@ -757,9 +752,7 @@ def get_team_by_id(
                     return team
                 if isinstance(team, TeamFactory):
                     if ctx is None:
-                        raise FactoryContextRequired(
-                            f"Team '{team_id}' is a factory and requires a RequestContext."
-                        )
+                        raise FactoryContextRequired(f"Team '{team_id}' is a factory and requires a RequestContext.")
                     result = team.resolve(ctx, expected_type=Team)
                     return result
                 return team
@@ -799,9 +792,7 @@ async def get_team_by_id_async(
                     return team
                 if isinstance(team, TeamFactory):
                     if ctx is None:
-                        raise FactoryContextRequired(
-                            f"Team '{team_id}' is a factory and requires a RequestContext."
-                        )
+                        raise FactoryContextRequired(f"Team '{team_id}' is a factory and requires a RequestContext.")
                     result = await team.resolve_async(ctx, expected_type=Team)
                     return result
                 return team
@@ -1482,9 +1473,7 @@ async def resolve_workflow(
     factory_input: Optional[str] = None,
 ) -> Union[Workflow, RemoteWorkflow]:
     """Resolve a workflow by ID with proper error handling for both factory and non-factory paths."""
-    is_factory = workflows and any(
-        isinstance(w, WorkflowFactory) and w.id == workflow_id for w in workflows
-    )
+    is_factory = workflows and any(isinstance(w, WorkflowFactory) and w.id == workflow_id for w in workflows)
     if is_factory:
         if request is None:
             raise HTTPException(status_code=400, detail="Request context is required for factory workflows")
@@ -1515,5 +1504,3 @@ async def resolve_workflow(
     if workflow is None:
         raise HTTPException(status_code=404, detail="Workflow not found")
     return workflow
-
-

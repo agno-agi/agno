@@ -5,7 +5,6 @@ from typing import Any, Dict, Mapping, Optional, Union
 
 from pydantic import BaseModel
 
-
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------

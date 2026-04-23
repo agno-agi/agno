@@ -29,7 +29,6 @@ from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
 
-
 class BadRequestResponse(BaseModel):
     model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}})
 
@@ -115,7 +114,9 @@ class AgentSummaryResponse(BaseModel):
         framework = getattr(agent, "framework", None)
         metadata = {"framework": framework} if framework else None
         if isinstance(agent, AgentFactory):
-            return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
+            return cls(
+                id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None
+            )
         return cls(
             id=agent.id,
             name=agent.name,

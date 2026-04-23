@@ -17,8 +17,8 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent
-from agno.agent.protocol import AgentProtocol
 from agno.agent.factory import AgentFactory
+from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
@@ -1099,7 +1099,9 @@ def get_agent_router(
                 else:
                     # External framework adapter: build a minimal response
                     agent_db = getattr(agent, "db", None)
-                    session_table = agent_db.session_table_name if agent_db and hasattr(agent_db, "session_table_name") else None
+                    session_table = (
+                        agent_db.session_table_name if agent_db and hasattr(agent_db, "session_table_name") else None
+                    )
                     sessions = {"session_table": session_table} if session_table else None
                     agents.append(
                         AgentResponse(
