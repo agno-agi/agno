@@ -155,7 +155,7 @@ class DSPyAgent(BaseExternalAgent):
                     if chunk.chunk:
                         yield RunContentEvent(
                             run_id=run_id,
-                            agent_id=self.id,
+                            agent_id=self.get_id(),
                             agent_name=self.name or "",
                             content=chunk.chunk,
                         )
@@ -171,7 +171,7 @@ class DSPyAgent(BaseExternalAgent):
                             t_id = str(uuid4())
                             yield ToolCallStartedEvent(
                                 run_id=run_id,
-                                agent_id=self.id,
+                                agent_id=self.get_id(),
                                 agent_name=self.name or "",
                                 tool=ToolExecution(
                                     tool_call_id=t_id,
@@ -181,7 +181,7 @@ class DSPyAgent(BaseExternalAgent):
                             )
                             yield ToolCallCompletedEvent(
                                 run_id=run_id,
-                                agent_id=self.id,
+                                agent_id=self.get_id(),
                                 agent_name=self.name or "",
                                 tool=ToolExecution(
                                     tool_call_id=t_id,

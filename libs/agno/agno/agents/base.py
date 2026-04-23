@@ -59,6 +59,10 @@ class BaseExternalAgent:
         if self.id is None:
             self.id = generate_id_from_name(self.name)
 
+    def get_id(self) -> str:
+        """Return the agent ID, guaranteed non-None after __post_init__."""
+        return self.id or ""
+
     # ---------------------------------------------------------------------------
     # Public async API (satisfies AgentProtocol protocol)
     # ---------------------------------------------------------------------------
@@ -374,7 +378,7 @@ class BaseExternalAgent:
         """Create a new AgentSession."""
         return AgentSession(
             session_id=session_id,
-            agent_id=self.id,
+            agent_id=self.get_id(),
             user_id=user_id,
             session_data={},
             agent_data={"agent_id": self.id, "agent_name": self.name, "framework": self.framework},
@@ -508,7 +512,7 @@ class BaseExternalAgent:
 
         return RunOutput(
             run_id=run_id,
-            agent_id=self.id,
+            agent_id=self.get_id(),
             agent_name=self.name,
             session_id=session_id,
             user_id=user_id,
@@ -628,7 +632,7 @@ class BaseExternalAgent:
 
         yield RunStartedEvent(
             run_id=run_id,
-            agent_id=self.id,
+            agent_id=self.get_id(),
             agent_name=self.name or "",
             session_id=session_id,
         )
@@ -687,7 +691,7 @@ class BaseExternalAgent:
         if run_error is not None:
             yield RunErrorEvent(
                 run_id=run_id,
-                agent_id=self.id,
+                agent_id=self.get_id(),
                 agent_name=self.name or "",
                 session_id=session_id,
                 content=str(run_error),
@@ -695,7 +699,7 @@ class BaseExternalAgent:
         else:
             yield RunCompletedEvent(
                 run_id=run_id,
-                agent_id=self.id,
+                agent_id=self.get_id(),
                 agent_name=self.name or "",
                 session_id=session_id,
                 content=accumulated_content,

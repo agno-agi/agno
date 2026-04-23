@@ -208,7 +208,7 @@ class ClaudeAgent(BaseExternalAgent):
                         if text:
                             yield RunContentEvent(
                                 run_id=run_id,
-                                agent_id=self.id,
+                                agent_id=self.get_id(),
                                 agent_name=self.name or "",
                                 content=text,
                             )
@@ -228,7 +228,7 @@ class ClaudeAgent(BaseExternalAgent):
                         if not got_stream_events and block.text:
                             yield RunContentEvent(
                                 run_id=run_id,
-                                agent_id=self.id,
+                                agent_id=self.get_id(),
                                 agent_name=self.name or "",
                                 content=block.text,
                             )
@@ -242,7 +242,7 @@ class ClaudeAgent(BaseExternalAgent):
                             tool_info_map[tool_id] = {"name": tool_name, "args": tool_args}
                             yield ToolCallStartedEvent(
                                 run_id=run_id,
-                                agent_id=self.id,
+                                agent_id=self.get_id(),
                                 agent_name=self.name or "",
                                 tool=ToolExecution(
                                     tool_call_id=tool_id,
@@ -267,7 +267,7 @@ class ClaudeAgent(BaseExternalAgent):
                             info = tool_info_map.get(tool_use_id, {})
                             yield ToolCallCompletedEvent(
                                 run_id=run_id,
-                                agent_id=self.id,
+                                agent_id=self.get_id(),
                                 agent_name=self.name or "",
                                 tool=ToolExecution(
                                     tool_call_id=tool_use_id,
