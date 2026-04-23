@@ -224,7 +224,9 @@ async def _resume_stream_generator(
                 meta: dict = {
                     "event": "replay",
                     "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
+                    "status": getattr(run_output.status, "value", run_output.status)
+                    if run_output.status
+                    else "unknown",
                     "total_events": len(run_output.events),
                     "message": "Run completed. Replaying all events from database.",
                 }
@@ -242,7 +244,9 @@ async def _resume_stream_generator(
                 meta = {
                     "event": "replay",
                     "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
+                    "status": getattr(run_output.status, "value", run_output.status)
+                    if run_output.status
+                    else "unknown",
                     "total_events": 0,
                     "message": "Run completed but no events stored.",
                 }
@@ -846,6 +850,12 @@ def get_team_router(
             description="JSON object with factory-specific parameters for dynamic team reconstruction",
         ),
     ):
+        user_id = getattr(request.state, "user_id", None)
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            if session_id and session_id != request.state.session_id:
+                log_warning("Session ID parameter passed in both request state and form, using request state")
+            session_id = request.state.session_id
+
         # Factory teams: resolve through the factory (needs request context); plain teams: direct lookup.
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
@@ -854,13 +864,18 @@ def get_team_router(
                 os.teams,
                 factory.db,
                 request=request,
+                user_id=user_id,
                 session_id=session_id,
                 factory_input=factory_input,
             )
         else:
-            team = get_team_by_id(  # type: ignore[assignment]
-                team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True
-            )
+            try:
+                team = get_team_by_id(  # type: ignore[assignment]
+                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True
+                )
+            except Exception as e:
+                logger.error(f"Error resolving team '{team_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
         if isinstance(team, RemoteTeam):
@@ -1302,6 +1317,12 @@ def get_team_router(
             description="JSON object with factory-specific parameters for dynamic team reconstruction",
         ),
     ):
+        user_id = getattr(request.state, "user_id", None)
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            if session_id and session_id != request.state.session_id:
+                log_warning("Session ID parameter passed in both request state and query params, using request state")
+            session_id = request.state.session_id
+
         # Factory teams
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
@@ -1310,6 +1331,7 @@ def get_team_router(
                 os.teams,
                 factory.db,
                 request=request,
+                user_id=user_id,
                 session_id=session_id,
                 factory_input=factory_input,
             )
@@ -1358,6 +1380,12 @@ def get_team_router(
         from agno.os.schema import TeamRunSchema
         from agno.team._storage import _aread_or_create_session
 
+        user_id = getattr(request.state, "user_id", None)
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            if session_id and session_id != request.state.session_id:
+                log_warning("Session ID parameter passed in both request state and query params, using request state")
+            session_id = request.state.session_id
+
         # Factory teams
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
@@ -1366,6 +1394,7 @@ def get_team_router(
                 os.teams,
                 factory.db,
                 request=request,
+                user_id=user_id,
                 session_id=session_id,
                 factory_input=factory_input,
             )

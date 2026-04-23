@@ -675,7 +675,9 @@ async def _resume_stream_generator(
                 meta: dict = {
                     "event": "replay",
                     "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
+                    "status": getattr(run_output.status, "value", run_output.status)
+                    if run_output.status
+                    else "unknown",
                     "total_events": len(run_output.events),
                     "message": "Run completed. Replaying all events from database.",
                 }
@@ -693,7 +695,9 @@ async def _resume_stream_generator(
                 meta = {
                     "event": "replay",
                     "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
+                    "status": getattr(run_output.status, "value", run_output.status)
+                    if run_output.status
+                    else "unknown",
                     "total_events": 0,
                     "message": "Run completed but no events stored.",
                 }
@@ -1487,6 +1491,12 @@ def get_workflow_router(
             description="JSON object with factory-specific parameters for dynamic workflow reconstruction",
         ),
     ):
+        user_id = getattr(request.state, "user_id", None)
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            if session_id and session_id != request.state.session_id:
+                log_warning("Session ID parameter passed in both request state and form, using request state")
+            session_id = request.state.session_id
+
         # Factory workflows: resolve through the factory; plain workflows: direct lookup.
         factory = find_factory_by_id(workflow_id, os.workflows)
         if factory:
@@ -1495,13 +1505,18 @@ def get_workflow_router(
                 os.workflows,
                 factory.db,
                 request=request,
+                user_id=user_id,
                 session_id=session_id,
                 factory_input=factory_input,
             )
         else:
-            workflow = get_workflow_by_id(  # type: ignore[assignment]
-                workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
-            )
+            try:
+                workflow = get_workflow_by_id(  # type: ignore[assignment]
+                    workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+                )
+            except Exception as e:
+                logger.error(f"Error resolving workflow '{workflow_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
             if workflow is None:
                 raise HTTPException(status_code=404, detail="Workflow not found")
         if isinstance(workflow, RemoteWorkflow):

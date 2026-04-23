@@ -329,7 +329,9 @@ async def _resume_stream_generator(
                 meta: dict = {
                     "event": "replay",
                     "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
+                    "status": getattr(run_output.status, "value", run_output.status)
+                    if run_output.status
+                    else "unknown",
                     "total_events": len(run_output.events),
                     "message": "Run completed. Replaying all events from database.",
                 }
@@ -347,7 +349,9 @@ async def _resume_stream_generator(
                 meta = {
                     "event": "replay",
                     "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
+                    "status": getattr(run_output.status, "value", run_output.status)
+                    if run_output.status
+                    else "unknown",
                     "total_events": 0,
                     "message": "Run completed but no events stored.",
                 }
@@ -1224,6 +1228,12 @@ def get_agent_router(
             description="JSON object with factory-specific parameters for dynamic agent reconstruction",
         ),
     ):
+        user_id = getattr(request.state, "user_id", None)
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            if session_id and session_id != request.state.session_id:
+                log_warning("Session ID parameter passed in both request state and query params, using request state")
+            session_id = request.state.session_id
+
         # Factory agents: resolve to get a real agent for session lookup
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
@@ -1232,6 +1242,7 @@ def get_agent_router(
                 os.agents,
                 factory.db,
                 request=request,
+                user_id=user_id,
                 session_id=session_id,
                 factory_input=factory_input,
             )
@@ -1292,6 +1303,12 @@ def get_agent_router(
             description="JSON object with factory-specific parameters for dynamic agent reconstruction",
         ),
     ):
+        user_id = getattr(request.state, "user_id", None)
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            if session_id and session_id != request.state.session_id:
+                log_warning("Session ID parameter passed in both request state and form, using request state")
+            session_id = request.state.session_id
+
         # Factory agents: resolve through the factory (needs request context); plain agents: direct lookup.
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
@@ -1300,13 +1317,18 @@ def get_agent_router(
                 os.agents,
                 factory.db,
                 request=request,
+                user_id=user_id,
                 session_id=session_id,
                 factory_input=factory_input,
             )
         else:
-            agent = get_agent_by_id(  # type: ignore[assignment]
-                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
-            )
+            try:
+                agent = get_agent_by_id(  # type: ignore[assignment]
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                )
+            except Exception as e:
+                log_error(f"Error resolving agent '{agent_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
             if agent is None:
                 raise HTTPException(status_code=404, detail="Agent not found")
         if isinstance(agent, RemoteAgent):
@@ -1344,6 +1366,12 @@ def get_agent_router(
     ):
         from agno.os.schema import RunSchema
 
+        user_id = getattr(request.state, "user_id", None)
+        if hasattr(request.state, "session_id") and request.state.session_id is not None:
+            if session_id and session_id != request.state.session_id:
+                log_warning("Session ID parameter passed in both request state and query params, using request state")
+            session_id = request.state.session_id
+
         # Factory agents: resolve to get a real agent for session lookup
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
@@ -1352,6 +1380,7 @@ def get_agent_router(
                 os.agents,
                 factory.db,
                 request=request,
+                user_id=user_id,
                 session_id=session_id,
                 factory_input=factory_input,
             )
