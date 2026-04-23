@@ -527,7 +527,9 @@ class WorkflowRunSchema(BaseModel):
     status: Optional[str] = Field(None, description="Status of the workflow run")
     step_results: Optional[list[dict]] = Field(None, description="Results from each workflow step")
     step_executor_runs: Optional[list[dict]] = Field(None, description="Executor runs for each step")
-    step_requirements: Optional[list[dict]] = Field(None, description="HITL step requirements (resolved state for historical display)")
+    step_requirements: Optional[list[dict]] = Field(
+        None, description="HITL step requirements (resolved state for historical display)"
+    )
     pause_kind: Optional[str] = Field(None, description="Kind of HITL pause: 'step' or 'executor'")
     paused_step_name: Optional[str] = Field(None, description="Name of the step that caused the pause")
     paused_step_index: Optional[int] = Field(None, description="Index of the step that caused the pause")

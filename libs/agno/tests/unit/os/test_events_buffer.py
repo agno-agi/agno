@@ -3,6 +3,7 @@
 from agno.os.managers import EventsBuffer
 from agno.run.agent import RunContentEvent
 
+
 def _make_event(content: str) -> RunContentEvent:
     return RunContentEvent(content=content)
 
@@ -32,7 +33,7 @@ class TestMonotonicIndex:
 
 
 class TestGetEventsAfterTrim:
-    """get_events must return correct events using monotonic indices after trims."""
+    """get_events must return correct (index, event) tuples using monotonic indices after trims."""
 
     def test_get_all_events_no_trim(self):
         buf = EventsBuffer(max_events_per_run=100)
@@ -40,6 +41,9 @@ class TestGetEventsAfterTrim:
             buf.add_event("r1", _make_event(f"e{i}"))
         events = buf.get_events("r1")
         assert len(events) == 5
+        # Should return tuples with correct monotonic indices
+        assert events[0] == (0, events[0][1])
+        assert events[4] == (4, events[4][1])
 
     def test_get_events_since_index_no_trim(self):
         buf = EventsBuffer(max_events_per_run=100)
@@ -48,8 +52,10 @@ class TestGetEventsAfterTrim:
         # Client has 0,1,2 — wants 3,4
         events = buf.get_events("r1", last_event_index=2)
         assert len(events) == 2
-        assert events[0].content == "e3"
-        assert events[1].content == "e4"
+        assert events[0][0] == 3
+        assert events[0][1].content == "e3"
+        assert events[1][0] == 4
+        assert events[1][1].content == "e4"
 
     def test_get_events_since_index_after_trim(self):
         buf = EventsBuffer(max_events_per_run=5)
@@ -58,8 +64,10 @@ class TestGetEventsAfterTrim:
         # Buffer holds e5..e9 (indices 5-9). Client has up to index 7.
         events = buf.get_events("r1", last_event_index=7)
         assert len(events) == 2
-        assert events[0].content == "e8"
-        assert events[1].content == "e9"
+        assert events[0][0] == 8
+        assert events[0][1].content == "e8"
+        assert events[1][0] == 9
+        assert events[1][1].content == "e9"
 
     def test_get_events_client_behind_buffer(self):
         """Client's last index is older than what the buffer still holds."""
@@ -67,10 +75,13 @@ class TestGetEventsAfterTrim:
         for i in range(10):
             buf.add_event("r1", _make_event(f"e{i}"))
         # Buffer holds e7,e8,e9. Client has index 2 — way behind.
-        # Should return everything in the buffer.
+        # Should return everything in the buffer with correct indices.
         events = buf.get_events("r1", last_event_index=2)
         assert len(events) == 3
-        assert events[0].content == "e7"
+        assert events[0][0] == 7
+        assert events[0][1].content == "e7"
+        assert events[2][0] == 9
+        assert events[2][1].content == "e9"
 
     def test_get_events_client_caught_up(self):
         buf = EventsBuffer(max_events_per_run=5)
@@ -86,7 +97,9 @@ class TestGetEventsAfterTrim:
             buf.add_event("r1", _make_event(f"e{i}"))
         events = buf.get_events("r1", last_event_index=None)
         assert len(events) == 3
-        assert events[0].content == "e4"
+        # After trim, buffer holds e4,e5,e6 with indices 4,5,6
+        assert events[0][0] == 4
+        assert events[0][1].content == "e4"
 
     def test_get_events_unknown_run(self):
         buf = EventsBuffer(max_events_per_run=10)
@@ -135,8 +148,10 @@ class TestMultipleRuns:
         # Run "a": buffer has a2,a3,a4 (indices 2-4)
         events_a = buf.get_events("a", last_event_index=3)
         assert len(events_a) == 1
-        assert events_a[0].content == "a4"
+        assert events_a[0][0] == 4
+        assert events_a[0][1].content == "a4"
         # Run "b": buffer has b5,b6,b7 (indices 5-7)
         events_b = buf.get_events("b", last_event_index=5)
         assert len(events_b) == 2
-        assert events_b[0].content == "b6"
+        assert events_b[0][0] == 6
+        assert events_b[0][1].content == "b6"

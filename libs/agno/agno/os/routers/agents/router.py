@@ -370,10 +370,9 @@ async def _resume_stream_generator(
         }
         yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
 
-        start_index = (last_event_index + 1) if last_event_index is not None else 0
-        for idx, buffered_event in enumerate(missed_events):
+        for ev_index, buffered_event in missed_events:
             event_dict = buffered_event.to_dict()
-            event_dict["event_index"] = start_index + idx
+            event_dict["event_index"] = ev_index
             if "run_id" not in event_dict:
                 event_dict["run_id"] = run_id
             event_type = event_dict.get("event", "message")
@@ -401,16 +400,14 @@ async def _resume_stream_generator(
             }
             yield f"event: catch_up\ndata: {json.dumps(meta)}\n\n"
 
-            start_index = (last_event_index + 1) if last_event_index is not None else 0
-            for idx, buffered_event in enumerate(missed_events):
-                current_idx = start_index + idx
+            for ev_index, buffered_event in missed_events:
                 event_dict = buffered_event.to_dict()
-                event_dict["event_index"] = current_idx
+                event_dict["event_index"] = ev_index
                 if "run_id" not in event_dict:
                     event_dict["run_id"] = run_id
                 event_type = event_dict.get("event", "message")
                 yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
-                last_replayed_index = current_idx
+                last_replayed_index = ev_index
 
         # Re-check buffer status after subscribing: the run may have completed
         # between our initial status check and now. If so, replay remaining events
@@ -421,11 +418,9 @@ async def _resume_stream_generator(
             # Run completed while we were catching up -- replay remaining from buffer
             remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
             if remaining:
-                replay_start = last_replayed_index + 1
-                for idx, buffered_event in enumerate(remaining):
-                    current_idx = replay_start + idx
+                for ev_index, buffered_event in remaining:
                     event_dict = buffered_event.to_dict()
-                    event_dict["event_index"] = current_idx
+                    event_dict["event_index"] = ev_index
                     if "run_id" not in event_dict:
                         event_dict["run_id"] = run_id
                     event_type = event_dict.get("event", "message")
@@ -446,7 +441,25 @@ async def _resume_stream_generator(
 
         # Read from queue, dedup events already replayed by event_index
         while True:
-            item = await queue.get()
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                # Check if run ended without sending sentinel
+                status = event_buffer.get_run_status(run_id)
+                if status is None or status != RunStatus.running:
+                    # Run ended - replay any remaining events from buffer
+                    remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
+                    for ev_index, buffered_event in remaining:
+                        event_dict = buffered_event.to_dict()
+                        event_dict["event_index"] = ev_index
+                        if "run_id" not in event_dict:
+                            event_dict["run_id"] = run_id
+                        event_type = event_dict.get("event", "message")
+                        yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                    break
+                # Still running - send heartbeat to keep connection alive
+                yield ": heartbeat\n\n"
+                continue
             if item is None:
                 # Sentinel: run completed
                 break
@@ -454,6 +467,8 @@ async def _resume_stream_generator(
             # Dedup: skip events already replayed during catch-up
             if ev_idx >= 0 and ev_idx <= last_replayed_index:
                 continue
+            if ev_idx >= 0:
+                last_replayed_index = ev_idx
             yield sse_data
     finally:
         sse_subscriber_manager.unsubscribe(run_id, queue)

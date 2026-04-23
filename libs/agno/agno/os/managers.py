@@ -14,7 +14,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 from time import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from starlette.websockets import WebSocket
 
@@ -249,7 +249,7 @@ class EventsBuffer:
 
     def get_events(
         self, run_id: str, last_event_index: Optional[int] = None
-    ) -> List[Union[WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent]]:
+    ) -> List[Tuple[int, Union[WorkflowRunOutputEvent, RunOutputEvent, TeamRunOutputEvent]]]:
         """
         Get events since the last received event index.
 
@@ -258,20 +258,20 @@ class EventsBuffer:
             last_event_index: Monotonic index of last event received by client (0-based)
 
         Returns:
-            List of events since last_event_index, or all events if None
+            List of (monotonic_index, event) tuples since last_event_index, or all if None
         """
         events = self.events.get(run_id, [])
         if not events:
             return []
 
-        if last_event_index is None:
-            # Client has no events, send all
-            return events
-
         # The buffer may have been trimmed, so list positions don't match event indices.
         # first_index is the monotonic index of the oldest event still in the buffer.
         next_idx = self._next_index.get(run_id, len(events))
         first_index = next_idx - len(events)
+
+        if last_event_index is None:
+            # Client has no events, send all with their real indices
+            return [(first_index + i, e) for i, e in enumerate(events)]
 
         # Client wants events after last_event_index
         start_index = last_event_index + 1
@@ -282,15 +282,26 @@ class EventsBuffer:
 
         if start_index <= first_index:
             # Client is behind the buffer — return everything we have
-            return events
+            return [(first_index + i, e) for i, e in enumerate(events)]
 
         # Convert monotonic index to list position
         list_offset = start_index - first_index
-        return events[list_offset:]
+        return [(start_index + i, e) for i, e in enumerate(events[list_offset:])]
 
     def get_event_count(self, run_id: str) -> int:
         """Get the current number of events for a run"""
         return len(self.events.get(run_id, []))
+
+    def get_last_index(self, run_id: str) -> int:
+        """Get the monotonic index of the last event added for a run.
+
+        Returns -1 if no events have been added for this run.
+        Unlike get_event_count(), this survives buffer trims.
+        """
+        next_idx = self._next_index.get(run_id)
+        if next_idx is None or next_idx == 0:
+            return -1
+        return next_idx - 1
 
     def set_run_completed(self, run_id: str, status: RunStatus) -> None:
         """Mark a run as completed/cancelled/error for future cleanup"""
