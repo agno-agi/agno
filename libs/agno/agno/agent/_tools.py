@@ -35,8 +35,10 @@ from agno.utils.agent import (
     collect_joint_videos,
 )
 from agno.utils.events import (
+    create_tool_call_cancelled_event,
     create_tool_call_completed_event,
     create_tool_call_error_event,
+    create_tool_call_failed_event,
     create_tool_call_started_event,
     handle_event,
 )
@@ -670,6 +672,14 @@ def run_tool(
                             events_to_skip=agent.events_to_skip,  # type: ignore
                             store_events=agent.store_events,
                         )
+                        yield handle_event(  # type: ignore
+                            create_tool_call_failed_event(
+                                from_run_response=run_response, tool=tool, error=str(tool.result)
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
         # Yield CustomEvent instances from sync tool generators
         elif isinstance(call_result, CustomEvent):
             if stream_events:
@@ -738,6 +748,14 @@ async def arun_tool(
                     if tool.tool_call_error:
                         yield handle_event(  # type: ignore
                             create_tool_call_error_event(
+                                from_run_response=run_response, tool=tool, error=str(tool.result)
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                        yield handle_event(  # type: ignore
+                            create_tool_call_failed_event(
                                 from_run_response=run_response, tool=tool, error=str(tool.result)
                             ),
                             run_response,
@@ -824,6 +842,15 @@ def handle_tool_call_updates_stream(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_tool_call_cancelled_event(
+                            from_run_response=run_response, tool=_t, reason=_t.confirmation_note
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
             _maybe_create_audit_approval(agent, _t, run_response, "approved" if _t.confirmed is True else "rejected")
             _t.requires_confirmation = False
 
@@ -926,6 +953,15 @@ async def ahandle_tool_call_updates_stream(
                 _t.confirmed = False
                 _t.confirmation_note = _t.confirmation_note or "Tool call was rejected"
                 _t.tool_call_error = True
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_tool_call_cancelled_event(
+                            from_run_response=run_response, tool=_t, reason=_t.confirmation_note
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
             await _amaybe_create_audit_approval(
                 agent, _t, run_response, "approved" if _t.confirmed is True else "rejected"
             )
