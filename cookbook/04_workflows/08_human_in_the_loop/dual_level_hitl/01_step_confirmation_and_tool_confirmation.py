@@ -42,7 +42,7 @@ def send_alert(city: str, message: str) -> str:
 
 alert_agent = Agent(
     name="AlertAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.4"),
     tools=[send_alert],
     instructions="You send weather alerts. Always use the send_alert tool.",
     db=db,
