@@ -3,6 +3,7 @@
 from agno.os.managers import EventsBuffer
 from agno.run.agent import RunContentEvent
 
+
 def _make_event(content: str) -> RunContentEvent:
     return RunContentEvent(content=content)
 

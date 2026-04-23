@@ -3363,23 +3363,23 @@ async def _arun_background_stream(
                 log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
 
         finally:
+            # Signal primary queue FIRST — unblocks the original client
+            try:
+                await sse_queue.put(None)
+            except Exception:
+                log_warning(f"Failed to signal primary queue for run {run_id} completion")
+
             # Mark run completed in event buffer (status is set by _arun_stream/acleanup_and_store)
             try:
                 event_buffer.set_run_completed(run_id, run_response.status or RunStatus.completed)
             except Exception:
                 log_warning(f"Failed to mark run {run_id} as completed in event buffer")
 
-            # Signal SSE subscribers that run is done
+            # Signal SSE subscribers that run is done (shielded to survive task cancellation)
             try:
-                await sse_subscriber_manager.complete(run_id)
-            except Exception:
+                await asyncio.shield(sse_subscriber_manager.complete(run_id))
+            except (Exception, asyncio.CancelledError):
                 log_warning(f"Failed to signal SSE subscribers for run {run_id} completion")
-
-            # Signal primary queue that run is done
-            try:
-                await sse_queue.put(None)
-            except Exception:
-                log_warning(f"Failed to signal primary queue for run {run_id} completion")
 
     task = asyncio.create_task(_background_producer())
     _background_tasks.add(task)

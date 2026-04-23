@@ -348,7 +348,28 @@ async def _resume_stream_generator(
 
         # Read from queue, dedup events already replayed by event_index
         while True:
-            item = await queue.get()
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                # Check if run ended without sending sentinel
+                status = event_buffer.get_run_status(run_id)
+                if status is None or status != RunStatus.running:
+                    # Run ended - replay any remaining events from buffer
+                    remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
+                    if remaining:
+                        replay_start = last_replayed_index + 1
+                        for idx, buffered_event in enumerate(remaining):
+                            current_idx = replay_start + idx
+                            event_dict = buffered_event.to_dict()
+                            event_dict["event_index"] = current_idx
+                            if "run_id" not in event_dict:
+                                event_dict["run_id"] = run_id
+                            event_type = event_dict.get("event", "message")
+                            yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                    break
+                # Still running - send heartbeat to keep connection alive
+                yield ": heartbeat\n\n"
+                continue
             if item is None:
                 # Sentinel: run completed
                 break

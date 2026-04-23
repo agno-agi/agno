@@ -134,7 +134,6 @@ STEP_TYPE_MAPPING = {
 }
 
 
-
 # Any step-like component that can appear in a workflow (top-level or nested).
 # Matches what callers iterate over in ``Workflow.steps`` (see ``WorkflowSteps``
 # below): Step + composite step types + nested Workflow + callable step.
@@ -4093,23 +4092,23 @@ class Workflow:
                     )
 
             finally:
+                # Signal primary queue FIRST — unblocks the original client
+                try:
+                    await sse_queue.put(None)
+                except Exception:
+                    log_warning(f"Failed to signal primary queue for workflow run {run_id} completion")
+
                 # Mark run completed in event buffer
                 try:
                     event_buffer.set_run_completed(run_id, workflow_run_response.status or RunStatus.completed)
                 except Exception:
                     log_warning(f"Failed to mark workflow run {run_id} as completed in event buffer")
 
-                # Signal SSE subscribers that run is done
+                # Signal SSE subscribers that run is done (shielded to survive task cancellation)
                 try:
-                    await sse_subscriber_manager.complete(run_id)
-                except Exception:
+                    await asyncio.shield(sse_subscriber_manager.complete(run_id))
+                except (Exception, asyncio.CancelledError):
                     log_warning(f"Failed to signal SSE subscribers for workflow run {run_id} completion")
-
-                # Signal primary queue that run is done
-                try:
-                    await sse_queue.put(None)
-                except Exception:
-                    log_warning(f"Failed to signal primary queue for workflow run {run_id} completion")
 
         task = asyncio.create_task(_background_producer())
         _workflow_background_tasks.add(task)
@@ -5117,21 +5116,13 @@ class Workflow:
         # Detect post-execution review (step already ran) — only on active requirement
         is_post_execution_review = any(req.is_post_execution for req in _active_reqs)
         # Detect loop iteration review specifically (confirmed = continue loop, not advance past it)
-        is_loop_iteration_review = any(
-            req.is_post_execution and req.step_type == "Loop" for req in _active_reqs
-        )
+        is_loop_iteration_review = any(req.is_post_execution and req.step_type == "Loop" for req in _active_reqs)
         # Detect router output review (reject = re-route to a different branch)
-        is_router_output_review = any(
-            req.is_post_execution and req.step_type == "Router" for req in _active_reqs
-        )
+        is_router_output_review = any(req.is_post_execution and req.step_type == "Router" for req in _active_reqs)
         retry_step = False
 
         # Check if active step was rejected
-        rejected_steps = [
-            req
-            for req in _active_reqs
-            if req.requires_confirmation and req.confirmed is False
-        ]
+        rejected_steps = [req for req in _active_reqs if req.requires_confirmation and req.confirmed is False]
 
         # Handle rejected steps based on on_reject policy
         skip_rejected_step = False
@@ -7015,21 +7006,13 @@ class Workflow:
         # Detect post-execution review (step already ran) — only on active requirement
         is_post_execution_review = any(req.is_post_execution for req in _active_reqs)
         # Detect loop iteration review specifically (confirmed = continue loop, not advance past it)
-        is_loop_iteration_review = any(
-            req.is_post_execution and req.step_type == "Loop" for req in _active_reqs
-        )
+        is_loop_iteration_review = any(req.is_post_execution and req.step_type == "Loop" for req in _active_reqs)
         # Detect router output review (reject = re-route to a different branch)
-        is_router_output_review = any(
-            req.is_post_execution and req.step_type == "Router" for req in _active_reqs
-        )
+        is_router_output_review = any(req.is_post_execution and req.step_type == "Router" for req in _active_reqs)
         retry_step = False
 
         # Check if active step was rejected
-        rejected_steps = [
-            req
-            for req in _active_reqs
-            if req.requires_confirmation and req.confirmed is False
-        ]
+        rejected_steps = [req for req in _active_reqs if req.requires_confirmation and req.confirmed is False]
 
         # Handle rejected steps based on on_reject policy
         skip_rejected_step = False
