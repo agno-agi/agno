@@ -64,6 +64,7 @@ from agno.utils.reasoning import (
     update_run_output_with_reasoning,
 )
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
+from agno.utils.structured_output import finalize_streamed_structured_output
 
 ###########################################################################
 # Reasoning
@@ -956,35 +957,6 @@ def convert_response_to_structured_format(
                 log_warning("Something went wrong. Run response content is not a string")
 
 
-def _finalize_streamed_structured_output(
-    agent: Agent,
-    run_response: RunOutput,
-    model_response: ModelResponse,
-    output_schema: Optional[Union[Type[BaseModel], Dict]],
-    should_parse_structured_output: bool,
-    stream_events: bool,
-    run_context: Optional[RunContext] = None,
-) -> Iterator[RunOutputEvent]:
-    if not should_parse_structured_output or model_response.content is None:
-        return
-
-    convert_response_to_structured_format(agent, model_response, run_context=run_context)
-    content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
-    run_response.content = model_response.content
-    run_response.content_type = content_type
-    if stream_events:
-        yield handle_event(  # type: ignore
-            create_run_output_content_event(
-                from_run_response=run_response,
-                content=run_response.content,
-                content_type=content_type,
-            ),
-            run_response,
-            events_to_skip=agent.events_to_skip,  # type: ignore
-            store_events=agent.store_events,
-        )
-
-
 # ---------------------------------------------------------------------------
 # Run response update
 # ---------------------------------------------------------------------------
@@ -1181,14 +1153,25 @@ def handle_model_response_stream(
             run_context=run_context,
         )
 
-    yield from _finalize_streamed_structured_output(
-        agent=agent,
-        run_response=run_response,
-        model_response=model_response,
+    yield from finalize_streamed_structured_output(
+        content_getter=lambda: model_response.content,
         output_schema=output_schema,
         should_parse_structured_output=should_parse_structured_output,
+        convert_fn=lambda: convert_response_to_structured_format(agent, model_response, run_context=run_context),
+        set_content_fn=lambda content: setattr(run_response, "content", content),
+        set_content_type_fn=lambda ct: setattr(run_response, "content_type", ct),
         stream_events=stream_events,
-        run_context=run_context,
+        build_event_fn=lambda content, ct: create_run_output_content_event(
+            from_run_response=run_response,
+            content=content,
+            content_type=ct,
+        ),
+        emit_fn=lambda payload: handle_event(  # type: ignore
+            payload,
+            run_response,
+            events_to_skip=agent.events_to_skip,  # type: ignore
+            store_events=agent.store_events,
+        ),
     )
 
     # Update RunOutput
@@ -1344,14 +1327,25 @@ async def ahandle_model_response_stream(
         ):
             yield event
 
-    for event in _finalize_streamed_structured_output(
-        agent=agent,
-        run_response=run_response,
-        model_response=model_response,
+    for event in finalize_streamed_structured_output(
+        content_getter=lambda: model_response.content,
         output_schema=output_schema,
         should_parse_structured_output=should_parse_structured_output,
+        convert_fn=lambda: convert_response_to_structured_format(agent, model_response, run_context=run_context),
+        set_content_fn=lambda content: setattr(run_response, "content", content),
+        set_content_type_fn=lambda ct: setattr(run_response, "content_type", ct),
         stream_events=stream_events,
-        run_context=run_context,
+        build_event_fn=lambda content, ct: create_run_output_content_event(
+            from_run_response=run_response,
+            content=content,
+            content_type=ct,
+        ),
+        emit_fn=lambda payload: handle_event(  # type: ignore
+            payload,
+            run_response,
+            events_to_skip=agent.events_to_skip,  # type: ignore
+            store_events=agent.store_events,
+        ),
     ):
         yield event
 

@@ -65,6 +65,7 @@ from agno.utils.reasoning import (
     update_run_output_with_reasoning,
 )
 from agno.utils.string import parse_response_dict_str, parse_response_model_str
+from agno.utils.structured_output import finalize_streamed_structured_output
 
 if TYPE_CHECKING:
     from agno.reasoning.manager import ReasoningEvent
@@ -1035,14 +1036,24 @@ def _handle_model_response_stream(
             run_context=run_context,
         )
 
-    yield from _finalize_streamed_structured_output(
-        team=team,
-        run_response=run_response,
-        full_model_response=full_model_response,
+    yield from finalize_streamed_structured_output(
+        content_getter=lambda: full_model_response.content,
         output_schema=output_schema,
         should_parse_structured_output=should_parse_structured_output,
+        convert_fn=lambda: _convert_response_to_structured_format(team, full_model_response, run_context=run_context),
+        set_content_type_fn=lambda ct: setattr(run_response, "content_type", ct),
         stream_events=stream_events,
-        run_context=run_context,
+        build_event_fn=lambda content, ct: create_team_run_output_content_event(
+            from_run_response=run_response,
+            content=content,
+            content_type=ct,
+        ),
+        emit_fn=lambda payload: handle_event(  # type: ignore
+            payload,
+            run_response,
+            events_to_skip=team.events_to_skip,
+            store_events=team.store_events,
+        ),
     )
 
     # 3. Update TeamRunOutput
@@ -1200,14 +1211,24 @@ async def _ahandle_model_response_stream(
         ):
             yield event
 
-    for event in _finalize_streamed_structured_output(
-        team=team,
-        run_response=run_response,
-        full_model_response=full_model_response,
+    for event in finalize_streamed_structured_output(
+        content_getter=lambda: full_model_response.content,
         output_schema=output_schema,
         should_parse_structured_output=should_parse_structured_output,
+        convert_fn=lambda: _convert_response_to_structured_format(team, full_model_response, run_context=run_context),
+        set_content_type_fn=lambda ct: setattr(run_response, "content_type", ct),
         stream_events=stream_events,
-        run_context=run_context,
+        build_event_fn=lambda content, ct: create_team_run_output_content_event(
+            from_run_response=run_response,
+            content=content,
+            content_type=ct,
+        ),
+        emit_fn=lambda payload: handle_event(  # type: ignore
+            payload,
+            run_response,
+            events_to_skip=team.events_to_skip,
+            store_events=team.store_events,
+        ),
     ):
         yield event
 
@@ -1583,34 +1604,6 @@ def _handle_model_response_chunk(
 # ---------------------------------------------------------------------------
 # Structured format conversion (moved from _hooks.py)
 # ---------------------------------------------------------------------------
-
-
-def _finalize_streamed_structured_output(
-    team: Team,
-    run_response: TeamRunOutput,
-    full_model_response: ModelResponse,
-    output_schema: Optional[Union[Type[BaseModel], Dict]],
-    should_parse_structured_output: bool,
-    stream_events: bool,
-    run_context: Optional[RunContext] = None,
-) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
-    if not should_parse_structured_output or full_model_response.content is None:
-        return
-
-    _convert_response_to_structured_format(team, full_model_response, run_context=run_context)
-    content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
-    run_response.content_type = content_type
-    if stream_events:
-        yield handle_event(  # type: ignore
-            create_team_run_output_content_event(
-                from_run_response=run_response,
-                content=full_model_response.content,
-                content_type=content_type,
-            ),
-            run_response,
-            events_to_skip=team.events_to_skip,
-            store_events=team.store_events,
-        )
 
 
 def _convert_response_to_structured_format(
