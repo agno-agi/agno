@@ -1058,10 +1058,9 @@ def handle_model_response_stream(
     output_schema = run_context.output_schema if run_context else None
     should_parse_structured_output = output_schema is not None and agent.parse_response and agent.parser_model is None
 
+    # Keep model-level streaming enabled even when parse_response=True so that
+    # long-running responses still emit incremental output.
     stream_model_response = True
-    if should_parse_structured_output:
-        log_debug("Response model set, model response is not streamed.")
-        stream_model_response = False
 
     for model_response_event in call_model_stream_with_fallback(
         agent.model,
@@ -1147,11 +1146,29 @@ def handle_model_response_stream(
             model_response=model_response,
             model_response_event=model_response_event,
             reasoning_state=reasoning_state,
-            parse_structured_output=should_parse_structured_output,
+            parse_structured_output=False,
             stream_events=stream_events,
             session_state=session_state,
             run_context=run_context,
         )
+
+    # Parse final accumulated content once streaming completes.
+    if should_parse_structured_output and model_response.content is not None:
+        convert_response_to_structured_format(agent, model_response, run_context=run_context)
+        content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
+        run_response.content = model_response.content
+        run_response.content_type = content_type
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_run_output_content_event(
+                    from_run_response=run_response,
+                    content=run_response.content,
+                    content_type=content_type,
+                ),
+                run_response,
+                events_to_skip=agent.events_to_skip,  # type: ignore
+                store_events=agent.store_events,
+            )
 
     # Update RunOutput
     # Build a list of messages that should be added to the RunOutput
@@ -1209,10 +1226,9 @@ async def ahandle_model_response_stream(
     output_schema = run_context.output_schema if run_context else None
     should_parse_structured_output = output_schema is not None and agent.parse_response and agent.parser_model is None
 
+    # Keep model-level streaming enabled even when parse_response=True so that
+    # long-running responses still emit incremental output.
     stream_model_response = True
-    if should_parse_structured_output:
-        log_debug("Response model set, model response is not streamed.")
-        stream_model_response = False
 
     model_response_stream = acall_model_stream_with_fallback(
         agent.model,
@@ -1300,12 +1316,30 @@ async def ahandle_model_response_stream(
             model_response=model_response,
             model_response_event=model_response_event,
             reasoning_state=reasoning_state,
-            parse_structured_output=should_parse_structured_output,
+            parse_structured_output=False,
             stream_events=stream_events,
             session_state=session_state,
             run_context=run_context,
         ):
             yield event
+
+    # Parse final accumulated content once streaming completes.
+    if should_parse_structured_output and model_response.content is not None:
+        convert_response_to_structured_format(agent, model_response, run_context=run_context)
+        content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
+        run_response.content = model_response.content
+        run_response.content_type = content_type
+        if stream_events:
+            yield handle_event(  # type: ignore
+                create_run_output_content_event(
+                    from_run_response=run_response,
+                    content=run_response.content,
+                    content_type=content_type,
+                ),
+                run_response,
+                events_to_skip=agent.events_to_skip,  # type: ignore
+                store_events=agent.store_events,
+            )
 
     # Update RunOutput
     # Build a list of messages that should be added to the RunOutput
