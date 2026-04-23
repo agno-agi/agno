@@ -164,9 +164,9 @@ if __name__ == "__main__":
 
     while run_output and run_output.is_paused:
         pause_count += 1
-        has_executor = any(
-            r.requires_executor_input for r in (run_output.step_requirements or [])
-        )
+        # Only check the LAST (active) requirement — earlier ones are resolved history
+        _active = (run_output.step_requirements or [])[-1:]
+        has_executor = any(r.requires_executor_input for r in _active)
         label = "executor" if has_executor else "loop-confirmation"
         console.print(f"\n[bold magenta]--- Pause #{pause_count} ({label}) ---[/]")
 

@@ -5225,22 +5225,16 @@ class Workflow:
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
 
-        # Extract user input from step requirements to pass to the step
+        # Extract user input and router selection from active (last) requirement only.
+        # With accumulated requirements, old resolved ones must NOT be picked up.
         user_input_data: Optional[Dict[str, Any]] = None
-        if step_requirements or run_response.step_requirements:
-            step_reqs = step_requirements or run_response.step_requirements or []
-            for step_req in step_reqs:
-                if step_req.user_input:
-                    user_input_data = step_req.user_input
-                    break
-
-        # Extract router selection to pass to the router (from step_requirements with requires_route_selection)
         router_selection: Optional[List[str]] = None
-        if run_response.step_requirements:
-            for step_req in run_response.step_requirements:
-                if step_req.requires_route_selection and step_req.selected_choices:
-                    router_selection = step_req.selected_choices
-                    break
+        for _ar in _active_reqs:
+            if _ar.user_input:
+                user_input_data = _ar.user_input
+            if _ar.requires_route_selection and _ar.selected_choices:
+                router_selection = _ar.selected_choices
+            break
 
         # Handle error requirements (retry or skip)
         error_should_skip = False
@@ -7112,22 +7106,16 @@ class Workflow:
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
 
-        # Extract user input from step requirements to pass to the step
+        # Extract user input and router selection from active (last) requirement only.
+        # With accumulated requirements, old resolved ones must NOT be picked up.
         user_input_data: Optional[Dict[str, Any]] = None
-        if step_requirements or run_response.step_requirements:
-            step_reqs = step_requirements or run_response.step_requirements or []
-            for step_req in step_reqs:
-                if step_req.user_input:
-                    user_input_data = step_req.user_input
-                    break
-
-        # Extract router selection to pass to the router (from step_requirements with requires_route_selection)
         router_selection: Optional[List[str]] = None
-        if run_response.step_requirements:
-            for step_req in run_response.step_requirements:
-                if step_req.requires_route_selection and step_req.selected_choices:
-                    router_selection = step_req.selected_choices
-                    break
+        for _ar in _active_reqs:
+            if _ar.user_input:
+                user_input_data = _ar.user_input
+            if _ar.requires_route_selection and _ar.selected_choices:
+                router_selection = _ar.selected_choices
+            break
 
         # Handle error requirements (retry or skip)
         error_should_skip = False

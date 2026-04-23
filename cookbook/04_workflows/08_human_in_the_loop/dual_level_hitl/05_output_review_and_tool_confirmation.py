@@ -167,14 +167,14 @@ if __name__ == "__main__":
 
     while run_output and run_output.is_paused:
         pause_count += 1
-        has_executor = any(
-            r.requires_executor_input for r in (run_output.step_requirements or [])
-        )
+        # Only check the LAST (active) requirement — earlier ones are resolved history
+        _active = (run_output.step_requirements or [])[-1:]
+        has_executor = any(r.requires_executor_input for r in _active)
         has_review = any(
             r.requires_output_review
             and r.confirmed is None
             and not r.requires_executor_input
-            for r in (run_output.step_requirements or [])
+            for r in _active
         )
         label = (
             "executor"
@@ -189,7 +189,7 @@ if __name__ == "__main__":
             resolve_output_review(run_output)
         else:
             # Catch-all: auto-confirm any remaining unresolved requirements
-            for req in run_output.step_requirements or []:
+            for req in _active:
                 if not req.is_resolved:
                     req.confirm()
 

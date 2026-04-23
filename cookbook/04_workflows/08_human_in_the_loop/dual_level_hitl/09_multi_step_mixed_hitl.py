@@ -246,24 +246,23 @@ def resolve_executor_pause(run_output):
 
 def resolve_pause(run_output):
     """Route to the appropriate resolver based on requirement type."""
-    has_executor = any(
-        r.requires_executor_input for r in (run_output.step_requirements or [])
-    )
+    # Only check the LAST (active) requirement — earlier ones are resolved history
+    _active = (run_output.step_requirements or [])[-1:]
+    has_executor = any(r.requires_executor_input for r in _active)
     has_user_input = any(
-        r.requires_user_input and not r.requires_executor_input
-        for r in (run_output.step_requirements or [])
+        r.requires_user_input and not r.requires_executor_input for r in _active
     )
     has_review = any(
         r.requires_output_review
         and r.confirmed is None
         and not r.requires_executor_input
-        for r in (run_output.step_requirements or [])
+        for r in _active
     )
     has_confirm = any(
         r.requires_confirmation
         and not r.requires_executor_input
         and not r.requires_output_review
-        for r in (run_output.step_requirements or [])
+        for r in _active
     )
 
     if has_executor:
@@ -305,6 +304,8 @@ if __name__ == "__main__":
 
     while run_output and run_output.is_paused:
         pause_count += 1
+        # Only check the LAST (active) requirement — earlier ones are resolved history
+        _active = (run_output.step_requirements or [])[-1:]
         label = resolve_pause(run_output)
         console.print(f"\n[bold magenta]--- Pause #{pause_count} ({label}) ---[/]")
 
@@ -318,7 +319,7 @@ if __name__ == "__main__":
             resolve_confirmation(run_output)
         else:
             # Catch-all: auto-confirm any unresolved requirements from retry flows
-            for req in run_output.step_requirements or []:
+            for req in _active:
                 if not req.is_resolved:
                     req.confirm()
 
