@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.5.16"
+version = "2.5.17"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -135,7 +135,7 @@ psycopg = ["psycopg-binary", "psycopg"]
 redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
 salesforce = ["simple-salesforce"]
-scrapegraph = ["scrapegraph-py"]
+scrapegraph = ["scrapegraph-py>=2.0.0"]
 todoist = ["todoist-api-python"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
