@@ -134,7 +134,32 @@ agent_content_search = Agent(
     markdown=True,
 )
 
-# Example 6: Default exclusions skip noise directories (.venv, .git, __pycache__,
+# Example 6: Regex search via grep. Faster and more flexible than search_content
+# (substring only): uses ripgrep when installed, a pure-Python fallback
+# otherwise. Pick an output_mode: "files_with_matches" just lists paths,
+# "content" returns each hit with its line number, and "count" gives a per-file
+# tally. Use the include parameter to scope the search to a filename pattern.
+agent_grep = Agent(
+    tools=[
+        FileTools(
+            Path("tmp/file"),
+            enable_read_file=True,
+            enable_grep=True,
+            enable_list_files=True,
+            enable_save_file=False,
+        )
+    ],
+    description="You are a code search assistant that uses regex to find specific patterns.",
+    instructions=[
+        "Use grep to answer questions about the codebase",
+        "Prefer output_mode='content' when the user wants to see the matching lines",
+        "Prefer output_mode='files_with_matches' when they just want the list of files",
+        "Use the include parameter to scope to a language or filename pattern (e.g. '*.py')",
+    ],
+    markdown=True,
+)
+
+# Example 7: Default exclusions skip noise directories (.venv, .git, __pycache__,
 # node_modules, build artifacts, etc.) so agents don't waste context on installed
 # packages or VCS metadata. See DEFAULT_EXCLUDE_PATTERNS for the full list.
 agent_default_exclusions = Agent(
@@ -154,7 +179,7 @@ agent_default_exclusions = Agent(
     markdown=True,
 )
 
-# Example 7: Custom exclusions - start from DEFAULT_EXCLUDE_PATTERNS and remove
+# Example 8: Custom exclusions - start from DEFAULT_EXCLUDE_PATTERNS and remove
 # the entries you want visible. Future additions to the default list apply
 # automatically. Here we keep the defaults but unhide .venv so the agent can
 # inspect installed packages.
@@ -179,7 +204,7 @@ agent_can_read_venv = Agent(
     markdown=True,
 )
 
-# Example 8: Full opt-out with exclude_patterns=[]. Every file becomes visible,
+# Example 9: Full opt-out with exclude_patterns=[]. Every file becomes visible,
 # including .git internals. Use only when you need forensic access to the tree.
 agent_sees_everything = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
@@ -231,6 +256,13 @@ if __name__ == "__main__":
     print("\n=== Content Search Example ===")
     agent_content_search.print_response(
         "Search inside all files for the word 'Python' and summarize what you find",
+        markdown=True,
+    )
+
+    print("\n=== Grep Regex Search Example ===")
+    agent_grep.print_response(
+        "Find every Python function definition (pattern: def \\w+) across the "
+        "workspace and list the first 10 matches with their line numbers.",
         markdown=True,
     )
 
