@@ -68,6 +68,10 @@ class OpenAIChat(Model):
     top_p: Optional[float] = None
     service_tier: Optional[str] = None  # "auto" | "default" | "flex" | "priority", defaults to "auto" when not set
     strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
+    # Some OpenAI-compatible gateways reject requests that include both
+    # response_format and tools. When True, response_format is omitted
+    # whenever tools are present.
+    omit_response_format_when_tools_present: bool = True
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     extra_body: Optional[Any] = None
@@ -263,9 +267,26 @@ class OpenAIChat(Model):
         if self.request_params:
             request_params.update(self.request_params)
 
+        self._omit_response_format_when_tools_present(request_params)
+
         if request_params:
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
+
+    def _omit_response_format_when_tools_present(self, request_params: Dict[str, Any]) -> None:
+        if not self.omit_response_format_when_tools_present:
+            return
+        if "response_format" not in request_params:
+            return
+        if not request_params.get("tools"):
+            return
+
+        request_params.pop("response_format", None)
+        log_debug(
+            "Omitting response_format because tools are present. "
+            "Set omit_response_format_when_tools_present=False to send both fields.",
+            log_level=2,
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -298,6 +319,7 @@ class OpenAIChat(Model):
                 "extra_query": self.extra_query,
                 "extra_body": self.extra_body,
                 "service_tier": self.service_tier,
+                "omit_response_format_when_tools_present": self.omit_response_format_when_tools_present,
             }
         )
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
