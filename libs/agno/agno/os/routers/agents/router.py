@@ -709,7 +709,7 @@ def get_agent_router(
                 # Events are buffered for reconnection via /resume endpoint.
                 return StreamingResponse(
                     agent_resumable_response_streamer(
-                        agent,
+                        agent,  # type: ignore[arg-type]
                         message,
                         session_id=session_id,
                         user_id=user_id,
@@ -725,7 +725,7 @@ def get_agent_router(
                 )
 
             # background=True, stream=False: return 202 immediately with run metadata
-            if not agent.db:
+            if not getattr(agent, "db", None):
                 raise HTTPException(
                     status_code=400, detail="Background execution requires a database to be configured on the agent"
                 )
@@ -986,7 +986,7 @@ def get_agent_router(
                 raise HTTPException(status_code=400, detail="Background execution is not supported for remote agents")
             return StreamingResponse(
                 agent_resumable_continue_response_streamer(
-                    agent,
+                    agent,  # type: ignore[arg-type]
                     run_id=run_id,
                     updated_tools=updated_tools,
                     session_id=session_id,
@@ -1281,7 +1281,7 @@ def get_agent_router(
             raise HTTPException(status_code=400, detail="Stream resumption is not supported for remote agents")
 
         return StreamingResponse(
-            _resume_stream_generator(agent, run_id, last_event_index, session_id),
+            _resume_stream_generator(agent, run_id, last_event_index, session_id),  # type: ignore[arg-type]
             media_type="text/event-stream",
         )
 

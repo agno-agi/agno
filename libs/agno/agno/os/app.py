@@ -15,6 +15,7 @@ from starlette.requests import Request
 
 from agno.agent.protocol import AgentProtocol
 from agno.agent import Agent, AgentFactory, RemoteAgent
+from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
@@ -531,8 +532,15 @@ class AgentOS:
 
     def _initialize_agents(self) -> None:
         """Initialize and configure all agents for AgentOS usage."""
+        # Inject db into external framework agents (not covered by self._agents)
+        for entry in self.agents or []:
+            if isinstance(entry, BaseExternalAgent):
+                if self.db is not None and entry.db is None:
+                    entry.db = self.db
+
         if not self._agents:
             return
+            
         for agent in self._agents:
             # Set the default db to agents without their own
             if self.db is not None and agent.db is None:
@@ -1032,6 +1040,11 @@ class AgentOS:
                 agent_contents_db = getattr(entry.knowledge, "contents_db", None) if entry.knowledge else None
                 if agent_contents_db:
                     self._register_db_with_validation(knowledge_dbs, agent_contents_db)
+            else:
+                # External framework agents (BaseExternalAgent / AgentProtocol)
+                agent_db = getattr(entry, "db", None)
+                if agent_db:
+                    self._register_db_with_validation(dbs, agent_db)
 
         for team_entry in self.teams or []:
             if isinstance(team_entry, TeamFactory):
