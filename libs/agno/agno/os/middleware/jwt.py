@@ -317,12 +317,14 @@ class JWTMiddleware(BaseHTTPMiddleware):
     2. Decodes and validates the token
     3. Validates the `aud` (audience) claim matches the AgentOS ID (if configured)
     4. Stores JWT claims (user_id, session_id, scopes) in request.state
-    5. Checks if the request path requires specific scopes (using default + custom scope_mappings)
+    5. Optionally checks if the request path requires specific scopes (if scope_mappings provided)
     6. Validates that the authenticated user has the required scopes
     7. Returns 401 for invalid tokens, 403 for insufficient scopes
 
-    RBAC is enabled by default. Pass `authorization=False` to disable scope checks
-    and use the middleware purely for JWT extraction/validation.
+    RBAC is opt-in: Only enabled when authorization=True or scope_mappings are provided.
+    Without authorization enabled, the middleware only extracts and validates JWT tokens —
+    endpoints return 200 regardless of scopes. Pass `authorization=True` (or set it via
+    AgentOS(authorization=True)) to enforce the default scope map.
 
     Audience Verification:
     - The `aud` claim in JWT tokens should contain the AgentOS ID
@@ -429,9 +431,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             validate: Whether to validate the JWT signature (default: True). If False, tokens are decoded
                      without signature verification and no verification key is required. Useful when
                      JWT verification is handled upstream (API Gateway, etc.).
-            authorization: Whether to enforce RBAC scope checks. Defaults to True so manually
-                          mounted middleware protects endpoints by default. Pass False to
-                          validate JWTs without enforcing scopes.
+            authorization: Whether to add authorization checks to the request (i.e. validation of scopes)
             token_source: Where to extract JWT token from (header, cookie, or both)
             token_header_key: Header key for Authorization (default: "Authorization")
             cookie_name: Cookie name for JWT token (default: "access_token")
@@ -495,13 +495,12 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
         self.audience = audience
 
-        # RBAC configuration. Default to enabled so manual
-        # `app.add_middleware(JWTMiddleware, ...)` calls don't silently leave
-        # endpoints unguarded. Callers that want JWT validation without RBAC
-        # must pass `authorization=False` explicitly.
-        if authorization is None:
-            authorization = True
+        # RBAC configuration (opt-in via scope_mappings)
         self.authorization = authorization
+
+        # If scope_mappings are provided, enable authorization
+        if scope_mappings is not None and self.authorization is None:
+            self.authorization = True
 
         # Build final scope mappings (additive approach)
         if self.authorization:

@@ -427,20 +427,6 @@ def test_raises_error_without_verification_key():
     assert "at least one jwt verification key or jwks file is required" in str(exc_info.value).lower()
 
 
-def test_authorization_enabled_by_default():
-    """RBAC is on by default — manual `app.add_middleware(JWTMiddleware, ...)`
-    without passing ``authorization`` must still enforce scopes.
-    Regression: previously the default left every endpoint unguarded."""
-    middleware = JWTMiddleware(
-        app=None,
-        verification_keys=[JWT_SECRET],
-        algorithm="HS256",
-    )
-
-    assert middleware.authorization is True
-    assert middleware.scope_mappings  # default mappings loaded
-
-
 def test_authorization_enabled_implicitly_with_scope_mappings():
     """Test that authorization is enabled when scope_mappings provided."""
     middleware = JWTMiddleware(
