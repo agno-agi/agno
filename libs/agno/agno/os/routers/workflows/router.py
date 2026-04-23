@@ -215,12 +215,12 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
             )
 
             # Send all events
-            for idx, buffered_event in enumerate(all_events):
+            for ev_index, buffered_event in all_events:
                 # Convert event to dict and add event_index
                 event_dict = (
                     buffered_event.model_dump() if hasattr(buffered_event, "model_dump") else buffered_event.to_dict()
                 )
-                event_dict["event_index"] = idx
+                event_dict["event_index"] = ev_index
                 if "run_id" not in event_dict:
                     event_dict["run_id"] = run_id
 
@@ -247,13 +247,12 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
             )
 
             # Send missed events
-            start_index = (last_event_index + 1) if last_event_index is not None else 0
-            for idx, buffered_event in enumerate(missed_events):
+            for ev_index, buffered_event in missed_events:
                 # Convert event to dict and add event_index
                 event_dict = (
                     buffered_event.model_dump() if hasattr(buffered_event, "model_dump") else buffered_event.to_dict()
                 )
-                event_dict["event_index"] = start_index + idx
+                event_dict["event_index"] = ev_index
                 if "run_id" not in event_dict:
                     event_dict["run_id"] = run_id
 
@@ -674,10 +673,9 @@ async def _resume_stream_generator(
         }
         yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
 
-        start_index = (last_event_index + 1) if last_event_index is not None else 0
-        for idx, buffered_event in enumerate(missed_events):
+        for ev_index, buffered_event in missed_events:
             event_dict = buffered_event.to_dict()
-            event_dict["event_index"] = start_index + idx
+            event_dict["event_index"] = ev_index
             if "run_id" not in event_dict:
                 event_dict["run_id"] = run_id
             event_type = event_dict.get("event", "message")
@@ -705,27 +703,23 @@ async def _resume_stream_generator(
             }
             yield f"event: catch_up\ndata: {json.dumps(meta)}\n\n"
 
-            start_index = (last_event_index + 1) if last_event_index is not None else 0
-            for idx, buffered_event in enumerate(missed_events):
-                current_idx = start_index + idx
+            for ev_index, buffered_event in missed_events:
                 event_dict = buffered_event.to_dict()
-                event_dict["event_index"] = current_idx
+                event_dict["event_index"] = ev_index
                 if "run_id" not in event_dict:
                     event_dict["run_id"] = run_id
                 event_type = event_dict.get("event", "message")
                 yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
-                last_replayed_index = current_idx
+                last_replayed_index = ev_index
 
         # Re-check buffer status after subscribing
         updated_status = event_buffer.get_run_status(run_id)
         if updated_status is not None and updated_status != RunStatus.running:
             remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
             if remaining:
-                replay_start = last_replayed_index + 1
-                for idx, buffered_event in enumerate(remaining):
-                    current_idx = replay_start + idx
+                for ev_index, buffered_event in remaining:
                     event_dict = buffered_event.to_dict()
-                    event_dict["event_index"] = current_idx
+                    event_dict["event_index"] = ev_index
                     if "run_id" not in event_dict:
                         event_dict["run_id"] = run_id
                     event_type = event_dict.get("event", "message")
@@ -742,16 +736,13 @@ async def _resume_stream_generator(
                 if status is None or status != RunStatus.running:
                     # Run ended - replay any remaining events from buffer
                     remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
-                    if remaining:
-                        replay_start = last_replayed_index + 1
-                        for idx, buffered_event in enumerate(remaining):
-                            current_idx = replay_start + idx
-                            event_dict = buffered_event.to_dict()
-                            event_dict["event_index"] = current_idx
-                            if "run_id" not in event_dict:
-                                event_dict["run_id"] = run_id
-                            event_type = event_dict.get("event", "message")
-                            yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                    for ev_index, buffered_event in remaining:
+                        event_dict = buffered_event.to_dict()
+                        event_dict["event_index"] = ev_index
+                        if "run_id" not in event_dict:
+                            event_dict["run_id"] = run_id
+                        event_type = event_dict.get("event", "message")
+                        yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
                     break
                 # Still running - send heartbeat to keep connection alive
                 yield ": heartbeat\n\n"
