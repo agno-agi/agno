@@ -200,6 +200,10 @@ class Gemini(Model):
                 # HttpOptions (or any pydantic model) → plain dict
                 http_options = http_options.model_dump(exclude_none=True)
             elif not isinstance(http_options, dict):
+                log_warning(
+                    f"Unrecognized http_options type {type(http_options).__name__!r} in client_params; "
+                    "falling back to empty dict. Use a plain dict or HttpOptions object instead."
+                )
                 http_options = {}
             # Only inject timeout when the caller has not already set one
             if "timeout" not in http_options:
