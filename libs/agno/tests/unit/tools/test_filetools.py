@@ -1,6 +1,9 @@
 import json
+import shutil
 import tempfile
 from pathlib import Path
+
+import pytest
 
 from agno.tools.file import FileTools
 
@@ -343,3 +346,171 @@ def test_search_content_honors_exclusions():
         assert result["matches_found"] == 1
         assert "real.py" in file_names
         assert not any(".venv" in f for f in file_names)
+
+
+# -----------------------------------------------------------------------------
+# grep tests
+#
+# grep has two backends: ripgrep (when ``rg`` is on PATH) and a pure-Python
+# fallback. The bulk of these tests force the fallback by monkeypatching
+# ``shutil.which`` so the output is deterministic on any CI box. A small
+# sanity test runs against the real ``rg`` when it is installed.
+# -----------------------------------------------------------------------------
+
+
+@pytest.fixture
+def force_python_grep(monkeypatch):
+    """Make ``shutil.which('rg')`` return None so grep uses the Python fallback."""
+    monkeypatch.setattr("agno.tools.file.shutil.which", lambda _name: None)
+
+
+@pytest.fixture
+def sample_tree():
+    """Small tree of files used by several grep tests."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        (base / "alpha.py").write_text("def foo():\n    return 1\n# TODO: refactor\n")
+        (base / "beta.py").write_text("def bar():\n    return 2\n")
+        (base / "README.md").write_text("# Project\n\nSome TODO items.\n")
+        sub = base / "pkg"
+        sub.mkdir()
+        (sub / "gamma.py").write_text("class Gamma:\n    pass\n# TODO: document\n")
+        yield base
+
+
+def test_grep_files_with_matches_default(force_python_grep, sample_tree):
+    """files_with_matches returns the list of files containing the pattern."""
+    f = FileTools(base_dir=sample_tree)
+    result = json.loads(f.grep(pattern=r"TODO"))
+    assert result["mode"] == "files_with_matches"
+    assert result["matches_found"] == 3
+    assert set(result["files"]) == {"alpha.py", "README.md", "pkg/gamma.py"}
+    assert result["truncated"] is False
+
+
+def test_grep_content_mode_returns_line_numbers(force_python_grep, sample_tree):
+    """content mode reports each matching line with its 1-indexed line number."""
+    f = FileTools(base_dir=sample_tree)
+    result = json.loads(f.grep(pattern=r"def \w+", output_mode="content"))
+    assert result["mode"] == "content"
+    files_found = {hit["file"] for hit in result["lines"]}
+    assert files_found == {"alpha.py", "beta.py"}
+    for hit in result["lines"]:
+        assert hit["line"] == 1
+        assert hit["text"].startswith("def ")
+
+
+def test_grep_count_mode_reports_per_file_counts(force_python_grep, sample_tree):
+    """count mode returns one entry per matching file with a per-file count."""
+    f = FileTools(base_dir=sample_tree)
+    result = json.loads(f.grep(pattern=r"TODO", output_mode="count"))
+    assert result["mode"] == "count"
+    counts_by_file = {entry["file"]: entry["count"] for entry in result["counts"]}
+    assert counts_by_file == {"alpha.py": 1, "README.md": 1, "pkg/gamma.py": 1}
+    assert result["matches_found"] == 3
+
+
+def test_grep_case_insensitive(force_python_grep, sample_tree):
+    """ignore_case=True makes the regex match regardless of case."""
+    f = FileTools(base_dir=sample_tree)
+    hits = json.loads(f.grep(pattern=r"todo", ignore_case=True))
+    assert hits["matches_found"] == 3
+    no_hits = json.loads(f.grep(pattern=r"todo"))
+    assert no_hits["matches_found"] == 0
+
+
+def test_grep_include_filter(force_python_grep, sample_tree):
+    """include narrows matches to filenames matching the glob pattern."""
+    f = FileTools(base_dir=sample_tree)
+    result = json.loads(f.grep(pattern=r"TODO", include="*.py"))
+    assert set(result["files"]) == {"alpha.py", "pkg/gamma.py"}
+
+
+def test_grep_limit_truncates(force_python_grep, sample_tree):
+    """limit caps results and marks truncated=True."""
+    f = FileTools(base_dir=sample_tree)
+    result = json.loads(f.grep(pattern=r"TODO", limit=1))
+    assert len(result["files"]) == 1
+    assert result["truncated"] is True
+
+
+def test_grep_no_matches(force_python_grep, sample_tree):
+    """No matches returns an empty list and matches_found=0."""
+    f = FileTools(base_dir=sample_tree)
+    result = json.loads(f.grep(pattern=r"NEVER_PRESENT_TOKEN_xyz"))
+    assert result["matches_found"] == 0
+    assert result["files"] == []
+
+
+def test_grep_empty_pattern_errors(force_python_grep, sample_tree):
+    f = FileTools(base_dir=sample_tree)
+    result = f.grep(pattern="   ")
+    assert result.startswith("Error")
+    assert "Pattern" in result
+
+
+def test_grep_invalid_output_mode_errors(force_python_grep, sample_tree):
+    f = FileTools(base_dir=sample_tree)
+    result = f.grep(pattern=r"x", output_mode="nope")
+    assert result.startswith("Error")
+    assert "output_mode" in result
+
+
+def test_grep_invalid_regex_errors(force_python_grep, sample_tree):
+    """A malformed regex produces a clear error, not an exception."""
+    f = FileTools(base_dir=sample_tree)
+    result = f.grep(pattern=r"[unterminated")
+    assert result.startswith("Error")
+    assert "regex" in result.lower()
+
+
+def test_grep_path_escape_rejected(force_python_grep, sample_tree):
+    """path outside base_dir is refused by the safety check."""
+    f = FileTools(base_dir=sample_tree)
+    result = f.grep(pattern=r".", path="../..")
+    assert result.startswith("Error")
+    assert "outside" in result
+
+
+def test_grep_honors_exclude_patterns(force_python_grep, sample_tree):
+    """Default exclusions (e.g. .venv) hide matches from noise directories."""
+    venv_pkg = sample_tree / ".venv" / "lib"
+    venv_pkg.mkdir(parents=True)
+    (venv_pkg / "hidden.py").write_text("# TODO: hidden\n")
+
+    f = FileTools(base_dir=sample_tree)
+    result = json.loads(f.grep(pattern=r"TODO"))
+    assert not any(".venv" in p for p in result["files"])
+
+
+def test_grep_disabled_by_flag():
+    """grep is excluded from the toolkit when enable_grep=False."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        f = FileTools(base_dir=Path(tmp_dir), enable_grep=False)
+        assert "grep" not in f.functions
+
+
+def test_grep_multiline_spans_lines(force_python_grep):
+    """multiline=True lets the pattern match across newline boundaries."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        (base / "a.py").write_text("class Foo:\n    def bar(self):\n        return 1\n")
+        f = FileTools(base_dir=base)
+
+        # Without multiline, '.' does not cross lines; this pattern should miss.
+        result_single = json.loads(f.grep(pattern=r"class Foo:.*def bar"))
+        assert result_single["matches_found"] == 0
+
+        # With multiline, DOTALL lets '.' match '\n' and the pattern hits.
+        result_multi = json.loads(f.grep(pattern=r"class Foo:.*def bar", multiline=True))
+        assert result_multi["matches_found"] == 1
+
+
+@pytest.mark.skipif(shutil.which("rg") is None, reason="ripgrep not installed")
+def test_grep_ripgrep_backend_smoke(sample_tree):
+    """When rg is on PATH, grep should produce the same shape of results."""
+    f = FileTools(base_dir=sample_tree)
+    result = json.loads(f.grep(pattern=r"TODO"))
+    assert result["mode"] == "files_with_matches"
+    assert result["matches_found"] == 3
+    assert set(result["files"]) == {"alpha.py", "README.md", "pkg/gamma.py"}
