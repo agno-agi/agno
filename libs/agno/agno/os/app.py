@@ -50,7 +50,6 @@ from agno.os.routers.components import get_components_router
 from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
-from agno.os.routers.home import get_home_router
 from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.learnings import get_learnings_router
 from agno.os.routers.memory import get_memory_router
@@ -630,10 +629,6 @@ class AgentOS:
 
     def _add_built_in_routes(self, app: FastAPI) -> None:
         """Add all AgentOSbuilt-in routes to the given app."""
-        # Always add the home router: explicit routes win over the root MCP Mount, and
-        # without it GET / falls through to the MCP app's plain-text 404.
-        self._add_router(app, get_home_router(self))
-
         self._add_router(app, get_health_router(health_endpoint="/health"))
         self._add_router(app, get_info_router(self))
         self._add_router(app, get_base_router(self, settings=self.settings))

@@ -210,11 +210,10 @@ def test_custom_app_endpoints_preserved(test_agent: Agent):
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
 
-    response = client.get("/")
+    response = client.get("/info")
     assert response.status_code == 200
     data = response.json()
-    assert "name" in data
-    assert "AgentOS API" in data["name"]
+    assert data["name"] == "AgentOS API"
 
 
 def test_custom_lifespan_integration(test_agent: Agent):
@@ -305,7 +304,7 @@ def test_available_endpoints_with_custom_app(test_agent: Agent, test_team: Team,
     response = client.get("/health")
     assert response.status_code == 200
 
-    response = client.get("/")
+    response = client.get("/info")
     assert response.status_code == 200
 
     # Test custom endpoint still works
@@ -352,7 +351,7 @@ def test_route_listing_with_custom_app(test_agent: Agent):
     assert "/custom" in route_paths
     assert "/custom-post" in route_paths
     assert "/health" in route_paths
-    assert "/" in route_paths
+    assert "/info" in route_paths
 
     # Check methods
     assert "GET" in route_methods
@@ -536,16 +535,15 @@ def test_multiple_conflicting_routes_preserve_agentos(test_agent: Agent):
     app = agent_os.get_app()
     client = TestClient(app)
 
-    # All AgentOS routes should override custom routes
+    # AgentOS routes should override conflicting custom routes
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"  # AgentOS health endpoint
 
+    # AgentOS does not own /, so the custom route is preserved
     response = client.get("/")
     assert response.status_code == 200
-    data = response.json()
-    assert "name" in data  # AgentOS home endpoint
-    assert "AgentOS API" in data["name"]
+    assert response.json() == {"message": "custom home"}
 
     response = client.get("/sessions")
     assert response.status_code == 200
@@ -691,12 +689,12 @@ def test_complex_route_conflict_scenario(test_agent: Agent, test_team: Team, tes
     app = agent_os.get_app()
     client = TestClient(app)
 
-    # AgentOS should override conflicting GET routes
+    # AgentOS does not own /, so the custom route is preserved
     response = client.get("/")
     assert response.status_code == 200
-    data = response.json()
-    assert "AgentOS" in str(data) or "name" in data  # AgentOS format
+    assert response.json() == {"app": "custom", "version": "1.0"}
 
+    # AgentOS should override conflicting GET routes it owns
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"  # AgentOS health

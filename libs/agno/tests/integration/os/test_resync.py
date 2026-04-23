@@ -71,28 +71,26 @@ class TestResyncPreservesEndpoints:
             assert response.status_code == 200
             assert response.json()["status"] == "ok"
 
-    def test_resync_preserves_home_endpoint(self, test_agent: Agent):
-        """Test that resync preserves the home endpoint."""
+    def test_resync_preserves_info_endpoint(self, test_agent: Agent):
+        """Test that resync preserves the /info endpoint."""
         agent_os = AgentOS(agents=[test_agent])
         app = agent_os.get_app()
 
         with TestClient(app) as client:
-            # Verify home endpoint works before resync
-            response = client.get("/")
+            # Verify info endpoint works before resync
+            response = client.get("/info")
             assert response.status_code == 200
             data = response.json()
-            assert "name" in data
-            assert "AgentOS API" in data["name"]
+            assert data["name"] == "AgentOS API"
 
             # Perform resync
             agent_os.resync(app=app)
 
-            # Verify home endpoint still works after resync
-            response = client.get("/")
+            # Verify info endpoint still works after resync
+            response = client.get("/info")
             assert response.status_code == 200
             data = response.json()
-            assert "name" in data
-            assert "AgentOS API" in data["name"]
+            assert data["name"] == "AgentOS API"
 
     def test_resync_preserves_config_endpoint(self, test_agent: Agent):
         """Test that resync preserves the config endpoint."""
@@ -197,7 +195,7 @@ class TestResyncPreservesEndpoints:
         app = agent_os.get_app()
 
         core_endpoints = [
-            "/",
+            "/info",
             "/health",
             "/config",
             "/agents",
@@ -385,8 +383,8 @@ class TestResyncWithLifespanAdditions:
             workflows = response.json()
             assert len(workflows) == 2
 
-    def test_home_endpoint_works_after_lifespan_resync(self, test_agent: Agent, second_agent: Agent):
-        """Test that home (/) endpoint works after resync during lifespan."""
+    def test_info_endpoint_works_after_lifespan_resync(self, test_agent: Agent, second_agent: Agent):
+        """Test that the /info endpoint works after resync during lifespan."""
         lifespan_executed = False
 
         @asynccontextmanager
@@ -409,12 +407,11 @@ class TestResyncWithLifespanAdditions:
             # Verify lifespan was executed
             assert lifespan_executed is True
 
-            # Verify home endpoint works after resync
-            response = client.get("/")
+            # Verify info endpoint works after resync
+            response = client.get("/info")
             assert response.status_code == 200
             data = response.json()
-            assert "name" in data
-            assert "AgentOS API" in data["name"]
+            assert data["name"] == "AgentOS API"
 
     def test_new_agent_endpoint_available_after_resync(self, test_agent: Agent, second_agent: Agent):
         """Test that individual agent endpoint is available for agents added during lifespan."""
@@ -612,12 +609,11 @@ class TestResyncMultipleTimes:
             for i in range(3):
                 agent_os.resync(app=app)
 
-                # Verify home endpoint still works after each resync
-                response = client.get("/")
-                assert response.status_code == 200, f"Home (/) failed after resync {i + 1}"
+                # Verify info endpoint still works after each resync
+                response = client.get("/info")
+                assert response.status_code == 200, f"Info failed after resync {i + 1}"
                 data = response.json()
-                assert "name" in data, f"Home (/) missing 'name' after resync {i + 1}"
-                assert "AgentOS API" in data["name"], f"Home (/) missing 'AgentOS API' after resync {i + 1}"
+                assert data["name"] == "AgentOS API", f"/info missing 'AgentOS API' after resync {i + 1}"
 
                 # Verify health endpoint still works after each resync
                 response = client.get("/health")
