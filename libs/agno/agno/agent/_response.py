@@ -956,6 +956,35 @@ def convert_response_to_structured_format(
                 log_warning("Something went wrong. Run response content is not a string")
 
 
+def _finalize_streamed_structured_output(
+    agent: Agent,
+    run_response: RunOutput,
+    model_response: ModelResponse,
+    output_schema: Optional[Union[Type[BaseModel], Dict]],
+    should_parse_structured_output: bool,
+    stream_events: bool,
+    run_context: Optional[RunContext] = None,
+) -> Iterator[RunOutputEvent]:
+    if not should_parse_structured_output or model_response.content is None:
+        return
+
+    convert_response_to_structured_format(agent, model_response, run_context=run_context)
+    content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
+    run_response.content = model_response.content
+    run_response.content_type = content_type
+    if stream_events:
+        yield handle_event(  # type: ignore
+            create_run_output_content_event(
+                from_run_response=run_response,
+                content=run_response.content,
+                content_type=content_type,
+            ),
+            run_response,
+            events_to_skip=agent.events_to_skip,  # type: ignore
+            store_events=agent.store_events,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Run response update
 # ---------------------------------------------------------------------------
@@ -1152,23 +1181,15 @@ def handle_model_response_stream(
             run_context=run_context,
         )
 
-    # Parse final accumulated content once streaming completes.
-    if should_parse_structured_output and model_response.content is not None:
-        convert_response_to_structured_format(agent, model_response, run_context=run_context)
-        content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
-        run_response.content = model_response.content
-        run_response.content_type = content_type
-        if stream_events:
-            yield handle_event(  # type: ignore
-                create_run_output_content_event(
-                    from_run_response=run_response,
-                    content=run_response.content,
-                    content_type=content_type,
-                ),
-                run_response,
-                events_to_skip=agent.events_to_skip,  # type: ignore
-                store_events=agent.store_events,
-            )
+    yield from _finalize_streamed_structured_output(
+        agent=agent,
+        run_response=run_response,
+        model_response=model_response,
+        output_schema=output_schema,
+        should_parse_structured_output=should_parse_structured_output,
+        stream_events=stream_events,
+        run_context=run_context,
+    )
 
     # Update RunOutput
     # Build a list of messages that should be added to the RunOutput
@@ -1323,23 +1344,16 @@ async def ahandle_model_response_stream(
         ):
             yield event
 
-    # Parse final accumulated content once streaming completes.
-    if should_parse_structured_output and model_response.content is not None:
-        convert_response_to_structured_format(agent, model_response, run_context=run_context)
-        content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
-        run_response.content = model_response.content
-        run_response.content_type = content_type
-        if stream_events:
-            yield handle_event(  # type: ignore
-                create_run_output_content_event(
-                    from_run_response=run_response,
-                    content=run_response.content,
-                    content_type=content_type,
-                ),
-                run_response,
-                events_to_skip=agent.events_to_skip,  # type: ignore
-                store_events=agent.store_events,
-            )
+    for event in _finalize_streamed_structured_output(
+        agent=agent,
+        run_response=run_response,
+        model_response=model_response,
+        output_schema=output_schema,
+        should_parse_structured_output=should_parse_structured_output,
+        stream_events=stream_events,
+        run_context=run_context,
+    ):
+        yield event
 
     # Update RunOutput
     # Build a list of messages that should be added to the RunOutput
