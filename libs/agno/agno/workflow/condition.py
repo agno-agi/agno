@@ -543,6 +543,18 @@ class Condition:
                             logger.info(f"Early termination requested by condition step {step_name}")
                             break
                 else:
+                    # Propagate executor HITL pause from inner step
+                    if getattr(step_output, "is_paused", False):
+                        all_results.append(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=conditional_step_id,
+                            step_type=StepType.CONDITION,
+                            content=f"Condition {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.append(step_output)
                     step_name = getattr(step, "name", f"step_{i}")
                     condition_step_outputs[step_name] = step_output
@@ -758,6 +770,18 @@ class Condition:
                 step_name = getattr(step, "name", f"step_{i}")
                 log_debug(f"Condition step {step_name} streaming completed")
 
+                # Propagate executor HITL pause from inner step
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=conditional_step_id,
+                        step_type=StepType.CONDITION,
+                        content=f"Condition {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
+
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
                         condition_step_outputs[step_name] = step_outputs_for_step[0]
@@ -934,6 +958,18 @@ class Condition:
                             logger.info(f"Early termination requested by condition step {step_name}")
                             break
                 else:
+                    # Propagate executor HITL pause from inner step
+                    if getattr(step_output, "is_paused", False):
+                        all_results.append(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=conditional_step_id,
+                            step_type=StepType.CONDITION,
+                            content=f"Condition {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.append(step_output)
                     step_name = getattr(step, "name", f"step_{i}")
                     condition_step_outputs[step_name] = step_output
@@ -1149,6 +1185,18 @@ class Condition:
 
                 step_name = getattr(step, "name", f"step_{i}")
                 log_debug(f"Condition step {step_name} async streaming completed")
+
+                # Propagate executor HITL pause from inner step
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=conditional_step_id,
+                        step_type=StepType.CONDITION,
+                        content=f"Condition {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
 
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
