@@ -1,4 +1,6 @@
 import json
+import os
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
@@ -26,6 +28,68 @@ TEXT_EXTENSIONS = {
     ".log",
     ".rst",
 }
+
+DEFAULT_EXCLUDE_PATTERNS = [
+    # Environments and secrets
+    ".venv",
+    "venv",
+    ".env*",
+    "*.env",
+    # Version control
+    ".git",
+    ".hg",
+    ".svn",
+    # Python caches and build artifacts
+    "__pycache__",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytest_cache",
+    ".tox",
+    ".nox",
+    ".ipynb_checkpoints",
+    "dist",
+    "build",
+    "*.egg-info",
+    # JavaScript and TypeScript
+    "node_modules",
+    ".next",
+    ".turbo",
+    ".nuxt",
+    ".svelte-kit",
+    ".docusaurus",
+    ".parcel-cache",
+    ".nyc_output",
+    "*.tsbuildinfo",
+    ".serverless",
+    # JVM (Java, Kotlin, Android, Gradle)
+    ".gradle",
+    ".kotlin",
+    "*.class",
+    # Dart and Flutter
+    ".dart_tool",
+    ".flutter-plugins",
+    ".flutter-plugins-dependencies",
+    # Swift and Xcode
+    ".build",
+    "xcuserdata",
+    "*.xcuserstate",
+    # Ruby
+    ".bundle",
+    "*.gem",
+    ".yardoc",
+    # Elixir
+    "_build",
+    ".elixir_ls",
+    # .NET / Visual Studio
+    ".vs",
+    # Infrastructure as Code (state files hidden by default for security)
+    ".terraform",
+    "*.tfstate",
+    "*.tfstate.*",
+    ".terragrunt-cache",
+    # OS artifacts
+    ".DS_Store",
+]
 
 
 def _format_size(size: int) -> str:
@@ -55,6 +119,25 @@ def _extract_snippet(content: str, query: str, context_chars: int = 200) -> str:
 
 
 class FileTools(Toolkit):
+    """Toolkit for read/write access to a local directory tree.
+
+    By default, results from ``list_files``, ``search_files``, and ``search_content``
+    skip common noise directories (``.venv``, ``.git``, ``__pycache__``,
+    ``node_modules``, etc.). See ``DEFAULT_EXCLUDE_PATTERNS`` for the full list.
+
+    To customize:
+    - Pass ``exclude_patterns=[...]`` with your own list of fnmatch-style patterns.
+    - Pass ``exclude_patterns=[]`` to disable exclusion entirely (prior behavior).
+
+    Each pattern is matched with ``fnmatch`` against *any path component* of the
+    file's path relative to ``base_dir``. A file is excluded if any component
+    matches any pattern, so ``.git`` will exclude both ``.git/`` at the root
+    and ``vendor/thing/.git/`` nested deep.
+
+    Note: ``exclude_patterns`` does not parse ``.gitignore`` files — it only
+    applies the literal patterns provided.
+    """
+
     def __init__(
         self,
         base_dir: Optional[Path] = None,
@@ -70,6 +153,7 @@ class FileTools(Toolkit):
         max_file_length: int = 10000000,
         max_file_lines: int = 100000,
         line_separator: str = "\n",
+        exclude_patterns: Optional[List[str]] = None,
         all: bool = False,
         **kwargs,
     ):
@@ -80,6 +164,9 @@ class FileTools(Toolkit):
         self.max_file_lines = max_file_lines
         self.line_separator = line_separator
         self.expose_base_directory = expose_base_directory
+        self.exclude_patterns: List[str] = (
+            exclude_patterns if exclude_patterns is not None else list(DEFAULT_EXCLUDE_PATTERNS)
+        )
         if all or enable_save_file:
             tools.append(self.save_file)
         if all or enable_read_file:
@@ -98,6 +185,16 @@ class FileTools(Toolkit):
             tools.append(self.search_content)
 
         super().__init__(name="file_tools", tools=tools, **kwargs)
+
+    def _is_excluded(self, path: Path) -> bool:
+        """Return True if any component of ``path`` (relative to ``base_dir``) matches an exclude pattern."""
+        if not self.exclude_patterns:
+            return False
+        try:
+            rel = path.relative_to(self.base_dir)
+        except ValueError:
+            return False
+        return any(fnmatch(part, pattern) for part in rel.parts for pattern in self.exclude_patterns)
 
     def check_escape(self, relative_path: str) -> Tuple[bool, Path]:
         """Check if the file path is within the base directory.
@@ -247,7 +344,14 @@ class FileTools(Toolkit):
             log_debug(f"Reading files in : {self.base_dir}/{directory}")
             safe, d = self.check_escape(directory)
             if safe:
-                return json.dumps([str(file_path.relative_to(self.base_dir)) for file_path in d.iterdir()], indent=4)
+                return json.dumps(
+                    [
+                        str(file_path.relative_to(self.base_dir))
+                        for file_path in d.iterdir()
+                        if not self._is_excluded(file_path)
+                    ],
+                    indent=4,
+                )
             else:
                 return "{}"
         except Exception as e:
@@ -265,7 +369,7 @@ class FileTools(Toolkit):
                 return "Error: Pattern cannot be empty"
 
             log_debug(f"Searching files in {self.base_dir} with pattern {pattern}")
-            matching_files = list(self.base_dir.glob(pattern))
+            matching_files = [p for p in self.base_dir.glob(pattern) if not self._is_excluded(p)]
             result = None
             if self.expose_base_directory:
                 file_paths = [str(file_path) for file_path in matching_files]
@@ -320,31 +424,42 @@ class FileTools(Toolkit):
             matches: List[dict] = []
             max_file_size = 500 * 1024  # 500KB
 
-            for file_path in search_dir.rglob("*"):
-                if len(matches) >= limit:
+            walk_done = False
+            for dirpath, dirnames, filenames in os.walk(search_dir):
+                if walk_done:
                     break
-                if not file_path.is_file():
-                    continue
-                if file_path.suffix.lower() not in TEXT_EXTENSIONS:
-                    continue
-                if file_path.stat().st_size > max_file_size:
-                    continue
+                # Prune excluded directories in place so os.walk doesn't descend into them.
+                dirnames[:] = [d for d in dirnames if not self._is_excluded(Path(dirpath) / d)]
+                for filename in filenames:
+                    if len(matches) >= limit:
+                        walk_done = True
+                        break
+                    file_path = Path(dirpath) / filename
+                    if self._is_excluded(file_path):
+                        continue
+                    if file_path.suffix.lower() not in TEXT_EXTENSIONS:
+                        continue
+                    try:
+                        if file_path.stat().st_size > max_file_size:
+                            continue
+                    except OSError:
+                        continue
 
-                try:
-                    content = file_path.read_text(encoding="utf-8", errors="ignore")
-                except Exception:
-                    continue
+                    try:
+                        content = file_path.read_text(encoding="utf-8", errors="ignore")
+                    except Exception:
+                        continue
 
-                if lower_query in content.lower():
-                    rel_path = str(file_path.relative_to(self.base_dir))
-                    snippet = _extract_snippet(content, query)
-                    matches.append(
-                        {
-                            "file": rel_path,
-                            "size": _format_size(file_path.stat().st_size),
-                            "snippet": snippet,
-                        }
-                    )
+                    if lower_query in content.lower():
+                        rel_path = str(file_path.relative_to(self.base_dir))
+                        snippet = _extract_snippet(content, query)
+                        matches.append(
+                            {
+                                "file": rel_path,
+                                "size": _format_size(file_path.stat().st_size),
+                                "snippet": snippet,
+                            }
+                        )
 
             result = {
                 "query": query,
