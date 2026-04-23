@@ -24,8 +24,7 @@ dspy.configure(lm=lm)
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 agent = DSPyAgent(
-    agent_id="dspy-chat",
-    agent_name="DSPy Chat",
+    name="DSPy Chat",
     program=dspy.ChainOfThought("question -> answer"),
     db=db,
 )

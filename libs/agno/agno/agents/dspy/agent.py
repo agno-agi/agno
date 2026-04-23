@@ -21,8 +21,8 @@ class DSPyAgent(BaseExternalAgent):
     be used with AgentOS endpoints or standalone via .run() / .print_response().
 
     Args:
-        agent_id: Unique identifier for this agent.
-        agent_name: Display name for this agent.
+        name: Display name for this agent.
+        id: Unique identifier (auto-generated from name if not set).
         program: A DSPy Module instance (e.g. dspy.Predict, dspy.ChainOfThought, dspy.ReAct, or custom).
         input_field: Name of the input field in the DSPy signature. Defaults to "question".
         output_field: Name of the output field to extract from the Prediction. Defaults to "answer".
@@ -33,11 +33,10 @@ class DSPyAgent(BaseExternalAgent):
         import dspy
         from agno.agents.dspy import DSPyAgent
 
-        dspy.configure(lm=dspy.LM("openai/gpt-4o-mini"))
+        dspy.configure(lm=dspy.LM("openai/gpt-5.4"))
 
         agent = DSPyAgent(
-            agent_id="dspy-qa",
-            agent_name="DSPy Q&A",
+            name="DSPy Q&A",
             program=dspy.ChainOfThought("question -> answer"),
         )
 
@@ -156,7 +155,7 @@ class DSPyAgent(BaseExternalAgent):
                     if chunk.chunk:
                         yield RunContentEvent(
                             run_id=run_id,
-                            agent_id=self.id,
+                            agent_id=self.get_id(),
                             agent_name=self.name or "",
                             content=chunk.chunk,
                         )
@@ -172,7 +171,7 @@ class DSPyAgent(BaseExternalAgent):
                             t_id = str(uuid4())
                             yield ToolCallStartedEvent(
                                 run_id=run_id,
-                                agent_id=self.id,
+                                agent_id=self.get_id(),
                                 agent_name=self.name or "",
                                 tool=ToolExecution(
                                     tool_call_id=t_id,
@@ -182,7 +181,7 @@ class DSPyAgent(BaseExternalAgent):
                             )
                             yield ToolCallCompletedEvent(
                                 run_id=run_id,
-                                agent_id=self.id,
+                                agent_id=self.get_id(),
                                 agent_name=self.name or "",
                                 tool=ToolExecution(
                                     tool_call_id=t_id,

@@ -33,8 +33,8 @@ class ClaudeAgent(BaseExternalAgent):
     internally by the SDK — you configure tools via allowed_tools and MCP servers.
 
     Args:
-        agent_id: Unique identifier for this agent.
-        agent_name: Display name for this agent.
+        name: Display name for this agent.
+        id: Unique identifier (auto-generated from name if not set).
         system_prompt: Optional system prompt for the agent.
         model: Model to use (e.g. "claude-sonnet-4-20250514"). Defaults to SDK default.
         allowed_tools: List of tools the agent can use (e.g. ["Read", "Bash", "WebSearch"]).
@@ -50,8 +50,7 @@ class ClaudeAgent(BaseExternalAgent):
         from agno.agents.claude import ClaudeAgent
 
         agent = ClaudeAgent(
-            agent_id="claude-coder",
-            agent_name="Claude Coder",
+            name="Claude Coder",
             allowed_tools=["Read", "Edit", "Bash"],
             permission_mode="acceptEdits",
             max_turns=10,
@@ -209,7 +208,7 @@ class ClaudeAgent(BaseExternalAgent):
                         if text:
                             yield RunContentEvent(
                                 run_id=run_id,
-                                agent_id=self.id,
+                                agent_id=self.get_id(),
                                 agent_name=self.name or "",
                                 content=text,
                             )
@@ -229,7 +228,7 @@ class ClaudeAgent(BaseExternalAgent):
                         if not got_stream_events and block.text:
                             yield RunContentEvent(
                                 run_id=run_id,
-                                agent_id=self.id,
+                                agent_id=self.get_id(),
                                 agent_name=self.name or "",
                                 content=block.text,
                             )
@@ -243,7 +242,7 @@ class ClaudeAgent(BaseExternalAgent):
                             tool_info_map[tool_id] = {"name": tool_name, "args": tool_args}
                             yield ToolCallStartedEvent(
                                 run_id=run_id,
-                                agent_id=self.id,
+                                agent_id=self.get_id(),
                                 agent_name=self.name or "",
                                 tool=ToolExecution(
                                     tool_call_id=tool_id,
@@ -268,7 +267,7 @@ class ClaudeAgent(BaseExternalAgent):
                             info = tool_info_map.get(tool_use_id, {})
                             yield ToolCallCompletedEvent(
                                 run_id=run_id,
-                                agent_id=self.id,
+                                agent_id=self.get_id(),
                                 agent_name=self.name or "",
                                 tool=ToolExecution(
                                     tool_call_id=tool_use_id,

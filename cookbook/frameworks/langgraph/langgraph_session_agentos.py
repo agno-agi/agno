@@ -67,8 +67,7 @@ compiled = graph.compile()
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 agent = LangGraphAgent(
-    agent_id="langgraph-search",
-    agent_name="LangGraph Search Agent",
+    name="LangGraph Search Agent",
     description="A LangGraph agent with web search, served through AgentOS",
     graph=compiled,
     db=db,

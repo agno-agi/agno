@@ -12,8 +12,7 @@ from agno.agents.claude import ClaudeAgent
 
 # ----- Wrap Claude Agent SDK for Agno -----
 agent = ClaudeAgent(
-    agent_id="claude-assistant",
-    agent_name="Claude Assistant",
+    name="Claude Assistant",
     model="claude-sonnet-4-20250514",
     max_turns=3,
 )

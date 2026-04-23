@@ -34,8 +34,7 @@ compiled = graph.compile()
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 agent = LangGraphAgent(
-    agent_id="langgraph-chat",
-    agent_name="LangGraph Chat",
+    name="LangGraph Chat",
     graph=compiled,
     db=db,
 )

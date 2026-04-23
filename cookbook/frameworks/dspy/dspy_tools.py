@@ -44,8 +44,7 @@ react_program = dspy.ReAct(
 )
 
 agent = DSPyAgent(
-    agent_id="dspy-react",
-    agent_name="DSPy ReAct Agent",
+    name="DSPy ReAct Agent",
     program=react_program,
 )
 

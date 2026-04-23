@@ -46,20 +46,22 @@ class BaseExternalAgent:
     - _arun_adapter_stream(input, **kwargs) -> AsyncIterator[RunOutputEvent]  (streaming)
     """
 
-    agent_id: str
-    agent_name: Optional[str] = None
+    name: Optional[str] = None
+    id: Optional[str] = None
     description: Optional[str] = None
     framework: str = "external"
     markdown: bool = True
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
-    @property
-    def id(self) -> str:
-        return self.agent_id
+    def __post_init__(self) -> None:
+        from agno.utils.string import generate_id_from_name
 
-    @property
-    def name(self) -> Optional[str]:
-        return self.agent_name or self.agent_id
+        if self.id is None:
+            self.id = generate_id_from_name(self.name)
+
+    def get_id(self) -> str:
+        """Return the agent ID, guaranteed non-None after __post_init__."""
+        return self.id or ""
 
     # ---------------------------------------------------------------------------
     # Public async API (satisfies AgentProtocol protocol)
@@ -376,7 +378,7 @@ class BaseExternalAgent:
         """Create a new AgentSession."""
         return AgentSession(
             session_id=session_id,
-            agent_id=self.id,
+            agent_id=self.get_id(),
             user_id=user_id,
             session_data={},
             agent_data={"agent_id": self.id, "agent_name": self.name, "framework": self.framework},
@@ -510,7 +512,7 @@ class BaseExternalAgent:
 
         return RunOutput(
             run_id=run_id,
-            agent_id=self.id,
+            agent_id=self.get_id(),
             agent_name=self.name,
             session_id=session_id,
             user_id=user_id,
@@ -630,7 +632,7 @@ class BaseExternalAgent:
 
         yield RunStartedEvent(
             run_id=run_id,
-            agent_id=self.id,
+            agent_id=self.get_id(),
             agent_name=self.name or "",
             session_id=session_id,
         )
@@ -689,7 +691,7 @@ class BaseExternalAgent:
         if run_error is not None:
             yield RunErrorEvent(
                 run_id=run_id,
-                agent_id=self.id,
+                agent_id=self.get_id(),
                 agent_name=self.name or "",
                 session_id=session_id,
                 content=str(run_error),
@@ -697,7 +699,7 @@ class BaseExternalAgent:
         else:
             yield RunCompletedEvent(
                 run_id=run_id,
-                agent_id=self.id,
+                agent_id=self.get_id(),
                 agent_name=self.name or "",
                 session_id=session_id,
                 content=accumulated_content,

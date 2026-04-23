@@ -37,8 +37,7 @@ from agno.os.app import AgentOS
 # Create the Claude Agent SDK agent
 # ---------------------------------------------------------------------------
 claude_agent = ClaudeAgent(
-    agent_id="claude-assistant",
-    agent_name="Claude Assistant",
+    name="Claude Assistant",
     description="A Claude-powered assistant served through AgentOS",
     model="claude-sonnet-4-20250514",
     allowed_tools=["Read", "Bash"],

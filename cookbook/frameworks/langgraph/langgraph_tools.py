@@ -69,8 +69,7 @@ compiled = graph.compile()
 
 # ----- Wrap for Agno -----
 agent = LangGraphAgent(
-    agent_id="langgraph-tool-agent",
-    agent_name="LangGraph Tool Agent",
+    name="LangGraph Tool Agent",
     graph=compiled,
 )
 

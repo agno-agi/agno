@@ -21,8 +21,8 @@ class LangGraphAgent(BaseExternalAgent):
     or standalone via .run() / .print_response().
 
     Args:
-        agent_id: Unique identifier for this agent.
-        agent_name: Display name for this agent.
+        name: Display name for this agent.
+        id: Unique identifier (auto-generated from name if not set).
         graph: A LangGraph compiled graph (from graph.compile()).
         input_key: Key in the graph state used for input messages. Defaults to "messages".
         output_key: Key in the graph state used for output messages. Defaults to "messages".
@@ -34,7 +34,7 @@ class LangGraphAgent(BaseExternalAgent):
         from agno.agents.langgraph import LangGraphAgent
 
         def chatbot(state: MessagesState):
-            return {"messages": [ChatOpenAI(model="gpt-4o").invoke(state["messages"])]}
+            return {"messages": [ChatOpenAI(model="gpt-5.4").invoke(state["messages"])]}
 
         graph = StateGraph(MessagesState)
         graph.add_node("chatbot", chatbot)
@@ -42,8 +42,7 @@ class LangGraphAgent(BaseExternalAgent):
         compiled = graph.compile()
 
         agent = LangGraphAgent(
-            agent_id="my-agent",
-            agent_name="My LangGraph Agent",
+            name="My LangGraph Agent",
             graph=compiled,
         )
 
@@ -120,7 +119,7 @@ class LangGraphAgent(BaseExternalAgent):
                     if isinstance(chunk.content, str):
                         yield RunContentEvent(
                             run_id=run_id,
-                            agent_id=self.id,
+                            agent_id=self.get_id(),
                             agent_name=self.name or "",
                             content=chunk.content,
                         )
@@ -131,7 +130,7 @@ class LangGraphAgent(BaseExternalAgent):
                 tool_run_id = event.get("run_id", str(uuid4()))
                 yield ToolCallStartedEvent(
                     run_id=run_id,
-                    agent_id=self.id,
+                    agent_id=self.get_id(),
                     agent_name=self.name or "",
                     tool=ToolExecution(
                         tool_call_id=tool_run_id,
@@ -147,7 +146,7 @@ class LangGraphAgent(BaseExternalAgent):
                 result_str = str(output.content) if hasattr(output, "content") else str(output)
                 yield ToolCallCompletedEvent(
                     run_id=run_id,
-                    agent_id=self.id,
+                    agent_id=self.get_id(),
                     agent_name=self.name or "",
                     tool=ToolExecution(
                         tool_call_id=tool_run_id,
