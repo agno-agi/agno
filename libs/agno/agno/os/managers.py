@@ -292,6 +292,17 @@ class EventsBuffer:
         """Get the current number of events for a run"""
         return len(self.events.get(run_id, []))
 
+    def get_last_index(self, run_id: str) -> int:
+        """Get the monotonic index of the last event added for a run.
+
+        Returns -1 if no events have been added for this run.
+        Unlike get_event_count(), this survives buffer trims.
+        """
+        next_idx = self._next_index.get(run_id)
+        if next_idx is None or next_idx == 0:
+            return -1
+        return next_idx - 1
+
     def set_run_completed(self, run_id: str, status: RunStatus) -> None:
         """Mark a run as completed/cancelled/error for future cleanup"""
         if run_id in self.run_metadata:

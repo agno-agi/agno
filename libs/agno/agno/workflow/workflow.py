@@ -4019,8 +4019,8 @@ class Workflow:
                         if isinstance(event, WfRunOutput):
                             continue
 
-                        # Get the event_index that _handle_event already assigned
-                        event_index = event_buffer.get_event_count(run_id) - 1
+                        # Get the monotonic index that _handle_event already assigned
+                        event_index = event_buffer.get_last_index(run_id)
 
                         # Format as SSE
                         sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
@@ -4052,8 +4052,8 @@ class Workflow:
                         if isinstance(event, WfRunOutput):
                             continue
 
-                        # Get the event_index that _handle_event already assigned
-                        event_index = event_buffer.get_event_count(run_id) - 1
+                        # Get the monotonic index that _handle_event already assigned
+                        event_index = event_buffer.get_last_index(run_id)
 
                         # Format as SSE
                         sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
