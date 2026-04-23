@@ -64,6 +64,7 @@ class TeamResponse(BaseModel):
             description=factory.description,
             db_id=factory.db.id if factory.db else None,
             is_factory=True,
+            input_schema=factory_input_schema,
             factory_input_schema=factory_input_schema,
         )
 
