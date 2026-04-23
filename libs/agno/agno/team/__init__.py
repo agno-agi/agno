@@ -1,5 +1,4 @@
 from agno.models.fallback import FallbackConfig
-from agno.team.factory import TeamFactory
 from agno.run.team import (
     FollowupsCompletedEvent,
     FollowupsStartedEvent,
@@ -19,6 +18,7 @@ from agno.run.team import (
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
+from agno.team.factory import TeamFactory
 from agno.team.mode import TeamMode
 from agno.team.remote import RemoteTeam
 from agno.team.task import Task, TaskList, TaskStatus

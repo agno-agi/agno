@@ -1,8 +1,8 @@
 from agno.workflow.agent import WorkflowAgent
-from agno.workflow.factory import WorkflowFactory
 from agno.workflow.cel import CEL_AVAILABLE, validate_cel_expression
 from agno.workflow.condition import Condition
 from agno.workflow.decorators import pause
+from agno.workflow.factory import WorkflowFactory
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
 from agno.workflow.remote import RemoteWorkflow

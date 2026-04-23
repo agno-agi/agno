@@ -110,4 +110,6 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="team_and_member_agent_both_level_approval:app", port=7777, reload=True)
+    agent_os.serve(
+        app="team_and_member_agent_both_level_approval:app", port=7777, reload=True
+    )

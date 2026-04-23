@@ -13,8 +13,8 @@ from rich import box
 from rich.panel import Panel
 from starlette.requests import Request
 
-from agno.agent.protocol import AgentProtocol
 from agno.agent import Agent, AgentFactory, RemoteAgent
+from agno.agent.protocol import AgentProtocol
 from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
@@ -540,7 +540,7 @@ class AgentOS:
 
         if not self._agents:
             return
-            
+
         for agent in self._agents:
             # Set the default db to agents without their own
             if self.db is not None and agent.db is None:

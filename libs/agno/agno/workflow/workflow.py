@@ -1600,7 +1600,6 @@ class Workflow:
         if isinstance(event, (RunOutput, TeamRunOutput)):
             return event
 
-
         if self.store_events:
             # Check if this event type should be skipped
             if self.events_to_skip:

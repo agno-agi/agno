@@ -2816,6 +2816,18 @@ def arun_dispatch(  # type: ignore
         )
 
 
+def _sync_requirements_with_tools(run_response: RunOutput, updated_tools: List[Any]) -> None:
+    """Sync requirements to reference the new tool objects so is_resolved()
+    checks operate on the same instances that handle_tool_call_updates modifies.
+    """
+    if run_response.requirements:
+        updated_tools_map = {t.tool_call_id: t for t in updated_tools if t.tool_call_id}
+
+        for req in run_response.requirements:
+            if req.tool_execution and req.tool_execution.tool_call_id in updated_tools_map:
+                req.tool_execution = updated_tools_map[req.tool_execution.tool_call_id]
+
+
 def continue_run_dispatch(
     agent: Agent,
     run_response: Optional[RunOutput] = None,
@@ -2944,13 +2956,7 @@ def continue_run_dispatch(
                 stacklevel=2,
             )
             run_response.tools = updated_tools
-            # Sync requirements to reference the new tool objects so is_resolved()
-            # checks operate on the same instances that handle_tool_call_updates modifies.
-            if run_response.requirements:
-                updated_tools_map = {t.tool_call_id: t for t in updated_tools if t.tool_call_id}
-                for req in run_response.requirements:
-                    if req.tool_execution and req.tool_execution.tool_call_id in updated_tools_map:
-                        req.tool_execution = updated_tools_map[req.tool_execution.tool_call_id]
+            _sync_requirements_with_tools(run_response, updated_tools)
 
         # If we have requirements, get the updated tools and set them in the run_response
         elif requirements is not None:
@@ -3963,13 +3969,7 @@ async def _acontinue_run(
                     # If we have updated_tools, set them in the run_response
                     if updated_tools is not None:
                         run_response.tools = updated_tools
-                        # Sync requirements to reference the new tool objects so is_resolved()
-                        # checks operate on the same instances that handle_tool_call_updates modifies.
-                        if run_response.requirements:
-                            updated_tools_map = {t.tool_call_id: t for t in updated_tools if t.tool_call_id}
-                            for req in run_response.requirements:
-                                if req.tool_execution and req.tool_execution.tool_call_id in updated_tools_map:
-                                    req.tool_execution = updated_tools_map[req.tool_execution.tool_call_id]
+                        _sync_requirements_with_tools(run_response, updated_tools)
 
                     # If we have requirements, get the updated tools and set them in the run_response
                     elif requirements is not None:
@@ -4343,13 +4343,7 @@ async def _acontinue_run_stream(
                     # If we have updated_tools, set them in the run_response
                     if updated_tools is not None:
                         run_response.tools = updated_tools
-                        # Sync requirements to reference the new tool objects so is_resolved()
-                        # checks operate on the same instances that handle_tool_call_updates modifies.
-                        if run_response.requirements:
-                            updated_tools_map = {t.tool_call_id: t for t in updated_tools if t.tool_call_id}
-                            for req in run_response.requirements:
-                                if req.tool_execution and req.tool_execution.tool_call_id in updated_tools_map:
-                                    req.tool_execution = updated_tools_map[req.tool_execution.tool_call_id]
+                        _sync_requirements_with_tools(run_response, updated_tools)
 
                     # If we have requirements, get the updated tools and set them in the run_response
                     elif requirements is not None:
