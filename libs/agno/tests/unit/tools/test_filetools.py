@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -343,3 +344,150 @@ def test_search_content_honors_exclusions():
         assert result["matches_found"] == 1
         assert "real.py" in file_names
         assert not any(".venv" in f for f in file_names)
+
+
+def test_edit_file_basic():
+    """edit_file replaces an occurrence after a prior read."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        f = FileTools(base_dir=base_dir)
+        f.save_file(contents="hello world\n", file_name="a.txt")
+        f.read_file(file_name="a.txt")
+
+        result = f.edit_file(file_name="a.txt", old_text="world", new_text="agno")
+        assert "Edited a.txt" in result
+        assert (base_dir / "a.txt").read_text() == "hello agno\n"
+
+
+def test_edit_file_requires_prior_read():
+    """edit_file refuses when the file has not been read first."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        (base_dir / "a.txt").write_text("hello world\n")
+        f = FileTools(base_dir=base_dir)
+
+        result = f.edit_file(file_name="a.txt", old_text="world", new_text="agno")
+        assert result.startswith("Error editing file")
+        assert "has not been read yet" in result
+        assert (base_dir / "a.txt").read_text() == "hello world\n"
+
+
+def test_edit_file_rejects_partial_read():
+    """edit_file refuses after read_file_chunk (agent only saw a slice)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        f = FileTools(base_dir=base_dir)
+        f.save_file(contents="line0\nline1\nline2\nline3\n", file_name="a.txt")
+        f.read_file_chunk(file_name="a.txt", start_line=0, end_line=1)
+
+        result = f.edit_file(file_name="a.txt", old_text="line0", new_text="LINE0")
+        assert result.startswith("Error editing file")
+        assert "partially read" in result
+
+
+def test_edit_file_no_match_errors():
+    """edit_file errors clearly when old_text is absent."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        f = FileTools(base_dir=base_dir)
+        f.save_file(contents="hello world\n", file_name="a.txt")
+        f.read_file(file_name="a.txt")
+
+        result = f.edit_file(file_name="a.txt", old_text="missing", new_text="x")
+        assert result.startswith("Error editing file")
+        assert "old_text not found" in result
+
+
+def test_edit_file_multiple_matches_without_replace_all():
+    """edit_file rejects ambiguous matches when replace_all is False."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        f = FileTools(base_dir=base_dir)
+        f.save_file(contents="foo\nfoo\nfoo\n", file_name="a.txt")
+        f.read_file(file_name="a.txt")
+
+        result = f.edit_file(file_name="a.txt", old_text="foo", new_text="bar")
+        assert result.startswith("Error editing file")
+        assert "matches 3 locations" in result
+        assert (base_dir / "a.txt").read_text() == "foo\nfoo\nfoo\n"
+
+
+def test_edit_file_replace_all():
+    """replace_all=True replaces every occurrence."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        f = FileTools(base_dir=base_dir)
+        f.save_file(contents="foo\nfoo\nfoo\n", file_name="a.txt")
+        f.read_file(file_name="a.txt")
+
+        result = f.edit_file(file_name="a.txt", old_text="foo", new_text="bar", replace_all=True)
+        assert "3 replacements" in result
+        assert (base_dir / "a.txt").read_text() == "bar\nbar\nbar\n"
+
+
+def test_edit_file_identical_strings_rejected():
+    """edit_file rejects no-op edits where old_text == new_text."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        f = FileTools(base_dir=base_dir)
+        f.save_file(contents="hello\n", file_name="a.txt")
+        f.read_file(file_name="a.txt")
+
+        result = f.edit_file(file_name="a.txt", old_text="hello", new_text="hello")
+        assert result.startswith("Error editing file")
+        assert "identical" in result
+
+
+def test_edit_file_creates_on_empty_old_text():
+    """Passing old_text='' for a missing file creates it."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        f = FileTools(base_dir=base_dir)
+
+        result = f.edit_file(file_name="new/nested.txt", old_text="", new_text="fresh content")
+        assert result == "Created new/nested.txt"
+        assert (base_dir / "new" / "nested.txt").read_text() == "fresh content"
+
+        # And it now has state, so a subsequent edit works without an explicit read.
+        result2 = f.edit_file(file_name="new/nested.txt", old_text="fresh", new_text="updated")
+        assert "Edited" in result2
+        assert (base_dir / "new" / "nested.txt").read_text() == "updated content"
+
+
+def test_edit_file_rejects_stale_mtime():
+    """edit_file refuses when the file was modified externally after the read."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        f = FileTools(base_dir=base_dir)
+        f.save_file(contents="hello\n", file_name="a.txt")
+        f.read_file(file_name="a.txt")
+
+        # Simulate an external modification with a different mtime.
+        path = base_dir / "a.txt"
+        path.write_text("hello world\n")
+        stat = path.stat()
+        os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+
+        result = f.edit_file(file_name="a.txt", old_text="hello", new_text="hi")
+        assert result.startswith("Error editing file")
+        assert "modified since last read" in result
+
+
+def test_edit_file_save_populates_state():
+    """save_file alone is enough to unlock edit_file — no explicit read needed."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        f = FileTools(base_dir=base_dir)
+        f.save_file(contents="alpha\n", file_name="a.txt")
+
+        result = f.edit_file(file_name="a.txt", old_text="alpha", new_text="beta")
+        assert "Edited a.txt" in result
+        assert (base_dir / "a.txt").read_text() == "beta\n"
+
+
+def test_edit_file_disabled_by_flag():
+    """edit_file is excluded from the toolkit when enable_edit_file=False."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base_dir = Path(tmp_dir)
+        f = FileTools(base_dir=base_dir, enable_edit_file=False)
+        assert "edit_file" not in f.functions
