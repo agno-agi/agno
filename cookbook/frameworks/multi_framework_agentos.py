@@ -66,8 +66,7 @@ agno_agent = Agent(
 # 2. Claude Agent SDK
 # ---------------------------------------------------------------------------
 claude_agent = ClaudeAgent(
-    agent_id="claude-assistant",
-    agent_name="Claude Assistant",
+    name="Claude Assistant",
     description="A Claude-powered assistant with web search",
     model="claude-sonnet-4-20250514",
     allowed_tools=["WebSearch"],
@@ -92,8 +91,7 @@ graph.set_entry_point("chatbot")
 compiled = graph.compile()
 
 langgraph_agent = LangGraphAgent(
-    agent_id="langgraph-assistant",
-    agent_name="LangGraph Assistant",
+    name="LangGraph Assistant",
     description="A LangGraph chatbot",
     graph=compiled,
     db=db,
@@ -105,8 +103,7 @@ langgraph_agent = LangGraphAgent(
 dspy.configure(lm=dspy.LM("openai/gpt-5.4"))
 
 dspy_agent = DSPyAgent(
-    agent_id="dspy-assistant",
-    agent_name="DSPy Assistant",
+    name="DSPy Assistant",
     description="A DSPy chain-of-thought agent",
     program=dspy.ChainOfThought("question -> answer"),
     db=db,

@@ -56,8 +56,7 @@ react_program = dspy.ReAct(
 )
 
 agent = DSPyAgent(
-    agent_id="dspy-search",
-    agent_name="DSPy Search Agent",
+    name="DSPy Search Agent",
     description="A DSPy ReAct agent with live web search, served through AgentOS",
     program=react_program,
     db=db,

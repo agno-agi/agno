@@ -46,20 +46,18 @@ class BaseExternalAgent:
     - _arun_adapter_stream(input, **kwargs) -> AsyncIterator[RunOutputEvent]  (streaming)
     """
 
-    agent_id: str
-    agent_name: Optional[str] = None
+    name: Optional[str] = None
+    id: Optional[str] = None
     description: Optional[str] = None
     framework: str = "external"
     markdown: bool = True
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
-    @property
-    def id(self) -> str:
-        return self.agent_id
+    def __post_init__(self) -> None:
+        from agno.utils.string import generate_id_from_name
 
-    @property
-    def name(self) -> Optional[str]:
-        return self.agent_name or self.agent_id
+        if self.id is None:
+            self.id = generate_id_from_name(self.name)
 
     # ---------------------------------------------------------------------------
     # Public async API (satisfies AgentProtocol protocol)

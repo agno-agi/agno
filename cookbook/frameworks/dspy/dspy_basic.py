@@ -17,8 +17,7 @@ dspy.configure(lm=lm)
 
 # ----- Basic Q&A with ChainOfThought -----
 agent = DSPyAgent(
-    agent_id="dspy-qa",
-    agent_name="DSPy Q&A",
+    name="DSPy Q&A",
     program=dspy.ChainOfThought("question -> answer"),
 )
 

@@ -37,8 +37,7 @@ compiled = graph.compile(checkpointer=checkpointer)
 
 # ----- Wrap for Agno -----
 agent = LangGraphAgent(
-    agent_id="time-travel-agent",
-    agent_name="Time Travel Agent",
+    name="Time Travel Agent",
     graph=compiled,
 )
 

@@ -26,8 +26,7 @@ compiled = graph.compile()
 
 # ----- Wrap it for Agno -----
 agent = LangGraphAgent(
-    agent_id="langgraph-chatbot",
-    agent_name="LangGraph Chatbot",
+    name="LangGraph Chatbot",
     graph=compiled,
 )
 

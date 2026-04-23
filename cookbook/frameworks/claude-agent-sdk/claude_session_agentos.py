@@ -20,8 +20,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 pg_db = PostgresDb(db_url=db_url)
 
 agent = ClaudeAgent(
-    agent_id="claude-chat",
-    agent_name="Claude Chat",
+    name="Claude Chat",
     model="claude-sonnet-4-20250514",
     allowed_tools=["WebSearch"],
     permission_mode="acceptEdits",

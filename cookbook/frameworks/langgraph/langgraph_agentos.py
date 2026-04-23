@@ -45,8 +45,7 @@ compiled = graph.compile()
 
 # ----- Wrap for AgentOS -----
 langgraph_agent = LangGraphAgent(
-    agent_id="langgraph-chatbot",
-    agent_name="LangGraph Chatbot",
+    name="LangGraph Chatbot",
     description="A simple chatbot built with LangGraph, served through AgentOS",
     graph=compiled,
 )

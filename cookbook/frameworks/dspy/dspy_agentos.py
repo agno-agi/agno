@@ -42,8 +42,7 @@ dspy.configure(lm=dspy.LM("openai/gpt-5.4"))
 # Create the DSPy agent
 # ---------------------------------------------------------------------------
 dspy_agent = DSPyAgent(
-    agent_id="dspy-assistant",
-    agent_name="DSPy Assistant",
+    name="DSPy Assistant",
     description="A DSPy-powered assistant served through AgentOS",
     program=dspy.ChainOfThought("question -> answer"),
 )

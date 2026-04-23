@@ -50,8 +50,7 @@ try:
 
     # ----- Agent with custom MCP tools -----
     agent = ClaudeAgent(
-        agent_id="claude-city-agent",
-        agent_name="Claude City Agent",
+        name="Claude City Agent",
         model="claude-sonnet-4-20250514",
         mcp_servers={"city-tools": server},
         allowed_tools=[
