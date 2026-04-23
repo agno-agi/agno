@@ -482,8 +482,9 @@ class Claude(Model):
             anthropic_tools = format_tools_for_model(formatted_tools)
 
         kwargs: Dict[str, Any] = {"messages": anthropic_messages, "model": self.id}
-        if system_prompt:
-            kwargs["system"] = system_prompt
+        system = self._build_system(system_prompt)
+        if system:
+            kwargs["system"] = system
         if anthropic_tools:
             kwargs["tools"] = anthropic_tools
 
@@ -509,8 +510,9 @@ class Claude(Model):
             anthropic_tools = format_tools_for_model(formatted_tools)
 
         kwargs: Dict[str, Any] = {"messages": anthropic_messages, "model": self.id}
-        if system_prompt:
-            kwargs["system"] = system_prompt
+        system = self._build_system(system_prompt)
+        if system:
+            kwargs["system"] = system
         if anthropic_tools:
             kwargs["tools"] = anthropic_tools
 
@@ -589,6 +591,37 @@ class Claude(Model):
         if self.cache_tools and "tools" in request_kwargs and request_kwargs["tools"]:
             request_kwargs["tools"][-1]["cache_control"] = {"type": "ephemeral"}
 
+    def _build_system(self, system_message: str) -> List[Dict[str, Any]]:
+        """Assemble the Anthropic ``system`` array.
+
+        Agent-built ``system_message`` becomes the first block (cached per
+        ``cache_system_prompt``). Model-level ``system_prompt_blocks`` are
+        appended after, each with its own cache/ttl. This ordering matches
+        Anthropic's prefix-cache semantics: stable content first, dynamic
+        per-request content later.
+
+        Used by both ``_prepare_request_kwargs`` and ``count_tokens`` so the
+        two paths cannot diverge.
+        """
+        blocks: List[Dict[str, Any]] = []
+        if system_message:
+            blocks.extend(
+                build_system_blocks(
+                    system_message,
+                    cache_system_prompt=bool(self.cache_system_prompt),
+                    extended_cache_time=bool(self.extended_cache_time),
+                )
+            )
+        if self.system_prompt_blocks:
+            blocks.extend(
+                build_system_blocks(
+                    self.system_prompt_blocks,
+                    cache_system_prompt=bool(self.cache_system_prompt),
+                    extended_cache_time=bool(self.extended_cache_time),
+                )
+            )
+        return blocks
+
     def _prepare_request_kwargs(
         self,
         system_message: str,
@@ -621,21 +654,9 @@ class Claude(Model):
             container_id = self._extract_container_id_from_messages(messages)
             if container_id:
                 request_kwargs["container"] = {**request_kwargs["container"], "id": container_id}
-        # system_prompt_blocks takes precedence over the agent-built string. Users
-        # who need per-block cache control pass blocks on the model; the agent-built
-        # system_message is ignored in that case.
-        if self.system_prompt_blocks:
-            request_kwargs["system"] = build_system_blocks(
-                self.system_prompt_blocks,
-                cache_system_prompt=bool(self.cache_system_prompt),
-                extended_cache_time=bool(self.extended_cache_time),
-            )
-        elif system_message:
-            request_kwargs["system"] = build_system_blocks(
-                system_message,
-                cache_system_prompt=bool(self.cache_system_prompt),
-                extended_cache_time=bool(self.extended_cache_time),
-            )
+        system = self._build_system(system_message)
+        if system:
+            request_kwargs["system"] = system
 
         # Add code execution tool if skills are enabled
         if self.skills:

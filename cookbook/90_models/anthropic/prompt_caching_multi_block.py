@@ -9,8 +9,10 @@ Demonstrates two Anthropic caching features:
    Anthropic caches all tools as a prefix when cache_control is on the last tool.
 
 Blocks live on the Claude model (not on Agent.system_message) because this is a
-Claude-specific feature. When set, the blocks replace the agent-built system
-string entirely, so include any static instructions you want cached yourself.
+Claude-specific feature. They are appended after the agent-built system prompt,
+which itself becomes the first cached block when cache_system_prompt=True. This
+preserves your agent's description, instructions, and tool hints while letting
+you add per-request static or dynamic blocks with their own cache settings.
 
 Docs: https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
 """

@@ -223,17 +223,54 @@ def test_string_system_message_backward_compat():
     assert kwargs["system"][0]["text"] == "You are helpful."
 
 
-def test_system_prompt_blocks_override_agent_system_message():
-    """When system_prompt_blocks is set, the agent-built string is ignored."""
+def test_system_prompt_blocks_augment_agent_system_message():
+    """Agent-built string comes first as a cached block, user blocks are appended."""
     blocks = [
-        SystemPromptBlock(text="Block-controlled content.", cache=True),
+        SystemPromptBlock(text="User-added static.", cache=True, ttl="1h"),
+        SystemPromptBlock(text="User-added dynamic.", cache=False),
     ]
     claude = Claude(cache_system_prompt=True, system_prompt_blocks=blocks)
-    # Simulate the agent-built string arriving as system_message
-    kwargs = claude._prepare_request_kwargs("Agent-built fallback that should not be sent.")
+    kwargs = claude._prepare_request_kwargs("You are a helpful assistant.")
 
-    assert len(kwargs["system"]) == 1
-    assert kwargs["system"][0]["text"] == "Block-controlled content."
+    # Agent content is the first block (cached per cache_system_prompt), then user blocks
+    assert len(kwargs["system"]) == 3
+    assert kwargs["system"][0] == {
+        "text": "You are a helpful assistant.",
+        "type": "text",
+        "cache_control": {"type": "ephemeral"},
+    }
+    assert kwargs["system"][1] == {
+        "text": "User-added static.",
+        "type": "text",
+        "cache_control": {"type": "ephemeral", "ttl": "1h"},
+    }
+    assert kwargs["system"][2] == {
+        "text": "User-added dynamic.",
+        "type": "text",
+    }
+
+
+def test_build_system_shared_between_request_and_count_tokens():
+    """count_tokens must assemble the same system array as _prepare_request_kwargs.
+
+    Both paths delegate to _build_system so system_prompt_blocks flow through
+    token counting. Regression guard: without the shared helper, count_tokens
+    would miss user blocks and under-report tokens.
+    """
+    blocks = [
+        SystemPromptBlock(text="User static.", cache=True, ttl="1h"),
+        SystemPromptBlock(text="User dynamic.", cache=False),
+    ]
+    claude = Claude(cache_system_prompt=True, system_prompt_blocks=blocks)
+
+    request_system = claude._prepare_request_kwargs("Agent content.")["system"]
+    # _build_system is what count_tokens calls; assert same output shape
+    count_system = claude._build_system("Agent content.")
+
+    assert request_system == count_system
+    # And blocks actually show up (not dropped like before the fix)
+    texts = [b["text"] for b in count_system]
+    assert texts == ["Agent content.", "User static.", "User dynamic."]
 
 
 def test_agent_system_message_stays_string():

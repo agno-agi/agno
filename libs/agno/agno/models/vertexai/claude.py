@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
 from agno.utils.log import log_debug, log_warning
-from agno.utils.models.claude import build_system_blocks, format_tools_for_model
+from agno.utils.models.claude import format_tools_for_model
 
 try:
     from anthropic import AnthropicVertex, AsyncAnthropicVertex
@@ -167,19 +167,9 @@ class Claude(AnthropicClaude):
         """
         # Pass response_format and tools to get_request_params for beta header handling
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools).copy()
-        # system_prompt_blocks takes precedence over the agent-built string.
-        if self.system_prompt_blocks:
-            request_kwargs["system"] = build_system_blocks(
-                self.system_prompt_blocks,
-                cache_system_prompt=bool(self.cache_system_prompt),
-                extended_cache_time=bool(self.extended_cache_time),
-            )
-        elif system_message:
-            request_kwargs["system"] = build_system_blocks(
-                system_message,
-                cache_system_prompt=bool(self.cache_system_prompt),
-                extended_cache_time=bool(self.extended_cache_time),
-            )
+        system = self._build_system(system_message)
+        if system:
+            request_kwargs["system"] = system
 
         # Format tools (this will handle strict mode)
         if tools:
