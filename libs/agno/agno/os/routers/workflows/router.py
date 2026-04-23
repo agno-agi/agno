@@ -1479,14 +1479,31 @@ def get_workflow_router(
     async def resume_workflow_run_stream(
         workflow_id: str,
         run_id: str,
+        request: Request,
         last_event_index: Optional[int] = Form(None, description="Index of last event received by client (0-based)"),
         session_id: Optional[str] = Form(None, description="Session ID for database fallback"),
+        factory_input: Optional[str] = Form(
+            None,
+            description="JSON object with factory-specific parameters for dynamic workflow reconstruction",
+        ),
     ):
-        workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
-        )
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Workflow not found")
+        # Factory workflows: resolve through the factory; plain workflows: direct lookup.
+        factory = find_factory_by_id(workflow_id, os.workflows)
+        if factory:
+            workflow = await resolve_workflow(  # type: ignore[assignment]
+                workflow_id,
+                os.workflows,
+                factory.db,
+                request=request,
+                session_id=session_id,
+                factory_input=factory_input,
+            )
+        else:
+            workflow = get_workflow_by_id(  # type: ignore[assignment]
+                workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+            )
+            if workflow is None:
+                raise HTTPException(status_code=404, detail="Workflow not found")
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Stream resumption is not supported for remote workflows")
 

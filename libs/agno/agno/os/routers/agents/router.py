@@ -895,6 +895,10 @@ def get_agent_router(
             False,
             description="Run continue in background (survives client disconnect). Requires database. Use /resume to reconnect.",
         ),
+        factory_input: Optional[str] = Form(
+            None,
+            description="JSON object with factory-specific parameters for dynamic agent reconstruction",
+        ),
     ):
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -908,7 +912,6 @@ def get_agent_router(
             raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
 
         # Factory agents: re-invoke factory to get a real agent for continue
-        # (needs model/tools to resume the paused run, factory_input not available)
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
             agent = await resolve_agent(  # type: ignore[assignment]
@@ -918,6 +921,7 @@ def get_agent_router(
                 request=request,
                 user_id=user_id,
                 session_id=session_id,
+                factory_input=factory_input,
             )
         else:
             try:
@@ -1213,7 +1217,12 @@ def get_agent_router(
     async def get_agent_run(
         agent_id: str,
         run_id: str,
+        request: Request,
         session_id: str = Query(..., description="Session ID for the run"),
+        factory_input: Optional[str] = Query(
+            None,
+            description="JSON object with factory-specific parameters for dynamic agent reconstruction",
+        ),
     ):
         # Factory agents: resolve to get a real agent for session lookup
         factory = find_factory_by_id(agent_id, os.agents)
@@ -1222,7 +1231,9 @@ def get_agent_router(
                 agent_id,
                 os.agents,
                 factory.db,
+                request=request,
                 session_id=session_id,
+                factory_input=factory_input,
             )
         else:
             try:
@@ -1273,12 +1284,31 @@ def get_agent_router(
     async def resume_agent_run_stream(
         agent_id: str,
         run_id: str,
+        request: Request,
         last_event_index: Optional[int] = Form(None, description="Index of last event received by client (0-based)"),
         session_id: Optional[str] = Form(None, description="Session ID for database fallback"),
+        factory_input: Optional[str] = Form(
+            None,
+            description="JSON object with factory-specific parameters for dynamic agent reconstruction",
+        ),
     ):
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
+        # Factory agents: resolve through the factory (needs request context); plain agents: direct lookup.
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            agent = await resolve_agent(  # type: ignore[assignment]
+                agent_id,
+                os.agents,
+                factory.db,
+                request=request,
+                session_id=session_id,
+                factory_input=factory_input,
+            )
+        else:
+            agent = get_agent_by_id(  # type: ignore[assignment]
+                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+            )
+            if agent is None:
+                raise HTTPException(status_code=404, detail="Agent not found")
         if isinstance(agent, RemoteAgent):
             raise HTTPException(status_code=400, detail="Stream resumption is not supported for remote agents")
 
@@ -1304,8 +1334,13 @@ def get_agent_router(
     )
     async def list_agent_runs(
         agent_id: str,
+        request: Request,
         session_id: str = Query(..., description="Session ID to list runs for"),
         status: Optional[str] = Query(None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR)"),
+        factory_input: Optional[str] = Query(
+            None,
+            description="JSON object with factory-specific parameters for dynamic agent reconstruction",
+        ),
     ):
         from agno.os.schema import RunSchema
 
@@ -1316,7 +1351,9 @@ def get_agent_router(
                 agent_id,
                 os.agents,
                 factory.db,
+                request=request,
                 session_id=session_id,
+                factory_input=factory_input,
             )
         else:
             try:

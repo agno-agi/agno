@@ -20,18 +20,19 @@ Test flow:
     #                "requires_confirmation": true, ...}]
     # Note the run_id, session_id, and the full tools array from the response.
 
-    # 2. Confirm: echo the full tools array back with `confirmed: true` set on each entry.
-    # (The /continue endpoint replaces stored tool state with what you send, so the
-    # payload must include tool_name and tool_args — not just tool_call_id.)
+    # 2. Confirm the tool call (replace TOOL_CALL_ID with the id from step 1).
+    # The /continue endpoint overwrites stored tool state with what you send, so
+    # the payload must include tool_name, tool_args, and requires_confirmation —
+    # not just tool_call_id + confirmed.
     curl -X POST http://localhost:7777/agents/hitl-agent/runs/RUN_ID/continue \
         -F 'session_id=SESSION_ID' \
-        -F 'tools=<TOOLS_ARRAY_FROM_STEP_1_WITH_CONFIRMED_TRUE>' \
+        -F 'tools=[{"tool_call_id": "TOOL_CALL_ID", "tool_name": "get_top_hackernews_stories", "tool_args": {"num_stories": 3}, "requires_confirmation": true, "confirmed": true}]' \
         -F 'stream=false'
 
-    # 3. Or reject: same pattern, set `confirmed: false` (and optional confirmation_note).
+    # 3. Or reject it (same payload with confirmed: false).
     curl -X POST http://localhost:7777/agents/hitl-agent/runs/RUN_ID/continue \
         -F 'session_id=SESSION_ID' \
-        -F 'tools=<TOOLS_ARRAY_FROM_STEP_1_WITH_CONFIRMED_FALSE>' \
+        -F 'tools=[{"tool_call_id": "TOOL_CALL_ID", "tool_name": "get_top_hackernews_stories", "tool_args": {"num_stories": 3}, "requires_confirmation": true, "confirmed": false, "confirmation_note": "User rejected"}]' \
         -F 'stream=false'
 
     # 4. Check run status

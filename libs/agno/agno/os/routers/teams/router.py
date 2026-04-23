@@ -838,12 +838,31 @@ def get_team_router(
     async def resume_team_run_stream(
         team_id: str,
         run_id: str,
+        request: Request,
         last_event_index: Optional[int] = Form(None, description="Index of last event received by client (0-based)"),
         session_id: Optional[str] = Form(None, description="Session ID for database fallback"),
+        factory_input: Optional[str] = Form(
+            None,
+            description="JSON object with factory-specific parameters for dynamic team reconstruction",
+        ),
     ):
-        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
-        if team is None:
-            raise HTTPException(status_code=404, detail="Team not found")
+        # Factory teams: resolve through the factory (needs request context); plain teams: direct lookup.
+        factory = find_factory_by_id(team_id, os.teams)
+        if factory:
+            team = await resolve_team(  # type: ignore[assignment]
+                team_id,
+                os.teams,
+                factory.db,
+                request=request,
+                session_id=session_id,
+                factory_input=factory_input,
+            )
+        else:
+            team = get_team_by_id(  # type: ignore[assignment]
+                team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True
+            )
+            if team is None:
+                raise HTTPException(status_code=404, detail="Team not found")
         if isinstance(team, RemoteTeam):
             raise HTTPException(status_code=400, detail="Stream resumption is not supported for remote teams")
 
@@ -902,6 +921,10 @@ def get_team_router(
         user_id: Optional[str] = Form(None),
         stream: bool = Form(True),
         background: bool = Form(False),
+        factory_input: Optional[str] = Form(
+            None,
+            description="JSON object with factory-specific parameters for dynamic team reconstruction",
+        ),
     ):
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -924,6 +947,7 @@ def get_team_router(
                 request=request,
                 user_id=user_id,
                 session_id=session_id,
+                factory_input=factory_input,
             )
         else:
             try:
@@ -1271,7 +1295,12 @@ def get_team_router(
     async def get_team_run(
         team_id: str,
         run_id: str,
+        request: Request,
         session_id: str = Query(..., description="Session ID for the run"),
+        factory_input: Optional[str] = Query(
+            None,
+            description="JSON object with factory-specific parameters for dynamic team reconstruction",
+        ),
     ):
         # Factory teams
         factory = find_factory_by_id(team_id, os.teams)
@@ -1280,7 +1309,9 @@ def get_team_router(
                 team_id,
                 os.teams,
                 factory.db,
+                request=request,
                 session_id=session_id,
+                factory_input=factory_input,
             )
         else:
             try:
@@ -1316,8 +1347,13 @@ def get_team_router(
     )
     async def list_team_runs(
         team_id: str,
+        request: Request,
         session_id: str = Query(..., description="Session ID to list runs for"),
         status: Optional[str] = Query(None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR)"),
+        factory_input: Optional[str] = Query(
+            None,
+            description="JSON object with factory-specific parameters for dynamic team reconstruction",
+        ),
     ):
         from agno.os.schema import TeamRunSchema
         from agno.team._storage import _aread_or_create_session
@@ -1329,7 +1365,9 @@ def get_team_router(
                 team_id,
                 os.teams,
                 factory.db,
+                request=request,
                 session_id=session_id,
+                factory_input=factory_input,
             )
         else:
             try:
