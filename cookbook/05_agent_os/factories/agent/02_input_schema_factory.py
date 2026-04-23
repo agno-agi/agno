@@ -9,20 +9,20 @@ Run:
 
 Test:
     # Run with default persona
-    curl -X POST http://localhost:7777/v1/agents/research-agent/runs \
+    curl -X POST http://localhost:7777/agents/research-agent/runs \
         -F 'message=What are the latest trends in AI?' \
         -F 'user_id=user_1' \
         -F 'stream=false'
 
     # Run with custom persona and depth
-    curl -X POST http://localhost:7777/v1/agents/research-agent/runs \
+    curl -X POST http://localhost:7777/agents/research-agent/runs \
         -F 'message=What are the latest trends in AI?' \
         -F 'user_id=user_1' \
         -F 'factory_input={"persona": "skeptic", "depth": 5}' \
         -F 'stream=false'
 
     # Invalid input returns 400
-    curl -X POST http://localhost:7777/v1/agents/research-agent/runs \
+    curl -X POST http://localhost:7777/agents/research-agent/runs \
         -F 'message=Hello' \
         -F 'factory_input={"depth": "not_a_number"}' \
         -F 'stream=false'
@@ -30,13 +30,12 @@ Test:
 
 from typing import Literal
 
-from pydantic import BaseModel
-
 from agno.agent import Agent, AgentFactory
-from agno.factory import RequestContext
 from agno.db.postgres import PostgresDb
+from agno.factory import RequestContext
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
+from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
 # Database

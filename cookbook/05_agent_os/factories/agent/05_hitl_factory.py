@@ -9,39 +9,41 @@ Run:
 
 Test flow:
     # 1. Start a run that triggers the tool (non-streaming to get full response)
-    curl -X POST http://localhost:7777/v1/agents/hitl-agent/runs \
+    curl -X POST http://localhost:7777/agents/hitl-agent/runs \
         -F 'message=Get the top 3 hacker news stories' \
         -F 'user_id=user_1' \
         -F 'stream=false'
 
     # Response will include:
     #   - "status": "PAUSED"
-    #   - "tools": [{"tool_call_id": "...", "requires_confirmation": true, ...}]
-    # Note the run_id, session_id, and tool_call_id from the response.
+    #   - "tools": [{"tool_call_id": "...", "tool_name": "...", "tool_args": {...},
+    #                "requires_confirmation": true, ...}]
+    # Note the run_id, session_id, and the full tools array from the response.
 
-    # 2. Confirm the tool call (replace RUN_ID, SESSION_ID, TOOL_CALL_ID)
-    curl -X POST http://localhost:7777/v1/agents/hitl-agent/runs/RUN_ID/continue \
+    # 2. Confirm: echo the full tools array back with `confirmed: true` set on each entry.
+    # (The /continue endpoint replaces stored tool state with what you send, so the
+    # payload must include tool_name and tool_args — not just tool_call_id.)
+    curl -X POST http://localhost:7777/agents/hitl-agent/runs/RUN_ID/continue \
         -F 'session_id=SESSION_ID' \
-        -F 'tools=[{"tool_call_id": "TOOL_CALL_ID", "confirmed": true}]' \
+        -F 'tools=<TOOLS_ARRAY_FROM_STEP_1_WITH_CONFIRMED_TRUE>' \
         -F 'stream=false'
 
-    # 3. Or reject it
-    curl -X POST http://localhost:7777/v1/agents/hitl-agent/runs/RUN_ID/continue \
+    # 3. Or reject: same pattern, set `confirmed: false` (and optional confirmation_note).
+    curl -X POST http://localhost:7777/agents/hitl-agent/runs/RUN_ID/continue \
         -F 'session_id=SESSION_ID' \
-        -F 'tools=[{"tool_call_id": "TOOL_CALL_ID", "confirmed": false, "confirmation_note": "User rejected"}]' \
+        -F 'tools=<TOOLS_ARRAY_FROM_STEP_1_WITH_CONFIRMED_FALSE>' \
         -F 'stream=false'
 
     # 4. Check run status
-    curl "http://localhost:7777/v1/agents/hitl-agent/runs/RUN_ID?session_id=SESSION_ID"
+    curl "http://localhost:7777/agents/hitl-agent/runs/RUN_ID?session_id=SESSION_ID"
 
     # 5. Cancel a run
-    curl -X POST http://localhost:7777/v1/agents/hitl-agent/runs/RUN_ID/cancel
+    curl -X POST http://localhost:7777/agents/hitl-agent/runs/RUN_ID/cancel
 """
 
 import json
 
 import httpx
-
 from agno.agent import Agent, AgentFactory
 from agno.db.postgres import PostgresDb
 from agno.factory import RequestContext
@@ -77,7 +79,9 @@ def get_top_hackernews_stories(num_stories: int) -> str:
     story_ids = response.json()
     stories = []
     for story_id in story_ids[:num_stories]:
-        story = httpx.get(f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json").json()
+        story = httpx.get(
+            f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
+        ).json()
         story.pop("text", None)
         stories.append(story)
     return json.dumps(stories)

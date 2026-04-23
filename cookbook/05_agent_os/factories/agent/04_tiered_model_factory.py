@@ -9,13 +9,13 @@ Run:
 
 Test:
     # Free tier (cheaper model)
-    curl -X POST http://localhost:7777/v1/agents/tiered-agent/runs \
+    curl -X POST http://localhost:7777/agents/tiered-agent/runs \
         -H "Authorization: Bearer <FREE_TOKEN>" \
         -F 'message=Explain quantum computing in one sentence' \
         -F 'stream=false'
 
     # Enterprise tier (best model)
-    curl -X POST http://localhost:7777/v1/agents/tiered-agent/runs \
+    curl -X POST http://localhost:7777/agents/tiered-agent/runs \
         -H "Authorization: Bearer <ENTERPRISE_TOKEN>" \
         -F 'message=Explain quantum computing in one sentence' \
         -F 'stream=false'
@@ -24,7 +24,6 @@ Test:
 from datetime import UTC, datetime, timedelta
 
 import jwt as pyjwt
-
 from agno.agent import Agent, AgentFactory
 from agno.db.postgres import PostgresDb
 from agno.factory import RequestContext

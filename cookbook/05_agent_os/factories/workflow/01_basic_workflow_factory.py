@@ -8,15 +8,15 @@ Run:
     .venvs/demo/bin/python cookbook/05_agent_os/factories/workflow/01_basic_workflow_factory.py
 
 Test:
-    curl -X POST http://localhost:7777/v1/workflows/content-pipeline/runs \
+    curl -X POST http://localhost:7777/workflows/content-pipeline/runs \
         -F 'message=Write a blog post about sustainable energy' \
         -F 'user_id=tenant_42' \
         -F 'stream=false'
 """
 
 from agno.agent import Agent
-from agno.factory import RequestContext
 from agno.db.postgres import PostgresDb
+from agno.factory import RequestContext
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.workflow.factory import WorkflowFactory

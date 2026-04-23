@@ -8,15 +8,15 @@ Run:
     .venvs/demo/bin/python cookbook/05_agent_os/factories/team/01_basic_team_factory.py
 
 Test:
-    curl -X POST http://localhost:7777/v1/teams/support-team/runs \
+    curl -X POST http://localhost:7777/teams/support-team/runs \
         -F 'message=I need help with billing and a technical issue' \
         -F 'user_id=tenant_42' \
         -F 'stream=false'
 """
 
 from agno.agent import Agent
-from agno.factory import RequestContext
 from agno.db.postgres import PostgresDb
+from agno.factory import RequestContext
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.team.factory import TeamFactory

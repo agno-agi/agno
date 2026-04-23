@@ -7,19 +7,19 @@ Run:
     .venvs/demo/bin/python cookbook/05_agent_os/factories/agent/01_basic_factory.py
 
 Test:
-    # List agents (factory shows up with type: "factory")
-    curl http://localhost:7777/v1/agents
+    # List agents (factory shows up with is_factory: true)
+    curl http://localhost:7777/agents
 
     # Run the factory agent
-    curl -X POST http://localhost:7777/v1/agents/tenant-agent/runs \
+    curl -X POST http://localhost:7777/agents/tenant-agent/runs \
         -F 'message=Hello, who are you?' \
         -F 'user_id=tenant_42' \
         -F 'stream=false'
 """
 
 from agno.agent import Agent, AgentFactory
-from agno.factory import RequestContext
 from agno.db.postgres import PostgresDb
+from agno.factory import RequestContext
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 

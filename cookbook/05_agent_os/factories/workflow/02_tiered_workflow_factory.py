@@ -8,13 +8,13 @@ Run:
 
 Test:
     # Free tier (2 steps, cheaper model)
-    curl -X POST http://localhost:7777/v1/workflows/article-pipeline/runs \
+    curl -X POST http://localhost:7777/workflows/article-pipeline/runs \
         -H "Authorization: Bearer <FREE_TOKEN>" \
         -F 'message=Write an article about remote work trends' \
         -F 'stream=false'
 
     # Enterprise tier (3 steps, best model)
-    curl -X POST http://localhost:7777/v1/workflows/article-pipeline/runs \
+    curl -X POST http://localhost:7777/workflows/article-pipeline/runs \
         -H "Authorization: Bearer <ENTERPRISE_TOKEN>" \
         -F 'message=Write an article about remote work trends' \
         -F 'stream=false'
@@ -23,10 +23,9 @@ Test:
 from datetime import UTC, datetime, timedelta
 
 import jwt as pyjwt
-
 from agno.agent import Agent
-from agno.factory import RequestContext
 from agno.db.postgres import PostgresDb
+from agno.factory import RequestContext
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.middleware import JWTMiddleware
@@ -70,14 +69,18 @@ def build_article_pipeline(ctx: RequestContext) -> Workflow:
             model=OpenAIResponses(id=model_id),
             instructions="Research the topic thoroughly. Provide key facts, statistics, and sources.",
         )
-        steps.append(Step(name="research", description="Research the topic", agent=researcher))
+        steps.append(
+            Step(name="research", description="Research the topic", agent=researcher)
+        )
 
     drafter = Agent(
         name="Drafter",
         model=OpenAIResponses(id=model_id),
         instructions="Write a well-structured article draft based on the input. Be thorough but readable.",
     )
-    steps.append(Step(name="draft", description="Write the article draft", agent=drafter))
+    steps.append(
+        Step(name="draft", description="Write the article draft", agent=drafter)
+    )
 
     editor = Agent(
         name="Editor",

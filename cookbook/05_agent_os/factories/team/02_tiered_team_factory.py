@@ -8,13 +8,13 @@ Run:
 
 Test:
     # Free tier (2 members, cheaper model)
-    curl -X POST http://localhost:7777/v1/teams/research-team/runs \
+    curl -X POST http://localhost:7777/teams/research-team/runs \
         -H "Authorization: Bearer <FREE_TOKEN>" \
         -F 'message=Research the impact of AI on healthcare' \
         -F 'stream=false'
 
     # Enterprise tier (3 members, best model)
-    curl -X POST http://localhost:7777/v1/teams/research-team/runs \
+    curl -X POST http://localhost:7777/teams/research-team/runs \
         -H "Authorization: Bearer <ENTERPRISE_TOKEN>" \
         -F 'message=Research the impact of AI on healthcare' \
         -F 'stream=false'
@@ -23,10 +23,9 @@ Test:
 from datetime import UTC, datetime, timedelta
 
 import jwt as pyjwt
-
 from agno.agent import Agent
-from agno.factory import RequestContext
 from agno.db.postgres import PostgresDb
+from agno.factory import RequestContext
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.middleware import JWTMiddleware
@@ -95,7 +94,11 @@ def build_research_team(ctx: RequestContext) -> Team:
             "Coordinate the research process.",
             "The Researcher finds information, the Writer drafts the report.",
         ]
-        + (["The Reviewer checks quality before finalizing."] if tier == "enterprise" else []),
+        + (
+            ["The Reviewer checks quality before finalizing."]
+            if tier == "enterprise"
+            else []
+        ),
         markdown=True,
     )
 

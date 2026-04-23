@@ -15,14 +15,14 @@ Test:
     # Generate test tokens (printed at startup) and use them:
 
     # As viewer (read-only tools)
-    curl -X POST http://localhost:7777/v1/agents/workspace-agent/runs \
+    curl -X POST http://localhost:7777/agents/workspace-agent/runs \
         -H "Authorization: Bearer <VIEWER_TOKEN>" \
         -F 'message=List the workspace documents' \
         -F 'factory_input={"theme": "dark"}' \
         -F 'stream=false'
 
     # As admin (full tool access)
-    curl -X POST http://localhost:7777/v1/agents/workspace-agent/runs \
+    curl -X POST http://localhost:7777/agents/workspace-agent/runs \
         -H "Authorization: Bearer <ADMIN_TOKEN>" \
         -F 'message=Add member jane@acme.com as editor' \
         -F 'factory_input={"theme": "light"}' \
@@ -33,14 +33,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal, Optional
 
 import jwt as pyjwt
-from pydantic import BaseModel
-
 from agno.agent import Agent, AgentFactory
-from agno.factory import FactoryPermissionError, RequestContext
 from agno.db.postgres import PostgresDb
+from agno.factory import FactoryPermissionError, RequestContext
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.middleware import JWTMiddleware
+from pydantic import BaseModel
 
 # ---------------------------------------------------------------------------
 # Config
@@ -108,7 +107,6 @@ def build_workspace_agent(ctx: RequestContext) -> Agent:
         tools.append(write_docs)
     if role == "admin":
         tools.append(manage_members)
-
 
     return Agent(
         model=OpenAIResponses(id="gpt-5.4"),
