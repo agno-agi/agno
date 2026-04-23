@@ -1,11 +1,24 @@
 import json
 import os
+from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
+
+
+@dataclass
+class _ReadState:
+    """Tracks the last-observed mtime of a file and whether the agent saw it
+    in full. ``edit_file`` uses both: staleness is detected via mtime, and
+    partial reads are rejected because the agent may pick an ``old_text``
+    that exists only in unseen lines."""
+
+    mtime_ns: int
+    is_partial: bool
+
 
 TEXT_EXTENSIONS = {
     ".md",
@@ -149,6 +162,7 @@ class FileTools(Toolkit):
         enable_read_file_chunk: bool = True,
         enable_replace_file_chunk: bool = True,
         enable_search_content: bool = True,
+        enable_edit_file: bool = True,
         expose_base_directory: bool = False,
         max_file_length: int = 10000000,
         max_file_lines: int = 100000,
@@ -167,6 +181,7 @@ class FileTools(Toolkit):
         self.exclude_patterns: List[str] = (
             exclude_patterns if exclude_patterns is not None else list(DEFAULT_EXCLUDE_PATTERNS)
         )
+        self._read_state: Dict[Path, _ReadState] = {}
         if all or enable_save_file:
             tools.append(self.save_file)
         if all or enable_read_file:
@@ -183,8 +198,15 @@ class FileTools(Toolkit):
             tools.append(self.replace_file_chunk)
         if all or enable_search_content:
             tools.append(self.search_content)
+        if all or enable_edit_file:
+            tools.append(self.edit_file)
 
         super().__init__(name="file_tools", tools=tools, **kwargs)
+
+    def _record_read(self, path: Path, is_partial: bool) -> None:
+        """Cache the current mtime of ``path`` so ``edit_file`` can detect
+        external modifications between reads and edits."""
+        self._read_state[path] = _ReadState(mtime_ns=path.stat().st_mtime_ns, is_partial=is_partial)
 
     def _is_excluded(self, path: Path) -> bool:
         """Return True if any component of ``path`` (relative to ``base_dir``) matches an exclude pattern."""
@@ -228,6 +250,7 @@ class FileTools(Toolkit):
             if file_path.exists() and not overwrite:
                 return f"File {file_name} already exists"
             file_path.write_text(contents, encoding=encoding)
+            self._record_read(file_path, is_partial=False)
             log_debug(f"Saved: {file_path}")
             return str(file_name)
         except Exception as e:
@@ -252,6 +275,7 @@ class FileTools(Toolkit):
                 return "Error reading file"
             contents = file_path.read_text(encoding=encoding)
             lines = contents.split(self.line_separator)
+            self._record_read(file_path, is_partial=True)
             return self.line_separator.join(lines[start_line : end_line + 1])
         except Exception as e:
             log_error(f"Error reading file: {str(e)}")
@@ -307,6 +331,7 @@ class FileTools(Toolkit):
             if len(contents.split(self.line_separator)) > self.max_file_lines:
                 return "Error reading file: file too long. Use read_file_chunk instead"
 
+            self._record_read(file_path, is_partial=False)
             return str(contents)
         except Exception as e:
             log_error(f"Error reading file: {str(e)}")
@@ -473,3 +498,87 @@ class FileTools(Toolkit):
             error_msg = f"Error searching content for '{query}': {e}"
             log_error(error_msg)
             return error_msg
+
+    def edit_file(
+        self,
+        file_name: str,
+        old_text: str,
+        new_text: str,
+        replace_all: bool = False,
+        encoding: str = "utf-8",
+    ) -> str:
+        """Edit a file by replacing ``old_text`` with ``new_text``.
+
+        The file must have been fully read via ``read_file`` (or just written
+        via ``save_file``) before it can be edited. If its mtime has changed
+        since then, the edit is rejected so the agent re-reads the current
+        contents before retrying.
+
+        ``old_text`` must match exactly one location unless ``replace_all``
+        is ``True``. Passing an empty ``old_text`` on a non-existent file
+        creates it with ``new_text`` as its contents.
+
+        :param file_name: Path (relative to ``base_dir``) of the file to edit.
+        :param old_text: Exact text to replace. Empty string + missing file => create.
+        :param new_text: Replacement text. Must differ from ``old_text``.
+        :param replace_all: Replace every occurrence instead of requiring a unique match.
+        :param encoding: File encoding, defaults to utf-8.
+        :return: A short success message, or an ``Error: ...`` string.
+        """
+        try:
+            if old_text == new_text:
+                return "Error editing file: old_text and new_text are identical"
+
+            safe, file_path = self.check_escape(file_name)
+            if not safe:
+                log_error(f"Attempted to edit file: {file_name}")
+                return "Error editing file"
+
+            if not file_path.exists():
+                if old_text == "":
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                    file_path.write_text(new_text, encoding=encoding)
+                    self._record_read(file_path, is_partial=False)
+                    log_debug(f"Created file via edit_file: {file_path}")
+                    return f"Created {file_name}"
+                return (
+                    f"Error editing file: {file_name} does not exist. "
+                    "To create it, pass old_text='' with the new contents in new_text."
+                )
+
+            cached = self._read_state.get(file_path)
+            if cached is None:
+                return (
+                    f"Error editing file: {file_name} has not been read yet. "
+                    "Call read_file first so the agent sees the current contents."
+                )
+            if cached.is_partial:
+                return (
+                    f"Error editing file: {file_name} was only partially read via read_file_chunk. "
+                    "Call read_file for the full contents before editing."
+                )
+            if file_path.stat().st_mtime_ns != cached.mtime_ns:
+                return (
+                    f"Error editing file: {file_name} has been modified since last read. "
+                    "Call read_file again before editing."
+                )
+
+            contents = file_path.read_text(encoding=encoding)
+            count = contents.count(old_text)
+            if count == 0:
+                return f"Error editing file: old_text not found in {file_name}"
+            if count > 1 and not replace_all:
+                return (
+                    f"Error editing file: old_text matches {count} locations in {file_name}. "
+                    "Add surrounding context to make the match unique, or pass replace_all=True."
+                )
+
+            replacements = count if replace_all else 1
+            new_contents = contents.replace(old_text, new_text, replacements)
+            file_path.write_text(new_contents, encoding=encoding)
+            self._record_read(file_path, is_partial=False)
+            log_debug(f"Edited {file_path} ({replacements} replacement{'s' if replacements != 1 else ''})")
+            return f"Edited {file_name} ({replacements} replacement{'s' if replacements != 1 else ''})"
+        except Exception as e:
+            log_error(f"Error editing file: {str(e)}")
+            return f"Error editing file: {e}"
