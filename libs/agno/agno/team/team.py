@@ -421,6 +421,10 @@ class Team:
     _learning_init_attempted: bool = False
     # Lazy-initialized shared thread pool executor for background tasks
     _background_executor: Optional[Any] = None
+    # Dedicated single-thread executor for learning (FIFO serialisation)
+    _learning_executor: Optional[Any] = None
+    # asyncio.Lock for serialising async learning tasks
+    _learning_lock: Optional[Any] = None
     # Callable factory caches
     _callable_tools_cache: Dict[str, List[Any]] = None  # type: ignore[assignment]
     _callable_knowledge_cache: Dict[str, Any] = None  # type: ignore[assignment]

@@ -420,6 +420,10 @@ def __init__(
 
     # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
     team._background_executor = None
+    # Dedicated single-thread executor for learning (FIFO serialisation).
+    team._learning_executor = None
+    # asyncio.Lock for serialising async learning tasks.
+    team._learning_lock = None
 
     # Callable factory settings
     team.cache_callables = cache_callables
@@ -446,6 +450,29 @@ def background_executor(team: "Team") -> Any:
 
         team._background_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="agno-bg")
     return team._background_executor
+
+
+def learning_executor(team: "Team") -> Any:
+    """Dedicated single-thread executor for learning tasks.
+
+    max_workers=1 ensures FIFO serialisation so that learning tasks from
+    consecutive runs never execute concurrently (avoids read-modify-write
+    races on user profile / memories / entity data).
+    """
+    if team._learning_executor is None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        team._learning_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agno-learn")
+    return team._learning_executor
+
+
+def learning_lock(team: "Team") -> Any:
+    """asyncio.Lock for serialising async learning tasks."""
+    import asyncio
+
+    if team._learning_lock is None:
+        team._learning_lock = asyncio.Lock()
+    return team._learning_lock
 
 
 def cached_session(team: "Team") -> Optional[TeamSession]:

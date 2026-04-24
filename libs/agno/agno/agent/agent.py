@@ -696,6 +696,11 @@ class Agent:
 
         # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
         self._background_executor: Optional[Any] = None
+        # Dedicated executor for learning: max_workers=1 ensures FIFO serialisation,
+        # preventing concurrent read-modify-write races across runs.
+        self._learning_executor: Optional[Any] = None
+        # asyncio.Lock for serialising async learning tasks (used by async run paths).
+        self._learning_lock: Optional[Any] = None
 
         # Callable factory settings
         self.cache_callables = cache_callables
@@ -717,6 +722,29 @@ class Agent:
 
             self._background_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="agno-bg")
         return self._background_executor
+
+    @property
+    def learning_executor(self) -> Any:
+        """Dedicated single-thread executor for learning tasks.
+
+        max_workers=1 ensures FIFO serialisation so that learning tasks from
+        consecutive runs never execute concurrently (avoids read-modify-write
+        races on user profile / memories / entity data).
+        """
+        if self._learning_executor is None:
+            from concurrent.futures import ThreadPoolExecutor
+
+            self._learning_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="agno-learn")
+        return self._learning_executor
+
+    @property
+    def learning_lock(self) -> Any:
+        """asyncio.Lock for serialising async learning tasks."""
+        import asyncio
+
+        if self._learning_lock is None:
+            self._learning_lock = asyncio.Lock()
+        return self._learning_lock
 
     @property
     def cached_session(self) -> Optional[AgentSession]:

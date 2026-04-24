@@ -385,7 +385,6 @@ def _run(
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
     memory_future = None
-    learning_future = None
     cultural_knowledge_future = None
     agent_session: Optional[AgentSession] = None
 
@@ -496,14 +495,8 @@ def _run(
                     existing_future=memory_future,
                 )
 
-                # Start learning extraction as a background task (runs concurrently with the main execution)
-                learning_future = _managers.start_learning_future(
-                    agent,
-                    run_messages=run_messages,
-                    session=agent_session,
-                    user_id=user_id,
-                    existing_future=learning_future,
-                )
+                # NOTE: Learning extraction is now deferred to after RunCompleted.
+                # It is started as a fire-and-forget task in the post-completion phase.
 
                 # Start cultural knowledge creation in background thread
                 cultural_knowledge_future = _managers.start_cultural_knowledge_future(
@@ -561,11 +554,10 @@ def _run(
                     wait_for_open_threads(
                         memory_future=memory_future,  # type: ignore
                         cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
-                        learning_future=learning_future,  # type: ignore
                     )
                     merge_background_metrics(
                         run_response.metrics,
-                        collect_background_metrics(memory_future, cultural_knowledge_future, learning_future),
+                        collect_background_metrics(memory_future, cultural_knowledge_future),
                     )
 
                     return handle_agent_run_paused(
@@ -607,11 +599,10 @@ def _run(
                 wait_for_open_threads(
                     memory_future=memory_future,  # type: ignore
                     cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
-                    learning_future=learning_future,  # type: ignore
-                )
+                        )
                 merge_background_metrics(
                     run_response.metrics,
-                    collect_background_metrics(memory_future, cultural_knowledge_future, learning_future),
+                    collect_background_metrics(memory_future, cultural_knowledge_future),
                 )
 
                 # 12. Create session summary
@@ -631,6 +622,17 @@ def _run(
                 cleanup_and_store(
                     agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
                 )
+
+                # 13b. Fire-and-forget: start learning extraction after RunCompleted and persistence.
+                # Uses the agent's dedicated learning_executor (max_workers=1) so that
+                # learning tasks from consecutive runs are serialised (FIFO).
+                if agent._learning is not None:
+                    _managers.start_learning_future(
+                        agent,
+                        run_messages=run_messages,
+                        session=agent_session,
+                        user_id=user_id,
+                    )
 
                 # Log Agent Telemetry
                 log_agent_telemetry(agent, session_id=agent_session.session_id, run_id=run_response.run_id)
@@ -719,7 +721,7 @@ def _run(
                 return run_response
     finally:
         # Cancel background futures on error (wait_for_open_threads handles waiting on success)
-        for future in (memory_future, cultural_knowledge_future, learning_future):
+        for future in (memory_future, cultural_knowledge_future):
             if future is not None and not future.done():
                 future.cancel()
                 try:
@@ -787,7 +789,6 @@ def _run_stream(
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
     memory_future = None
-    learning_future = None
     cultural_knowledge_future = None
     agent_session: Optional[AgentSession] = None
 
@@ -899,14 +900,8 @@ def _run_stream(
                     existing_future=memory_future,
                 )
 
-                # Start learning extraction as a background task (runs concurrently with the main execution)
-                learning_future = _managers.start_learning_future(
-                    agent,
-                    run_messages=run_messages,
-                    session=agent_session,
-                    user_id=user_id,
-                    existing_future=learning_future,
-                )
+                # NOTE: Learning extraction is now deferred to after RunCompleted.
+                # It is started as a fire-and-forget task in the post-completion phase.
 
                 # Start cultural knowledge creation in background thread
                 cultural_knowledge_future = _managers.start_cultural_knowledge_future(
@@ -1022,8 +1017,7 @@ def _run_stream(
                     yield from wait_for_thread_tasks_stream(
                         memory_future=memory_future,  # type: ignore
                         cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
-                        learning_future=learning_future,  # type: ignore
-                        stream_events=stream_events,
+                                    stream_events=stream_events,
                         run_response=run_response,
                         events_to_skip=agent.events_to_skip,
                         store_events=agent.store_events,
@@ -1031,7 +1025,7 @@ def _run_stream(
                     )
                     merge_background_metrics(
                         run_response.metrics,
-                        collect_background_metrics(memory_future, cultural_knowledge_future, learning_future),
+                        collect_background_metrics(memory_future, cultural_knowledge_future),
                     )
 
                     # Handle the paused run
@@ -1073,8 +1067,7 @@ def _run_stream(
                 yield from wait_for_thread_tasks_stream(
                     memory_future=memory_future,  # type: ignore
                     cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
-                    learning_future=learning_future,  # type: ignore
-                    stream_events=stream_events,
+                            stream_events=stream_events,
                     run_response=run_response,
                     events_to_skip=agent.events_to_skip,
                     store_events=agent.store_events,
@@ -1082,7 +1075,7 @@ def _run_stream(
                 )
                 merge_background_metrics(
                     run_response.metrics,
-                    collect_background_metrics(memory_future, cultural_knowledge_future, learning_future),
+                    collect_background_metrics(memory_future, cultural_knowledge_future),
                 )
 
                 # 9. Create session summary
@@ -1133,6 +1126,15 @@ def _run_stream(
                 cleanup_and_store(
                     agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
                 )
+
+                # 10b. Fire-and-forget: start learning extraction after RunCompleted and persistence.
+                if agent._learning is not None:
+                    _managers.start_learning_future(
+                        agent,
+                        run_messages=run_messages,
+                        session=agent_session,
+                        user_id=user_id,
+                    )
 
                 if stream_events:
                     yield completed_event  # type: ignore
@@ -1259,7 +1261,7 @@ def _run_stream(
                 yield run_error
     finally:
         # Cancel background futures on error (wait_for_thread_tasks_stream handles waiting on success)
-        for future in (memory_future, cultural_knowledge_future, learning_future):
+        for future in (memory_future, cultural_knowledge_future):
             if future is not None and not future.done():
                 future.cancel()
                 try:
@@ -1507,7 +1509,6 @@ async def _arun(
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
     memory_task = None
-    learning_task = None
     cultural_knowledge_task = None
     agent_session: Optional[AgentSession] = None
 
@@ -1623,14 +1624,8 @@ async def _arun(
                     existing_task=memory_task,
                 )
 
-                # Start learning extraction as a background task
-                learning_task = await _managers.astart_learning_task(
-                    agent,
-                    run_messages=run_messages,
-                    session=agent_session,
-                    user_id=user_id,
-                    existing_task=learning_task,
-                )
+                # NOTE: Learning extraction is now deferred to after RunCompleted.
+                # It is started as a fire-and-forget task in the post-completion phase.
 
                 # Start cultural knowledge creation as a background task (runs concurrently with the main execution)
                 cultural_knowledge_task = await _managers.astart_cultural_knowledge_task(
@@ -1695,11 +1690,10 @@ async def _arun(
                     await await_for_open_threads(
                         memory_task=memory_task,
                         cultural_knowledge_task=cultural_knowledge_task,
-                        learning_task=learning_task,
-                    )
+                        )
                     merge_background_metrics(
                         run_response.metrics,
-                        collect_background_metrics(memory_task, cultural_knowledge_task, learning_task),
+                        collect_background_metrics(memory_task, cultural_knowledge_task),
                     )
                     return await ahandle_agent_run_paused(
                         agent,
@@ -1740,11 +1734,10 @@ async def _arun(
                 await await_for_open_threads(
                     memory_task=memory_task,
                     cultural_knowledge_task=cultural_knowledge_task,
-                    learning_task=learning_task,
                 )
                 merge_background_metrics(
                     run_response.metrics,
-                    collect_background_metrics(memory_task, cultural_knowledge_task, learning_task),
+                    collect_background_metrics(memory_task, cultural_knowledge_task),
                 )
 
                 # 15. Create session summary
@@ -1768,6 +1761,15 @@ async def _arun(
                     run_context=run_context,
                     user_id=user_id,
                 )
+
+                # 16b. Fire-and-forget: start learning extraction after RunCompleted and persistence.
+                if agent._learning is not None:
+                    await _managers.astart_learning_task(
+                        agent,
+                        run_messages=run_messages,
+                        session=agent_session,
+                        user_id=user_id,
+                    )
 
                 # Log Agent Telemetry
                 await alog_agent_telemetry(agent, session_id=agent_session.session_id, run_id=run_response.run_id)
@@ -1883,12 +1885,6 @@ async def _arun(
             cultural_knowledge_task.cancel()
             try:
                 await cultural_knowledge_task
-            except asyncio.CancelledError:
-                pass
-        if learning_task is not None and not learning_task.done():
-            learning_task.cancel()
-            try:
-                await learning_task
             except asyncio.CancelledError:
                 pass
 
@@ -2172,7 +2168,6 @@ async def _arun_stream(
 
     memory_task = None
     cultural_knowledge_task = None
-    learning_task = None
     agent_session: Optional[AgentSession] = None
 
     # Set up retry logic
@@ -2296,14 +2291,8 @@ async def _arun_stream(
                     existing_task=memory_task,
                 )
 
-                # Start learning extraction as a background task
-                learning_task = await _managers.astart_learning_task(
-                    agent,
-                    run_messages=run_messages,
-                    session=agent_session,
-                    user_id=user_id,
-                    existing_task=learning_task,
-                )
+                # NOTE: Learning extraction is now deferred to after RunCompleted.
+                # It is started as a fire-and-forget task in the post-completion phase.
 
                 # Start cultural knowledge creation as a background task (runs concurrently with the main execution)
                 cultural_knowledge_task = await _managers.astart_cultural_knowledge_task(
@@ -2420,8 +2409,7 @@ async def _arun_stream(
                     async for item in await_for_thread_tasks_stream(
                         memory_task=memory_task,
                         cultural_knowledge_task=cultural_knowledge_task,
-                        learning_task=learning_task,
-                        stream_events=stream_events,
+                            stream_events=stream_events,
                         run_response=run_response,
                         events_to_skip=agent.events_to_skip,
                         store_events=agent.store_events,
@@ -2430,7 +2418,7 @@ async def _arun_stream(
                         yield item
                     merge_background_metrics(
                         run_response.metrics,
-                        collect_background_metrics(memory_task, cultural_knowledge_task, learning_task),
+                        collect_background_metrics(memory_task, cultural_knowledge_task),
                     )
 
                     async for item in ahandle_agent_run_paused_stream(  # type: ignore[assignment]
@@ -2464,7 +2452,6 @@ async def _arun_stream(
                 async for item in await_for_thread_tasks_stream(
                     memory_task=memory_task,
                     cultural_knowledge_task=cultural_knowledge_task,
-                    learning_task=learning_task,
                     stream_events=stream_events,
                     run_response=run_response,
                     events_to_skip=agent.events_to_skip,
@@ -2474,7 +2461,7 @@ async def _arun_stream(
                     yield item
                 merge_background_metrics(
                     run_response.metrics,
-                    collect_background_metrics(memory_task, cultural_knowledge_task, learning_task),
+                    collect_background_metrics(memory_task, cultural_knowledge_task),
                 )
 
                 # 12. Create session summary
@@ -2529,6 +2516,15 @@ async def _arun_stream(
                     run_context=run_context,
                     user_id=user_id,
                 )
+
+                # 13b. Fire-and-forget: start learning extraction after RunCompleted and persistence.
+                if agent._learning is not None:
+                    await _managers.astart_learning_task(
+                        agent,
+                        run_messages=run_messages,
+                        session=agent_session,
+                        user_id=user_id,
+                    )
 
                 if stream_events:
                     yield completed_event  # type: ignore
@@ -2697,12 +2693,6 @@ async def _arun_stream(
             except asyncio.CancelledError:
                 pass
 
-        if learning_task is not None and not learning_task.done():
-            learning_task.cancel()
-            try:
-                await learning_task
-            except asyncio.CancelledError:
-                pass
 
         # Always clean up the run tracking
         await acleanup_run(run_response.run_id)  # type: ignore
