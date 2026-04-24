@@ -555,3 +555,47 @@ def test_aws_cache_tools():
 
     assert "cache_control" not in kwargs["tools"][0]
     assert kwargs["tools"][-1]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_azure_cache_tools_and_blocks():
+    """Azure Foundry Claude routes through the shared _build_system and
+    _apply_cache_tools helpers, so it gets system_prompt_blocks and cache_tools
+    support for free."""
+    from agno.models.azure.claude import Claude as AzureClaude
+
+    blocks = [SystemPromptBlock(text="User static.", cache=True, ttl="1h")]
+    claude = AzureClaude(
+        cache_system_prompt=True,
+        extended_cache_time=True,
+        cache_tools=True,
+        system_prompt_blocks=blocks,
+    )
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "tool_a",
+                "description": "A",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "tool_b",
+                "description": "B",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+    ]
+    kwargs = claude._prepare_request_kwargs("Agent content.", tools=tools)
+
+    # Augmented system: agent block first (1h), then user block (1h)
+    assert len(kwargs["system"]) == 2
+    assert kwargs["system"][0]["text"] == "Agent content."
+    assert kwargs["system"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    assert kwargs["system"][1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+    # cache_tools marks the last tool
+    assert "cache_control" not in kwargs["tools"][0]
+    assert kwargs["tools"][-1]["cache_control"] == {"type": "ephemeral"}
