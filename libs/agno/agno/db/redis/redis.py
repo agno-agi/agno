@@ -27,6 +27,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.utils import deserialize_session, deserialize_sessions
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -342,7 +343,7 @@ class RedisDb(BaseDb):
     def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -350,7 +351,7 @@ class RedisDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to get.
-            session_type (SessionType): The type of session to get.
+            session_type (Optional[SessionType]): The type of session to get.
             user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
@@ -371,14 +372,7 @@ class RedisDb(BaseDb):
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT.value:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM.value:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW.value:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
             log_error(f"Exception reading session: {str(e)}")
@@ -433,6 +427,14 @@ class RedisDb(BaseDb):
                     filtered_sessions = [s for s in filtered_sessions if s.get("team_id") == component_id]
                 elif session_type == SessionType.WORKFLOW:
                     filtered_sessions = [s for s in filtered_sessions if s.get("workflow_id") == component_id]
+                elif session_type is None:
+                    filtered_sessions = [
+                        s
+                        for s in filtered_sessions
+                        if s.get("agent_id") == component_id
+                        or s.get("team_id") == component_id
+                        or s.get("workflow_id") == component_id
+                    ]
             if start_timestamp is not None:
                 filtered_sessions = [s for s in filtered_sessions if s.get("created_at", 0) >= start_timestamp]
             if end_timestamp is not None:
@@ -442,7 +444,7 @@ class RedisDb(BaseDb):
                 filtered_sessions = [
                     s
                     for s in filtered_sessions
-                    if session_name.lower() in s.get("session_data", {}).get("session_name", "").lower()
+                    if session_name.lower() in ((s.get("session_data") or {}).get("session_name") or "").lower()
                 ]
 
             sorted_sessions = apply_sorting(records=filtered_sessions, sort_by=sort_by, sort_order=sort_order)
@@ -452,14 +454,7 @@ class RedisDb(BaseDb):
             if not deserialize:
                 return sessions, len(filtered_sessions)
 
-            if session_type == SessionType.AGENT:
-                return [AgentSession.from_dict(record) for record in sessions]  # type: ignore
-            elif session_type == SessionType.TEAM:
-                return [TeamSession.from_dict(record) for record in sessions]  # type: ignore
-            elif session_type == SessionType.WORKFLOW:
-                return [WorkflowSession.from_dict(record) for record in sessions]  # type: ignore
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_sessions(session_type, sessions)
 
         except Exception as e:
             log_error(f"Exception reading sessions: {str(e)}")
@@ -468,7 +463,7 @@ class RedisDb(BaseDb):
     def rename_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType],
         session_name: str,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
@@ -495,8 +490,11 @@ class RedisDb(BaseDb):
             if user_id is not None and session.get("user_id") != user_id:
                 return None
 
+            if session_type is not None and session.get("session_type") != session_type.value:
+                return None
+
             # Update session_name, in session_data
-            if "session_data" not in session:
+            if "session_data" not in session or session["session_data"] is None:
                 session["session_data"] = {}
             session["session_data"]["session_name"] = session_name
             session["updated_at"] = int(time.time())
@@ -511,14 +509,7 @@ class RedisDb(BaseDb):
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
             log_error(f"Error renaming session: {str(e)}")
