@@ -53,7 +53,7 @@ async def main() -> None:
             markdown=True,
         )
 
-        prompt = "What is the latest stable release of CPython? Cite the source."
+        prompt = "What is the latest stable release of Agno? Cite the source."
         await agent.aprint_response(prompt)
     finally:
         await web.aclose()
