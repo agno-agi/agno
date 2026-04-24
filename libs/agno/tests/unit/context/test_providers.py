@@ -17,7 +17,7 @@ from agno.context.fs import FilesystemContextProvider
 from agno.context.gdrive import GDriveContextProvider
 from agno.context.mcp import MCPContextProvider
 from agno.context.slack import SlackContextProvider
-from agno.context.web import ExaBackend, ParallelMCPBackend, WebContextProvider
+from agno.context.web import ExaBackend, ExaMCPBackend, ParallelMCPBackend, WebContextProvider
 
 # ---------------------------------------------------------------------------
 # Filesystem
@@ -78,6 +78,51 @@ def test_web_provider_forwards_status_from_backend():
     assert p.status().ok is True
 
 
+def test_exa_mcp_backend_keyless_status_ok(monkeypatch):
+    monkeypatch.delenv("EXA_API_KEY", raising=False)
+    b = ExaMCPBackend()
+    status = b.status()
+    assert status.ok is True
+    assert status.detail == "mcp.exa.ai (keyless)"
+
+
+def test_exa_mcp_backend_keyed_status_reports_keyed():
+    b = ExaMCPBackend(api_key="secret")
+    assert b.status().detail == "mcp.exa.ai (keyed)"
+
+
+def test_exa_mcp_backend_default_include_tools():
+    b = ExaMCPBackend(api_key="x")
+    assert b.include_tools == ["web_search_exa", "web_fetch_exa"]
+    assert "tools=web_search_exa,web_fetch_exa" in b.url
+
+
+def test_exa_mcp_backend_custom_include_tools():
+    b = ExaMCPBackend(api_key="x", include_tools=["web_search_exa"])
+    assert b.include_tools == ["web_search_exa"]
+    assert "tools=web_search_exa" in b.url
+
+
+def test_exa_mcp_backend_include_tools_none_passes_empty():
+    b = ExaMCPBackend(api_key="x", include_tools=None)
+    assert b.include_tools is None
+    assert "tools=" in b.url
+
+
+def test_exa_mcp_backend_exclude_tools_propagates():
+    b = ExaMCPBackend(api_key="x", exclude_tools=["web_fetch_exa"])
+    assert b.exclude_tools == ["web_fetch_exa"]
+    tools = b.get_tools()
+    assert tools[0].exclude_tools == ["web_fetch_exa"]
+
+
+def test_exa_mcp_backend_tool_name_prefix_propagates():
+    b = ExaMCPBackend(api_key="x", tool_name_prefix="exa")
+    assert b.tool_name_prefix == "exa"
+    tools = b.get_tools()
+    assert tools[0].tool_name_prefix == "exa"
+
+
 def test_parallel_mcp_backend_keyless_status_ok(monkeypatch):
     monkeypatch.delenv("PARALLEL_API_KEY", raising=False)
     b = ParallelMCPBackend()
@@ -135,6 +180,32 @@ def test_parallel_mcp_backend_custom_timeout_propagates():
     b = ParallelMCPBackend(api_key="x", timeout_seconds=120)
     tools = b.get_tools()
     assert tools[0].timeout_seconds == 120
+
+
+def test_parallel_mcp_backend_custom_include_tools():
+    b = ParallelMCPBackend(api_key="x", include_tools=["web_search"])
+    tools = b.get_tools()
+    assert tools[0].include_tools == ["web_search"]
+
+
+def test_parallel_mcp_backend_include_tools_none_passes_none():
+    b = ParallelMCPBackend(api_key="x", include_tools=None)
+    tools = b.get_tools()
+    assert tools[0].include_tools is None
+
+
+def test_parallel_mcp_backend_exclude_tools_propagates():
+    b = ParallelMCPBackend(api_key="x", exclude_tools=["web_fetch"])
+    assert b.exclude_tools == ["web_fetch"]
+    tools = b.get_tools()
+    assert tools[0].exclude_tools == ["web_fetch"]
+
+
+def test_parallel_mcp_backend_tool_name_prefix_propagates():
+    b = ParallelMCPBackend(api_key="x", tool_name_prefix="parallel")
+    assert b.tool_name_prefix == "parallel"
+    tools = b.get_tools()
+    assert tools[0].tool_name_prefix == "parallel"
 
 
 def test_web_provider_accepts_parallel_mcp_backend(monkeypatch):

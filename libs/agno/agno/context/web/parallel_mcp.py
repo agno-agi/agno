@@ -21,6 +21,7 @@ the raw extraction payload.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from os import getenv
 from typing import Any, Optional
 
@@ -30,7 +31,7 @@ from agno.utils.log import log_info, log_warning
 
 _BASE_URL = "https://search.parallel.ai/mcp"
 _OAUTH_BASE_URL = "https://search.parallel.ai/mcp-oauth"
-_TOOLS = ("web_search", "web_fetch")
+_DEFAULT_TOOLS: Sequence[str] = ("web_search", "web_fetch")
 
 
 class ParallelMCPBackend(ContextBackend):
@@ -42,9 +43,15 @@ class ParallelMCPBackend(ContextBackend):
         api_key: Optional[str] = None,
         authenticated: bool = False,
         timeout_seconds: int = 60,
+        include_tools: Sequence[str] | None = _DEFAULT_TOOLS,
+        exclude_tools: Sequence[str] | None = None,
+        tool_name_prefix: str | None = None,
     ) -> None:
         self.api_key = api_key if api_key is not None else (getenv("PARALLEL_API_KEY", "") or None)
         self.url = _OAUTH_BASE_URL if authenticated else _BASE_URL
+        self.include_tools = list(include_tools) if include_tools is not None else None
+        self.exclude_tools = list(exclude_tools) if exclude_tools is not None else None
+        self.tool_name_prefix = tool_name_prefix
         # /mcp-oauth rejects anonymous requests with 401 (unlike /mcp), so
         # the endpoint is unusable without a key — fail fast instead of
         # surfacing a runtime 401 during asetup().
@@ -79,7 +86,9 @@ class ParallelMCPBackend(ContextBackend):
         return MCPTools(
             server_params=server_params,
             transport="streamable-http",
-            include_tools=list(_TOOLS),
+            include_tools=self.include_tools,
+            exclude_tools=self.exclude_tools,
+            tool_name_prefix=self.tool_name_prefix,
             timeout_seconds=self.timeout_seconds,
         )
 
