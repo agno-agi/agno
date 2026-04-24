@@ -74,8 +74,14 @@ class SystemPromptBlock(BaseModel):
 
     Used with ``Claude.system_prompt_blocks`` to split the system prompt into
     independently-cacheable segments. ``cache=True`` adds ``cache_control`` to
-    the block when the model has ``cache_system_prompt=True``. ``ttl`` overrides
-    the model-level ``extended_cache_time`` flag for that block only.
+    this block; ``cache=False`` leaves it uncached. This decision is made per
+    block and is independent of the model-level ``cache_system_prompt`` flag,
+    which only controls whether the agent-built system message gets cached.
+    That separation lets you leave the agent-built block uncached while still
+    caching selected custom blocks (or vice versa).
+
+    ``ttl`` overrides the model-level ``extended_cache_time`` flag for that
+    block only.
     """
 
     text: str

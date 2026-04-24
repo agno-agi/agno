@@ -186,18 +186,22 @@ def test_multi_block_system_message_caching():
     }
 
 
-def test_multi_block_no_caching():
-    """Blocks sent without cache_control when cache_system_prompt=False."""
+def test_block_cache_field_independent_of_cache_system_prompt():
+    """block.cache decides per-block caching on its own — cache_system_prompt
+    only controls the agent-built string block. This lets users cache custom
+    blocks while leaving the agent-built block uncached."""
     blocks = [
-        SystemPromptBlock(text="Static.", cache=True),
-        SystemPromptBlock(text="Dynamic.", cache=False),
+        SystemPromptBlock(text="Custom cached.", cache=True),
+        SystemPromptBlock(text="Custom uncached.", cache=False),
     ]
     claude = Claude(cache_system_prompt=False, system_prompt_blocks=blocks)
     kwargs = claude._prepare_request_kwargs("")
 
     assert len(kwargs["system"]) == 2
-    for block in kwargs["system"]:
-        assert "cache_control" not in block
+    # block.cache=True still gets cache_control even when cache_system_prompt=False
+    assert kwargs["system"][0]["cache_control"] == {"type": "ephemeral"}
+    # block.cache=False stays uncached
+    assert "cache_control" not in kwargs["system"][1]
 
 
 def test_multi_block_extended_cache_time():
@@ -318,14 +322,16 @@ def test_build_system_valid_when_extended_cache_time_matches():
 
 
 def test_build_system_valid_when_agent_block_uncached():
-    """cache_system_prompt=False disables caching on every block, so TTL
-    ordering is vacuously satisfied (no cache_control anywhere)."""
+    """cache_system_prompt=False leaves the agent-built block uncached while
+    user blocks still cache per their own block.cache field. The resulting
+    [uncached agent, 1h cached user] ordering satisfies Anthropic's rule
+    (no 5m cached block precedes the 1h one)."""
     blocks = [SystemPromptBlock(text="User 1h.", cache=True, ttl="1h")]
     claude = Claude(cache_system_prompt=False, system_prompt_blocks=blocks)
 
     result = claude._build_system("Agent content.")
     assert "cache_control" not in result[0]
-    assert "cache_control" not in result[1]
+    assert result[1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 
 
 def test_tools_sorted_by_name_for_cache_stability():

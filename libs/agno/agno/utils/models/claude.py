@@ -337,13 +337,21 @@ def build_system_blocks(
     """Build the system parameter blocks for the Anthropic API.
 
     Converts either a plain string or a list of SystemPromptBlock into the
-    list-of-dicts format the Anthropic API expects for the ``system`` field,
-    applying ``cache_control`` only to blocks marked as cacheable.
+    list-of-dicts format the Anthropic API expects for the ``system`` field.
+
+    Caching semantics are asymmetric by design:
+    - For a string (the agent-built system message), ``cache_system_prompt``
+      decides whether it gets ``cache_control``. That flag is the single
+      switch for the agent-built block.
+    - For a list of ``SystemPromptBlock`` (user-supplied), each block's own
+      ``block.cache`` field decides. This is independent of
+      ``cache_system_prompt`` so that you can leave the agent-built block
+      uncached while still caching selected user blocks (or vice versa).
 
     TTL resolution for each cached block:
-    - Explicit block.ttl wins: "5m" => plain ephemeral (5m is the default),
-      "1h" => ephemeral with ttl key.
-    - block.ttl is None => falls back to model-level extended_cache_time.
+    - Explicit ``block.ttl`` wins: ``"5m"`` => plain ephemeral (5m is the
+      default), ``"1h"`` => ephemeral with ttl key.
+    - ``block.ttl is None`` => falls back to model-level ``extended_cache_time``.
     """
     if isinstance(system_message, str):
         entry: Dict[str, Any] = {"text": system_message, "type": "text"}
@@ -357,8 +365,11 @@ def build_system_blocks(
     result: List[Dict[str, Any]] = []
     for block in system_message:
         b: Dict[str, Any] = {"text": block.text, "type": "text"}
-        if cache_system_prompt and block.cache:
-            # Explicit block-level ttl wins; None falls back to model-level extended_cache_time
+        if block.cache:
+            # Explicit block-level ttl wins; None falls back to model-level extended_cache_time.
+            # Deliberately independent of cache_system_prompt — that flag only gates the
+            # agent-built block, so users can cache custom blocks without also caching
+            # the agent-built one (and vice versa).
             effective_ttl = block.ttl if block.ttl is not None else ("1h" if extended_cache_time else "5m")
             cc = {"type": "ephemeral"}
             if effective_ttl == "1h":
@@ -389,7 +400,8 @@ def _validate_cache_ttl_order(blocks: List[Dict[str, Any]]) -> None:
                     "a SystemPromptBlock(ttl='1h'). Fix with one of:\n"
                     "  - Claude(extended_cache_time=True) so the agent-built block is 1h too\n"
                     "  - Change your block ttl to '5m' or None\n"
-                    "  - Set cache_system_prompt=False so the agent-built block is uncached"
+                    "  - Set cache_system_prompt=False to leave the agent-built block "
+                    "uncached (custom blocks still cache per their own block.cache field)"
                 )
         else:
             seen_5m = True
