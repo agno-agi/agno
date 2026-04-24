@@ -23,6 +23,7 @@ Providers ship in this package:
 | `WebContextProvider` + `ExaMCPBackend` | Web via Exa's public MCP server (keyless / keyed) | `query_<id>` (search + fetch sub-agent) |
 | `WebContextProvider` + `ExaBackend` | Web via Exa's direct SDK | `query_<id>` (search + fetch sub-agent) |
 | `WebContextProvider` + `ParallelBackend` | Web via Parallel's beta API | `query_<id>` (search + fetch sub-agent) |
+| `WebContextProvider` + `ParallelMCPBackend` | Web via Parallel's public MCP server (keyless / keyed) | `query_<id>` (search + fetch sub-agent) |
 | `DatabaseContextProvider` | Any SQL database (SQLAlchemy) | `query_<id>`, `update_<id>` (separate read/write sub-agents) |
 | `SlackContextProvider` | A Slack workspace | `query_<id>`, `update_<id>` (separate read/write sub-agents; writer only gets `send_message` + the lookup tools it needs) |
 | `MCPContextProvider` | One MCP server | `query_<id>` (sub-agent over the server's tools) or flat tools in `mode=tools` |
@@ -43,6 +44,7 @@ Providers ship in this package:
 | `08_multi_provider.py` | Three providers on one agent; names compose cleanly |
 | `09_web_plus_slack.py` | Compositional: Slack topics feed per-topic web searches |
 | `10_custom_provider.py` | Subclass `ContextProvider` for your own source |
+| `11_web_parallel_mcp.py` | Web research via Parallel's public MCP endpoint (keyless; `PARALLEL_API_KEY` raises the ceiling) |
 
 ## Run
 
@@ -57,6 +59,9 @@ OPENAI_API_KEY=... EXA_API_KEY=... .venvs/demo/bin/python cookbook/12_context/01
 
 # Keyless Exa MCP — no signup required
 OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/02_web_exa_mcp.py
+
+# Keyless Parallel MCP — no signup required; set PARALLEL_API_KEY for higher limits
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/11_web_parallel_mcp.py
 
 # Parallel SDK
 OPENAI_API_KEY=... PARALLEL_API_KEY=... .venvs/demo/bin/python cookbook/12_context/03_web_parallel.py
