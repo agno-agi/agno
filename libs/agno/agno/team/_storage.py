@@ -504,6 +504,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["add_name_to_context"] = team.add_name_to_context
     if team.add_member_tools_to_context:
         config["add_member_tools_to_context"] = team.add_member_tools_to_context
+    if not team.expose_sub_team_members:  # default is True
+        config["expose_sub_team_members"] = team.expose_sub_team_members
     if not team.resolve_in_context:  # default is True
         config["resolve_in_context"] = team.resolve_in_context
 
@@ -913,6 +915,7 @@ def from_dict(
             timezone_identifier=config.get("timezone_identifier"),
             add_name_to_context=config.get("add_name_to_context", False),
             add_member_tools_to_context=config.get("add_member_tools_to_context", False),
+            expose_sub_team_members=config.get("expose_sub_team_members", True),
             resolve_in_context=config.get("resolve_in_context", True),
             # --- Database settings ---
             db=config.get("db"),

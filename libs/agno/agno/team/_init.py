@@ -102,6 +102,7 @@ def __init__(
     timezone_identifier: Optional[str] = None,
     add_name_to_context: bool = False,
     add_member_tools_to_context: bool = False,
+    expose_sub_team_members: bool = True,
     system_message: Optional[Union[str, Callable, Message]] = None,
     system_message_role: str = "system",
     introduction: Optional[str] = None,
@@ -274,6 +275,7 @@ def __init__(
     team.add_name_to_context = add_name_to_context
     team.timezone_identifier = timezone_identifier
     team.add_member_tools_to_context = add_member_tools_to_context
+    team.expose_sub_team_members = expose_sub_team_members
     team.system_message = system_message
     team.system_message_role = system_message_role
     team.introduction = introduction

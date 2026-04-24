@@ -175,6 +175,13 @@ class Team:
     add_name_to_context: bool = False
     # If True, add the tools available to team members to the context
     add_member_tools_to_context: bool = False
+    # If True (default), sub-teams are transparent: the team leader sees the full nested
+    # member tree in its system prompt and can delegate directly to grandchild members.
+    # If False, sub-teams are opaque capabilities: only the sub-team itself is visible to
+    # the parent, and delegation must target the sub-team (its leader then delegates to
+    # its own members). Encapsulation preserves the sub-team's own orchestration, reduces
+    # prompt size, and avoids the leader picking a grandchild over the sub-team as a whole.
+    expose_sub_team_members: bool = True
 
     # Provide the system message as a string or function
     system_message: Optional[Union[str, Callable, Message]] = None
@@ -468,6 +475,7 @@ class Team:
         timezone_identifier: Optional[str] = None,
         add_name_to_context: bool = False,
         add_member_tools_to_context: bool = False,
+        expose_sub_team_members: bool = True,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
         introduction: Optional[str] = None,
@@ -590,6 +598,7 @@ class Team:
             timezone_identifier=timezone_identifier,
             add_name_to_context=add_name_to_context,
             add_member_tools_to_context=add_member_tools_to_context,
+            expose_sub_team_members=expose_sub_team_members,
             system_message=system_message,
             system_message_role=system_message_role,
             introduction=introduction,

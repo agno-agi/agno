@@ -483,7 +483,12 @@ def _determine_team_member_interactions(
 def _find_member_by_id(
     team: "Team", member_id: str, run_context: Optional["RunContext"] = None
 ) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
-    """Find a member (agent or team) by its URL-safe ID, searching recursively.
+    """Find a member (agent or team) by its URL-safe ID.
+
+    Searches `team`'s direct members. Recursion into sub-teams is gated by
+    `team.expose_sub_team_members`: when False, sub-teams are opaque and their
+    descendants are not discoverable from this team — the caller must delegate
+    to the sub-team itself, which then resolves its own members.
 
     Args:
         team: The team to search in.
@@ -508,8 +513,8 @@ def _find_member_by_id(
         if url_safe_member_id == member_id:
             return i, member
 
-        # If this member is a team, search its members recursively
-        if isinstance(member, Team):
+        # Only descend into sub-teams when this team exposes nested members.
+        if isinstance(member, Team) and team.expose_sub_team_members:
             result = member._find_member_by_id(member_id, run_context=run_context)
             if result is not None:
                 return result

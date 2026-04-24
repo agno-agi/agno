@@ -92,7 +92,10 @@ def get_members_system_message_content(
             content += f'{pad}<member id="{member_id}" name="{member.name}" type="team">\n'
             if member.description is not None:
                 content += f"{pad}  Description: {member.description}\n"
-            if member.members is not None:
+            # Only expand a sub-team's members into this team's prompt when this team is
+            # configured to see through sub-teams. Otherwise the sub-team is treated as
+            # an opaque capability — its leader handles delegation to its own members.
+            if team.expose_sub_team_members and member.members is not None:
                 content += member.get_members_system_message_content(
                     indent=indent + 2, run_context=run_context, async_mode=async_mode
                 )
