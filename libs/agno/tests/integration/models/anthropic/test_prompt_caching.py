@@ -252,6 +252,49 @@ def test_system_prompt_blocks_augment_agent_system_message():
     }
 
 
+def test_system_prompt_blocks_callable_evaluated_per_request():
+    """A callable system_prompt_blocks is resolved on every _build_system call,
+    so users can inject dynamic per-request content without reinstantiating
+    the model or agent.
+    """
+    call_count = {"n": 0}
+
+    def build_blocks():
+        call_count["n"] += 1
+        return [
+            SystemPromptBlock(text="Static role.", cache=True, ttl="1h"),
+            SystemPromptBlock(text=f"Request #{call_count['n']}.", cache=False),
+        ]
+
+    claude = Claude(cache_system_prompt=True, extended_cache_time=True, system_prompt_blocks=build_blocks)
+
+    # First call: callable runs once, block text reflects the invocation
+    first = claude._build_system("Agent content.")
+    assert call_count["n"] == 1
+    assert first[2]["text"] == "Request #1."
+    assert "cache_control" not in first[2]  # dynamic block stays uncached
+
+    # Second call: callable runs again, text differs → dynamic content refreshed
+    second = claude._build_system("Agent content.")
+    assert call_count["n"] == 2
+    assert second[2]["text"] == "Request #2."
+
+    # Static parts are identical across calls → cache prefix is stable
+    assert first[0] == second[0]
+    assert first[1] == second[1]
+
+
+def test_system_prompt_blocks_callable_propagates_validation():
+    """TTL ordering validation still fires when blocks come from a callable."""
+    claude = Claude(
+        cache_system_prompt=True,
+        extended_cache_time=False,
+        system_prompt_blocks=lambda: [SystemPromptBlock(text="User 1h.", cache=True, ttl="1h")],
+    )
+    with pytest.raises(ValueError, match="Invalid Anthropic cache TTL ordering"):
+        claude._build_system("Agent content.")
+
+
 def test_build_system_raises_on_invalid_ttl_ordering():
     """Anthropic rejects 5m-cached-block before 1h-cached-block. _build_system
     must catch this at assembly time with an actionable ValueError."""

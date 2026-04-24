@@ -2,7 +2,7 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
 from os import getenv
-from typing import Any, Dict, List, Literal, NoReturn, Optional, Type, Union
+from typing import Any, Callable, Dict, List, Literal, NoReturn, Optional, Type, Union
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -133,9 +133,12 @@ class Claude(Model):
     extended_cache_time: Optional[bool] = False
     cache_tools: bool = False
     # Optional multi-block system prompt with per-block cache control.
-    # When set, replaces the agent-built system string and is sent to Anthropic
-    # as the ``system`` array. See SystemPromptBlock for cache/ttl semantics.
-    system_prompt_blocks: Optional[List[SystemPromptBlock]] = None
+    # Appended after the agent-built system message in the Anthropic ``system``
+    # array. See SystemPromptBlock for cache/ttl semantics. May be a list, or a
+    # zero-arg callable returning a list — the callable is evaluated on every
+    # request, which is how you inject dynamic per-request content into a
+    # cached system prompt without reinstantiating the model or agent.
+    system_prompt_blocks: Optional[Union[List[SystemPromptBlock], Callable[[], List[SystemPromptBlock]]]] = None
     request_params: Optional[Dict[str, Any]] = None
 
     # Anthropic beta and experimental features
@@ -616,10 +619,11 @@ class Claude(Model):
                     extended_cache_time=bool(self.extended_cache_time),
                 )
             )
-        if self.system_prompt_blocks:
+        user_blocks = self.system_prompt_blocks() if callable(self.system_prompt_blocks) else self.system_prompt_blocks
+        if user_blocks:
             blocks.extend(
                 build_system_blocks(
-                    self.system_prompt_blocks,
+                    user_blocks,
                     cache_system_prompt=bool(self.cache_system_prompt),
                     extended_cache_time=bool(self.extended_cache_time),
                 )
