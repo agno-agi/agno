@@ -17,7 +17,7 @@ from agno.context.fs import FilesystemContextProvider
 from agno.context.gdrive import GDriveContextProvider
 from agno.context.mcp import MCPContextProvider
 from agno.context.slack import SlackContextProvider
-from agno.context.web import ExaBackend, WebContextProvider
+from agno.context.web import ExaBackend, ParallelMCPBackend, WebContextProvider
 
 # ---------------------------------------------------------------------------
 # Filesystem
@@ -75,6 +75,73 @@ def test_web_provider_exposes_query_tool():
 
 def test_web_provider_forwards_status_from_backend():
     p = WebContextProvider(backend=ExaBackend(api_key="x"))
+    assert p.status().ok is True
+
+
+def test_parallel_mcp_backend_keyless_status_ok(monkeypatch):
+    monkeypatch.delenv("PARALLEL_API_KEY", raising=False)
+    b = ParallelMCPBackend()
+    status = b.status()
+    assert status.ok is True
+    assert "keyless" in status.detail
+    assert "/mcp" in status.detail
+
+
+def test_parallel_mcp_backend_keyed_status_reports_keyed():
+    b = ParallelMCPBackend(api_key="secret")
+    status = b.status()
+    assert status.ok is True
+    assert "keyed" in status.detail
+
+
+def test_parallel_mcp_backend_picks_up_env_var(monkeypatch):
+    monkeypatch.setenv("PARALLEL_API_KEY", "env-secret")
+    b = ParallelMCPBackend()
+    assert b.api_key == "env-secret"
+    assert "keyed" in b.status().detail
+
+
+def test_parallel_mcp_backend_oauth_requires_api_key(monkeypatch):
+    monkeypatch.delenv("PARALLEL_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="use_oauth=True requires api_key"):
+        ParallelMCPBackend(use_oauth=True)
+
+
+def test_parallel_mcp_backend_oauth_points_at_oauth_endpoint():
+    b = ParallelMCPBackend(api_key="secret", use_oauth=True)
+    assert b.url == "https://search.parallel.ai/mcp-oauth"
+    assert "/mcp-oauth" in b.status().detail
+
+
+def test_parallel_mcp_backend_builds_mcp_tools_with_bearer_header():
+    b = ParallelMCPBackend(api_key="secret")
+    tools = b.get_tools()
+    assert len(tools) == 1
+    mcp_tools = tools[0]
+    params = mcp_tools.server_params
+    assert params.url == "https://search.parallel.ai/mcp"
+    assert params.headers == {"Authorization": "Bearer secret"}
+    assert mcp_tools.include_tools == ["web_search", "web_fetch"]
+    assert mcp_tools.timeout_seconds == 30
+
+
+def test_parallel_mcp_backend_keyless_has_no_auth_header(monkeypatch):
+    monkeypatch.delenv("PARALLEL_API_KEY", raising=False)
+    b = ParallelMCPBackend()
+    tools = b.get_tools()
+    assert tools[0].server_params.headers is None
+
+
+def test_parallel_mcp_backend_custom_timeout_propagates():
+    b = ParallelMCPBackend(api_key="x", timeout_seconds=120)
+    tools = b.get_tools()
+    assert tools[0].timeout_seconds == 120
+
+
+def test_web_provider_accepts_parallel_mcp_backend(monkeypatch):
+    monkeypatch.delenv("PARALLEL_API_KEY", raising=False)
+    p = WebContextProvider(backend=ParallelMCPBackend())
+    assert [t.name for t in p.get_tools()] == ["query_web"]
     assert p.status().ok is True
 
 
