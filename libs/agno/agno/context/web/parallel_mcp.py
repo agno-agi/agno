@@ -8,7 +8,7 @@ rate ceiling.
 Two endpoints are supported:
 - `search.parallel.ai/mcp` (default): allows anonymous use, Bearer token
   optional. Good for prototyping and single-user dev.
-- `search.parallel.ai/mcp-oauth` (`use_oauth_endpoint=True`): authenticated-only,
+- `search.parallel.ai/mcp-oauth` (`authenticated=True`): authenticated-only,
   rejects anonymous requests with 401. Use for org-wide deployments, ZDR
   contexts, or MCP clients that negotiate auth via OAuth2.
 
@@ -22,11 +22,11 @@ the raw extraction payload.
 from __future__ import annotations
 
 from os import getenv
-from typing import Any
+from typing import Any, Optional
 
 from agno.context.backend import ContextBackend
 from agno.context.provider import Status
-from agno.utils.log import log_warning
+from agno.utils.log import log_info, log_warning
 
 _BASE_URL = "https://search.parallel.ai/mcp"
 _OAUTH_BASE_URL = "https://search.parallel.ai/mcp-oauth"
@@ -39,18 +39,17 @@ class ParallelMCPBackend(ContextBackend):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
-        use_oauth_endpoint: bool = False,
+        api_key: Optional[str] = None,
+        authenticated: bool = False,
         timeout_seconds: int = 60,
     ) -> None:
         self.api_key = api_key if api_key is not None else (getenv("PARALLEL_API_KEY", "") or None)
+        self.url = _OAUTH_BASE_URL if authenticated else _BASE_URL
         # /mcp-oauth rejects anonymous requests with 401 (unlike /mcp), so
         # the endpoint is unusable without a key — fail fast instead of
         # surfacing a runtime 401 during asetup().
-        if use_oauth_endpoint and not self.api_key:
-            raise ValueError("use_oauth_endpoint=True requires api_key (or PARALLEL_API_KEY env var).")
-        self.use_oauth_endpoint = use_oauth_endpoint
-        self.url = _OAUTH_BASE_URL if self.use_oauth_endpoint else _BASE_URL
+        if self.url == _OAUTH_BASE_URL and not self.api_key:
+            raise ValueError("authenticated=True requires api_key (or PARALLEL_API_KEY env var).")
         # web_fetch returns server-compressed markdown for long pages and
         # regularly exceeds MCPTools' 10s default.
         self.timeout_seconds = timeout_seconds
@@ -94,6 +93,7 @@ class ParallelMCPBackend(ContextBackend):
             self._mcp_tools = self._build_tools()
         if getattr(self._mcp_tools, "initialized", False):
             return
+        log_info(f"ParallelMCPBackend: connecting to {self.url} ({'keyed' if self.api_key else 'keyless'})")
         try:
             await self._mcp_tools._connect()
         except Exception as exc:

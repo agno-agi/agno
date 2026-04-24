@@ -100,14 +100,14 @@ def test_parallel_mcp_backend_picks_up_env_var(monkeypatch):
     assert b.status().detail == "search.parallel.ai/mcp (keyed)"
 
 
-def test_parallel_mcp_backend_oauth_endpoint_requires_api_key(monkeypatch):
+def test_parallel_mcp_backend_authenticated_requires_api_key(monkeypatch):
     monkeypatch.delenv("PARALLEL_API_KEY", raising=False)
-    with pytest.raises(ValueError, match="use_oauth_endpoint=True requires api_key"):
-        ParallelMCPBackend(use_oauth_endpoint=True)
+    with pytest.raises(ValueError, match="authenticated=True requires api_key"):
+        ParallelMCPBackend(authenticated=True)
 
 
-def test_parallel_mcp_backend_oauth_endpoint_points_at_oauth_url():
-    b = ParallelMCPBackend(api_key="secret", use_oauth_endpoint=True)
+def test_parallel_mcp_backend_authenticated_uses_oauth_endpoint():
+    b = ParallelMCPBackend(api_key="secret", authenticated=True)
     assert b.url == "https://search.parallel.ai/mcp-oauth"
     assert b.status().detail == "search.parallel.ai/mcp-oauth (keyed)"
 

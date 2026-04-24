@@ -49,7 +49,7 @@ async def main() -> None:
         agent = Agent(
             model=OpenAIResponses(id="gpt-5.4"),
             tools=web.get_tools(),
-            instructions=web.instructions() + "\nAlways cite URLs inline.",
+            instructions=web.instructions(),
             markdown=True,
         )
 
