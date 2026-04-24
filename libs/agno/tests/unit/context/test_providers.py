@@ -121,7 +121,7 @@ def test_parallel_mcp_backend_builds_mcp_tools_with_bearer_header():
     assert params.url == "https://search.parallel.ai/mcp"
     assert params.headers == {"Authorization": "Bearer secret"}
     assert mcp_tools.include_tools == ["web_search", "web_fetch"]
-    assert mcp_tools.timeout_seconds == 30
+    assert mcp_tools.timeout_seconds == 60
 
 
 def test_parallel_mcp_backend_keyless_has_no_auth_header(monkeypatch):

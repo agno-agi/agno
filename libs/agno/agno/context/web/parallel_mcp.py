@@ -41,7 +41,7 @@ class ParallelMCPBackend(ContextBackend):
         *,
         api_key: str | None = None,
         use_oauth_endpoint: bool = False,
-        timeout_seconds: int = 30,
+        timeout_seconds: int = 60,
     ) -> None:
         self.api_key = api_key if api_key is not None else (getenv("PARALLEL_API_KEY", "") or None)
         # /mcp-oauth rejects anonymous requests with 401 (unlike /mcp), so
