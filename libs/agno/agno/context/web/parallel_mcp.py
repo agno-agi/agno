@@ -5,6 +5,13 @@ agent. The default endpoint is keyless; passing `api_key` (or setting
 `PARALLEL_API_KEY`) authenticates via Bearer token and raises the
 rate ceiling.
 
+Two endpoints are supported:
+- `search.parallel.ai/mcp` (default): allows anonymous use, Bearer token
+  optional. Good for prototyping and single-user dev.
+- `search.parallel.ai/mcp-oauth` (`use_oauth_endpoint=True`): authenticated-only,
+  rejects anonymous requests with 401. Use for org-wide deployments, ZDR
+  contexts, or MCP clients that negotiate auth via OAuth2.
+
 Pairs with `ParallelBackend` (direct SDK) — the two are not equivalent:
 the SDK exposes `web_search` + `web_extract`, whereas the MCP server
 exposes `web_search` + `web_fetch` (token-efficient markdown). Pick
@@ -33,23 +40,24 @@ class ParallelMCPBackend(ContextBackend):
         self,
         *,
         api_key: str | None = None,
-        use_oauth: bool = False,
+        use_oauth_endpoint: bool = False,
         timeout_seconds: int = 30,
     ) -> None:
         self.api_key = api_key if api_key is not None else (getenv("PARALLEL_API_KEY", "") or None)
-        # OAuth endpoint still accepts Bearer tokens but requires one — reject
-        # the nonsensical "oauth + keyless" combination up front.
-        if use_oauth and not self.api_key:
-            raise ValueError("use_oauth=True requires api_key (or PARALLEL_API_KEY env var).")
-        self.use_oauth = use_oauth
-        self.url = _OAUTH_BASE_URL if self.use_oauth else _BASE_URL
+        # /mcp-oauth rejects anonymous requests with 401 (unlike /mcp), so
+        # the endpoint is unusable without a key — fail fast instead of
+        # surfacing a runtime 401 during asetup().
+        if use_oauth_endpoint and not self.api_key:
+            raise ValueError("use_oauth_endpoint=True requires api_key (or PARALLEL_API_KEY env var).")
+        self.use_oauth_endpoint = use_oauth_endpoint
+        self.url = _OAUTH_BASE_URL if self.use_oauth_endpoint else _BASE_URL
         # Bumped from MCPTools' 10s default — Parallel's web_fetch returns
         # server-compressed markdown for long pages and regularly exceeds 10s.
         self.timeout_seconds = timeout_seconds
         self._mcp_tools: Any = None
 
     def status(self) -> Status:
-        endpoint = "mcp-oauth" if self.use_oauth else "mcp"
+        endpoint = "mcp-oauth" if self.use_oauth_endpoint else "mcp"
         return Status(ok=True, detail=f"search.parallel.ai/{endpoint} ({'keyed' if self.api_key else 'keyless'})")
 
     async def astatus(self) -> Status:

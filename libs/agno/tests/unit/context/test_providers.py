@@ -83,34 +83,33 @@ def test_parallel_mcp_backend_keyless_status_ok(monkeypatch):
     b = ParallelMCPBackend()
     status = b.status()
     assert status.ok is True
-    assert "keyless" in status.detail
-    assert "/mcp" in status.detail
+    assert status.detail == "search.parallel.ai/mcp (keyless)"
 
 
 def test_parallel_mcp_backend_keyed_status_reports_keyed():
     b = ParallelMCPBackend(api_key="secret")
     status = b.status()
     assert status.ok is True
-    assert "keyed" in status.detail
+    assert status.detail == "search.parallel.ai/mcp (keyed)"
 
 
 def test_parallel_mcp_backend_picks_up_env_var(monkeypatch):
     monkeypatch.setenv("PARALLEL_API_KEY", "env-secret")
     b = ParallelMCPBackend()
     assert b.api_key == "env-secret"
-    assert "keyed" in b.status().detail
+    assert b.status().detail == "search.parallel.ai/mcp (keyed)"
 
 
-def test_parallel_mcp_backend_oauth_requires_api_key(monkeypatch):
+def test_parallel_mcp_backend_oauth_endpoint_requires_api_key(monkeypatch):
     monkeypatch.delenv("PARALLEL_API_KEY", raising=False)
-    with pytest.raises(ValueError, match="use_oauth=True requires api_key"):
-        ParallelMCPBackend(use_oauth=True)
+    with pytest.raises(ValueError, match="use_oauth_endpoint=True requires api_key"):
+        ParallelMCPBackend(use_oauth_endpoint=True)
 
 
-def test_parallel_mcp_backend_oauth_points_at_oauth_endpoint():
-    b = ParallelMCPBackend(api_key="secret", use_oauth=True)
+def test_parallel_mcp_backend_oauth_endpoint_points_at_oauth_url():
+    b = ParallelMCPBackend(api_key="secret", use_oauth_endpoint=True)
     assert b.url == "https://search.parallel.ai/mcp-oauth"
-    assert "/mcp-oauth" in b.status().detail
+    assert b.status().detail == "search.parallel.ai/mcp-oauth (keyed)"
 
 
 def test_parallel_mcp_backend_builds_mcp_tools_with_bearer_header():
@@ -143,6 +142,50 @@ def test_web_provider_accepts_parallel_mcp_backend(monkeypatch):
     p = WebContextProvider(backend=ParallelMCPBackend())
     assert [t.name for t in p.get_tools()] == ["query_web"]
     assert p.status().ok is True
+
+
+@pytest.mark.asyncio
+async def test_parallel_mcp_backend_asetup_swallows_errors_and_retries(monkeypatch):
+    from agno.tools.mcp import MCPTools
+
+    b = ParallelMCPBackend(api_key="test-key", timeout_seconds=1)
+
+    calls = {"n": 0}
+
+    async def _fail(self_):
+        calls["n"] += 1
+        raise RuntimeError("connect failed")
+
+    monkeypatch.setattr(MCPTools, "_connect", _fail)
+
+    await b.asetup()
+    assert b._mcp_tools is None
+
+    await b.asetup()
+    assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_parallel_mcp_backend_aclose_noop_when_never_connected():
+    b = ParallelMCPBackend(api_key="test-key")
+    await b.aclose()
+    assert b._mcp_tools is None
+
+
+@pytest.mark.asyncio
+async def test_parallel_mcp_backend_aclose_swallows_close_errors(monkeypatch):
+    from agno.tools.mcp import MCPTools
+
+    b = ParallelMCPBackend(api_key="test-key")
+    b._mcp_tools = b._build_tools()
+
+    async def _close_fails(self_):
+        raise RuntimeError("close failed")
+
+    monkeypatch.setattr(MCPTools, "close", _close_fails)
+
+    await b.aclose()
+    assert b._mcp_tools is None
 
 
 # ---------------------------------------------------------------------------
