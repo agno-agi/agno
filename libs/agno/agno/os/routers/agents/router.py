@@ -17,6 +17,8 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent
+from agno.agent.factory import AgentFactory
+from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.db.base import BaseDb
 from agno.exceptions import InputCheckError, OutputCheckError
@@ -28,6 +30,7 @@ from agno.os.auth import (
     require_approval_resolved,
     require_resource_access,
 )
+from agno.os.managers import event_buffer, sse_subscriber_manager
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -38,6 +41,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    find_factory_by_id,
     format_sse_event,
     get_agent_by_id,
     get_request_kwargs,
@@ -45,18 +49,26 @@ from agno.os.utils import (
     process_document,
     process_image,
     process_video,
+    resolve_agent,
 )
 from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.base import RunStatus
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.serialize import json_serializer
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
+def _require_capability(agent: Any, method: str, feature: str) -> None:
+    """Raise 501 if the agent does not expose the given method."""
+    if not callable(getattr(agent, method, None)):
+        raise HTTPException(status_code=501, detail=f"This agent does not support {feature}")
+
+
 async def agent_response_streamer(
-    agent: Union[Agent, RemoteAgent],
+    agent: Union[Agent, RemoteAgent, AgentProtocol],
     message: str,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -68,8 +80,8 @@ async def agent_response_streamer(
     auth_token: Optional[str] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
+    """Default SSE generator. Agent runs inline — if client disconnects, agent is cancelled."""
     try:
-        # Pass background_tasks if provided
         if background_tasks is not None:
             kwargs["background_tasks"] = background_tasks
 
@@ -78,7 +90,6 @@ async def agent_response_streamer(
         else:
             stream_events = True
 
-        # Pass auth_token for remote agents
         if auth_token and isinstance(agent, RemoteAgent):
             kwargs["auth_token"] = auth_token
 
@@ -94,7 +105,7 @@ async def agent_response_streamer(
             stream_events=stream_events,
             **kwargs,
         )
-        async for run_response_chunk in run_response:
+        async for run_response_chunk in run_response:  # type: ignore[union-attr]
             yield format_sse_event(run_response_chunk)  # type: ignore
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
@@ -116,8 +127,76 @@ async def agent_response_streamer(
         yield format_sse_event(error_response)
 
 
-async def agent_continue_response_streamer(
+async def agent_resumable_response_streamer(
     agent: Union[Agent, RemoteAgent],
+    message: str,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    images: Optional[List[Image]] = None,
+    audio: Optional[List[Audio]] = None,
+    videos: Optional[List[Video]] = None,
+    files: Optional[List[FileMedia]] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
+    auth_token: Optional[str] = None,
+    **kwargs: Any,
+) -> AsyncGenerator:
+    """Resumable SSE generator for background=True, stream=True.
+
+    Delegates to agent.arun(background=True, stream=True) which handles:
+    - Persisting RUNNING status in DB
+    - Running agent in a detached asyncio.Task (survives client disconnect)
+    - Buffering events for reconnection via /resume
+    - Publishing to SSE subscribers for resumed clients
+    - Yielding SSE-formatted strings via a queue
+    """
+    if background_tasks is not None:
+        kwargs["background_tasks"] = background_tasks
+
+    if "stream_events" in kwargs:
+        stream_events = kwargs.pop("stream_events")
+    else:
+        stream_events = True
+
+    if auth_token and isinstance(agent, RemoteAgent):
+        kwargs["auth_token"] = auth_token
+
+    try:
+        async for sse_data in agent.arun(
+            input=message,
+            session_id=session_id,
+            user_id=user_id,
+            images=images,
+            audio=audio,
+            videos=videos,
+            files=files,
+            stream=True,
+            stream_events=stream_events,
+            background=True,
+            **kwargs,
+        ):
+            yield sse_data
+    except (InputCheckError, OutputCheckError) as e:
+        error_response = RunErrorEvent(
+            content=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+            additional_data=e.additional_data,
+        )
+        yield format_sse_event(error_response)
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        error_response = RunErrorEvent(
+            content=str(e),
+        )
+        yield format_sse_event(error_response)
+
+
+async def agent_continue_response_streamer(
+    agent: Union[Agent, RemoteAgent, AgentProtocol],
     run_id: str,
     updated_tools: Optional[List] = None,
     session_id: Optional[str] = None,
@@ -125,13 +204,13 @@ async def agent_continue_response_streamer(
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
 ) -> AsyncGenerator:
+    """Default SSE generator for continue_run. Agent runs inline — client disconnect cancels agent."""
     try:
-        # Build kwargs for remote agent auth
         extra_kwargs: dict = {}
         if auth_token and isinstance(agent, RemoteAgent):
             extra_kwargs["auth_token"] = auth_token
 
-        continue_response = agent.acontinue_run(
+        continue_response = agent.acontinue_run(  # type: ignore[union-attr]
             run_id=run_id,
             updated_tools=updated_tools,
             session_id=session_id,
@@ -164,7 +243,245 @@ async def agent_continue_response_streamer(
             error_id=e.error_id if hasattr(e, "error_id") else None,
         )
         yield format_sse_event(error_response)
+
+
+async def agent_resumable_continue_response_streamer(
+    agent: Union[Agent, RemoteAgent],
+    run_id: str,
+    updated_tools: Optional[List] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    background_tasks: Optional[BackgroundTasks] = None,
+    auth_token: Optional[str] = None,
+) -> AsyncGenerator:
+    """Resumable SSE generator for continue_run with background=True, stream=True.
+
+    Delegates to agent.acontinue_run(background=True, stream=True) which handles:
+    - Running continue-run in a detached asyncio.Task (survives client disconnect)
+    - Buffering events for reconnection via /resume
+    - Publishing to SSE subscribers for resumed clients
+    - Yielding SSE-formatted strings via a queue
+    """
+    extra_kwargs: dict = {}
+    if auth_token and isinstance(agent, RemoteAgent):
+        extra_kwargs["auth_token"] = auth_token
+
+    if background_tasks is not None:
+        extra_kwargs["background_tasks"] = background_tasks
+
+    try:
+        async for sse_data in agent.acontinue_run(
+            run_id=run_id,
+            updated_tools=updated_tools,
+            session_id=session_id,
+            user_id=user_id,
+            stream=True,
+            stream_events=True,
+            background=True,
+            **extra_kwargs,
+        ):
+            yield sse_data
+    except (InputCheckError, OutputCheckError) as e:
+        error_response = RunErrorEvent(
+            content=str(e),
+            error_type=e.type,
+            error_id=e.error_id,
+            additional_data=e.additional_data,
+        )
+        yield format_sse_event(error_response)
+    except asyncio.CancelledError:
         return
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        error_response = RunErrorEvent(
+            content=str(e),
+        )
+        yield format_sse_event(error_response)
+
+
+async def _resume_stream_generator(
+    agent: Union[Agent, RemoteAgent],
+    run_id: str,
+    last_event_index: Optional[int],
+    session_id: Optional[str],
+) -> AsyncGenerator:
+    """SSE generator for the /resume endpoint.
+
+    Three reconnection paths:
+    1. Run still active (in buffer): replay missed events + subscribe for live events via Queue
+    2. Run completed (in buffer): replay all events since last_event_index
+    3. Not in buffer: fall back to database replay
+    """
+    buffer_status = event_buffer.get_run_status(run_id)
+
+    if buffer_status is None:
+        # PATH 3: Not in buffer -- fall back to database
+        if session_id and not isinstance(agent, RemoteAgent):
+            try:
+                run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+            except Exception as e:
+                error = {"event": "error", "error": f"Failed to fetch run from database: {str(e)}"}
+                yield f"event: error\ndata: {json.dumps(error)}\n\n"
+                return
+            if run_output and run_output.events:
+                meta: dict = {
+                    "event": "replay",
+                    "run_id": run_id,
+                    "status": run_output.status.value if run_output.status else "unknown",
+                    "total_events": len(run_output.events),
+                    "message": "Run completed. Replaying all events from database.",
+                }
+                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+
+                for idx, event in enumerate(run_output.events):
+                    event_dict = event.to_dict()
+                    event_dict["event_index"] = idx
+                    if "run_id" not in event_dict:
+                        event_dict["run_id"] = run_id
+                    event_type = event_dict.get("event", "message")
+                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                return
+            elif run_output:
+                meta = {
+                    "event": "replay",
+                    "run_id": run_id,
+                    "status": run_output.status.value if run_output.status else "unknown",
+                    "total_events": 0,
+                    "message": "Run completed but no events stored.",
+                }
+                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+                return
+
+        # Run not found anywhere
+        error = {"event": "error", "error": f"Run {run_id} not found in buffer or database"}
+        yield f"event: error\ndata: {json.dumps(error)}\n\n"
+        return
+
+    if buffer_status in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
+        # PATH 2: Run finished -- replay missed events from buffer
+        total_buffered = event_buffer.get_event_count(run_id)
+        missed_events = event_buffer.get_events(run_id, last_event_index=last_event_index)
+        log_debug(
+            f"Resume PATH 2: run_id={run_id}, status={buffer_status.value}, "
+            f"last_event_index={last_event_index}, total_buffered={total_buffered}, "
+            f"missed_events={len(missed_events)}"
+        )
+
+        meta = {
+            "event": "replay",
+            "run_id": run_id,
+            "status": buffer_status.value,
+            "total_events": len(missed_events),
+            "total_buffered": total_buffered,
+            "last_event_index_requested": last_event_index if last_event_index is not None else -1,
+            "message": f"Run {buffer_status.value}. Replaying {len(missed_events)} missed events (of {total_buffered} total).",
+        }
+        yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+
+        for ev_index, buffered_event in missed_events:
+            event_dict = buffered_event.to_dict()
+            event_dict["event_index"] = ev_index
+            if "run_id" not in event_dict:
+                event_dict["run_id"] = run_id
+            event_type = event_dict.get("event", "message")
+            yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+        return
+
+    # PATH 1: Run still active -- subscribe FIRST (to avoid race condition), then replay missed events
+    queue = sse_subscriber_manager.subscribe(run_id)
+
+    try:
+        missed_events = event_buffer.get_events(run_id, last_event_index)
+        current_count = event_buffer.get_event_count(run_id)
+
+        # Track the highest replayed event_index for dedup against queue events
+        last_replayed_index = last_event_index if last_event_index is not None else -1
+
+        if missed_events:
+            meta = {
+                "event": "catch_up",
+                "run_id": run_id,
+                "status": "running",
+                "missed_events": len(missed_events),
+                "current_event_count": current_count,
+                "message": f"Catching up on {len(missed_events)} missed events.",
+            }
+            yield f"event: catch_up\ndata: {json.dumps(meta)}\n\n"
+
+            for ev_index, buffered_event in missed_events:
+                event_dict = buffered_event.to_dict()
+                event_dict["event_index"] = ev_index
+                if "run_id" not in event_dict:
+                    event_dict["run_id"] = run_id
+                event_type = event_dict.get("event", "message")
+                yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                last_replayed_index = ev_index
+
+        # Re-check buffer status after subscribing: the run may have completed
+        # between our initial status check and now. If so, replay remaining events
+        # from buffer instead of waiting on the queue (the sentinel was already pushed
+        # before our subscription existed).
+        updated_status = event_buffer.get_run_status(run_id)
+        if updated_status is not None and updated_status != RunStatus.running:
+            # Run completed while we were catching up -- replay remaining from buffer
+            remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
+            if remaining:
+                for ev_index, buffered_event in remaining:
+                    event_dict = buffered_event.to_dict()
+                    event_dict["event_index"] = ev_index
+                    if "run_id" not in event_dict:
+                        event_dict["run_id"] = run_id
+                    event_type = event_dict.get("event", "message")
+                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+            return
+
+        # Confirm subscription for live events
+        subscribed = {
+            "event": "subscribed",
+            "run_id": run_id,
+            "status": "running",
+            "current_event_count": current_count,
+            "message": "Subscribed to agent run. Receiving live events.",
+        }
+        yield f"event: subscribed\ndata: {json.dumps(subscribed)}\n\n"
+
+        log_debug(f"SSE client subscribed to agent run {run_id} (last_event_index: {last_event_index})")
+
+        # Read from queue, dedup events already replayed by event_index
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                # Check if run ended without sending sentinel
+                status = event_buffer.get_run_status(run_id)
+                if status is None or status != RunStatus.running:
+                    # Run ended - replay any remaining events from buffer
+                    remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
+                    for ev_index, buffered_event in remaining:
+                        event_dict = buffered_event.to_dict()
+                        event_dict["event_index"] = ev_index
+                        if "run_id" not in event_dict:
+                            event_dict["run_id"] = run_id
+                        event_type = event_dict.get("event", "message")
+                        yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                    break
+                # Still running - send heartbeat to keep connection alive
+                yield ": heartbeat\n\n"
+                continue
+            if item is None:
+                # Sentinel: run completed
+                break
+            ev_idx, sse_data = item
+            # Dedup: skip events already replayed during catch-up
+            if ev_idx >= 0 and ev_idx <= last_replayed_index:
+                continue
+            if ev_idx >= 0:
+                last_replayed_index = ev_idx
+            yield sse_data
+    finally:
+        sse_subscriber_manager.unsubscribe(run_id, queue)
 
 
 def get_agent_router(
@@ -239,6 +556,10 @@ def get_agent_router(
         background: bool = Form(
             False, description="Run in background and return immediately with run metadata (requires database)"
         ),
+        factory_input: Optional[str] = Form(
+            None,
+            description="JSON object with factory-specific parameters for dynamic agent construction",
+        ),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
 
@@ -266,11 +587,17 @@ def get_agent_router(
                 log_warning("Metadata parameter passed in both request state and kwargs, using request state")
             kwargs["metadata"] = metadata
 
-        agent = get_agent_by_id(
-            agent_id, os.agents, os.db, registry, version=int(version) if version else None, create_fresh=True
+        agent = await resolve_agent(
+            agent_id,
+            os.agents,
+            os.db,
+            registry,
+            version=int(version) if version else None,
+            request=request,
+            user_id=user_id,
+            session_id=session_id,
+            factory_input=factory_input,
         )
-        if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
 
         if session_id is None or session_id == "":
             log_debug("Creating new session")
@@ -371,11 +698,34 @@ def get_agent_router(
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)
 
-        # Background execution: return 202 immediately with run metadata
+        # Background execution
         if background:
             if isinstance(agent, RemoteAgent):
                 raise HTTPException(status_code=400, detail="Background execution is not supported for remote agents")
-            if not agent.db:
+
+            if stream:
+                # background=True, stream=True: resumable SSE streaming
+                # Agent runs in a detached asyncio.Task that survives client disconnections.
+                # Events are buffered for reconnection via /resume endpoint.
+                return StreamingResponse(
+                    agent_resumable_response_streamer(
+                        agent,  # type: ignore[arg-type]
+                        message,
+                        session_id=session_id,
+                        user_id=user_id,
+                        images=base64_images if base64_images else None,
+                        audio=base64_audios if base64_audios else None,
+                        videos=base64_videos if base64_videos else None,
+                        files=input_files if input_files else None,
+                        background_tasks=background_tasks,
+                        auth_token=auth_token,
+                        **kwargs,
+                    ),
+                    media_type="text/event-stream",
+                )
+
+            # background=True, stream=False: return 202 immediately with run metadata
+            if not getattr(agent, "db", None):
                 raise HTTPException(
                     status_code=400, detail="Background execution requires a database to be configured on the agent"
                 )
@@ -468,13 +818,29 @@ def get_agent_router(
         agent_id: str,
         run_id: str,
     ):
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        # Factory agents: cancel is static, no agent instance needed
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            from agno.agent._run import acancel_run
+
+            await acancel_run(run_id)
+            return JSONResponse(content={}, status_code=200)
+
+        try:
+            agent = get_agent_by_id(
+                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+            )  # type: ignore[assignment]
+        except Exception as e:
+            log_error(f"Error resolving agent '{agent_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
+        _require_capability(agent, "acancel_run", "cancel_run")
+
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
-        await agent.acancel_run(run_id=run_id)
+        await agent.acancel_run(run_id=run_id)  # type: ignore[union-attr]
         return JSONResponse(content={}, status_code=200)
 
     @router.post(
@@ -525,6 +891,10 @@ def get_agent_router(
         session_id: Optional[str] = Form(None, description="Session ID for the paused run"),
         user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
         stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
+        background: bool = Form(
+            False,
+            description="Run continue in background (survives client disconnect). Requires database. Use /resume to reconnect.",
+        ),
     ):
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -537,19 +907,42 @@ def get_agent_router(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
 
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        # Factory agents: re-invoke factory to get a real agent for continue
+        # (needs model/tools to resume the paused run, factory_input not available)
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            agent = await resolve_agent(  # type: ignore[assignment]
+                agent_id,
+                os.agents,
+                factory.db,
+                request=request,
+                user_id=user_id,
+                session_id=session_id,
+            )
+        else:
+            try:
+                agent = get_agent_by_id(
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                )  # type: ignore[assignment]
+            except Exception as e:
+                log_error(f"Error resolving agent '{agent_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        if session_id is None or session_id == "":
-            log_warning(
-                "Continuing run without session_id. This might lead to unexpected behavior if session context is important."
+        _require_capability(agent, "acontinue_run", "continue_run")
+
+        if (session_id is None or session_id == "") and not isinstance(agent, RemoteAgent):
+            raise HTTPException(
+                status_code=400,
+                detail="session_id is required to continue a run",
             )
 
         # Fetch existing run once for validation and potential approval resolution
         existing_run = None
         if session_id and not isinstance(agent, RemoteAgent):
-            existing_run = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+            if hasattr(agent, "aget_run_output"):
+                existing_run = await agent.aget_run_output(run_id=run_id, session_id=session_id)
 
         # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
         if existing_run is not None:
@@ -585,7 +978,25 @@ def get_agent_router(
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)
 
-        if stream:
+        if stream and background:
+            # background=True, stream=True: resumable SSE streaming
+            # Continue-run runs in a detached asyncio.Task that survives client disconnections.
+            # Events are buffered for reconnection via /resume endpoint.
+            if isinstance(agent, RemoteAgent):
+                raise HTTPException(status_code=400, detail="Background execution is not supported for remote agents")
+            return StreamingResponse(
+                agent_resumable_continue_response_streamer(
+                    agent,  # type: ignore[arg-type]
+                    run_id=run_id,
+                    updated_tools=updated_tools,
+                    session_id=session_id,
+                    user_id=user_id,
+                    background_tasks=background_tasks,
+                    auth_token=auth_token,
+                ),
+                media_type="text/event-stream",
+            )
+        elif stream:
             return StreamingResponse(
                 agent_continue_response_streamer(
                     agent,
@@ -679,11 +1090,29 @@ def get_agent_router(
         agents: List[AgentResponse] = []
         if accessible_agents:
             for agent in accessible_agents:
-                if isinstance(agent, RemoteAgent):
+                if isinstance(agent, Agent):
+                    agents.append(await AgentResponse.from_agent(agent=agent, is_component=False))
+                elif isinstance(agent, AgentFactory):
+                    agents.append(AgentResponse.from_factory(agent))
+                elif isinstance(agent, RemoteAgent):
                     agents.append(await agent.get_agent_config())
                 else:
-                    agent_response = await AgentResponse.from_agent(agent=agent, is_component=False)
-                    agents.append(agent_response)
+                    # External framework adapter: build a minimal response
+                    agent_db = getattr(agent, "db", None)
+                    session_table = (
+                        agent_db.session_table_name if agent_db and hasattr(agent_db, "session_table_name") else None
+                    )
+                    sessions = {"session_table": session_table} if session_table else None
+                    agents.append(
+                        AgentResponse(
+                            id=agent.id,
+                            name=agent.name,
+                            description=getattr(agent, "description", None),
+                            db_id=agent_db.id if agent_db else None,
+                            sessions=sessions,
+                            metadata={"framework": getattr(agent, "framework", "external")},
+                        )
+                    )
 
         if os.db and isinstance(os.db, BaseDb):
             from agno.agent.agent import get_agents
@@ -738,14 +1167,33 @@ def get_agent_router(
         dependencies=[Depends(require_resource_access("agents", "read", "agent_id"))],
     )
     async def get_agent(agent_id: str, request: Request) -> AgentResponse:
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        # Factory agents: return factory metadata directly (no invocation needed)
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            return AgentResponse.from_factory(factory)
+
+        try:
+            agent = get_agent_by_id(
+                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+            )  # type: ignore[assignment]
+        except Exception as e:
+            log_error(f"Error resolving agent '{agent_id}': {e}")
+            raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
         if isinstance(agent, RemoteAgent):
             return await agent.get_agent_config()
-        else:
+        elif isinstance(agent, Agent):
             return await AgentResponse.from_agent(agent=agent)
+        else:
+            # External framework agent -- return minimal response
+            return AgentResponse(
+                id=agent.id,
+                name=agent.name,
+                description=getattr(agent, "description", None),
+                metadata={"framework": getattr(agent, "framework", "external")},
+            )
 
     @router.get(
         "/agents/{agent_id}/runs/{run_id}",
@@ -767,17 +1215,77 @@ def get_agent_router(
         run_id: str,
         session_id: str = Query(..., description="Session ID for the run"),
     ):
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
-        if isinstance(agent, RemoteAgent):
-            raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
+        # Factory agents: resolve to get a real agent for session lookup
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            agent = await resolve_agent(  # type: ignore[assignment]
+                agent_id,
+                os.agents,
+                factory.db,
+                session_id=session_id,
+            )
+        else:
+            try:
+                agent = get_agent_by_id(
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                )  # type: ignore[assignment]
+            except Exception as e:
+                log_error(f"Error resolving agent '{agent_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+            if agent is None:
+                raise HTTPException(status_code=404, detail="Agent not found")
+            if isinstance(agent, RemoteAgent):
+                raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
 
-        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+        run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
 
         return run_output.to_dict()
+
+    @router.post(
+        "/agents/{agent_id}/runs/{run_id}/resume",
+        tags=["Agents"],
+        operation_id="resume_agent_run_stream",
+        summary="Resume Agent Run Stream",
+        description=(
+            "Resume an SSE stream for an agent run after disconnection.\n\n"
+            "Sends missed events since `last_event_index`, then continues streaming "
+            "live events if the run is still active.\n\n"
+            "**Three reconnection paths:**\n"
+            "1. **Run still active**: Sends catch-up events + continues live streaming\n"
+            "2. **Run completed (in buffer)**: Replays missed buffered events\n"
+            "3. **Run completed (in database)**: Replays events from database\n\n"
+            "**Client usage:**\n"
+            "Track `event_index` from each SSE event. On reconnection, pass the last "
+            "received `event_index` as `last_event_index`."
+        ),
+        responses={
+            200: {
+                "description": "SSE stream of catch-up and/or live events",
+                "content": {"text/event-stream": {}},
+            },
+            400: {"description": "Not supported for remote agents", "model": BadRequestResponse},
+            404: {"description": "Agent not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
+    )
+    async def resume_agent_run_stream(
+        agent_id: str,
+        run_id: str,
+        last_event_index: Optional[int] = Form(None, description="Index of last event received by client (0-based)"),
+        session_id: Optional[str] = Form(None, description="Session ID for database fallback"),
+    ):
+        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        if isinstance(agent, RemoteAgent):
+            raise HTTPException(status_code=400, detail="Stream resumption is not supported for remote agents")
+
+        return StreamingResponse(
+            _resume_stream_generator(agent, run_id, last_event_index, session_id),  # type: ignore[arg-type]
+            media_type="text/event-stream",
+        )
 
     @router.get(
         "/agents/{agent_id}/runs",
@@ -801,16 +1309,37 @@ def get_agent_router(
     ):
         from agno.os.schema import RunSchema
 
-        agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
-        if isinstance(agent, RemoteAgent):
-            raise HTTPException(status_code=400, detail="Run listing is not supported for remote agents")
+        # Factory agents: resolve to get a real agent for session lookup
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            agent = await resolve_agent(  # type: ignore[assignment]
+                agent_id,
+                os.agents,
+                factory.db,
+                session_id=session_id,
+            )
+        else:
+            try:
+                agent = get_agent_by_id(
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                )  # type: ignore[assignment]
+            except Exception as e:
+                log_error(f"Error resolving agent '{agent_id}': {e}")
+                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+            if agent is None:
+                raise HTTPException(status_code=404, detail="Agent not found")
+            if isinstance(agent, RemoteAgent):
+                raise HTTPException(status_code=400, detail="Run listing is not supported for remote agents")
 
-        # Load the session to get its runs
-        from agno.agent._storage import aread_or_create_session
+        # Load session: native Agent uses the storage helper, external adapters have their own method.
+        if isinstance(agent, Agent):
+            from agno.agent._storage import aread_or_create_session
 
-        session = await aread_or_create_session(agent, session_id=session_id)
+            session = await aread_or_create_session(agent, session_id=session_id)
+        elif hasattr(agent, "aread_or_create_session"):
+            session = await agent.aread_or_create_session(session_id=session_id)
+        else:
+            raise HTTPException(status_code=501, detail="This agent does not support run listing")
         runs = session.runs or []
 
         # Convert to dicts and optionally filter by status
