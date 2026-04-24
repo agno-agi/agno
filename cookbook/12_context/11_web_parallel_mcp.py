@@ -18,7 +18,7 @@ would normally be wired into the framework's lifespan hook.
 
 Requires:
     OPENAI_API_KEY
-    (optional) PARALLEL_API_KEY   raises the rate ceiling
+    (optional) PARALLEL_API_KEY raises the rate ceiling
 """
 
 from __future__ import annotations
