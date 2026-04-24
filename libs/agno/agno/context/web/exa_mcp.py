@@ -30,11 +30,13 @@ class ExaMCPBackend(ContextBackend):
         self,
         *,
         api_key: str | None = None,
+        timeout_seconds: int = 60,
         include_tools: Sequence[str] | None = _DEFAULT_TOOLS,
         exclude_tools: Sequence[str] | None = None,
         tool_name_prefix: str | None = None,
     ) -> None:
         self.api_key = api_key if api_key is not None else (getenv("EXA_API_KEY", "") or None)
+        self.timeout_seconds = timeout_seconds
         self.include_tools = list(include_tools) if include_tools is not None else None
         self.exclude_tools = list(exclude_tools) if exclude_tools is not None else None
         self.tool_name_prefix = tool_name_prefix
@@ -58,13 +60,21 @@ class ExaMCPBackend(ContextBackend):
         return [self._mcp_tools]
 
     def _build_tools(self) -> Any:
-        from agno.tools.mcp import MCPTools
+        from datetime import timedelta
 
-        return MCPTools(
+        from agno.tools.mcp import MCPTools
+        from agno.tools.mcp.params import StreamableHTTPClientParams
+
+        server_params = StreamableHTTPClientParams(
             url=self.url,
+            timeout=timedelta(seconds=self.timeout_seconds),
+        )
+        return MCPTools(
+            server_params=server_params,
             transport="streamable-http",
             exclude_tools=self.exclude_tools,
             tool_name_prefix=self.tool_name_prefix,
+            timeout_seconds=self.timeout_seconds,
         )
 
     async def asetup(self) -> None:

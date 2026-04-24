@@ -75,6 +75,8 @@ class ParallelMCPBackend(ContextBackend):
         return [self._mcp_tools]
 
     def _build_tools(self) -> Any:
+        from datetime import timedelta
+
         from agno.tools.mcp import MCPTools
         from agno.tools.mcp.params import StreamableHTTPClientParams
 
@@ -82,7 +84,11 @@ class ParallelMCPBackend(ContextBackend):
         if self.api_key:
             headers = {"Authorization": f"Bearer {self.api_key}"}
 
-        server_params = StreamableHTTPClientParams(url=self.url, headers=headers)
+        server_params = StreamableHTTPClientParams(
+            url=self.url,
+            headers=headers,
+            timeout=timedelta(seconds=self.timeout_seconds),
+        )
         return MCPTools(
             server_params=server_params,
             transport="streamable-http",
