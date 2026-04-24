@@ -540,7 +540,7 @@ def get_system_message(
         learning_context = team._learning.build_context(
             user_id=user_id,
             session_id=session.session_id if session else None,
-            agent_id=team.team_id,
+            agent_id=team.id,
         )
         if learning_context:
             system_message_content += learning_context + "\n"
@@ -771,7 +771,7 @@ async def aget_system_message(
         learning_context = await team._learning.abuild_context(
             user_id=user_id,
             session_id=session.session_id if session else None,
-            agent_id=team.team_id,
+            agent_id=team.id,
         )
         if learning_context:
             system_message_content += learning_context + "\n"
