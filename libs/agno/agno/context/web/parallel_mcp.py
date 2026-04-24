@@ -51,13 +51,13 @@ class ParallelMCPBackend(ContextBackend):
             raise ValueError("use_oauth_endpoint=True requires api_key (or PARALLEL_API_KEY env var).")
         self.use_oauth_endpoint = use_oauth_endpoint
         self.url = _OAUTH_BASE_URL if self.use_oauth_endpoint else _BASE_URL
-        # Bumped from MCPTools' 10s default — Parallel's web_fetch returns
-        # server-compressed markdown for long pages and regularly exceeds 10s.
+        # web_fetch returns server-compressed markdown for long pages and
+        # regularly exceeds MCPTools' 10s default.
         self.timeout_seconds = timeout_seconds
         self._mcp_tools: Any = None
 
     def status(self) -> Status:
-        endpoint = "mcp-oauth" if self.use_oauth_endpoint else "mcp"
+        endpoint = self.url.rsplit("/", 1)[-1]
         return Status(ok=True, detail=f"search.parallel.ai/{endpoint} ({'keyed' if self.api_key else 'keyless'})")
 
     async def astatus(self) -> Status:
@@ -101,7 +101,7 @@ class ParallelMCPBackend(ContextBackend):
             self._mcp_tools = None
 
     async def aclose(self) -> None:
-        """Close the MCP session and drop cached state."""
+        """Close the MCP session and clear the cached tool handle."""
         tools = self._mcp_tools
         self._mcp_tools = None
         if tools is None:
