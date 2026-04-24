@@ -633,9 +633,4 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
             tool["strict"] = True
 
         parsed_tools.append(tool)
-    # Deterministic ordering for Anthropic prompt caching: tool order contributes
-    # to the cached prefix, so dict-iteration / MCP / registration-order noise
-    # would otherwise invalidate cache hits. Non-function tools (built-ins) keep
-    # their declared position relative to other non-function tools.
-    parsed_tools.sort(key=lambda t: t.get("name", ""))
     return parsed_tools

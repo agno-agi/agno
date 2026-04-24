@@ -285,27 +285,23 @@ def test_build_system_valid_when_agent_block_uncached():
     assert "cache_control" not in result[1]
 
 
-def test_tools_sorted_in_claude_formatter():
-    """format_tools_for_model returns tools sorted by name for cache stability.
-    Scoped to Claude (not base.Model) so other providers are unaffected."""
-    from agno.utils.models.claude import format_tools_for_model
+def test_tools_sorted_by_name_for_cache_stability():
+    """Model._format_tools returns tools sorted by name across all providers.
 
+    Anthropic, OpenAI, and Gemini caching all depend on a stable request
+    prefix; the deterministic tool order removes dict-iteration / MCP /
+    registration-order noise.
+    """
+    from agno.tools.function import Function
+
+    claude = Claude()
     tools = [
-        {
-            "type": "function",
-            "function": {"name": "zeta", "description": "Z", "parameters": {"type": "object", "properties": {}}},
-        },
-        {
-            "type": "function",
-            "function": {"name": "alpha", "description": "A", "parameters": {"type": "object", "properties": {}}},
-        },
-        {
-            "type": "function",
-            "function": {"name": "mu", "description": "M", "parameters": {"type": "object", "properties": {}}},
-        },
+        Function(name="zeta", description="Z"),
+        Function(name="alpha", description="A"),
+        Function(name="mu", description="M"),
     ]
-    result = format_tools_for_model(tools)
-    assert [t["name"] for t in result] == ["alpha", "mu", "zeta"]
+    result = claude._format_tools(tools)
+    assert [t["function"]["name"] for t in result] == ["alpha", "mu", "zeta"]
 
 
 def test_build_system_shared_between_request_and_count_tokens():
