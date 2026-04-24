@@ -1,7 +1,7 @@
 """
 Example showing how to use Redis as the database for an agent.
 
-Run `uv pip install ddgs` to install the dependency.
+Run `uv pip install redis openai ddgs` to install the dependency.
 
 We can start Redis locally using docker:
 1. Start Redis container
