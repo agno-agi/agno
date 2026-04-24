@@ -73,8 +73,8 @@ def get_mcp_server(
             evals=os._get_evals_config(),
             metrics=os._get_metrics_config(),
             traces=os._get_traces_config(),
-            agents=[AgentSummaryResponse.from_agent(agent) for agent in os.agents] if os.agents else [],
-            teams=[TeamSummaryResponse.from_team(team) for team in os.teams] if os.teams else [],
+            agents=[AgentSummaryResponse.from_agent(a) for a in os.agents] if os.agents else [],
+            teams=[TeamSummaryResponse.from_team(t) for t in os.teams] if os.teams else [],
             workflows=[WorkflowSummaryResponse.from_workflow(w) for w in os.workflows] if os.workflows else [],
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.prefix)

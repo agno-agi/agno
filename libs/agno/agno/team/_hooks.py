@@ -74,6 +74,17 @@ def _get_team_paused_content(run_response: TeamRunOutput) -> str:
     return "Team run paused. The following require input:\n" + "\n".join(parts)
 
 
+def _member_approval_already_exists(run_response: TeamRunOutput) -> bool:
+    """Return True if all requirements are member-propagated AND already have an approval_id."""
+    reqs = run_response.requirements or []
+    if not reqs:
+        return False
+    return all(
+        getattr(r, "member_agent_id", None) is not None and getattr(r.tool_execution, "approval_id", None) is not None
+        for r in reqs
+    )
+
+
 def handle_team_run_paused(
     team: "Team",
     run_response: TeamRunOutput,
@@ -87,10 +98,12 @@ def handle_team_run_paused(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
-    # Stamp approval_id on tools before building event and storing so the DB has the complete data.
-    create_approval_from_pause(
-        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
-    )
+    # Only create a team-level approval if this is NOT a member-propagated pause.
+    # Member agents already create their own approval record when they pause.
+    if not _member_approval_already_exists(run_response):
+        create_approval_from_pause(
+            db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+        )
 
     handle_event(
         create_team_run_paused_event(
@@ -122,10 +135,10 @@ def handle_team_run_paused_stream(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
-    # Stamp approval_id on tools before building event and storing so the DB has the complete data.
-    create_approval_from_pause(
-        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
-    )
+    if not _member_approval_already_exists(run_response):
+        create_approval_from_pause(
+            db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+        )
 
     pause_event = handle_event(
         create_team_run_paused_event(
@@ -159,10 +172,10 @@ async def ahandle_team_run_paused(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
-    # Stamp approval_id on tools before building event and storing so the DB has the complete data.
-    await acreate_approval_from_pause(
-        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
-    )
+    if not _member_approval_already_exists(run_response):
+        await acreate_approval_from_pause(
+            db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+        )
 
     handle_event(
         create_team_run_paused_event(
@@ -194,10 +207,10 @@ async def ahandle_team_run_paused_stream(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
-    # Stamp approval_id on tools before building event and storing so the DB has the complete data.
-    await acreate_approval_from_pause(
-        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
-    )
+    if not _member_approval_already_exists(run_response):
+        await acreate_approval_from_pause(
+            db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+        )
 
     pause_event = handle_event(
         create_team_run_paused_event(
