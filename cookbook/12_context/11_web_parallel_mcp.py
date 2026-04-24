@@ -36,7 +36,7 @@ async def main() -> None:
     # ------------------------------------------------------------------
     web = WebContextProvider(
         backend=ParallelMCPBackend(),  # reads PARALLEL_API_KEY if present; works keyless otherwise
-        model=OpenAIResponses(id="gpt-5.4-mini"),
+        model=OpenAIResponses(id="gpt-5.4"),
     )
 
     # ------------------------------------------------------------------
