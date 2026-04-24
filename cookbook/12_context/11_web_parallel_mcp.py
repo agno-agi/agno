@@ -54,7 +54,6 @@ async def main() -> None:
         )
 
         prompt = "What is the latest stable release of CPython? Cite the source."
-        print(f"> {prompt}\n")
         await agent.aprint_response(prompt)
     finally:
         await web.aclose()
