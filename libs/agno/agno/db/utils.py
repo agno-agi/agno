@@ -2,7 +2,7 @@
 
 import json
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import UUID
 
 from agno.metrics import ModelMetrics, RunMetrics, SessionMetrics
@@ -10,8 +10,9 @@ from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
-    from agno.db.base import BaseDb
+    from agno.db.base import AsyncBaseDb, BaseDb, SessionType
     from agno.registry.registry import Registry
+    from agno.session import Session
 
 
 # Keys in a serialized db dict that correspond to table-name overrides.
@@ -36,6 +37,128 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "approvals_table",
     }
 )
+
+
+def detect_session_type(record: Dict[str, Any]) -> str:
+    """Detect session type from a raw session dict, inferring from component IDs if needed.
+
+    Priority: stored session_type > component IDs (agent_id > team_id > workflow_id) > fallback "agent".
+
+    Args:
+        record: Raw session dictionary.
+
+    Returns:
+        Session type string ("agent", "team", or "workflow").
+    """
+    st = record.get("session_type")
+    if st:
+        return st.value if hasattr(st, "value") else st
+    if record.get("agent_id"):
+        return "agent"
+    if record.get("team_id"):
+        return "team"
+    if record.get("workflow_id"):
+        return "workflow"
+    return "agent"
+
+
+def deserialize_session_by_type(record: Dict[str, Any]) -> "Session":
+    """Deserialize a raw session dict into the correct Session subclass based on detected type.
+
+    Args:
+        record: Raw session dictionary.
+
+    Returns:
+        Session subclass instance (AgentSession, TeamSession, or WorkflowSession).
+    """
+    from agno.session import AgentSession, TeamSession, WorkflowSession
+
+    st = detect_session_type(record)
+    if st == "agent":
+        return AgentSession.from_dict(record)  # type: ignore
+    elif st == "team":
+        return TeamSession.from_dict(record)  # type: ignore
+    elif st == "workflow":
+        return WorkflowSession.from_dict(record)  # type: ignore
+    return AgentSession.from_dict(record)  # type: ignore
+
+
+def deserialize_session(session_type: Optional["SessionType"], record: Dict[str, Any]) -> "Session":
+    """Deserialize a raw session dict into the correct Session subclass.
+
+    Args:
+        session_type: The type to deserialize as. If None, auto-detects from the record's component IDs.
+        record: Raw session dictionary.
+
+    Returns:
+        Session subclass instance (AgentSession, TeamSession, or WorkflowSession).
+
+    Raises:
+        ValueError: If session_type is not a valid SessionType.
+    """
+    from agno.db.base import SessionType
+    from agno.session import AgentSession, TeamSession, WorkflowSession
+
+    if session_type is None:
+        return deserialize_session_by_type(record)
+    if session_type == SessionType.AGENT:
+        return AgentSession.from_dict(record)  # type: ignore
+    elif session_type == SessionType.TEAM:
+        return TeamSession.from_dict(record)  # type: ignore
+    elif session_type == SessionType.WORKFLOW:
+        return WorkflowSession.from_dict(record)  # type: ignore
+    raise ValueError(f"Invalid session type: {session_type}")
+
+
+def deserialize_sessions(session_type: Optional["SessionType"], records: List[Dict[str, Any]]) -> List["Session"]:
+    """Deserialize a list of raw session dicts into the correct Session subclasses.
+
+    Args:
+        session_type: The type to deserialize as. If None, auto-detects each record individually.
+        records: List of raw session dictionaries.
+
+    Returns:
+        List of Session subclass instances.
+    """
+    return [deserialize_session(session_type, record) for record in records]
+
+
+async def resolve_session_type(
+    db: Union["BaseDb", "AsyncBaseDb"],
+    session_id: str,
+    session_type: Optional["SessionType"],
+    user_id: Optional[str] = None,
+) -> Tuple[Optional["SessionType"], Optional[Any]]:
+    """Resolve session type by auto-detecting from DB if not provided.
+
+    Args:
+        db: Database adapter instance (sync or async).
+        session_id: The session ID to look up.
+        session_type: The session type if already known. If None, auto-detects from DB.
+        user_id: Optional user ID filter.
+
+    Returns:
+        Tuple of (resolved_type, raw_session):
+        - If session_type is already set: (session_type, None) — no DB fetch needed.
+        - If session_type is None and session found: (detected_type, raw_dict).
+        - If session_type is None and session not found: (None, None).
+    """
+    if session_type is not None:
+        return session_type, None
+
+    from agno.db.base import AsyncBaseDb, SessionType
+
+    if isinstance(db, AsyncBaseDb):
+        raw = await db.get_session(session_id=session_id, user_id=user_id, deserialize=False)
+    else:
+        raw = db.get_session(session_id=session_id, user_id=user_id, deserialize=False)
+
+    if not raw:
+        return None, None
+
+    detected = detect_session_type(raw if isinstance(raw, dict) else {})
+    resolved = SessionType(detected)
+    return resolved, raw
 
 
 def get_sort_value(record: Dict[str, Any], sort_by: str) -> Any:
@@ -100,7 +223,7 @@ def serialize_session_json_fields(session: dict) -> dict:
     datetime, date, UUID, Message, Metrics, etc.
 
     Args:
-        data (dict): The dictionary to serialize JSON fields in.
+        session (dict): The session dictionary to serialize JSON fields in.
 
     Returns:
         dict: The dictionary with JSON fields serialized.

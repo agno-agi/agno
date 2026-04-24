@@ -506,7 +506,7 @@ class MultiMCPTools(Toolkit):
                 elif isinstance(server_params, SSEClientParams):
                     sse_params = asdict(server_params)
                     if init_headers:
-                        existing_headers = sse_params.get("headers", {})
+                        existing_headers = sse_params.get("headers") or {}
                         sse_params["headers"] = {**existing_headers, **init_headers}
                     client_connection = await self._async_exit_stack.enter_async_context(sse_client(**sse_params))
                     read, write = client_connection
@@ -518,7 +518,7 @@ class MultiMCPTools(Toolkit):
                 elif isinstance(server_params, StreamableHTTPClientParams):
                     streamable_http_params = asdict(server_params)
                     if init_headers:
-                        existing_headers = streamable_http_params.get("headers", {})
+                        existing_headers = streamable_http_params.get("headers") or {}
                         streamable_http_params["headers"] = {**existing_headers, **init_headers}
                     client_connection = await self._async_exit_stack.enter_async_context(
                         streamablehttp_client(**streamable_http_params)

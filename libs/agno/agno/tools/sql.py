@@ -142,7 +142,12 @@ class SQLTools(Toolkit):
         with self.Session() as sess, sess.begin():
             result = sess.execute(text(sql))
 
-            # Check if the operation has returned rows.
+            # DML (INSERT/UPDATE/DELETE) and DDL don't return rows — don't
+            # try to fetch. The `sess.begin()` context still commits on
+            # clean exit.
+            if not result.returns_rows:
+                return []
+
             try:
                 if limit:
                     rows = result.fetchmany(limit)

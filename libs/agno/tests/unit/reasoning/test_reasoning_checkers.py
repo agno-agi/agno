@@ -163,22 +163,13 @@ def test_openai_chat_with_o1_model():
     assert is_openai_reasoning_model(model) is True
 
 
-def test_openai_chat_with_4_1_in_id():
-    """Test OpenAIChat model with 4.1 in ID returns True."""
+def test_openai_chat_with_gpt_4_1_in_id():
+    """Test GPT-4.1 is not treated as a native reasoning model."""
     model = MockModel(
         class_name="OpenAIChat",
-        model_id="claude-opus-4.1",
+        model_id="gpt-4.1",
     )
-    assert is_openai_reasoning_model(model) is True
-
-
-def test_openai_chat_with_4_5_in_id():
-    """Test OpenAIChat model with 4.5 in ID returns True."""
-    model = MockModel(
-        class_name="OpenAIChat",
-        model_id="claude-sonnet-4.5",
-    )
-    assert is_openai_reasoning_model(model) is True
+    assert is_openai_reasoning_model(model) is False
 
 
 def test_openai_chat_with_5_1_in_id():

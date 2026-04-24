@@ -1,5 +1,15 @@
 # Test Log
 
+### file_tools.py (Examples 6-8: exclude_patterns)
+
+**Status:** PASS
+
+**Description:** Added three new examples (6-8) to the existing FileTools cookbook demonstrating the `exclude_patterns` parameter from PR #7618. Example 6 uses the default exclusion list (hides `.venv`, `.git`, `__pycache__`, etc.); Example 7 subtracts `.venv` from `DEFAULT_EXCLUDE_PATTERNS` so the agent can inspect installed packages while still filtering noise; Example 8 uses `exclude_patterns=[]` for full visibility. A `setup_exclusion_sandbox()` helper creates a deterministic fixture (real source + stub `.venv/lib/python3.12/site-packages/requests/` + `.git/HEAD`) so Examples 6-8 are reproducible. New examples use `model=OpenAIResponses(id="gpt-5.4")` per project convention.
+
+**Result:** Ran the three new agents end-to-end with `PYTHONPATH=/Users/coolm/Developer/agno-pr-7618/libs/agno timeout 120 .venvs/demo/bin/python cookbook/91_tools/file_tools.py` (PYTHONPATH needed because the demo venv's editable install resolves to main, but the PR's new `DEFAULT_EXCLUDE_PATTERNS` export lives on the PR branch). Default agent returned only `README.md` and `main.py`; the `.venv`-allowed agent read `__version__ = '2.31.0'` from `.venv/lib/python3.12/site-packages/requests/__init__.py`; the no-exclusions agent listed `.git/HEAD` and every `.venv` file. Module import also verified under importlib — all three agents wire up with the expected `exclude_patterns` lengths (47, 46, 0).
+
+---
+
 ### docling_tools/run.py
 
 **Status:** PASS

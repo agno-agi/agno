@@ -6,15 +6,6 @@ from agno.media import File, Image
 from agno.models.message import Message
 from agno.utils.log import log_error, log_info, log_warning
 
-try:
-    from anthropic.types import (
-        TextBlock,
-        ToolUseBlock,
-    )
-except ImportError:
-    raise ImportError("`anthropic` not installed. Please install using `pip install anthropic`")
-
-
 # Models that support assistant message prefill. This is a closed set —
 # prefill was deprecated starting with Claude 4.6 and all future models
 # are expected to reject it.
@@ -394,6 +385,8 @@ def format_messages(
                 log_warning("Video input is currently unsupported.")
 
         elif message.role == "assistant":
+            from anthropic.types import TextBlock, ToolUseBlock
+
             content = []
 
             if message.reasoning_content is not None and message.provider_data is not None:
