@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from ssl import SSLContext
 from typing import Any, Dict, List, Literal, Optional, Union
 
@@ -7,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RemoteAgent
-from agno.os.interfaces.slack.blocks import build_pause_message
+from agno.os.interfaces.slack.builders import build_pause_message
 from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import (
     build_run_metadata,
@@ -21,12 +22,34 @@ from agno.os.interfaces.slack.helpers import (
     strip_bot_mention,
     upload_response_media_async,
 )
+from agno.os.interfaces.slack.types import LiveStream
 from agno.os.interfaces.slack.security import verify_slack_signature
-from agno.os.interfaces.slack.state import StreamState
+from agno.os.interfaces.slack.state import StreamState, TaskStatus
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
+
+# In-memory registry for active HITL streams. Keyed by run_id.
+_STREAM_MAX_AGE_S = 3600.0
+_streams: Dict[str, LiveStream] = {}
+
+
+def _stream_save(run_id: str, live: LiveStream) -> None:
+    now = time.monotonic()
+    stale = [k for k, v in _streams.items() if now - v.saved_at > _STREAM_MAX_AGE_S]
+    for k in stale:
+        del _streams[k]
+    _streams[run_id] = live
+
+
+def _stream_get(run_id: str) -> Optional[LiveStream]:
+    return _streams.get(run_id)
+
+
+def _stream_pop(run_id: str) -> Optional[LiveStream]:
+    return _streams.pop(run_id, None)
+
 
 # Slack sends lifecycle events for bots with these subtypes. Without this
 # filter the router would try to process its own messages, causing infinite loops.
@@ -50,6 +73,20 @@ _STREAM_CHAR_LIMIT = 39000
 _STREAM_CARD_LIMIT = 45
 
 
+def _slack_err_code(exc: BaseException) -> Optional[str]:
+    """Pull Slack's structured "error" field out of a SlackApiError response.
+    We use this in HITL resume logging to distinguish
+    message_not_in_streaming_state (expired stream) from other failures
+    that need different handling."""
+    resp = getattr(exc, "response", None)
+    data = getattr(resp, "data", None) if resp is not None else None
+    if isinstance(data, dict):
+        code = data.get("error")
+        if isinstance(code, str):
+            return code
+    return None
+
+
 class SlackEventResponse(BaseModel):
     status: str = Field(default="ok")
 
@@ -58,36 +95,35 @@ class SlackChallengeResponse(BaseModel):
     challenge: str = Field(description="Challenge string to echo back to Slack")
 
 
-async def _post_pause_message_safely(
+async def _post_pause_card(
     async_client: Any,
     paused_event: Any,
     channel: str,
     thread_ts: str,
-) -> None:
-    """Post the Block Kit pause card into the thread after stream.stop().
-    Runs AsyncChatStream-independent because chat_stream doesn't support
-    Block Kit payloads."""
+) -> Optional[str]:
+    """Post the Card block as a separate message in the thread.
+    Runs independently of AsyncChatStream because chat_appendStream does
+    not accept Block Kit payloads. The decision handler later mutates
+    this message in place via chat.update to swap the buttons for a
+    permanent decision chip."""
     run_id = getattr(paused_event, "run_id", None)
-    # active_requirements filters out anything already resolved in-flight.
     requirements = list(getattr(paused_event, "active_requirements", None) or [])
     if not run_id or not requirements:
-        return
+        return None
     try:
-        # Use run_id as the approval identifier in block_ids. On SUBMIT, F11
-        # recovers the run_id from the 'pause:<run_id>' block_id and fetches
-        # the requirements via entity.aget_run_output(run_id, session_id).
         blocks = build_pause_message(run_id, requirements)
-        # BlockKitMessage would validate here; we skip and emit raw dicts to
-        # keep chat.postMessage independent of the Pydantic roundtrip.
         block_dicts = [b.model_dump(exclude_none=True, mode="json") for b in blocks]
-        await async_client.chat_postMessage(
+        resp = await async_client.chat_postMessage(
             channel=channel,
             thread_ts=thread_ts,
             text="Run paused — please resolve below",
             blocks=block_dicts,
         )
+        ts = resp.get("ts") if isinstance(resp, dict) else getattr(resp, "data", {}).get("ts")
+        return str(ts) if ts else None
     except Exception as exc:
-        log_error(f"Failed to post pause message (run_id={run_id}): {exc}")
+        log_error(f"Failed to post pause card (run_id={run_id}): {exc}")
+        return None
 
 
 def attach_routes(
@@ -249,16 +285,17 @@ def attach_routes(
         return SlackEventResponse(status="ok")
 
     async def _handle_row_click(payload: Dict[str, Any]) -> None:
-        """Approve/Deny click on a confirmation card.
+        """Approve/Deny click on a Card block.
 
-        If the pause is confirmation-only (no form-collecting rows), this is
-        the atomic commit — we update the row visually AND trigger the full
-        submit/resume flow inline. If the pause is mixed, we only update the
-        visual; the Submit button will commit everything later.
+        The Card is a standalone chat.postMessage in the thread. On click we
+        chat.update it in place to swap the buttons for a permanent decision
+        chip ("<tool> — ✅ Approved" / "<tool> — ❌ Rejected"), then hand off
+        to _handle_submit which opens a fresh continuation stream. Keeping
+        the card preserves an audit trail of the decision in the thread even
+        across server restarts or long human deliberation windows — the
+        continuation simply renders in a new bubble below.
         """
         from slack_sdk.web.async_client import AsyncWebClient
-
-        from agno.os.interfaces.slack.blocks import parse_row_block_id
 
         actions = payload.get("actions") or []
         if not actions:
@@ -267,96 +304,98 @@ def attach_routes(
         button_value = actions[0].get("value") or ""
         if action_id not in ("row_approve", "row_reject"):
             return
-        # button_value carries "req_id|approval_id" — this is our source of
-        # truth. The Actions block_id is now "rowact:..." (not a row_block_id),
-        # so parsing req_id from block_id would fail.
         if "|" not in button_value:
             return
         req_id, approval_id = button_value.split("|", 1)
-        decided = "approve" if action_id == "row_approve" else "reject"
 
         channel = (payload.get("channel") or {}).get("id")
         message = payload.get("message") or {}
-        msg_ts = message.get("ts")
-        original_blocks = list(message.get("blocks") or [])
-        if not channel or not msg_ts:
+        card_ts = message.get("ts")
+        if not channel or not card_ts:
             return
 
-        # Collapse the clicked row into a decided chip; preserve other blocks.
-        new_blocks: List[Dict[str, Any]] = []
-        any_pending_confirm = False
-        has_submit_block = False
-        for block in original_blocks:
-            bid = block.get("block_id") or ""
-            block_type = block.get("type")
-            if block_type == "actions" and bid.startswith("pause:"):
-                has_submit_block = True
-                new_blocks.append(block)
-                continue
-            # The decided row's companion Actions block (buttons) — drop it so
-            # users can't click again. Matched by the rowact:<req_id>:... prefix
-            # emitted by _build_confirmation_row.
-            if bid == f"rowact:{req_id}:confirmation":
-                continue
-            parsed_block = parse_row_block_id(bid)
-            is_confirm_row = parsed_block and parsed_block.get("kind") == "confirmation"
-            if is_confirm_row and parsed_block.get("req_id") == req_id:
-                chip = "✅ Approved" if decided == "approve" else "❌ Rejected"
-                # task_card has title; Section has text; older Card uses body.
-                body_text = (
-                    block.get("title")
-                    or (block.get("text") or {}).get("text")
-                    or (block.get("body") or {}).get("text")
-                    or ""
-                )
-                new_blocks.append(
-                    {
-                        "type": "section",
-                        "block_id": f"row:{req_id}:confirmation:decided:{decided}",
-                        "text": {"type": "mrkdwn", "text": f"*{body_text}*\n\n{chip}"},
-                    }
-                )
-            else:
-                if is_confirm_row and parsed_block.get("status") == "pending":
-                    any_pending_confirm = True
-                new_blocks.append(block)
+        # Re-emit the original Card with the action row stripped. Slack's Card
+        # block accepts cards without an actions field (verified via Block Kit
+        # Builder), so we keep the full visual chrome (border, icon slot,
+        # title/subtitle styling) and only drop the interactive Approve/Deny
+        # buttons. The decision itself is evident from the continuation bubble
+        # below (subscription cancelled / denial message).
+        original_card: Dict[str, Any] = {}
+        for blk in message.get("blocks") or []:
+            if blk.get("type") == "card":
+                original_card = blk
+                break
+
+        resolved_blocks: List[Dict[str, Any]] = []
+        if original_card:
+            resolved_card: Dict[str, Any] = {"type": "card"}
+            for field in ("title", "subtitle", "body", "icon"):
+                if field in original_card:
+                    resolved_card[field] = original_card[field]
+            resolved_blocks = [resolved_card]
+        fallback_text = "Approved" if action_id == "row_approve" else "Denied"
 
         client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
         try:
-            await client.chat_update(channel=channel, ts=msg_ts, blocks=new_blocks, text="Run paused")
+            await client.chat_update(
+                channel=channel,
+                ts=card_ts,
+                text=fallback_text,
+                blocks=resolved_blocks,
+            )
         except Exception as exc:
-            log_error(f"[HITL] chat_update failed for row {req_id}: {exc}")
+            # chat_update failure is non-fatal — the continuation still runs.
+            # User sees stale buttons until Slack reconciles, but no state is lost.
+            log_error(f"[HITL] chat_update (decision record) failed for card {card_ts}: {exc}")
 
-        # Atomic commit for confirmation-only pauses: no Submit block + no
-        # other pending confirmation rows → trigger the submit/resume flow.
-        if not has_submit_block and not any_pending_confirm and approval_id:
-            synthetic_payload = dict(payload)
-            # Repurpose: make it look like a submit_pause click so _handle_submit
-            # reads it uniformly. We inject the approval_id via submit block_id.
-            synthetic_payload["actions"] = [
-                {
-                    "action_id": "submit_pause",
-                    "block_id": f"pause:{approval_id}",
-                    "value": approval_id,
-                }
-            ]
-            # Replace the message blocks in the payload with the updated
-            # state so parse_submit_payload sees the 'decided:<decision>'
-            # block_ids on confirmation rows.
-            synthetic_payload["message"] = {**(payload.get("message") or {}), "blocks": new_blocks}
-            await _handle_submit(synthetic_payload)
+        # The standalone "⏸ Awaiting approval of <tool>…" indicator is deleted
+        # by _handle_submit below — the convergence point for all pause kinds
+        # (confirmation buttons AND user_input / user_feedback / external_execution
+        # Submit). Keeping the delete in one place avoids double-delete races
+        # and covers the non-button pause flows too.
+
+        if not approval_id:
+            return
+
+        # Chain to the submit/resume flow. The synthetic payload carries
+        # the run_id (in submit block_id) and the row's decided block_id
+        # so parse_submit_payload can extract the decision. Block_id format
+        # per blocks.py:30 is "row:<req_id>:<kind>:decided:<approve|reject>".
+        decision_side = "approve" if action_id == "row_approve" else "reject"
+        decided_block_id = f"row:{req_id}:confirmation:decided:{decision_side}"
+        synthetic_payload = dict(payload)
+        synthetic_payload["actions"] = [
+            {
+                "action_id": "submit_pause",
+                "block_id": f"pause:{approval_id}",
+                "value": approval_id,
+            }
+        ]
+        synthetic_payload["message"] = {
+            **(payload.get("message") or {}),
+            # parse_submit_payload walks message.blocks looking for
+            # "row:...:decided:..." block_ids to recover each requirement's
+            # decision. The original Card didn't carry a "decided" block_id
+            # (it was still pending at click time), so we inject a minimal
+            # stand-in that does.
+            "blocks": [{"type": "section", "block_id": decided_block_id, "text": {"type": "plain_text", "text": ""}}],
+        }
+        await _handle_submit(synthetic_payload)
 
     async def _handle_submit(payload: Dict[str, Any]) -> None:
-        """SUBMIT button clicked. Parse the form state, hydrate the paused
-        requirements, apply user decisions, then resume the run and post the
-        continuation back to the same thread.
+        """Approval submitted. Hydrate the paused requirements, apply the
+        user's decisions, then resume the run and append the continuation
+        events to the SAME Slack stream that paused (so the spinner keeps
+        animating and everything lives in one cohesive message).
 
-        v0 uses non-streaming continuation for simplicity — one chat.postMessage
-        per resumption with the final content. No CAS guard (last write wins).
+        Falls back to stream=False + chat.postMessage if the live-stream
+        metadata is missing (e.g., server restarted between pause and click).
         """
         from slack_sdk.web.async_client import AsyncWebClient
 
         from agno.os.interfaces.slack.blocks import (
+            _approval_task_id,
+            _format_decision_title,
             apply_decisions,
             parse_submit_payload,
         )
@@ -365,25 +404,37 @@ def attach_routes(
         if not actions:
             return
         submit_block_id = actions[0].get("block_id") or ""
-        # block_id shape for SUBMIT: "pause:<run_id>"
         if not submit_block_id.startswith("pause:"):
             return
-        run_id = submit_block_id[len("pause:") :]
+        run_id = submit_block_id.removeprefix("pause:")
         channel = (payload.get("channel") or {}).get("id")
         message = payload.get("message") or {}
         msg_ts = message.get("ts")
         if not (run_id and channel and msg_ts):
             return
+        log_info(f"[HITL] submit received: run_id={run_id} channel={channel}")
 
-        # thread_ts: the pause card was posted inside an assistant thread.
-        # Slack includes the thread_ts in message metadata; fall back to msg_ts.
         thread_ts = message.get("thread_ts") or msg_ts
         session_id = f"{entity_id}:{thread_ts}"
 
         client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
 
-        # Fetch the paused run so we can hydrate the in-memory requirements.
-        # aget_run_output pulls the last RunOutput from the agent's session storage.
+        # Delete the standalone "⏸ Awaiting …" indicator posted at pause time.
+        # Fires for ALL pause kinds (confirmation button, user_input Submit,
+        # user_feedback Submit, external_execution Submit) because every
+        # resolution path funnels through here. The pre-pause streamed bubble
+        # (Thinking + prior tool-call cards) is untouched — that audit trail
+        # stays. We null the ts after delete so retry submissions (errors,
+        # double-clicks) don't re-attempt delete on a missing message.
+        live = _stream_get(run_id)
+        if live and live.awaiting_message_ts:
+            awaiting_ts = live.awaiting_message_ts
+            try:
+                await client.chat_delete(channel=channel, ts=awaiting_ts)
+            except Exception as exc:
+                log_error(f"[HITL] chat_delete (awaiting indicator) failed for ts={awaiting_ts}: {exc}")
+            live.awaiting_message_ts = None
+
         try:
             run_output = await entity.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
         except Exception as exc:
@@ -398,6 +449,7 @@ def attach_routes(
                 user=(payload.get("user") or {}).get("id", ""),
                 text="This approval is no longer active.",
             )
+            _stream_pop(run_id)
             return
 
         decisions, errors = parse_submit_payload(payload, requirements)
@@ -413,39 +465,311 @@ def attach_routes(
 
         apply_decisions(decisions, requirements)
 
-        # Leave the pause card in whatever decided-chip state _handle_row_click
-        # already set (e.g., "✅ Approved" or "❌ Rejected"). Overwriting it
-        # with a "Submitted — resuming…" context block erased the chip and
-        # produced a confusing near-empty message bubble. The continuation
-        # message that posts next already gives the user resumption feedback.
+        # Lock the Card: drop the Submit button and convert each interactive
+        # input into a read-only section showing label + selected value. This
+        # mirrors how _handle_row_click handles Approve/Deny — the submitted
+        # selections stay visible as an audit trail, but the user can't
+        # re-submit or mutate them. Skipped when there are no input blocks
+        # (the synthetic payload from _handle_row_click has only a marker
+        # section, and _handle_row_click already did its own chat_update).
+        original_blocks = list((payload.get("message") or {}).get("blocks") or [])
+        if any(b.get("type") == "input" for b in original_blocks):
+            state_values = (payload.get("state") or {}).get("values") or {}
+            # Preserve any non-input, non-actions blocks that were part of
+            # the original message (e.g., a `card` header block for the
+            # confirmation arm of a mixed-requirement pause, or dividers).
+            # Submitted-input sections go into the body of a NEW card so
+            # the user sees a bordered/styled container instead of loose
+            # text rows.
+            preserved_blocks: List[Dict[str, Any]] = []
+            submission_sections: List[Dict[str, Any]] = []
+            for block in original_blocks:
+                btype = block.get("type")
+                if btype == "actions":
+                    continue
+                if btype == "input":
+                    label_text = (block.get("label") or {}).get("text", "")
+                    element = block.get("element") or {}
+                    block_id_of_input = block.get("block_id", "")
+                    action_id_of_input = element.get("action_id", "")
+                    etype = element.get("type")
+                    submitted = (state_values.get(block_id_of_input) or {}).get(action_id_of_input) or {}
+                    if etype == "plain_text_input":
+                        value_str = submitted.get("value") or "_(empty)_"
+                    elif etype == "static_select":
+                        selected_option = submitted.get("selected_option") or {}
+                        value_str = (
+                            (selected_option.get("text") or {}).get("text")
+                            or selected_option.get("value")
+                            or "_(none)_"
+                        )
+                    elif etype in ("checkboxes", "multi_static_select"):
+                        selected_options = submitted.get("selected_options") or []
+                        labels = [
+                            ((opt.get("text") or {}).get("text") or opt.get("value") or "") for opt in selected_options
+                        ]
+                        value_str = ", ".join(labels) if labels else "_(none)_"
+                    else:
+                        value_str = "_(submitted)_"
+                    submission_sections.append(
+                        {
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": f"*{label_text}*\n{value_str}"},
+                        }
+                    )
+                elif btype == "card":
+                    # Strip any actions from the existing card so its buttons
+                    # can't fire again, but keep its title/subtitle/body/icon
+                    # as-is for the audit trail.
+                    preserved_blocks.append({k: v for k, v in block.items() if k != "actions"})
+                else:
+                    preserved_blocks.append(block)
 
-        # Resume the run with hydrated requirements. v0 uses stream=False for
-        # simplicity; later versions can plumb continuation into chat_stream.
+            # Slack's card block takes `body` as a SINGLE mrkdwn object
+            # (not an array). title holds the tool name that was responded
+            # to, body holds all the question/answer rows joined with blank
+            # lines between them. This gives one bordered container with
+            # every field visible, unlike subtitle which truncates ~75 chars.
+            from agno.os.interfaces.slack.blocks import _tool_name as _tool_name_helper
+
+            body_lines: List[str] = []
+            for sec in submission_sections:
+                body_lines.append((sec.get("text") or {}).get("text", ""))
+            # Title: the paused tool name, so the user sees what they
+            # responded to (e.g. "ask_user", "open_ticket"). Falls back to
+            # the generic "Submitted" if no requirement metadata is present.
+            card_title = "Submitted"
+            for req_for_title in requirements:
+                tool_for_title = _tool_name_helper(req_for_title)
+                if tool_for_title:
+                    card_title = tool_for_title
+                    break
+            submission_card: Dict[str, Any] = {
+                "type": "card",
+                "title": {"type": "mrkdwn", "text": card_title},
+                "body": {"type": "mrkdwn", "text": "\n\n".join(body_lines)},
+            }
+            readonly_blocks = preserved_blocks + [submission_card]
+
+            try:
+                await client.chat_update(
+                    channel=channel,
+                    ts=msg_ts,
+                    text="Submitted",
+                    blocks=readonly_blocks,
+                )
+            except Exception as exc:
+                log_error(f"[HITL] chat_update (submit readonly) failed for card {msg_ts}: {exc}")
+
+        # Resume always opens a fresh continuation stream — we intentionally
+        # do not try to reuse the pre-pause ts. Slack enforces a ~5-min wall
+        # clock on chat_stream regardless of pings, and human deliberation
+        # routinely exceeds that. A new bubble is the predictable fallback.
+        live = _stream_get(run_id)
+        pause_age_s: Optional[float] = None
+        if live is not None:
+            pause_age_s = time.monotonic() - live.saved_at
+            log_info(f"[HITL] registry hit: run_id={run_id} pause_age={pause_age_s:.1f}s")
+        if live is None:
+            # Fallback: server lost the in-memory registry (restart) or the
+            # pause happened pre-redesign. Non-streaming resume.
+            log_warning(f"[HITL] registry miss: run_id={run_id} — falling back to non-stream resume")
+            try:
+                continued = await entity.acontinue_run(  # type: ignore[union-attr, call-arg, call-overload]
+                    run_id=run_id,
+                    requirements=requirements,
+                    session_id=session_id,
+                    stream=False,
+                )
+            except Exception as exc:
+                log_error(f"[HITL] acontinue_run (fallback) failed for run={run_id}: {exc}")
+                await send_slack_message_async(client, channel=channel, message=_ERROR_MESSAGE, thread_ts=thread_ts)
+                return
+            content = getattr(continued, "content", None) or ""
+            if content:
+                await send_slack_message_async(client, channel=channel, message=str(content), thread_ts=thread_ts)
+            return
+
+        # Open a fresh continuation stream in the same thread. The pre-pause
+        # stream was stopped when the pause fired; the approval card it sat
+        # under has already been mutated to the decision chip by
+        # _handle_row_click. The continuation renders in a new bubble below.
+        stream = await client.chat_stream(
+            channel=live.channel,
+            thread_ts=live.thread_ts,
+            recipient_team_id=live.recipient_team_id,
+            recipient_user_id=live.recipient_user_id,
+            task_display_mode=live.task_display_mode,
+            buffer_size=live.buffer_size,
+        )
+
+        # Emit the decision task cards. Approved confirmations skip the
+        # dedicated decision card (the tool's own task_call card will
+        # carry the same name + args). Denials and non-confirmation
+        # resolutions always emit a decision card.
+        requirements_by_id = {r.id: r for r in requirements if r.id}
+        for decision in decisions:
+            req = requirements_by_id.get(decision.requirement_id)
+            if req is None:
+                continue
+            # Skip the decision task card entirely except for DENIED
+            # confirmations. Approved confirmations let the tool's own
+            # call card carry the story. For user_input / user_feedback /
+            # external_execution, the readonly Card in the thread above
+            # already shows the submission — repeating "Submitted: tool(...)"
+            # in the continuation's plan block is redundant noise.
+            if decision.pause_type != "confirmation":
+                continue
+            if decision.approved is True:
+                continue
+            title = _format_decision_title(decision, req)
+            decision_chunk = {
+                "type": "task_update",
+                "id": _approval_task_id(decision.requirement_id),
+                "title": title,
+                "status": "complete",
+            }
+            try:
+                await stream.append(markdown_text="", chunks=[decision_chunk])
+            except Exception as exc:
+                log_error(
+                    f"[HITL] decision_update append failed: run_id={run_id} "
+                    f"pause_age={pause_age_s:.1f}s "
+                    f"slack_error={_slack_err_code(exc)!r} | {exc}"
+                )
+
+        # Now stream the continuation. We reuse the same process_event
+        # pipeline that the initial run used so cards, reasoning, tool
+        # call events, and content all render identically.
+        state = StreamState(entity_name=entity_name, entity_type=entity_type)
         try:
-            continued = await entity.acontinue_run(  # type: ignore[union-attr]
+            # requirements= is load-bearing: apply_decisions mutated our
+            # local list, but the agent's own stored state still sees them
+            # as pending. Passing the mutated list forwards the user's
+            # confirmations into the resumed run.
+            # Annotated Any because acontinue_run's overload resolution can't
+            # narrow through entity's Union and the tool-ignore comment on
+            # the call disables mypy's AsyncIterator vs Coroutine discrimination.
+            response_stream: Any = entity.acontinue_run(  # type: ignore[union-attr, call-arg, call-overload]
                 run_id=run_id,
                 requirements=requirements,
                 session_id=session_id,
-                stream=False,
+                stream=True,
+                stream_events=True,
             )
         except Exception as exc:
-            log_error(f"[HITL] acontinue_run failed for run={run_id}: {exc}")
-            await send_slack_message_async(
-                client,
-                channel=channel,
-                message=_ERROR_MESSAGE,
-                thread_ts=thread_ts,
-            )
+            log_error(f"[HITL] acontinue_run (stream) failed for run={run_id}: {exc}")
+            await send_slack_message_async(client, channel=channel, message=_ERROR_MESSAGE, thread_ts=thread_ts)
+            _stream_pop(run_id)
             return
 
-        content = getattr(continued, "content", None) or ""
-        if content:
-            await send_slack_message_async(
-                client,
-                channel=channel,
-                message=str(content),
-                thread_ts=thread_ts,
+        paused_again: bool = False
+        try:
+            async for chunk in response_stream:
+                state.collect_media(chunk)
+                ev = getattr(chunk, "event", None)
+                if ev:
+                    if await process_event(ev, chunk, state, stream):
+                        break
+                if state.has_content():
+                    content = state.flush()
+                    if content and state.stream_chars_sent + len(content) <= _STREAM_CHAR_LIMIT:
+                        await stream.append(markdown_text=content)
+                        state.stream_chars_sent += len(content)
+        except Exception as exc:
+            log_error(
+                f"[HITL] continuation append failed: run_id={run_id} "
+                f"pause_age={pause_age_s:.1f}s "
+                f"slack_error={_slack_err_code(exc)!r} | {exc}"
             )
+
+        # If the continuation paused again, finalize the pre-pause bubble,
+        # refresh the live-stream registry with the new awaiting_message_ts,
+        # and post the awaiting indicator + Card. This mirrors the main-run
+        # pause path — without stream.stop() here Slack keeps the bubble in
+        # a streaming state and the appended "_Reviewing…_" placeholder
+        # never lands as a rendered rich_text block.
+        if state.paused_event is not None:
+            requirements2 = list(getattr(state.paused_event, "active_requirements", None) or [])
+            if requirements2:
+                pause_stop_kwargs2: Dict[str, Any] = {}
+                if state.has_content():
+                    pause_stop_kwargs2["markdown_text"] = state.flush()
+                if state.task_cards:
+                    pending_chunks2 = state.resolve_all_pending("pending")
+                    if pending_chunks2:
+                        pause_stop_kwargs2["chunks"] = pending_chunks2
+                try:
+                    await stream.stop(**pause_stop_kwargs2)
+                except Exception as exc:
+                    log_error(
+                        f"[HITL] stream.stop on re-pause failed: run_id={run_id} "
+                        f"slack_error={_slack_err_code(exc)!r} | {exc}"
+                    )
+
+                # Refresh registry with the SAME run_id — the continuation
+                # shares the run, only the pending requirement changed.
+                _stream_save(
+                    run_id,
+                    LiveStream(
+                        channel=live.channel,
+                        thread_ts=live.thread_ts,
+                        recipient_user_id=live.recipient_user_id,
+                        recipient_team_id=live.recipient_team_id,
+                        task_display_mode=live.task_display_mode,
+                        buffer_size=live.buffer_size,
+                    ),
+                )
+
+                from agno.os.interfaces.slack.blocks import _tool_name, classify_requirement
+
+                pause_labels2: List[str] = []
+                for requirement in requirements2:
+                    kind = classify_requirement(requirement)
+                    tool_name_for_label = _tool_name(requirement)
+                    pause_labels2.append(
+                        {
+                            "confirmation": f"⏸ *Awaiting approval of* `{tool_name_for_label}`…",
+                            "user_input": f"⏸ *Awaiting input for* `{tool_name_for_label}`…",
+                            "user_feedback": "⏸ *Awaiting feedback*…",
+                            "external_execution": f"⏸ *Awaiting output for* `{tool_name_for_label}`…",
+                        }[kind]
+                    )
+                if pause_labels2:
+                    try:
+                        awaiting_resp2 = await client.chat_postMessage(
+                            channel=live.channel,
+                            thread_ts=live.thread_ts,
+                            text="\n".join(pause_labels2),
+                            mrkdwn=True,
+                        )
+                        saved_live2 = _stream_get(run_id)
+                        if saved_live2 is not None:
+                            saved_live2.awaiting_message_ts = awaiting_resp2.get("ts")
+                    except Exception as exc:
+                        log_error(f"[HITL] chat_postMessage (awaiting indicator, re-pause) failed: {exc}")
+
+                await _post_pause_card(client, state.paused_event, live.channel, live.thread_ts)
+                paused_again = True
+
+        if not paused_again:
+            stop_kwargs: Dict[str, Any] = {}
+            if state.has_content():
+                stop_kwargs["markdown_text"] = state.flush()
+            if state.task_cards:
+                final_status: TaskStatus = state.terminal_status or "complete"
+                completion_chunks = state.resolve_all_pending(final_status)
+                if completion_chunks:
+                    stop_kwargs["chunks"] = completion_chunks
+            try:
+                await stream.stop(**stop_kwargs)
+            except Exception as exc:
+                log_error(
+                    f"[HITL] stream.stop after resume failed: run_id={run_id} "
+                    f"pause_age={pause_age_s:.1f}s "
+                    f"slack_error={_slack_err_code(exc)!r} | {exc}"
+                )
+            _stream_pop(run_id)
 
     async def _post_ephemeral(
         client: Any,
@@ -732,7 +1056,7 @@ def attach_routes(
                     else:
                         await _rotate_stream(content)
             # Default to complete when no terminal error/cancel event arrived
-            final_status: Literal["in_progress", "complete", "error"] = state.terminal_status or "complete"
+            final_status: TaskStatus = state.terminal_status or "complete"
             completion_chunks = state.resolve_all_pending(final_status) if state.task_cards else []
             stop_kwargs: Dict[str, Any] = {}
             if state.has_content():
@@ -740,41 +1064,93 @@ def attach_routes(
             if completion_chunks:
                 stop_kwargs["chunks"] = completion_chunks
 
-            # HITL: attach the approval UI directly to the finalized streamed
-            # message via stream.stop(blocks=...). Keeps task cards + approval
-            # in one cohesive message with no visual seam.
-            pause_blocks: Optional[List[Dict[str, Any]]] = None
+            # HITL pause: stop the pre-pause stream cleanly and post the
+            # approval Card as a separate message. In-progress task cards
+            # flip to "pending" — Slack renders these as neutral waiting
+            # indicators (not the red errored state it would otherwise
+            # assign to in_progress cards whose stream has ended). The
+            # resume handler opens a fresh chat_stream for the continuation
+            # in a new bubble when the human clicks.
             if hitl_enabled and state.paused_event is not None:
-                run_id = getattr(state.paused_event, "run_id", None)
+                pause_run_id = getattr(state.paused_event, "run_id", None)
                 requirements = list(getattr(state.paused_event, "active_requirements", None) or [])
-                if run_id and requirements:
+                if pause_run_id and requirements:
+                    pause_stop_kwargs: Dict[str, Any] = {}
+                    if state.has_content():
+                        pause_stop_kwargs["markdown_text"] = state.flush()
+                    if state.task_cards:
+                        pending_chunks = state.resolve_all_pending("pending")
+                        if pending_chunks:
+                            pause_stop_kwargs["chunks"] = pending_chunks
                     try:
-                        pydantic_blocks = build_pause_message(run_id, requirements)
-                        pause_blocks = [b.model_dump(exclude_none=True, mode="json") for b in pydantic_blocks]
-                        stop_kwargs["blocks"] = pause_blocks
+                        await stream.stop(**pause_stop_kwargs)
                     except Exception as exc:
-                        log_error(f"[HITL] Failed to build pause blocks: {exc}")
+                        log_error(
+                            f"[HITL] stream.stop on pause failed: run_id={pause_run_id} "
+                            f"slack_error={_slack_err_code(exc)!r} | {exc}"
+                        )
+                    _stream_save(
+                        pause_run_id,
+                        LiveStream(
+                            channel=ctx["channel_id"],
+                            thread_ts=ctx["thread_id"],
+                            recipient_user_id=user_id,
+                            recipient_team_id=team_id,
+                            task_display_mode=task_display_mode,
+                            buffer_size=buffer_size,
+                        ),
+                    )
+                    log_info(f"[HITL] pause saved: run_id={pause_run_id} channel={ctx['channel_id']}")
+
+                    # Post the "⏸ Awaiting approval of <tool>…" indicator as a
+                    # standalone message so the row-click handler can delete it
+                    # without touching the streamed pre-pause bubble (Thinking
+                    # + prior tool-call cards). Built here from the paused
+                    # event because events.py:_on_run_paused intentionally no
+                    # longer streams the indicator into the bubble.
+                    from agno.os.interfaces.slack.blocks import _tool_name, classify_requirement
+
+                    pause_labels: List[str] = []
+                    for requirement in requirements:
+                        kind = classify_requirement(requirement)
+                        tool_name_for_label = _tool_name(requirement)
+                        pause_labels.append(
+                            {
+                                "confirmation": f"⏸ *Awaiting approval of* `{tool_name_for_label}`…",
+                                "user_input": f"⏸ *Awaiting input for* `{tool_name_for_label}`…",
+                                "user_feedback": "⏸ *Awaiting feedback*…",
+                                "external_execution": f"⏸ *Awaiting output for* `{tool_name_for_label}`…",
+                            }[kind]
+                        )
+                    if pause_labels:
+                        try:
+                            awaiting_resp = await async_client.chat_postMessage(
+                                channel=ctx["channel_id"],
+                                thread_ts=ctx["thread_id"],
+                                text="\n".join(pause_labels),
+                                mrkdwn=True,
+                            )
+                            saved_live = _stream_get(pause_run_id)
+                            if saved_live is not None:
+                                saved_live.awaiting_message_ts = awaiting_resp.get("ts")
+                        except Exception as exc:
+                            log_error(f"[HITL] chat_postMessage (awaiting indicator) failed: {exc}")
+
+                    try:
+                        await _post_pause_card(
+                            async_client,
+                            state.paused_event,
+                            ctx["channel_id"],
+                            ctx["thread_id"],
+                        )
+                    except Exception as exc:
+                        log_error(f"[HITL] Failed to post Card block: {exc}")
+                    return
 
             try:
                 await stream.stop(**stop_kwargs)
-            except Exception as exc:
-                # Fall back: stop without blocks, then post separately. Covers
-                # the case where Slack rejects task_card blocks for this workspace.
-                if pause_blocks:
-                    log_error(f"[HITL] stream.stop(blocks=) failed, falling back to post: {exc}")
-                    stop_kwargs.pop("blocks", None)
-                    try:
-                        await stream.stop(**stop_kwargs)
-                    except Exception:
-                        pass
-                    await _post_pause_message_safely(
-                        async_client,
-                        state.paused_event,
-                        ctx["channel_id"],
-                        ctx["thread_id"],
-                    )
-                else:
-                    raise
+            except Exception:
+                raise
 
             await upload_response_media_async(async_client, state, ctx["channel_id"], ctx["thread_id"])
 

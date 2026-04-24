@@ -8,8 +8,10 @@ from agno.os.interfaces.slack.blocks import (
     ACTION_ROW_APPROVE,
     ACTION_ROW_REJECT,
     ACTION_SUBMIT,
+    ParsedDecision,
     build_pause_message,
     classify_requirement,
+    format_decision_title,
     parse_row_block_id,
     parse_submit_payload,
     pause_block_id,
@@ -102,32 +104,38 @@ class TestRowBlockId:
 
 
 class TestConfirmationRow:
-    def test_block_types(self):
+    def test_block_type_is_card(self):
+        # Confirmation renders as a single Card with title (tool name),
+        # subtitle (args), and embedded Approve/Deny buttons. Coexists with
+        # the streaming plan/task_card above; dropped on decision via
+        # chat.update.
         req = _make_requirement(tool_name="delete_file")
         blocks = build_pause_message("A1", [req])
-        # No global Submit — Approve/Deny buttons carry their own confirm dialogs.
-        assert [b.type for b in blocks] == ["task_card", "actions"]
+        assert [b.type for b in blocks] == ["card"]
 
-    def test_task_card(self):
+    def test_card_title_contains_tool_name(self):
         card = build_pause_message("A1", [_make_requirement(tool_name="delete_file")])[0]
-        assert card.title == "Approval required: delete_file"
-        assert card.status == "in_progress"
-        assert card.block_id == row_block_id("r1", "confirmation")
+        assert card.title.text == "*Approve: delete_file*"
+
+    def test_card_subtitle_renders_args(self):
+        card = build_pause_message("A1", [_make_requirement(tool_name="delete_file", tool_args={"path": "/tmp/x"})])[0]
+        assert "path" in card.subtitle.text
+        assert "/tmp/x" in card.subtitle.text
 
     def test_button_action_ids(self):
-        actions = build_pause_message("A1", [_make_requirement()])[1]
-        assert [el.action_id for el in actions.elements] == [ACTION_ROW_APPROVE, ACTION_ROW_REJECT]
+        card = build_pause_message("A1", [_make_requirement()])[0]
+        assert [el.action_id for el in card.actions] == [ACTION_ROW_APPROVE, ACTION_ROW_REJECT]
 
     def test_button_value_routing(self):
         # _handle_row_click splits on "|" to recover (req_id, approval_id).
-        actions = build_pause_message("A1", [_make_requirement()])[1]
-        assert actions.elements[0].value == "r1|A1"
-        assert actions.elements[1].value == "r1|A1"
+        card = build_pause_message("A1", [_make_requirement()])[0]
+        assert card.actions[0].value == "r1|A1"
+        assert card.actions[1].value == "r1|A1"
 
     def test_buttons_carry_confirm_dialogs(self):
-        actions = build_pause_message("A1", [_make_requirement()])[1]
-        assert actions.elements[0].confirm is not None
-        assert actions.elements[1].confirm is not None
+        card = build_pause_message("A1", [_make_requirement()])[0]
+        assert card.actions[0].confirm is not None
+        assert card.actions[1].confirm is not None
 
 
 # -- User-input row --
@@ -140,7 +148,8 @@ class TestUserInputRow:
             user_input_schema=[UserInputField(name="to_address", field_type=str)],
         )
         blocks = build_pause_message("A1", [req])
-        assert [b.type for b in blocks] == ["task_card", "input", "actions"]
+        # Input fields + global Submit. Header lives in the plan timeline.
+        assert [b.type for b in blocks] == ["input", "actions"]
 
     def test_per_field_block_ids_are_unique(self):
         # Regression — Slack rejects messages with duplicate block_ids.
@@ -161,7 +170,7 @@ class TestUserInputRow:
             requires_user_input=True,
             user_input_schema=[UserInputField(name="force", field_type=bool)],
         )
-        block = build_pause_message("A1", [req])[1]
+        block = build_pause_message("A1", [req])[0]
         assert block.element.type == "static_select"
         assert [o.value for o in block.element.options] == ["true", "false"]
 
@@ -170,7 +179,7 @@ class TestUserInputRow:
             requires_user_input=True,
             user_input_schema=[UserInputField(name="tags", field_type=list)],
         )
-        block = build_pause_message("A1", [req])[1]
+        block = build_pause_message("A1", [req])[0]
         assert block.element.multiline is True
 
 
@@ -188,7 +197,7 @@ class TestUserFeedbackRow:
                 ),
             ],
         )
-        block = build_pause_message("A1", [req])[1]
+        block = build_pause_message("A1", [req])[0]
         assert block.element.type == "checkboxes"
         assert block.element.action_id == f"{ACTION_FEEDBACK_SELECT}:0"
 
@@ -201,7 +210,7 @@ class TestUserFeedbackRow:
                 ),
             ],
         )
-        block = build_pause_message("A1", [req])[1]
+        block = build_pause_message("A1", [req])[0]
         assert block.element.type == "static_select"
 
     def test_question_index_in_block_id(self):
@@ -223,11 +232,11 @@ class TestExternalExecutionRow:
     def test_block_types(self):
         req = _make_requirement(tool_name="run_shell", external_execution_required=True)
         blocks = build_pause_message("A1", [req])
-        assert [b.type for b in blocks] == ["task_card", "input", "actions"]
+        assert [b.type for b in blocks] == ["input", "actions"]
 
     def test_multiline_plain_text_input(self):
         req = _make_requirement(external_execution_required=True)
-        block = build_pause_message("A1", [req])[1]
+        block = build_pause_message("A1", [req])[0]
         assert block.element.type == "plain_text_input"
         assert block.element.multiline is True
         assert block.element.action_id == ACTION_EXTERNAL_RESULT
@@ -336,7 +345,37 @@ class TestParseSubmitPayload:
         assert errors[0].field == "tags"
         assert decisions[0].input_values == {"tags": None}
 
-    def test_confirmation_decided_approve(self):
+    def test_confirmation_decided_from_plan_task(self):
+        # Approval is encoded as a task entry inside the plan block; status
+        # = "complete" means approved, "error" means rejected.
+        req = _make_requirement(tool_name="delete_file")
+        payload = _submit_payload(
+            message_blocks=[
+                {
+                    "type": "plan",
+                    "tasks": [{"task_id": "approval:r1", "title": "Approval required", "status": "complete"}],
+                }
+            ]
+        )
+        decisions, errors = parse_submit_payload(payload, [req])
+        assert errors == []
+        assert decisions[0].approved is True
+
+    def test_confirmation_plan_task_error_is_rejected(self):
+        req = _make_requirement(tool_name="delete_file")
+        payload = _submit_payload(
+            message_blocks=[
+                {
+                    "type": "plan",
+                    "tasks": [{"task_id": "approval:r1", "title": "Approval required", "status": "error"}],
+                }
+            ]
+        )
+        decisions, _ = parse_submit_payload(payload, [req])
+        assert decisions[0].approved is False
+
+    def test_confirmation_legacy_decided_block_id(self):
+        # Backwards-compat — older messages use section + decided block_id.
         req = _make_requirement(tool_name="delete_file")
         payload = _submit_payload(
             message_blocks=[
@@ -346,6 +385,19 @@ class TestParseSubmitPayload:
         decisions, errors = parse_submit_payload(payload, [req])
         assert errors == []
         assert decisions[0].approved is True
+
+    def test_confirmation_legacy_decided_block_id_reject(self):
+        # Deny click path: _handle_action synthesizes this exact block_id
+        # shape when deleting the Card, so parser must recognize reject here.
+        req = _make_requirement(tool_name="delete_file")
+        payload = _submit_payload(
+            message_blocks=[
+                {"block_id": row_block_id("r1", "confirmation", decided="reject"), "type": "section"},
+            ]
+        )
+        decisions, errors = parse_submit_payload(payload, [req])
+        assert errors == []
+        assert decisions[0].approved is False
 
     def test_confirmation_without_click_defaults_to_rejected(self):
         # Submit with no click — parser treats as rejected so runs stay safe.
@@ -382,3 +434,118 @@ class TestParseSubmitPayload:
         _, errors = parse_submit_payload(payload, [req])
         assert len(errors) == 1
         assert errors[0].requirement_id == "r1"
+
+
+class TestFormatDecisionTitle:
+    def test_approved_confirmation_inlines_args(self):
+        req = _make_requirement(
+            tool_name="cancel_subscription",
+            tool_args={"customer_id": "C-42", "reason": "pricing"},
+        )
+        decision = ParsedDecision(requirement_id="r1", pause_type="confirmation", approved=True)
+        assert (
+            format_decision_title(decision, req) == "Approved: cancel_subscription(customer_id=C-42, reason=pricing)"
+        )
+
+    def test_denied_confirmation_inlines_args(self):
+        req = _make_requirement(
+            tool_name="cancel_subscription",
+            tool_args={"customer_id": "C-42", "reason": "pricing"},
+        )
+        decision = ParsedDecision(requirement_id="r1", pause_type="confirmation", approved=False)
+        assert format_decision_title(decision, req) == "Denied: cancel_subscription(customer_id=C-42, reason=pricing)"
+
+    def test_confirmation_empty_args_no_parens(self):
+        req = _make_requirement(tool_name="cancel_subscription", tool_args={})
+        decision = ParsedDecision(requirement_id="r1", pause_type="confirmation", approved=True)
+        assert format_decision_title(decision, req) == "Approved: cancel_subscription"
+
+    def test_user_input_inlines_input_values(self):
+        req = _make_requirement(
+            tool_name="file_incident_retro",
+            requires_user_input=True,
+            user_input_schema=[
+                UserInputField(name="priority", field_type=str),
+                UserInputField(name="on_call_owner", field_type=str),
+            ],
+        )
+        decision = ParsedDecision(
+            requirement_id="r1",
+            pause_type="user_input",
+            input_values={"priority": "P1", "on_call_owner": "alice@acme.com"},
+        )
+        assert (
+            format_decision_title(decision, req)
+            == "Submitted: file_incident_retro(priority=P1, on_call_owner=alice@acme.com)"
+        )
+
+    def test_user_feedback_single_select_unwraps_list(self):
+        req = _make_requirement(
+            tool_name="ask_user",
+            user_feedback_schema=[
+                UserFeedbackQuestion(question="severity", options=[UserFeedbackOption(label="P1")]),
+            ],
+        )
+        decision = ParsedDecision(
+            requirement_id="r1",
+            pause_type="user_feedback",
+            feedback_selections={"severity": ["P1"], "subsystems": ["api", "cache"]},
+        )
+        # Single-element list unwraps to the value; multi-element stays as list.
+        result = format_decision_title(decision, req)
+        assert result.startswith("Submitted: ask_user(")
+        assert "severity=P1" in result
+        assert "subsystems=" in result
+
+    def test_external_execution_includes_result(self):
+        req = _make_requirement(
+            tool_name="run_diagnostic",
+            tool_args={"command": "kubectl describe pod foo"},
+            external_execution_required=True,
+        )
+        decision = ParsedDecision(
+            requirement_id="r1",
+            pause_type="external_execution",
+            external_result="ok",
+        )
+        result = format_decision_title(decision, req)
+        assert result.startswith("Submitted: run_diagnostic(")
+        assert "command=kubectl describe pod foo" in result
+        assert "result=ok" in result
+
+    def test_value_over_40_chars_truncates(self):
+        req = _make_requirement(
+            tool_name="cancel_subscription",
+            tool_args={"reason": "a" * 60},
+        )
+        decision = ParsedDecision(requirement_id="r1", pause_type="confirmation", approved=True)
+        result = format_decision_title(decision, req)
+        # Long value truncated to 40 chars (39 + ellipsis).
+        assert "reason=" in result
+        assert "…" in result
+        assert "a" * 60 not in result
+
+    def test_title_over_120_chars_truncates(self):
+        # Several medium-length args that together exceed the 120-char cap.
+        req = _make_requirement(
+            tool_name="very_long_tool_name_indeed",
+            tool_args={f"arg{i}": "x" * 30 for i in range(5)},
+        )
+        decision = ParsedDecision(requirement_id="r1", pause_type="confirmation", approved=True)
+        result = format_decision_title(decision, req)
+        assert len(result) <= 120
+        assert result.endswith("…")
+
+    def test_newlines_stripped_from_values(self):
+        req = _make_requirement(
+            tool_name="run_diagnostic",
+            tool_args={"command": "line1\nline2\nline3"},
+            external_execution_required=True,
+        )
+        decision = ParsedDecision(
+            requirement_id="r1",
+            pause_type="external_execution",
+            external_result="done",
+        )
+        result = format_decision_title(decision, req)
+        assert "\n" not in result
