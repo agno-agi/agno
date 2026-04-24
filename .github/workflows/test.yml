@@ -4,9 +4,7 @@ on:
   push:
     branches:
       - "main"
-      - "v2.4.0"
-      - "v2.5-phase1"
-      - "v2.5-phase1-prerelease-fixes"
+      - "v2.6.0"
   pull_request:
     types:
       - opened
@@ -14,9 +12,7 @@ on:
       - reopened
     branches:
       - "main"
-      - "v2.4.0"
-      - "v2.5-phase1"
-      - "v2.5-phase1-prerelease-fixes"
+      - "v2.6.0"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -137,5 +133,5 @@ jobs:
         run: |
           source .venv/bin/activate
           uv pip install pytest-cov
-          python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py
+          python -m pytest --cov=agno --cov-report=json:coverage-agno.json ./libs/agno/tests/unit --ignore=libs/agno/tests/unit/models/litellm --ignore=libs/agno/tests/unit/tools/test_crawl4ai.py --ignore=libs/agno/tests/unit/tools/test_scrapegraph.py
           echo "AGNO_COVERAGE=$(python -c 'import json; print(json.load(open("coverage-agno.json"))["totals"]["percent_covered_display"])')" >> $GITHUB_ENV

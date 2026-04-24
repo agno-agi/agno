@@ -706,6 +706,29 @@ class Router:
                     add_session_state_to_context=add_session_state_to_context,
                 )
 
+                # Check for executor HITL pause
+                if isinstance(step_output, StepOutput) and getattr(step_output, "is_paused", False):
+                    all_results.append(step_output)
+                    return StepOutput(
+                        step_name=self.name,
+                        step_id=router_step_id,
+                        step_type=StepType.ROUTER,
+                        content=f"Router {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+
+                if isinstance(step_output, list) and step_output and getattr(step_output[-1], "is_paused", False):
+                    all_results.extend(step_output)
+                    return StepOutput(
+                        step_name=self.name,
+                        step_id=router_step_id,
+                        step_type=StepType.ROUTER,
+                        content=f"Router {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+
                 # Handle both single StepOutput and List[StepOutput]
                 if isinstance(step_output, list):
                     all_results.extend(step_output)
@@ -856,6 +879,18 @@ class Router:
                 step_name = getattr(step, "name", f"step_{i}")
                 log_debug(f"Router step {step_name} streaming completed")
 
+                # Check for executor HITL pause
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=router_step_id,
+                        step_type=StepType.ROUTER,
+                        content=f"Router {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
+
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
                         router_step_outputs[step_name] = step_outputs_for_step[0]
@@ -980,6 +1015,30 @@ class Router:
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                 )
+
+                # Check for executor HITL pause
+                if isinstance(step_output, StepOutput) and getattr(step_output, "is_paused", False):
+                    all_results.append(step_output)
+                    return StepOutput(
+                        step_name=self.name,
+                        step_id=router_step_id,
+                        step_type=StepType.ROUTER,
+                        content=f"Router {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+
+                if isinstance(step_output, list) and step_output and getattr(step_output[-1], "is_paused", False):
+                    all_results.extend(step_output)
+                    return StepOutput(
+                        step_name=self.name,
+                        step_id=router_step_id,
+                        step_type=StepType.ROUTER,
+                        content=f"Router {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+
                 # Handle both single StepOutput and List[StepOutput]
                 if isinstance(step_output, list):
                     all_results.extend(step_output)
@@ -1134,6 +1193,18 @@ class Router:
 
                 step_name = getattr(step, "name", f"step_{i}")
                 log_debug(f"Router step {step_name} async streaming completed")
+
+                # Check for executor HITL pause
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=router_step_id,
+                        step_type=StepType.ROUTER,
+                        content=f"Router {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
 
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
