@@ -467,6 +467,7 @@ class Claude(Model):
                 "top_k": self.top_k,
                 "cache_system_prompt": self.cache_system_prompt,
                 "extended_cache_time": self.extended_cache_time,
+                "cache_tools": self.cache_tools,
                 "betas": self.betas,
             }
         )

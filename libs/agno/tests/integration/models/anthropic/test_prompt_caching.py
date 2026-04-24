@@ -334,6 +334,25 @@ def test_build_system_valid_when_agent_block_uncached():
     assert result[1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 
 
+def test_to_dict_serializes_cache_flags_but_not_blocks():
+    """Scalar cache flags round-trip via to_dict. system_prompt_blocks does not —
+    the callable form cannot serialize and the list form would round-trip only
+    partially, so we deliberately leave it out of the dict."""
+    blocks = [SystemPromptBlock(text="X.", cache=True, ttl="1h")]
+    claude = Claude(
+        cache_system_prompt=True,
+        extended_cache_time=True,
+        cache_tools=True,
+        system_prompt_blocks=blocks,
+    )
+    d = claude.to_dict()
+
+    assert d["cache_system_prompt"] is True
+    assert d["extended_cache_time"] is True
+    assert d["cache_tools"] is True
+    assert "system_prompt_blocks" not in d
+
+
 def test_tools_sorted_by_name_for_cache_stability():
     """Model._format_tools returns tools sorted by name across all providers.
 
