@@ -543,7 +543,7 @@ def _set_default_model(team: "Team") -> None:
     # Set the default model
     if team.model is None:
         try:
-            from agno.models.openai import OpenAIChat
+            from agno.models.openai import OpenAIResponses
         except ModuleNotFoundError as e:
             log_exception(e)
             log_error(
@@ -551,8 +551,8 @@ def _set_default_model(team: "Team") -> None:
             )
             exit(1)
 
-        log_info("Setting default model to OpenAI Chat")
-        team.model = OpenAIChat(id="gpt-4o")
+        log_info("Setting default model to OpenAI Responses")
+        team.model = OpenAIResponses(id="gpt-5.4")
 
 
 def _set_memory_manager(team: "Team") -> None:

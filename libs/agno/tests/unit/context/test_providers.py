@@ -17,7 +17,7 @@ from agno.context.fs import FilesystemContextProvider
 from agno.context.gdrive import GDriveContextProvider
 from agno.context.mcp import MCPContextProvider
 from agno.context.slack import SlackContextProvider
-from agno.context.web import ExaBackend, WebContextProvider
+from agno.context.web import ExaBackend, ExaMCPBackend, ParallelMCPBackend, WebContextProvider
 
 # ---------------------------------------------------------------------------
 # Filesystem
@@ -76,6 +76,187 @@ def test_web_provider_exposes_query_tool():
 def test_web_provider_forwards_status_from_backend():
     p = WebContextProvider(backend=ExaBackend(api_key="x"))
     assert p.status().ok is True
+
+
+def test_exa_mcp_backend_keyless_status_ok(monkeypatch):
+    monkeypatch.delenv("EXA_API_KEY", raising=False)
+    b = ExaMCPBackend()
+    status = b.status()
+    assert status.ok is True
+    assert status.detail == "mcp.exa.ai (keyless)"
+
+
+def test_exa_mcp_backend_keyed_status_reports_keyed():
+    b = ExaMCPBackend(api_key="secret")
+    assert b.status().detail == "mcp.exa.ai (keyed)"
+
+
+def test_exa_mcp_backend_default_include_tools():
+    b = ExaMCPBackend(api_key="x")
+    assert b.include_tools == ["web_search_exa", "web_fetch_exa"]
+    assert "tools=web_search_exa,web_fetch_exa" in b.url
+
+
+def test_exa_mcp_backend_custom_include_tools():
+    b = ExaMCPBackend(api_key="x", include_tools=["web_search_exa"])
+    assert b.include_tools == ["web_search_exa"]
+    assert "tools=web_search_exa" in b.url
+
+
+def test_exa_mcp_backend_include_tools_none_passes_empty():
+    b = ExaMCPBackend(api_key="x", include_tools=None)
+    assert b.include_tools is None
+    assert "tools=" in b.url
+
+
+def test_exa_mcp_backend_exclude_tools_propagates():
+    b = ExaMCPBackend(api_key="x", exclude_tools=["web_fetch_exa"])
+    assert b.exclude_tools == ["web_fetch_exa"]
+    tools = b.get_tools()
+    assert tools[0].exclude_tools == ["web_fetch_exa"]
+
+
+def test_exa_mcp_backend_tool_name_prefix_propagates():
+    b = ExaMCPBackend(api_key="x", tool_name_prefix="exa")
+    assert b.tool_name_prefix == "exa"
+    tools = b.get_tools()
+    assert tools[0].tool_name_prefix == "exa"
+
+
+def test_parallel_mcp_backend_keyless_status_ok(monkeypatch):
+    monkeypatch.delenv("PARALLEL_API_KEY", raising=False)
+    b = ParallelMCPBackend()
+    status = b.status()
+    assert status.ok is True
+    assert status.detail == "search.parallel.ai/mcp (keyless)"
+
+
+def test_parallel_mcp_backend_keyed_status_reports_keyed():
+    b = ParallelMCPBackend(api_key="secret")
+    status = b.status()
+    assert status.ok is True
+    assert status.detail == "search.parallel.ai/mcp (keyed)"
+
+
+def test_parallel_mcp_backend_picks_up_env_var(monkeypatch):
+    monkeypatch.setenv("PARALLEL_API_KEY", "env-secret")
+    b = ParallelMCPBackend()
+    assert b.api_key == "env-secret"
+    assert b.status().detail == "search.parallel.ai/mcp (keyed)"
+
+
+def test_parallel_mcp_backend_authenticated_requires_api_key(monkeypatch):
+    monkeypatch.delenv("PARALLEL_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="authenticated=True requires api_key"):
+        ParallelMCPBackend(authenticated=True)
+
+
+def test_parallel_mcp_backend_authenticated_uses_oauth_endpoint():
+    b = ParallelMCPBackend(api_key="secret", authenticated=True)
+    assert b.url == "https://search.parallel.ai/mcp-oauth"
+    assert b.status().detail == "search.parallel.ai/mcp-oauth (keyed)"
+
+
+def test_parallel_mcp_backend_builds_mcp_tools_with_bearer_header():
+    b = ParallelMCPBackend(api_key="secret")
+    tools = b.get_tools()
+    assert len(tools) == 1
+    mcp_tools = tools[0]
+    params = mcp_tools.server_params
+    assert params.url == "https://search.parallel.ai/mcp"
+    assert params.headers == {"Authorization": "Bearer secret"}
+    assert mcp_tools.include_tools == ["web_search", "web_fetch"]
+    assert mcp_tools.timeout_seconds == 60
+
+
+def test_parallel_mcp_backend_keyless_has_no_auth_header(monkeypatch):
+    monkeypatch.delenv("PARALLEL_API_KEY", raising=False)
+    b = ParallelMCPBackend()
+    tools = b.get_tools()
+    assert tools[0].server_params.headers is None
+
+
+def test_parallel_mcp_backend_custom_timeout_propagates():
+    b = ParallelMCPBackend(api_key="x", timeout_seconds=120)
+    tools = b.get_tools()
+    assert tools[0].timeout_seconds == 120
+
+
+def test_parallel_mcp_backend_custom_include_tools():
+    b = ParallelMCPBackend(api_key="x", include_tools=["web_search"])
+    tools = b.get_tools()
+    assert tools[0].include_tools == ["web_search"]
+
+
+def test_parallel_mcp_backend_include_tools_none_passes_none():
+    b = ParallelMCPBackend(api_key="x", include_tools=None)
+    tools = b.get_tools()
+    assert tools[0].include_tools is None
+
+
+def test_parallel_mcp_backend_exclude_tools_propagates():
+    b = ParallelMCPBackend(api_key="x", exclude_tools=["web_fetch"])
+    assert b.exclude_tools == ["web_fetch"]
+    tools = b.get_tools()
+    assert tools[0].exclude_tools == ["web_fetch"]
+
+
+def test_parallel_mcp_backend_tool_name_prefix_propagates():
+    b = ParallelMCPBackend(api_key="x", tool_name_prefix="parallel")
+    assert b.tool_name_prefix == "parallel"
+    tools = b.get_tools()
+    assert tools[0].tool_name_prefix == "parallel"
+
+
+def test_web_provider_accepts_parallel_mcp_backend(monkeypatch):
+    monkeypatch.delenv("PARALLEL_API_KEY", raising=False)
+    p = WebContextProvider(backend=ParallelMCPBackend())
+    assert [t.name for t in p.get_tools()] == ["query_web"]
+    assert p.status().ok is True
+
+
+@pytest.mark.asyncio
+async def test_parallel_mcp_backend_asetup_swallows_errors_and_retries(monkeypatch):
+    from agno.tools.mcp import MCPTools
+
+    b = ParallelMCPBackend(api_key="test-key", timeout_seconds=1)
+
+    calls = {"n": 0}
+
+    async def _fail(self_):
+        calls["n"] += 1
+        raise RuntimeError("connect failed")
+
+    monkeypatch.setattr(MCPTools, "_connect", _fail)
+
+    await b.asetup()
+    assert b._mcp_tools is None
+
+    await b.asetup()
+    assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_parallel_mcp_backend_aclose_noop_when_never_connected():
+    b = ParallelMCPBackend(api_key="test-key")
+    await b.aclose()
+    assert b._mcp_tools is None
+
+
+@pytest.mark.asyncio
+async def test_parallel_mcp_backend_aclose_swallows_close_errors(monkeypatch):
+    from agno.tools.mcp import MCPTools
+
+    b = ParallelMCPBackend(api_key="test-key")
+    b._mcp_tools = b._build_tools()
+
+    async def _close_fails(self_):
+        raise RuntimeError("close failed")
+
+    monkeypatch.setattr(MCPTools, "close", _close_fails)
+
+    await b.aclose()
+    assert b._mcp_tools is None
 
 
 # ---------------------------------------------------------------------------

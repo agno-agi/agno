@@ -80,7 +80,7 @@ workflow = Workflow(
 
 def resolve_user_input_pause(run_output):
     """Collect user input for step-level HITL."""
-    for req in run_output.step_requirements or []:
+    for req in (run_output.step_requirements or [])[-1:]:
         if req.requires_user_input and not req.requires_executor_input:
             console.print(f"  [dim]{req.user_input_message}[/]")
             if req.user_input_schema:
@@ -99,7 +99,7 @@ def resolve_user_input_pause(run_output):
 
 def resolve_executor_pause(run_output):
     """Resolve executor-level tool confirmation."""
-    for req in run_output.step_requirements or []:
+    for req in (run_output.step_requirements or [])[-1:]:
         if req.requires_executor_input:
             for executor_req in req.executor_requirements or []:
                 tool_exec = (
@@ -158,9 +158,9 @@ if __name__ == "__main__":
 
     while run_output and run_output.is_paused:
         pause_count += 1
-        has_executor = any(
-            r.requires_executor_input for r in (run_output.step_requirements or [])
-        )
+        # Only check the LAST (active) requirement — earlier ones are resolved history
+        _active = (run_output.step_requirements or [])[-1:]
+        has_executor = any(r.requires_executor_input for r in _active)
         console.print(
             f"\n[bold magenta]--- Pause #{pause_count} ({'executor' if has_executor else 'step'}-level) ---[/]"
         )
