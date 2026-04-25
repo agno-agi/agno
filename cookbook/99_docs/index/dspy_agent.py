@@ -16,6 +16,3 @@ agent_os = AgentOS(
     db=SqliteDb(db_file="tmp/agentos.db"),
 )
 app = agent_os.get_app()
-
-if __name__ == "__main__":
-    agent_os.serve(app="dspy_agent:app", reload=True)
