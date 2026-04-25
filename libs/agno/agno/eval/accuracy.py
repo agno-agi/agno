@@ -62,14 +62,11 @@ class AccuracyEvaluation:
 @dataclass
 class AccuracyResult:
     results: List[AccuracyEvaluation] = field(default_factory=list)
-    avg_score: float = field(init=False)
-    mean_score: float = field(init=False)
-    min_score: float = field(init=False)
-    max_score: float = field(init=False)
-    std_dev_score: float = field(init=False)
-
-    def __post_init__(self):
-        self.compute_stats()
+    avg_score: Optional[float] = None
+    mean_score: Optional[float] = None
+    min_score: Optional[float] = None
+    max_score: Optional[float] = None
+    std_dev_score: Optional[float] = None
 
     def compute_stats(self):
         import statistics
