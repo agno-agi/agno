@@ -27,7 +27,7 @@ import re
 import subprocess
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -257,7 +257,7 @@ class Workspace(Toolkit):
         )
         # Tracks which paths have been read this session — used by require_read_before_write.
         # Resolved absolute paths so move/rename interactions are unambiguous.
-        self._read_paths: set = set()
+        self._read_paths: Set[Path] = set()
 
         resolved_allowed_aliases, resolved_confirm_aliases = self._resolve_partitions(allowed, confirm)
 
