@@ -37,6 +37,7 @@ def test_agent_retry():
     assert attempt_count["count"] == 2
     assert response is not None
     assert response.status == RunStatus.completed
+    assert response.metrics.retry_count == 1
 
 
 def test_agent_exponential_backoff():
@@ -95,6 +96,7 @@ def test_agent_keyboard_interrupt_stops_retries():
     assert attempt_count["count"] == 1
     assert response.status == RunStatus.cancelled
     assert response.content == "Operation cancelled by user"
+    assert response.metrics.retry_count == 0
 
 
 @pytest.mark.asyncio
@@ -125,3 +127,4 @@ async def test_agent_async_retry():
     assert attempt_count["count"] == 2
     assert response is not None
     assert response.status == RunStatus.completed
+    assert response.metrics.retry_count == 1

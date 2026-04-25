@@ -383,6 +383,7 @@ def _run(
         # Set up retry logic
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
+            run_response.metrics.retry_count = attempt
             if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
             try:
@@ -772,6 +773,7 @@ def _run_stream(
         # Set up retry logic
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
+            run_response.metrics.retry_count = attempt
             if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
             try:
@@ -1461,6 +1463,7 @@ async def _arun(
 
     try:
         for attempt in range(num_attempts):
+            run_response.metrics.retry_count = attempt
             if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
@@ -2103,6 +2106,7 @@ async def _arun_stream(
     num_attempts = agent.retries + 1
     try:
         for attempt in range(num_attempts):
+            run_response.metrics.retry_count = attempt
             if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
@@ -3106,6 +3110,7 @@ def _continue_run(
     try:
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
+            run_response.metrics.retry_count = attempt
             try:
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3312,6 +3317,7 @@ def _continue_run_stream(
     num_attempts = agent.retries + 1
     try:
         for attempt in range(num_attempts):
+            run_response.metrics.retry_count = attempt
             try:
                 # 1. Resolve dependencies
                 if run_context.dependencies is not None:
@@ -3926,6 +3932,7 @@ async def _acontinue_run(
     try:
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
+            run_response.metrics.retry_count = attempt
             try:
                 if attempt > 0:
                     log_debug(f"Retrying Agent acontinue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
@@ -4302,6 +4309,7 @@ async def _acontinue_run_stream(
     try:
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
+            run_response.metrics.retry_count = attempt
             try:
                 # 1. Read existing session from db
                 agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
