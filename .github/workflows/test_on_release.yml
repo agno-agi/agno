@@ -7,6 +7,7 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
+      - "v2.6.0"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
@@ -854,6 +855,7 @@ jobs:
           ./libs/agno/tests/integration/teams/test_followups.py \
           ./libs/agno/tests/integration/teams/test_tool_hooks.py \
           ./libs/agno/tests/integration/teams/test_member_dedup.py \
+          ./libs/agno/tests/integration/teams/human_in_the_loop/test_member_run_persistence.py \
 
   verify-split-test-coverage:
     runs-on: ubuntu-latest
@@ -1033,14 +1035,16 @@ jobs:
           VIRTUAL_ENV=.venv uv venv --python 3.12
           VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
           VIRTUAL_ENV=.venv uv pip install -e ./libs/agno[dev,os,integration-tests,openai]
-          VIRTUAL_ENV=.venv uv pip install a2a-sdk
+          # TODO: a2a-sdk v1.0+ has breaking changes, update agno for it
+          VIRTUAL_ENV=.venv uv pip install "a2a-sdk>=0.3.0,<1.0"
       - name: Run A2A integration tests
         working-directory: .
         env:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          pip install a2a-sdk
+          # TODO: a2a-sdk v1.0+ has breaking changes, update agno for it
+          pip install "a2a-sdk>=0.3.0,<1.0"
           python -m pytest ./libs/agno/tests/integration/os/interfaces/test_a2a.py
 
   test-clean:
