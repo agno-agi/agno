@@ -14,11 +14,12 @@ ALL_METHODS = [
     "search_content",
     "write_file",
     "edit_file",
+    "move_file",
     "delete_file",
     "run_command",
 ]
 READ_METHODS = ["read_file", "list_files", "search_content"]
-WRITE_METHODS = ["write_file", "edit_file", "delete_file", "run_command"]
+WRITE_METHODS = ["write_file", "edit_file", "move_file", "delete_file", "run_command"]
 
 
 # ------------------------------------------------------------------
@@ -157,23 +158,26 @@ def test_path_escape_blocked_on_delete():
 
 
 # ------------------------------------------------------------------
-# read_file
+# read_file (line-numbered output)
 # ------------------------------------------------------------------
 
 
-def test_read_file_full_contents():
+def test_read_file_returns_line_numbered_output():
+    """read_file output is cat -n style (`{6d}\\t{line}`)."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
-        (Path(tmp_dir) / "hello.txt").write_text("Hello, World!")
-        assert ws.read_file("hello.txt") == "Hello, World!"
+        (Path(tmp_dir) / "hello.txt").write_text("alpha\nbeta\ngamma\n")
+        out = ws.read_file("hello.txt")
+        assert out == "     1\talpha\n     2\tbeta\n     3\tgamma"
 
 
-def test_read_file_with_line_range():
+def test_read_file_chunked_uses_actual_file_line_numbers():
+    """Reading a chunk starting at line 2 should number it 2, not 1."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         (Path(tmp_dir) / "lines.txt").write_text("a\nb\nc\nd\ne\n")
-        # 1-indexed inclusive
-        assert ws.read_file("lines.txt", start_line=2, end_line=4) == "b\nc\nd"
+        out = ws.read_file("lines.txt", start_line=2, end_line=4)
+        assert out == "     2\tb\n     3\tc\n     4\td"
 
 
 def test_read_file_missing():
@@ -183,39 +187,47 @@ def test_read_file_missing():
         assert result.startswith("Error: file not found")
 
 
-def test_read_file_too_long_by_chars():
+def test_read_file_too_long_by_chars_hint_includes_search():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir, max_file_length=10)
         (Path(tmp_dir) / "big.txt").write_text("a" * 100)
         result = ws.read_file("big.txt")
         assert "too long" in result
-        # Chunked read still works.
-        assert ws.read_file("big.txt", start_line=1, end_line=1) == "a" * 100
+        assert "search_content" in result
+        # Chunked read still works (and is line-numbered).
+        out = ws.read_file("big.txt", start_line=1, end_line=1)
+        assert out == "     1\t" + "a" * 100
 
 
-def test_read_file_too_long_by_lines():
+def test_read_file_too_long_by_lines_hint_includes_search():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir, max_file_lines=3)
         (Path(tmp_dir) / "many.txt").write_text("\n".join(str(i) for i in range(10)))
         result = ws.read_file("many.txt")
         assert "too long" in result
+        assert "search_content" in result
 
 
 # ------------------------------------------------------------------
-# list_files
+# list_files (richer entries + recursive)
 # ------------------------------------------------------------------
 
 
-def test_list_files_basic():
+def test_list_files_returns_size_and_type():
+    """Each entry is {path, type, size}; size is human-readable for files, null for dirs."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
-        (Path(tmp_dir) / "a.txt").write_text("a")
-        (Path(tmp_dir) / "b.txt").write_text("b")
+        (Path(tmp_dir) / "a.txt").write_text("hello")  # 5 bytes
+        (Path(tmp_dir) / "subdir").mkdir()
         result = json.loads(ws.list_files())
-        assert sorted(result["files"]) == ["a.txt", "b.txt"]
+        by_path = {e["path"]: e for e in result["files"]}
+        assert by_path["a.txt"]["type"] == "file"
+        assert by_path["a.txt"]["size"] == "5B"
+        assert by_path["subdir"]["type"] == "dir"
+        assert by_path["subdir"]["size"] is None
 
 
-def test_list_files_with_recursive_pattern():
+def test_list_files_with_glob_pattern():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         base = Path(tmp_dir)
@@ -226,7 +238,8 @@ def test_list_files_with_recursive_pattern():
         (base / "c.txt").write_text("c")
 
         result = json.loads(ws.list_files(pattern="**/*.py"))
-        assert sorted(result["files"]) == ["a.py", "sub/b.py"]
+        paths = sorted(e["path"] for e in result["files"])
+        assert paths == ["a.py", "sub/b.py"]
 
 
 def test_list_files_skips_default_excludes():
@@ -238,8 +251,9 @@ def test_list_files_skips_default_excludes():
         (base / ".venv" / "skip.txt").write_text("skip")
 
         result = json.loads(ws.list_files())
-        assert "keep.txt" in result["files"]
-        assert ".venv" not in result["files"]
+        paths = [e["path"] for e in result["files"]]
+        assert "keep.txt" in paths
+        assert ".venv" not in paths
 
 
 def test_list_files_paths_are_relative():
@@ -247,9 +261,48 @@ def test_list_files_paths_are_relative():
         ws = Workspace(tmp_dir)
         (Path(tmp_dir) / "x.txt").write_text("x")
         result = json.loads(ws.list_files())
-        for f in result["files"]:
-            assert not f.startswith("/")
-            assert not f.startswith(tmp_dir)
+        for e in result["files"]:
+            assert not e["path"].startswith("/")
+            assert not e["path"].startswith(tmp_dir)
+
+
+def test_list_files_recursive_walks_tree():
+    """recursive=True returns nested entries up to max_depth."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "a.txt").write_text("a")
+        (base / "src").mkdir()
+        (base / "src" / "b.py").write_text("b")
+        (base / "src" / "lib").mkdir()
+        (base / "src" / "lib" / "c.py").write_text("c")
+
+        result = json.loads(ws.list_files(recursive=True))
+        paths = sorted(e["path"] for e in result["files"])
+        assert "a.txt" in paths
+        assert "src/b.py" in paths
+        assert "src/lib/c.py" in paths
+        assert result["recursive"] is True
+
+
+def test_list_files_recursive_respects_max_depth():
+    """max_depth=1 should not return entries deeper than one level."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "top.txt").write_text("a")
+        (base / "lvl1").mkdir()
+        (base / "lvl1" / "mid.txt").write_text("b")
+        (base / "lvl1" / "lvl2").mkdir()
+        (base / "lvl1" / "lvl2" / "deep.txt").write_text("c")
+
+        result = json.loads(ws.list_files(recursive=True, max_depth=1))
+        paths = sorted(e["path"] for e in result["files"])
+        assert "top.txt" in paths
+        assert "lvl1" in paths
+        # lvl1/mid.txt and below should be pruned by max_depth=1.
+        assert "lvl1/mid.txt" not in paths
+        assert "lvl1/lvl2/deep.txt" not in paths
 
 
 # ------------------------------------------------------------------
@@ -309,7 +362,7 @@ def test_search_content_empty_query():
 
 
 # ------------------------------------------------------------------
-# write_file
+# write_file (atomic)
 # ------------------------------------------------------------------
 
 
@@ -330,8 +383,17 @@ def test_write_file_no_overwrite():
         assert (Path(tmp_dir) / "a.txt").read_text() == "first"
 
 
+def test_write_file_atomic_no_tmp_leftover():
+    """A successful write should not leave a .tmp file behind."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        ws.write_file("a.txt", "content")
+        assert (Path(tmp_dir) / "a.txt").read_text() == "content"
+        assert not (Path(tmp_dir) / "a.txt.tmp").exists()
+
+
 # ------------------------------------------------------------------
-# edit_file
+# edit_file (replace_all)
 # ------------------------------------------------------------------
 
 
@@ -352,14 +414,95 @@ def test_edit_file_rejects_zero_matches():
         assert "not found" in result
 
 
-def test_edit_file_rejects_multiple_matches():
+def test_edit_file_rejects_multiple_matches_default():
+    """Without replace_all, multiple matches → error mentioning replace_all."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         (Path(tmp_dir) / "doc.md").write_text("foo foo foo")
         result = ws.edit_file("doc.md", old_str="foo", new_str="bar")
         assert "matches 3 times" in result
+        assert "replace_all" in result
         # File untouched.
         assert (Path(tmp_dir) / "doc.md").read_text() == "foo foo foo"
+
+
+def test_edit_file_replace_all_replaces_every_occurrence():
+    """replace_all=True replaces all occurrences and reports the count."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        (Path(tmp_dir) / "doc.md").write_text("foo bar foo baz foo")
+        result = ws.edit_file("doc.md", old_str="foo", new_str="QUX", replace_all=True)
+        assert "replaced 3 occurrences" in result
+        assert (Path(tmp_dir) / "doc.md").read_text() == "QUX bar QUX baz QUX"
+
+
+# ------------------------------------------------------------------
+# move_file
+# ------------------------------------------------------------------
+
+
+def test_move_file_renames_within_workspace():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        (Path(tmp_dir) / "old.txt").write_text("hi")
+        result = ws.move_file("old.txt", "new.txt")
+        assert "Moved old.txt -> new.txt" in result
+        assert not (Path(tmp_dir) / "old.txt").exists()
+        assert (Path(tmp_dir) / "new.txt").read_text() == "hi"
+
+
+def test_move_file_creates_dst_parent_dirs():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        (Path(tmp_dir) / "src.txt").write_text("hi")
+        result = ws.move_file("src.txt", "nested/deep/dst.txt")
+        assert "Moved" in result
+        assert (Path(tmp_dir) / "nested" / "deep" / "dst.txt").read_text() == "hi"
+
+
+def test_move_file_refuses_existing_dst_without_overwrite():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        (Path(tmp_dir) / "a.txt").write_text("a")
+        (Path(tmp_dir) / "b.txt").write_text("b")
+        result = ws.move_file("a.txt", "b.txt")
+        assert result.startswith("Error: dst exists")
+        # Both still present, untouched.
+        assert (Path(tmp_dir) / "a.txt").read_text() == "a"
+        assert (Path(tmp_dir) / "b.txt").read_text() == "b"
+
+
+def test_move_file_overwrite_true_replaces_dst():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        (Path(tmp_dir) / "a.txt").write_text("source")
+        (Path(tmp_dir) / "b.txt").write_text("target")
+        result = ws.move_file("a.txt", "b.txt", overwrite=True)
+        assert "Moved" in result
+        assert not (Path(tmp_dir) / "a.txt").exists()
+        assert (Path(tmp_dir) / "b.txt").read_text() == "source"
+
+
+def test_move_file_path_escape_blocked_on_src():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        result = ws.move_file("../outside.txt", "inside.txt")
+        assert result.startswith("Error: src escapes")
+
+
+def test_move_file_path_escape_blocked_on_dst():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        (Path(tmp_dir) / "a.txt").write_text("hi")
+        result = ws.move_file("a.txt", "../escape.txt")
+        assert result.startswith("Error: dst escapes")
+
+
+def test_move_file_missing_src():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        result = ws.move_file("does_not_exist.txt", "wherever.txt")
+        assert "Error: src not found" in result
 
 
 # ------------------------------------------------------------------
@@ -388,7 +531,59 @@ def test_delete_file_refuses_directory():
 
 
 # ------------------------------------------------------------------
-# run_command
+# require_read_before_write
+# ------------------------------------------------------------------
+
+
+def test_require_read_before_write_blocks_unread_write():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir, require_read_before_write=True)
+        (Path(tmp_dir) / "existing.txt").write_text("original")
+        result = ws.write_file("existing.txt", "tampered")
+        assert "require_read_before_write" in result
+        # File untouched.
+        assert (Path(tmp_dir) / "existing.txt").read_text() == "original"
+
+
+def test_require_read_before_write_allows_after_read():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir, require_read_before_write=True)
+        (Path(tmp_dir) / "existing.txt").write_text("original")
+        ws.read_file("existing.txt")
+        result = ws.write_file("existing.txt", "updated")
+        assert "Wrote" in result
+        assert (Path(tmp_dir) / "existing.txt").read_text() == "updated"
+
+
+def test_require_read_before_write_allows_new_file():
+    """Creating a new file doesn't require a prior read (nothing to hallucinate)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir, require_read_before_write=True)
+        result = ws.write_file("brand_new.txt", "content")
+        assert "Wrote" in result
+        assert (Path(tmp_dir) / "brand_new.txt").read_text() == "content"
+
+
+def test_require_read_before_write_blocks_unread_edit():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir, require_read_before_write=True)
+        (Path(tmp_dir) / "doc.md").write_text("Hello, world.")
+        result = ws.edit_file("doc.md", old_str="world", new_str="Agno")
+        assert "require_read_before_write" in result
+        assert (Path(tmp_dir) / "doc.md").read_text() == "Hello, world."
+
+
+def test_require_read_before_write_blocks_unread_delete():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir, require_read_before_write=True)
+        (Path(tmp_dir) / "trash.txt").write_text("anything")
+        result = ws.delete_file("trash.txt")
+        assert "require_read_before_write" in result
+        assert (Path(tmp_dir) / "trash.txt").exists()
+
+
+# ------------------------------------------------------------------
+# run_command (ANSI strip)
 # ------------------------------------------------------------------
 
 
@@ -416,6 +611,16 @@ def test_run_command_returns_error_on_nonzero_exit():
         assert out.startswith("Error")
 
 
+def test_run_command_strips_ansi_color_codes():
+    """Color codes from CLI output should be stripped before tailing."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        # printf interprets the \x1b escape and produces a literal red "RED" plus reset.
+        out = ws.run_command(["printf", "\x1b[31mRED\x1b[0m\n"])
+        assert out == "RED"
+        assert "\x1b" not in out
+
+
 # ------------------------------------------------------------------
 # Async siblings — spot-check parity with sync
 # ------------------------------------------------------------------
@@ -427,7 +632,7 @@ def test_async_read_file_matches_sync():
         (Path(tmp_dir) / "a.txt").write_text("hi")
         sync_result = ws.read_file("a.txt")
         async_result = asyncio.run(ws.aread_file("a.txt"))
-        assert sync_result == async_result == "hi"
+        assert sync_result == async_result == "     1\thi"
 
 
 def test_async_write_then_read():
@@ -438,7 +643,7 @@ def test_async_write_then_read():
             await ws.awrite_file("a.txt", "async write")
             return await ws.aread_file("a.txt")
 
-        assert asyncio.run(go()) == "async write"
+        assert asyncio.run(go()) == "     1\tasync write"
 
 
 def test_async_run_command():
@@ -447,6 +652,15 @@ def test_async_run_command():
         (Path(tmp_dir) / "marker.txt").write_text("x")
         out = asyncio.run(ws.arun_command(["ls"]))
         assert "marker.txt" in out
+
+
+def test_async_move_file():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        (Path(tmp_dir) / "src.txt").write_text("x")
+        out = asyncio.run(ws.amove_file("src.txt", "dst.txt"))
+        assert "Moved" in out
+        assert (Path(tmp_dir) / "dst.txt").read_text() == "x"
 
 
 # ------------------------------------------------------------------
@@ -461,4 +675,5 @@ def test_empty_exclude_patterns_opts_out():
         venv_pkg.mkdir(parents=True)
         (venv_pkg / "x.py").write_text("print('x')")
         result = json.loads(ws.list_files(pattern="**/*.py"))
-        assert any(".venv" in f for f in result["files"])
+        paths = [e["path"] for e in result["files"]]
+        assert any(".venv" in p for p in paths)

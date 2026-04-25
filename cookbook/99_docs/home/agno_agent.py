@@ -8,7 +8,7 @@ agent = Agent(
     model="openai:gpt-5.4",
     tools=[
         Workspace(
-            ".",
+            root=".",
             allowed_tools=["read", "list", "search"],
             confirm_tools=["write", "edit", "delete", "shell"],
         )

@@ -1,7 +1,7 @@
 """Workspace — read, write, edit, search, and run shell commands in a sandboxed local directory.
 
-Destructive operations (write/edit/delete/shell) require human confirmation by default,
-which AgentOS renders as approval prompts in the run timeline.
+Destructive operations (write/edit/move/delete/shell) require human confirmation by
+default, which AgentOS renders as approval prompts in the run timeline.
 
 Quick start:
 
@@ -14,7 +14,7 @@ Quick start:
             Workspace(
                 ".",
                 allowed_tools=["read", "list", "search"],
-                confirm_tools=["write", "edit", "delete", "shell"],
+                confirm_tools=["write", "edit", "move", "delete", "shell"],
             )
         ],
     )
@@ -23,6 +23,7 @@ Quick start:
 import asyncio
 import json
 import os
+import re
 import subprocess
 from fnmatch import fnmatch
 from pathlib import Path
@@ -118,6 +119,14 @@ DEFAULT_EXCLUDE_PATTERNS = [
     ".DS_Store",
 ]
 
+# Strips ANSI CSI sequences (color codes, cursor moves) from terminal output.
+_ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences (color codes, cursor moves) from text."""
+    return _ANSI_RE.sub("", text)
+
 
 def _format_size(size: float) -> str:
     """Format a file size in bytes to a human-readable string."""
@@ -145,6 +154,19 @@ def _extract_snippet(content: str, query: str, context_chars: int = 200) -> str:
     return snippet
 
 
+def _format_with_line_numbers(text: str, start_line: int = 1) -> str:
+    """Prefix each line with its 1-indexed number, ``cat -n`` style.
+
+    The numbers reflect the actual line in the source file: when reading a chunk
+    starting at line 50, the first returned line is numbered 50.
+    """
+    lines = text.split("\n")
+    # Drop the trailing empty element produced by a terminal newline.
+    if lines and lines[-1] == "":
+        lines = lines[:-1]
+    return "\n".join(f"{i + start_line:6d}\t{line}" for i, line in enumerate(lines))
+
+
 class Workspace(Toolkit):
     """Local-machine toolkit for read/write/edit/search/shell access to a sandboxed directory.
 
@@ -164,18 +186,19 @@ class Workspace(Toolkit):
 
     | Alias    | Registered tool name | What it does                            |
     | -------- | -------------------- | --------------------------------------- |
-    | ``read``   | ``read_file``        | Read a file (optionally a line range)   |
-    | ``list``   | ``list_files``       | List a directory (optional glob)        |
+    | ``read``   | ``read_file``        | Read a file (line-numbered)             |
+    | ``list``   | ``list_files``       | List a directory (recursive option)     |
     | ``search`` | ``search_content``   | Recursive content grep                  |
-    | ``write``  | ``write_file``       | Create or overwrite a file              |
-    | ``edit``   | ``edit_file``        | Replace exactly one occurrence in a file|
+    | ``write``  | ``write_file``       | Create or overwrite a file (atomic)     |
+    | ``edit``   | ``edit_file``        | Replace a substring (with ``replace_all``)|
+    | ``move``   | ``move_file``        | Move or rename a file                   |
     | ``delete`` | ``delete_file``      | Delete a file                           |
     | ``shell``  | ``run_command``      | Run a shell command in ``root``         |
 
     Defaults:
 
     - When both lists are ``None``: reads (``read``, ``list``, ``search``) auto-pass,
-      writes (``write``, ``edit``, ``delete``, ``shell``) require confirmation.
+      writes (``write``, ``edit``, ``move``, ``delete``, ``shell``) require confirmation.
       This is the safe-by-default surface meant for the homepage demo.
     - When only one is set: the other defaults to ``[]`` — you've taken control,
       and the surface is exactly what you specified.
@@ -183,10 +206,14 @@ class Workspace(Toolkit):
     Listing results from ``list_files`` and ``search_content`` skip common noise directories
     (``.venv``, ``.git``, ``__pycache__``, ``node_modules``, etc.) by default. Pass
     ``exclude_patterns=[]`` to disable, or ``exclude_patterns=[...]`` to override.
+
+    Optional ``require_read_before_write=True`` blocks ``write_file`` / ``edit_file`` /
+    ``move_file`` / ``delete_file`` on existing files until the agent has read them in
+    this session. Catches the "agent hallucinated the file's contents" bug class.
     """
 
     READ_TOOLS: List[str] = ["read", "list", "search"]
-    WRITE_TOOLS: List[str] = ["write", "edit", "delete", "shell"]
+    WRITE_TOOLS: List[str] = ["write", "edit", "move", "delete", "shell"]
     ALL_TOOLS: List[str] = READ_TOOLS + WRITE_TOOLS
 
     # Alias → registered tool name (the descriptive name the LLM sees in the tool spec).
@@ -196,6 +223,7 @@ class Workspace(Toolkit):
         "search": "search_content",
         "write": "write_file",
         "edit": "edit_file",
+        "move": "move_file",
         "delete": "delete_file",
         "shell": "run_command",
     }
@@ -205,6 +233,7 @@ class Workspace(Toolkit):
         root: Optional[Union[str, Path]] = None,
         allowed_tools: Optional[List[str]] = None,
         confirm_tools: Optional[List[str]] = None,
+        require_read_before_write: bool = False,
         max_file_lines: int = 100_000,
         max_file_length: int = 10_000_000,
         exclude_patterns: Optional[List[str]] = None,
@@ -218,9 +247,13 @@ class Workspace(Toolkit):
 
         self.max_file_lines = max_file_lines
         self.max_file_length = max_file_length
+        self.require_read_before_write = require_read_before_write
         self.exclude_patterns: List[str] = (
             exclude_patterns if exclude_patterns is not None else list(DEFAULT_EXCLUDE_PATTERNS)
         )
+        # Tracks which paths have been read this session — used by require_read_before_write.
+        # Resolved absolute paths so move/rename interactions are unambiguous.
+        self._read_paths: set = set()
 
         resolved_allowed_aliases, resolved_confirm_aliases = self._resolve_partitions(allowed_tools, confirm_tools)
 
@@ -303,6 +336,25 @@ class Workspace(Toolkit):
             return False
         return any(fnmatch(part, pattern) for part in rel.parts for pattern in self.exclude_patterns)
 
+    def _check_read_before_write(self, file_path: Path, op: str) -> Optional[str]:
+        """If require_read_before_write is on, verify the file was read this session.
+
+        Returns an error string if the check fails, or ``None`` if it passes (or
+        the file is being newly created, which doesn't need a prior read).
+        """
+        if not self.require_read_before_write:
+            return None
+        if not file_path.exists():
+            # Creating a new file is fine without a prior read.
+            return None
+        if file_path in self._read_paths:
+            return None
+        return (
+            f"Error: require_read_before_write is enabled and {file_path.name} hasn't "
+            f"been read this session. Call read_file first to confirm contents before "
+            f"the {op}."
+        )
+
     # ------------------------------------------------------------------
     # Read operations (auto-pass by default)
     # ------------------------------------------------------------------
@@ -314,14 +366,20 @@ class Workspace(Toolkit):
         end_line: Optional[int] = None,
         encoding: str = "utf-8",
     ) -> str:
-        """Read a file from the workspace.
+        """Read a file from the workspace, returning ``cat -n`` style line-numbered output.
+
+        Each line is prefixed with its 1-indexed line number followed by a tab. The
+        numbers reflect the actual line in the file — if you read lines 50-60, the
+        first returned line is numbered 50. Pass these line numbers back to ``edit_file``
+        when you want to make a targeted change.
 
         :param path: File path relative to the workspace root.
-        :param start_line: Optional 1-indexed first line to return. If omitted with end_line,
-            returns the entire file (subject to size limits).
+        :param start_line: Optional 1-indexed first line to return. If omitted with
+            end_line, returns the entire file (subject to size limits).
         :param end_line: Optional 1-indexed last line to return (inclusive).
         :param encoding: Text encoding (default utf-8).
-        :return: File contents (or selected line range), or an error message starting with "Error".
+        :return: Line-numbered file contents (or selected range), or an error message
+            starting with "Error".
         """
         try:
             log_debug(f"read_file: {path}")
@@ -332,38 +390,58 @@ class Workspace(Toolkit):
             if not file_path.is_file():
                 return f"Error: file not found: {path}"
             contents = file_path.read_text(encoding=encoding)
+            self._read_paths.add(file_path)
             if start_line is None and end_line is None:
                 if len(contents) > self.max_file_length:
                     return (
                         f"Error: file too long ({len(contents)} chars > {self.max_file_length}). "
-                        "Use start_line/end_line to read a chunk."
+                        "Use start_line/end_line to read a chunk, "
+                        "or use search_content to find specific text first."
                     )
                 line_count = contents.count("\n") + 1
                 if line_count > self.max_file_lines:
                     return (
                         f"Error: file too long ({line_count} lines > {self.max_file_lines}). "
-                        "Use start_line/end_line to read a chunk."
+                        "Use start_line/end_line to read a chunk, "
+                        "or use search_content to find specific text first."
                     )
-                return contents
+                return _format_with_line_numbers(contents, start_line=1)
             lines = contents.split("\n")
             start = start_line if start_line is not None else 1
             end = end_line if end_line is not None else len(lines)
             start_idx = max(0, start - 1)
             end_idx = min(len(lines), end)
-            return "\n".join(lines[start_idx:end_idx])
+            chunk = "\n".join(lines[start_idx:end_idx])
+            return _format_with_line_numbers(chunk, start_line=start)
         except Exception as e:
             log_error(f"read_file failed: {e}")
             return f"Error reading file: {e}"
 
-    def list_files(self, directory: str = ".", pattern: Optional[str] = None) -> str:
-        """List files in a workspace directory, optionally filtered by a glob pattern.
+    def list_files(
+        self,
+        directory: str = ".",
+        pattern: Optional[str] = None,
+        recursive: bool = False,
+        max_depth: int = 3,
+    ) -> str:
+        """List entries in a workspace directory.
+
+        Each entry is returned as ``{"path", "type", "size"}`` so you can decide which
+        files to read without a second call. ``type`` is ``"file"`` or ``"dir"``;
+        ``size`` is a human-readable string for files and ``null`` for directories.
+
+        For tree-style exploration of a project use ``recursive=True`` (defaults to
+        depth 3). Default-excluded directories (``.venv``, ``.git``, ``node_modules``,
+        etc.) are always pruned.
 
         :param directory: Subdirectory relative to the workspace root (default ".").
-        :param pattern: Optional glob pattern. Use ``"**/*.py"`` for recursive matches.
-            If omitted, lists immediate children of ``directory``.
-        :return: JSON string with keys ``directory``, ``pattern``, and ``files`` (list of
-            relative paths). Default-excluded directories (``.venv``, ``.git``, ``node_modules``,
-            etc.) are filtered out.
+        :param pattern: Optional glob pattern to filter by (e.g. ``"*.py"``). When
+            ``recursive=False`` patterns can include ``**`` for cross-directory globs.
+            When ``recursive=True`` the pattern is matched against each entry name.
+        :param recursive: If True, walk the directory tree up to ``max_depth`` levels deep.
+        :param max_depth: Depth limit when ``recursive=True`` (default 3).
+        :return: JSON string with keys ``directory``, ``pattern``, ``recursive``, and
+            ``files`` (list of entry objects).
         """
         try:
             safe, d = self._check_path(directory, self.root)
@@ -371,12 +449,58 @@ class Workspace(Toolkit):
                 return "Error: directory escapes workspace root"
             if not d.is_dir():
                 return f"Error: not a directory: {directory}"
-            if pattern:
-                matches = [p for p in d.glob(pattern) if not self._is_excluded(p)]
-                files = sorted(str(p.relative_to(self.root)) for p in matches)
+
+            entries: List[Path] = []
+            if recursive:
+                # max_depth uses tree -L semantics: max_depth=1 returns only the
+                # immediate children of the search root. An entry inside a directory
+                # walked at relative depth N has entry-depth N+1; we enumerate entries
+                # iff rel_depth < max_depth, and skip both enumeration and recursion
+                # otherwise.
+                base_depth = len(d.parts)
+                for dirpath, dirnames, filenames in os.walk(d):
+                    rel_depth = len(Path(dirpath).parts) - base_depth
+                    if rel_depth >= max_depth:
+                        dirnames[:] = []
+                        continue
+                    dirnames[:] = [name for name in dirnames if not self._is_excluded(Path(dirpath) / name)]
+                    for name in filenames + dirnames:
+                        full = Path(dirpath) / name
+                        if self._is_excluded(full):
+                            continue
+                        if pattern and not fnmatch(name, pattern):
+                            continue
+                        entries.append(full)
+            elif pattern:
+                entries = [p for p in d.glob(pattern) if not self._is_excluded(p)]
             else:
-                files = sorted(str(p.relative_to(self.root)) for p in d.iterdir() if not self._is_excluded(p))
-            return json.dumps({"directory": directory, "pattern": pattern, "files": files}, indent=2)
+                entries = [p for p in d.iterdir() if not self._is_excluded(p)]
+
+            files = []
+            for p in sorted(entries):
+                try:
+                    is_dir = p.is_dir()
+                    size = None if is_dir else _format_size(p.stat().st_size)
+                except OSError:
+                    # Broken symlink or vanished file — skip silently.
+                    continue
+                files.append(
+                    {
+                        "path": str(p.relative_to(self.root)),
+                        "type": "dir" if is_dir else "file",
+                        "size": size,
+                    }
+                )
+
+            return json.dumps(
+                {
+                    "directory": directory,
+                    "pattern": pattern,
+                    "recursive": recursive,
+                    "files": files,
+                },
+                indent=2,
+            )
         except Exception as e:
             log_error(f"list_files failed: {e}")
             return f"Error listing files: {e}"
@@ -450,6 +574,9 @@ class Workspace(Toolkit):
     def write_file(self, path: str, content: str, overwrite: bool = True, encoding: str = "utf-8") -> str:
         """Write a file to the workspace, creating parent directories if needed.
 
+        Writes are atomic: content is written to a sibling ``.tmp`` file and renamed
+        into place, so a crash mid-write can't leave a partially-written target.
+
         :param path: File path relative to the workspace root.
         :param content: Text content to write.
         :param overwrite: If False, fail when the file already exists (default True).
@@ -463,26 +590,48 @@ class Workspace(Toolkit):
                 return "Error: path escapes workspace root"
             if file_path.exists() and not overwrite:
                 return f"Error: file exists and overwrite=False: {path}"
+            check_err = self._check_read_before_write(file_path, op="write")
+            if check_err:
+                return check_err
             if not file_path.parent.exists():
                 file_path.parent.mkdir(parents=True, exist_ok=True)
-            file_path.write_text(content, encoding=encoding)
+
+            tmp_path = file_path.with_name(file_path.name + ".tmp")
+            try:
+                tmp_path.write_text(content, encoding=encoding)
+                os.replace(tmp_path, file_path)
+            finally:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            # Treat write as a read for require_read_before_write — the agent now knows
+            # the contents, so subsequent edits to the same path are fair game.
+            self._read_paths.add(file_path)
             return f"Wrote {len(content)} chars to {path}"
         except Exception as e:
             log_error(f"write_file failed: {e}")
             return f"Error writing file: {e}"
 
-    def edit_file(self, path: str, old_str: str, new_str: str, encoding: str = "utf-8") -> str:
-        """Edit a file by replacing exactly one occurrence of ``old_str`` with ``new_str``.
+    def edit_file(
+        self,
+        path: str,
+        old_str: str,
+        new_str: str,
+        replace_all: bool = False,
+        encoding: str = "utf-8",
+    ) -> str:
+        """Edit a file by replacing ``old_str`` with ``new_str``.
 
-        Fails if ``old_str`` doesn't appear, or appears more than once. To replace all
-        occurrences, call this method multiple times with progressively unique snippets,
-        or read the file and use ``write_file`` with the rewritten contents.
+        By default ``old_str`` must match exactly once — fails if it appears zero or
+        more than one times. Pass ``replace_all=True`` to replace every occurrence
+        (useful for renames across a file).
 
         :param path: File path relative to the workspace root.
-        :param old_str: Exact substring to replace. Must match exactly once in the file.
+        :param old_str: Exact substring to replace.
         :param new_str: Replacement substring.
+        :param replace_all: If True, replace every occurrence (default False).
         :param encoding: Text encoding (default utf-8).
-        :return: Success message, or an error if old_str matches zero or multiple times.
+        :return: Success message with the count, or an error if no matches (or, when
+            ``replace_all=False``, multiple matches).
         """
         try:
             safe, file_path = self._check_path(path, self.root)
@@ -490,18 +639,71 @@ class Workspace(Toolkit):
                 return "Error: path escapes workspace root"
             if not file_path.is_file():
                 return f"Error: file not found: {path}"
+            check_err = self._check_read_before_write(file_path, op="edit")
+            if check_err:
+                return check_err
             contents = file_path.read_text(encoding=encoding)
             count = contents.count(old_str)
             if count == 0:
                 return f"Error: old_str not found in {path}"
-            if count > 1:
-                return f"Error: old_str matches {count} times in {path}; provide a more unique snippet"
-            new_contents = contents.replace(old_str, new_str, 1)
-            file_path.write_text(new_contents, encoding=encoding)
-            return f"Edited {path}: replaced 1 occurrence"
+            if count > 1 and not replace_all:
+                return (
+                    f"Error: old_str matches {count} times in {path}; "
+                    "provide a more unique snippet or pass replace_all=True"
+                )
+            new_contents = contents.replace(old_str, new_str) if replace_all else contents.replace(old_str, new_str, 1)
+            tmp_path = file_path.with_name(file_path.name + ".tmp")
+            try:
+                tmp_path.write_text(new_contents, encoding=encoding)
+                os.replace(tmp_path, file_path)
+            finally:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            return f"Edited {path}: replaced {count if replace_all else 1} occurrence{'s' if (count if replace_all else 1) != 1 else ''}"
         except Exception as e:
             log_error(f"edit_file failed: {e}")
             return f"Error editing file: {e}"
+
+    def move_file(self, src: str, dst: str, overwrite: bool = False) -> str:
+        """Move or rename a file within the workspace.
+
+        Both ``src`` and ``dst`` must resolve inside the workspace root. By default
+        refuses to clobber an existing destination — pass ``overwrite=True`` to
+        force.
+
+        :param src: Source file path relative to the workspace root.
+        :param dst: Destination path relative to the workspace root.
+        :param overwrite: If True, replace ``dst`` if it already exists (default False).
+        :return: Success message, or an error if either path escapes, src is missing,
+            or dst exists and overwrite is False.
+        """
+        try:
+            safe_src, src_path = self._check_path(src, self.root)
+            if not safe_src:
+                return "Error: src escapes workspace root"
+            safe_dst, dst_path = self._check_path(dst, self.root)
+            if not safe_dst:
+                return "Error: dst escapes workspace root"
+            if not src_path.exists():
+                return f"Error: src not found: {src}"
+            if src_path.is_dir():
+                return f"Error: src is a directory, not a file: {src}"
+            if dst_path.exists() and not overwrite:
+                return f"Error: dst exists and overwrite=False: {dst}"
+            check_err = self._check_read_before_write(src_path, op="move")
+            if check_err:
+                return check_err
+            if not dst_path.parent.exists():
+                dst_path.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(src_path, dst_path) if overwrite else src_path.rename(dst_path)
+            # Carry the "has been read" status with the file.
+            if src_path in self._read_paths:
+                self._read_paths.discard(src_path)
+                self._read_paths.add(dst_path)
+            return f"Moved {src} -> {dst}"
+        except Exception as e:
+            log_error(f"move_file failed: {e}")
+            return f"Error moving file: {e}"
 
     def delete_file(self, path: str) -> str:
         """Delete a file from the workspace. Refuses to delete directories.
@@ -517,7 +719,11 @@ class Workspace(Toolkit):
                 return f"Error: file not found: {path}"
             if file_path.is_dir():
                 return f"Error: path is a directory, not a file: {path}"
+            check_err = self._check_read_before_write(file_path, op="delete")
+            if check_err:
+                return check_err
             file_path.unlink()
+            self._read_paths.discard(file_path)
             return f"Deleted {path}"
         except Exception as e:
             log_error(f"delete_file failed: {e}")
@@ -529,6 +735,9 @@ class Workspace(Toolkit):
         Args is a list of strings (e.g. ``["ls", "-la"]``) — the command is NOT
         invoked through a shell, so quoting/expansion are not interpreted. To use
         shell features, pass ``["bash", "-c", "your-command-here"]``.
+
+        ANSI escape sequences (color codes, cursor moves) are stripped from output
+        before truncation, so terminal-formatted output doesn't waste tokens.
 
         :param args: Command and arguments as a list of strings.
         :param tail: Maximum number of trailing lines of stdout (or stderr on error) to return.
@@ -543,9 +752,9 @@ class Workspace(Toolkit):
                 cwd=str(self.root),
             )
             if result.returncode != 0:
-                err = "\n".join(result.stderr.splitlines()[-tail:])
+                err = "\n".join(_strip_ansi(result.stderr).splitlines()[-tail:])
                 return f"Error (exit {result.returncode}): {err}"
-            return "\n".join(result.stdout.splitlines()[-tail:])
+            return "\n".join(_strip_ansi(result.stdout).splitlines()[-tail:])
         except Exception as e:
             log_warning(f"run_command failed: {e}")
             return f"Error running command: {e}"
@@ -564,9 +773,15 @@ class Workspace(Toolkit):
         """Async variant of ``read_file``."""
         return await asyncio.to_thread(self.read_file, path, start_line, end_line, encoding)
 
-    async def alist_files(self, directory: str = ".", pattern: Optional[str] = None) -> str:
+    async def alist_files(
+        self,
+        directory: str = ".",
+        pattern: Optional[str] = None,
+        recursive: bool = False,
+        max_depth: int = 3,
+    ) -> str:
         """Async variant of ``list_files``."""
-        return await asyncio.to_thread(self.list_files, directory, pattern)
+        return await asyncio.to_thread(self.list_files, directory, pattern, recursive, max_depth)
 
     async def asearch_content(self, query: str, directory: str = ".", limit: int = 10) -> str:
         """Async variant of ``search_content``."""
@@ -576,9 +791,20 @@ class Workspace(Toolkit):
         """Async variant of ``write_file``."""
         return await asyncio.to_thread(self.write_file, path, content, overwrite, encoding)
 
-    async def aedit_file(self, path: str, old_str: str, new_str: str, encoding: str = "utf-8") -> str:
+    async def aedit_file(
+        self,
+        path: str,
+        old_str: str,
+        new_str: str,
+        replace_all: bool = False,
+        encoding: str = "utf-8",
+    ) -> str:
         """Async variant of ``edit_file``."""
-        return await asyncio.to_thread(self.edit_file, path, old_str, new_str, encoding)
+        return await asyncio.to_thread(self.edit_file, path, old_str, new_str, replace_all, encoding)
+
+    async def amove_file(self, src: str, dst: str, overwrite: bool = False) -> str:
+        """Async variant of ``move_file``."""
+        return await asyncio.to_thread(self.move_file, src, dst, overwrite)
 
     async def adelete_file(self, path: str) -> str:
         """Async variant of ``delete_file``."""
@@ -598,9 +824,9 @@ class Workspace(Toolkit):
             stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
             stderr = stderr_b.decode("utf-8", errors="replace") if stderr_b else ""
             if proc.returncode != 0:
-                err = "\n".join(stderr.splitlines()[-tail:])
+                err = "\n".join(_strip_ansi(stderr).splitlines()[-tail:])
                 return f"Error (exit {proc.returncode}): {err}"
-            return "\n".join(stdout.splitlines()[-tail:])
+            return "\n".join(_strip_ansi(stdout).splitlines()[-tail:])
         except Exception as e:
             log_warning(f"arun_command failed: {e}")
             return f"Error running command: {e}"
