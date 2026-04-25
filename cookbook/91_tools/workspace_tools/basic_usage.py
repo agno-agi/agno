@@ -1,10 +1,10 @@
 """
-WorkspaceTools — basic usage
-============================
+Workspace — basic usage
+=======================
 
 A polished local-machine toolkit: read/write/edit/delete/search/shell, scoped to
-a sandboxed base directory. All destructive operations require confirmation by
-default — see ``with_confirmation.py`` for the pause/resume flow.
+a sandboxed directory. Destructive operations require confirmation by default —
+see ``with_confirmation.py`` for the pause/resume flow.
 
 This example uses ``confirm_tools=[]`` to disable confirmation so the agent
 runs end-to-end without prompts. For production, leave the defaults on.
@@ -15,7 +15,7 @@ from pathlib import Path
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
-from agno.tools.workspace import WorkspaceTools
+from agno.tools.workspace import Workspace
 
 # Use a clean tmp directory so the demo doesn't touch real files.
 workspace = Path(tempfile.mkdtemp(prefix="workspace_demo_"))
@@ -28,9 +28,9 @@ workspace = Path(tempfile.mkdtemp(prefix="workspace_demo_"))
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     tools=[
-        WorkspaceTools(
-            base_dir=str(workspace),
-            allowed_tools=WorkspaceTools.ALL_TOOLS,
+        Workspace(
+            str(workspace),
+            allowed_tools=Workspace.ALL_TOOLS,
             confirm_tools=[],
         )
     ],

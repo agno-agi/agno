@@ -1,16 +1,16 @@
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
-from agno.tools.workspace import WorkspaceTools
+from agno.tools.workspace import Workspace
 
 agent = Agent(
     name="Agno Agent",
     model="openai:gpt-5.4",
     tools=[
-        WorkspaceTools(
-            base_dir=".",
-            allowed_tools=["read_file", "list_files", "search_content"],
-            confirm_tools=["write_file", "edit_file", "delete_file", "run_command"],
+        Workspace(
+            ".",
+            allowed_tools=["read", "list", "search"],
+            confirm_tools=["write", "edit", "delete", "shell"],
         )
     ],
 )

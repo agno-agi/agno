@@ -1,20 +1,20 @@
-"""WorkspaceTools — read, write, edit, search, and run shell commands in a sandboxed local directory.
+"""Workspace — read, write, edit, search, and run shell commands in a sandboxed local directory.
 
-Destructive operations (write/edit/delete/run) require human confirmation by default,
+Destructive operations (write/edit/delete/shell) require human confirmation by default,
 which AgentOS renders as approval prompts in the run timeline.
 
 Quick start:
 
     from agno.agent import Agent
-    from agno.tools.workspace import WorkspaceTools
+    from agno.tools.workspace import Workspace
 
     agent = Agent(
         model="openai:gpt-5.4",
         tools=[
-            WorkspaceTools(
-                base_dir=".",
-                allowed_tools=["read_file", "list_files", "search_content"],
-                confirm_tools=["write_file", "edit_file", "delete_file", "run_command"],
+            Workspace(
+                ".",
+                allowed_tools=["read", "list", "search"],
+                confirm_tools=["write", "edit", "delete", "shell"],
             )
         ],
     )
@@ -26,7 +26,7 @@ import os
 import subprocess
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -145,39 +145,64 @@ def _extract_snippet(content: str, query: str, context_chars: int = 200) -> str:
     return snippet
 
 
-class WorkspaceTools(Toolkit):
+class Workspace(Toolkit):
     """Local-machine toolkit for read/write/edit/search/shell access to a sandboxed directory.
 
-    All file operations are scoped to ``base_dir``; paths that escape it are rejected.
-    Shell commands run with ``cwd=base_dir``.
+    All file operations are scoped to ``root``; paths that escape it are rejected.
+    Shell commands run with ``cwd=root``.
 
-    Permission model — ``allowed_tools`` and ``confirm_tools`` are mutually exclusive partitions:
+    Permission model — ``allowed_tools`` and ``confirm_tools`` are mutually exclusive
+    partitions of short aliases:
 
-    - A method in ``allowed_tools`` runs silently.
-    - A method in ``confirm_tools`` requires user approval (Agno's HITL pause/resume).
-    - A method in **neither** list is not registered with the toolkit — the LLM doesn't see it.
-    - A method in **both** lists raises ``ValueError``.
+    - An alias in ``allowed_tools`` runs silently.
+    - An alias in ``confirm_tools`` requires user approval (Agno's HITL pause/resume).
+    - An alias in **neither** list is not registered with the toolkit — the LLM doesn't see it.
+    - An alias in **both** lists raises ``ValueError``.
+
+    Aliases (the strings you put in the lists) are short for the snippet; the actual method
+    names registered with the LLM are descriptive so the tool spec is self-explanatory:
+
+    | Alias    | Registered tool name | What it does                            |
+    | -------- | -------------------- | --------------------------------------- |
+    | ``read``   | ``read_file``        | Read a file (optionally a line range)   |
+    | ``list``   | ``list_files``       | List a directory (optional glob)        |
+    | ``search`` | ``search_content``   | Recursive content grep                  |
+    | ``write``  | ``write_file``       | Create or overwrite a file              |
+    | ``edit``   | ``edit_file``        | Replace exactly one occurrence in a file|
+    | ``delete`` | ``delete_file``      | Delete a file                           |
+    | ``shell``  | ``run_command``      | Run a shell command in ``root``         |
 
     Defaults:
 
-    - When both are ``None``: reads (``read_file``, ``list_files``, ``search_content``) are
-      auto-pass, writes (``write_file``, ``edit_file``, ``delete_file``, ``run_command``) require
-      confirmation. This is the safe-by-default surface meant for the homepage demo.
-    - When only one is set: the other defaults to ``[]`` — you've taken control, and the
-      surface is exactly what you specified.
+    - When both lists are ``None``: reads (``read``, ``list``, ``search``) auto-pass,
+      writes (``write``, ``edit``, ``delete``, ``shell``) require confirmation.
+      This is the safe-by-default surface meant for the homepage demo.
+    - When only one is set: the other defaults to ``[]`` — you've taken control,
+      and the surface is exactly what you specified.
 
     Listing results from ``list_files`` and ``search_content`` skip common noise directories
     (``.venv``, ``.git``, ``__pycache__``, ``node_modules``, etc.) by default. Pass
     ``exclude_patterns=[]`` to disable, or ``exclude_patterns=[...]`` to override.
     """
 
-    READ_TOOLS: List[str] = ["read_file", "list_files", "search_content"]
-    WRITE_TOOLS: List[str] = ["write_file", "edit_file", "delete_file", "run_command"]
+    READ_TOOLS: List[str] = ["read", "list", "search"]
+    WRITE_TOOLS: List[str] = ["write", "edit", "delete", "shell"]
     ALL_TOOLS: List[str] = READ_TOOLS + WRITE_TOOLS
+
+    # Alias → registered tool name (the descriptive name the LLM sees in the tool spec).
+    _ALIASES: Dict[str, str] = {
+        "read": "read_file",
+        "list": "list_files",
+        "search": "search_content",
+        "write": "write_file",
+        "edit": "edit_file",
+        "delete": "delete_file",
+        "shell": "run_command",
+    }
 
     def __init__(
         self,
-        base_dir: Optional[Union[str, Path]] = None,
+        root: Optional[Union[str, Path]] = None,
         allowed_tools: Optional[List[str]] = None,
         confirm_tools: Optional[List[str]] = None,
         max_file_lines: int = 100_000,
@@ -185,11 +210,11 @@ class WorkspaceTools(Toolkit):
         exclude_patterns: Optional[List[str]] = None,
         **kwargs,
     ):
-        # Resolve base_dir to an absolute path once — never re-read cwd later (reload-safe).
-        if base_dir is None:
-            self.base_dir: Path = Path.cwd().resolve()
+        # Resolve root to an absolute path once — never re-read cwd later (reload-safe).
+        if root is None:
+            self.root: Path = Path.cwd().resolve()
         else:
-            self.base_dir = Path(base_dir).resolve()
+            self.root = Path(root).resolve()
 
         self.max_file_lines = max_file_lines
         self.max_file_length = max_file_length
@@ -197,26 +222,34 @@ class WorkspaceTools(Toolkit):
             exclude_patterns if exclude_patterns is not None else list(DEFAULT_EXCLUDE_PATTERNS)
         )
 
-        resolved_allowed, resolved_confirm = self._resolve_partitions(allowed_tools, confirm_tools)
+        resolved_allowed_aliases, resolved_confirm_aliases = self._resolve_partitions(allowed_tools, confirm_tools)
 
-        registered = resolved_allowed + resolved_confirm
+        # Translate aliases → method names. The LLM sees the descriptive names.
+        resolved_allowed_methods = [self._ALIASES[a] for a in resolved_allowed_aliases]
+        resolved_confirm_methods = [self._ALIASES[a] for a in resolved_confirm_aliases]
+
+        registered = resolved_allowed_methods + resolved_confirm_methods
         sync_tools = [getattr(self, name) for name in registered]
         async_tools = [(getattr(self, "a" + name), name) for name in registered]
 
         super().__init__(
-            name="workspace_tools",
+            name="workspace",
             tools=sync_tools,
             async_tools=async_tools,
-            requires_confirmation_tools=resolved_confirm,
+            requires_confirmation_tools=resolved_confirm_methods,
             **kwargs,
         )
 
-        # Surface-drift guard: every name in ALL_TOOLS must resolve to both a sync method
-        # and an async sibling. Catches contributor bugs (added a method but forgot to
-        # partition it, or vice versa).
-        for name in self.ALL_TOOLS:
-            assert callable(getattr(self, name, None)), f"WorkspaceTools missing sync method: {name}"
-            assert callable(getattr(self, "a" + name, None)), f"WorkspaceTools missing async method: a{name}"
+        # Surface-drift guard: every alias must resolve to both a sync method and async
+        # sibling on the class. Catches contributor bugs (added a method but forgot to
+        # add the alias, or vice versa).
+        for alias, method_name in self._ALIASES.items():
+            assert callable(getattr(self, method_name, None)), (
+                f"Workspace missing sync method '{method_name}' for alias '{alias}'"
+            )
+            assert callable(getattr(self, "a" + method_name, None)), (
+                f"Workspace missing async method 'a{method_name}' for alias '{alias}'"
+            )
 
     @classmethod
     def _resolve_partitions(
@@ -224,15 +257,17 @@ class WorkspaceTools(Toolkit):
         allowed_tools: Optional[List[str]],
         confirm_tools: Optional[List[str]],
     ) -> Tuple[List[str], List[str]]:
-        """Resolve allowed_tools / confirm_tools into mutually-exclusive lists.
+        """Resolve allowed_tools / confirm_tools alias lists into mutually-exclusive lists.
 
-        See the class docstring for the resolution rules.
+        See the class docstring for the resolution rules. Both lists hold *aliases*
+        (e.g. ``"read"``, not ``"read_file"``).
         """
         # Both None → safe defaults.
         if allowed_tools is None and confirm_tools is None:
             return list(cls.READ_TOOLS), list(cls.WRITE_TOOLS)
 
-        # If one is set, the other defaults to [] — explicit user control means no surprise mixing.
+        # If one is set, the other defaults to [] — explicit user control means no
+        # surprise mixing.
         if allowed_tools is None:
             allowed_tools = []
         if confirm_tools is None:
@@ -242,27 +277,28 @@ class WorkspaceTools(Toolkit):
         unknown_allowed = set(allowed_tools) - valid
         if unknown_allowed:
             raise ValueError(
-                f"Unknown tool name(s) in allowed_tools: {sorted(unknown_allowed)}. Valid names: {cls.ALL_TOOLS}"
+                f"Unknown alias(es) in allowed_tools: {sorted(unknown_allowed)}. Valid aliases: {cls.ALL_TOOLS}"
             )
         unknown_confirm = set(confirm_tools) - valid
         if unknown_confirm:
             raise ValueError(
-                f"Unknown tool name(s) in confirm_tools: {sorted(unknown_confirm)}. Valid names: {cls.ALL_TOOLS}"
+                f"Unknown alias(es) in confirm_tools: {sorted(unknown_confirm)}. Valid aliases: {cls.ALL_TOOLS}"
             )
         overlap = set(allowed_tools) & set(confirm_tools)
         if overlap:
             raise ValueError(
-                f"Tool name(s) appear in both allowed_tools and confirm_tools: {sorted(overlap)}. "
-                "They must be mutually exclusive — allowed_tools auto-pass, confirm_tools require approval."
+                f"Alias(es) appear in both allowed_tools and confirm_tools: {sorted(overlap)}. "
+                "They must be mutually exclusive — allowed_tools auto-pass, "
+                "confirm_tools require approval."
             )
         return list(allowed_tools), list(confirm_tools)
 
     def _is_excluded(self, path: Path) -> bool:
-        """Return True if any component of ``path`` (relative to ``base_dir``) matches an exclude pattern."""
+        """Return True if any component of ``path`` (relative to ``root``) matches an exclude pattern."""
         if not self.exclude_patterns:
             return False
         try:
-            rel = path.relative_to(self.base_dir)
+            rel = path.relative_to(self.root)
         except ValueError:
             return False
         return any(fnmatch(part, pattern) for part in rel.parts for pattern in self.exclude_patterns)
@@ -280,7 +316,7 @@ class WorkspaceTools(Toolkit):
     ) -> str:
         """Read a file from the workspace.
 
-        :param path: File path relative to the workspace base directory.
+        :param path: File path relative to the workspace root.
         :param start_line: Optional 1-indexed first line to return. If omitted with end_line,
             returns the entire file (subject to size limits).
         :param end_line: Optional 1-indexed last line to return (inclusive).
@@ -289,10 +325,10 @@ class WorkspaceTools(Toolkit):
         """
         try:
             log_debug(f"read_file: {path}")
-            safe, file_path = self._check_path(path, self.base_dir)
+            safe, file_path = self._check_path(path, self.root)
             if not safe:
                 log_error(f"Path escapes workspace: {path}")
-                return "Error: path escapes workspace base directory"
+                return "Error: path escapes workspace root"
             if not file_path.is_file():
                 return f"Error: file not found: {path}"
             contents = file_path.read_text(encoding=encoding)
@@ -322,7 +358,7 @@ class WorkspaceTools(Toolkit):
     def list_files(self, directory: str = ".", pattern: Optional[str] = None) -> str:
         """List files in a workspace directory, optionally filtered by a glob pattern.
 
-        :param directory: Subdirectory relative to the workspace base (default ".").
+        :param directory: Subdirectory relative to the workspace root (default ".").
         :param pattern: Optional glob pattern. Use ``"**/*.py"`` for recursive matches.
             If omitted, lists immediate children of ``directory``.
         :return: JSON string with keys ``directory``, ``pattern``, and ``files`` (list of
@@ -330,16 +366,16 @@ class WorkspaceTools(Toolkit):
             etc.) are filtered out.
         """
         try:
-            safe, d = self._check_path(directory, self.base_dir)
+            safe, d = self._check_path(directory, self.root)
             if not safe:
-                return "Error: directory escapes workspace base directory"
+                return "Error: directory escapes workspace root"
             if not d.is_dir():
                 return f"Error: not a directory: {directory}"
             if pattern:
                 matches = [p for p in d.glob(pattern) if not self._is_excluded(p)]
-                files = sorted(str(p.relative_to(self.base_dir)) for p in matches)
+                files = sorted(str(p.relative_to(self.root)) for p in matches)
             else:
-                files = sorted(str(p.relative_to(self.base_dir)) for p in d.iterdir() if not self._is_excluded(p))
+                files = sorted(str(p.relative_to(self.root)) for p in d.iterdir() if not self._is_excluded(p))
             return json.dumps({"directory": directory, "pattern": pattern, "files": files}, indent=2)
         except Exception as e:
             log_error(f"list_files failed: {e}")
@@ -360,9 +396,9 @@ class WorkspaceTools(Toolkit):
         try:
             if not query or not query.strip():
                 return "Error: query cannot be empty"
-            safe, search_dir = self._check_path(directory, self.base_dir)
+            safe, search_dir = self._check_path(directory, self.root)
             if not safe:
-                return "Error: directory escapes workspace base directory"
+                return "Error: directory escapes workspace root"
             if not search_dir.is_dir():
                 return f"Error: not a directory: {directory}"
 
@@ -394,7 +430,7 @@ class WorkspaceTools(Toolkit):
                     except Exception:
                         continue
                     if lower_query in content.lower():
-                        rel_path = str(file_path.relative_to(self.base_dir))
+                        rel_path = str(file_path.relative_to(self.root))
                         matches.append(
                             {
                                 "file": rel_path,
@@ -414,17 +450,17 @@ class WorkspaceTools(Toolkit):
     def write_file(self, path: str, content: str, overwrite: bool = True, encoding: str = "utf-8") -> str:
         """Write a file to the workspace, creating parent directories if needed.
 
-        :param path: File path relative to the workspace base directory.
+        :param path: File path relative to the workspace root.
         :param content: Text content to write.
         :param overwrite: If False, fail when the file already exists (default True).
         :param encoding: Text encoding (default utf-8).
         :return: Success message including the path and byte count, or an error message.
         """
         try:
-            safe, file_path = self._check_path(path, self.base_dir)
+            safe, file_path = self._check_path(path, self.root)
             if not safe:
                 log_error(f"Path escapes workspace: {path}")
-                return "Error: path escapes workspace base directory"
+                return "Error: path escapes workspace root"
             if file_path.exists() and not overwrite:
                 return f"Error: file exists and overwrite=False: {path}"
             if not file_path.parent.exists():
@@ -442,16 +478,16 @@ class WorkspaceTools(Toolkit):
         occurrences, call this method multiple times with progressively unique snippets,
         or read the file and use ``write_file`` with the rewritten contents.
 
-        :param path: File path relative to the workspace base directory.
+        :param path: File path relative to the workspace root.
         :param old_str: Exact substring to replace. Must match exactly once in the file.
         :param new_str: Replacement substring.
         :param encoding: Text encoding (default utf-8).
         :return: Success message, or an error if old_str matches zero or multiple times.
         """
         try:
-            safe, file_path = self._check_path(path, self.base_dir)
+            safe, file_path = self._check_path(path, self.root)
             if not safe:
-                return "Error: path escapes workspace base directory"
+                return "Error: path escapes workspace root"
             if not file_path.is_file():
                 return f"Error: file not found: {path}"
             contents = file_path.read_text(encoding=encoding)
@@ -470,13 +506,13 @@ class WorkspaceTools(Toolkit):
     def delete_file(self, path: str) -> str:
         """Delete a file from the workspace. Refuses to delete directories.
 
-        :param path: File path relative to the workspace base directory.
+        :param path: File path relative to the workspace root.
         :return: Success message, or an error if the path doesn't exist or is a directory.
         """
         try:
-            safe, file_path = self._check_path(path, self.base_dir)
+            safe, file_path = self._check_path(path, self.root)
             if not safe:
-                return "Error: path escapes workspace base directory"
+                return "Error: path escapes workspace root"
             if not file_path.exists():
                 return f"Error: file not found: {path}"
             if file_path.is_dir():
@@ -488,7 +524,7 @@ class WorkspaceTools(Toolkit):
             return f"Error deleting file: {e}"
 
     def run_command(self, args: List[str], tail: int = 100) -> str:
-        """Run a shell command in the workspace base directory and return its output.
+        """Run a shell command in the workspace root and return its output.
 
         Args is a list of strings (e.g. ``["ls", "-la"]``) — the command is NOT
         invoked through a shell, so quoting/expansion are not interpreted. To use
@@ -504,7 +540,7 @@ class WorkspaceTools(Toolkit):
                 args,
                 capture_output=True,
                 text=True,
-                cwd=str(self.base_dir),
+                cwd=str(self.root),
             )
             if result.returncode != 0:
                 err = "\n".join(result.stderr.splitlines()[-tail:])
@@ -556,7 +592,7 @@ class WorkspaceTools(Toolkit):
                 *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=str(self.base_dir),
+                cwd=str(self.root),
             )
             stdout_b, stderr_b = await proc.communicate()
             stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""

@@ -1,6 +1,6 @@
 """
-WorkspaceTools — human-in-the-loop confirmation
-===============================================
+Workspace — human-in-the-loop confirmation
+==========================================
 
 This is the default safety story. Reads run silently; writes/edits/deletes/shell
 pause the run and surface a confirmation request. AgentOS renders these as
@@ -16,7 +16,7 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.tools.workspace import WorkspaceTools
+from agno.tools.workspace import Workspace
 from agno.utils import pprint
 from rich.console import Console
 from rich.prompt import Prompt
@@ -31,8 +31,8 @@ workspace = Path(tempfile.mkdtemp(prefix="workspace_hitl_"))
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     tools=[
-        WorkspaceTools(
-            base_dir=str(workspace),
+        Workspace(
+            str(workspace),
             # Default partition: reads auto-pass, writes need approval.
         )
     ],
@@ -48,8 +48,7 @@ def _drain_pauses(run_response):
             if requirement.needs_confirmation:
                 te = requirement.tool_execution
                 console.print(
-                    f"\n[yellow]Tool[/] [bold blue]{te.tool_name}[/]"
-                    f" wants to run with args:\n  {te.tool_args}"
+                    f"\n[yellow]Tool[/] [bold blue]{te.tool_name}[/] wants to run with args:\n  {te.tool_args}"
                 )
                 choice = Prompt.ask("Confirm?", choices=["y", "n"], default="y")
                 if choice.strip().lower() == "n":
