@@ -1,9 +1,14 @@
 # Workspace
 
 A polished local-machine toolkit. Read / write / edit / move / delete / search /
-shell, scoped to a sandboxed `root`. Destructive operations require human
-confirmation by default — AgentOS renders these as approval cards in the run
-timeline; in a plain console you drive the loop yourself.
+shell, scoped to a `root` directory (paths that resolve outside it are rejected).
+Destructive operations require human confirmation by default — AgentOS renders
+these as approval cards in the run timeline; in a plain console you drive the
+loop yourself.
+
+This is a path-scoping boundary, not a process sandbox — the agent can still
+read env vars, hit the network via shell, etc. For untrusted code, run the
+agent inside a real sandbox (container, VM, Daytona).
 
 ## Quick reference
 

@@ -122,7 +122,7 @@ def test_root_defaults_to_cwd():
 
 
 # ------------------------------------------------------------------
-# Sandbox: path escape protection
+# Path escape protection (paths must resolve under root)
 # ------------------------------------------------------------------
 
 
@@ -138,7 +138,7 @@ def test_path_escape_blocked_on_write():
         ws = Workspace(tmp_dir)
         result = ws.write_file("../escaped.txt", "boom")
         assert result.startswith("Error")
-        # File outside the sandbox should not have been created.
+        # File outside the workspace root should not have been created.
         assert not (Path(tmp_dir).parent / "escaped.txt").exists()
 
 

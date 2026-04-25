@@ -1,4 +1,4 @@
-"""Workspace — read, write, edit, search, and run shell commands in a sandboxed local directory.
+"""Workspace — read, write, edit, search, and run shell commands in a local working directory.
 
 Destructive operations (write/edit/move/delete/shell) require human confirmation by
 default, which AgentOS renders as approval prompts in the run timeline.
@@ -168,10 +168,14 @@ def _format_with_line_numbers(text: str, start_line: int = 1) -> str:
 
 
 class Workspace(Toolkit):
-    """Local-machine toolkit for read/write/edit/search/shell access to a sandboxed directory.
+    """Local-machine toolkit for read/write/edit/search/shell access to a directory tree.
 
-    All file operations are scoped to ``root``; paths that escape it are rejected.
-    Shell commands run with ``cwd=root``.
+    All file operations are scoped to ``root`` — paths that resolve outside it are
+    rejected with an error. Shell commands run with ``cwd=root``. This is a path-scoping
+    boundary, not a process sandbox: the agent can still read environment variables,
+    make network calls via shell tools, and use whatever the host process can use. For
+    untrusted code execution, run the agent inside a real sandbox (container, VM, or
+    a service like Daytona).
 
     Permission model — ``allowed_tools`` and ``confirm_tools`` are mutually exclusive
     partitions of short aliases:
