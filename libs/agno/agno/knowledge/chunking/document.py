@@ -38,17 +38,10 @@ class DocumentChunking(ChunkingStrategy):
                 if current_chunk:
                     meta_data = chunk_meta_data.copy()
                     meta_data["chunk"] = chunk_number
-                    chunk_id = None
-                    if document.id:
-                        chunk_id = f"{document.id}_{chunk_number}"
-                    elif document.name:
-                        chunk_id = f"{document.name}_{chunk_number}"
-                    meta_data["chunk_size"] = len("\n\n".join(current_chunk))
-                    chunks.append(
-                        Document(
-                            id=chunk_id, name=document.name, meta_data=meta_data, content="\n\n".join(current_chunk)
-                        )
-                    )
+                    chunk_content = "\n\n".join(current_chunk)
+                    chunk_id = self._generate_chunk_id(document, chunk_number, chunk_content)
+                    meta_data["chunk_size"] = len(chunk_content)
+                    chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk_content))
                     chunk_number += 1
                     current_chunk = []
                     current_size = 0
@@ -70,18 +63,15 @@ class DocumentChunking(ChunkingStrategy):
                         if current_chunk:
                             meta_data = chunk_meta_data.copy()
                             meta_data["chunk"] = chunk_number
-                            chunk_id = None
-                            if document.id:
-                                chunk_id = f"{document.id}_{chunk_number}"
-                            elif document.name:
-                                chunk_id = f"{document.name}_{chunk_number}"
-                            meta_data["chunk_size"] = len(" ".join(current_chunk))
+                            chunk_content = " ".join(current_chunk)
+                            chunk_id = self._generate_chunk_id(document, chunk_number, chunk_content)
+                            meta_data["chunk_size"] = len(chunk_content)
                             chunks.append(
                                 Document(
                                     id=chunk_id,
                                     name=document.name,
                                     meta_data=meta_data,
-                                    content=" ".join(current_chunk),
+                                    content=chunk_content,
                                 )
                             )
                             chunk_number += 1
@@ -94,18 +84,11 @@ class DocumentChunking(ChunkingStrategy):
             else:
                 meta_data = chunk_meta_data.copy()
                 meta_data["chunk"] = chunk_number
-                chunk_id = None
-                if document.id:
-                    chunk_id = f"{document.id}_{chunk_number}"
-                elif document.name:
-                    chunk_id = f"{document.name}_{chunk_number}"
-                meta_data["chunk_size"] = len("\n\n".join(current_chunk))
+                chunk_content = "\n\n".join(current_chunk)
+                chunk_id = self._generate_chunk_id(document, chunk_number, chunk_content)
+                meta_data["chunk_size"] = len(chunk_content)
                 if current_chunk:
-                    chunks.append(
-                        Document(
-                            id=chunk_id, name=document.name, meta_data=meta_data, content="\n\n".join(current_chunk)
-                        )
-                    )
+                    chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk_content))
                     chunk_number += 1
                 current_chunk = [para]
                 current_size = para_size
@@ -113,15 +96,10 @@ class DocumentChunking(ChunkingStrategy):
         if current_chunk:
             meta_data = chunk_meta_data.copy()
             meta_data["chunk"] = chunk_number
-            chunk_id = None
-            if document.id:
-                chunk_id = f"{document.id}_{chunk_number}"
-            elif document.name:
-                chunk_id = f"{document.name}_{chunk_number}"
-            meta_data["chunk_size"] = len("\n\n".join(current_chunk))
-            chunks.append(
-                Document(id=chunk_id, name=document.name, meta_data=meta_data, content="\n\n".join(current_chunk))
-            )
+            chunk_content = "\n\n".join(current_chunk)
+            chunk_id = self._generate_chunk_id(document, chunk_number, chunk_content)
+            meta_data["chunk_size"] = len(chunk_content)
+            chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk_content))
 
         # Handle overlap if specified
         if self.overlap > 0:
@@ -131,11 +109,11 @@ class DocumentChunking(ChunkingStrategy):
                     # Add overlap from previous chunk
                     prev_text = chunks[i - 1].content[-self.overlap :]
                     meta_data = chunk_meta_data.copy()
-                    meta_data["chunk"] = chunk_number
-                    chunk_id = None
-                    if document.id:
-                        chunk_id = f"{document.id}_{chunk_number}"
+                    # Use the chunk's existing metadata and ID instead of stale chunk_number
+                    meta_data["chunk"] = chunks[i].meta_data["chunk"]
+                    chunk_id = chunks[i].id
                     meta_data["chunk_size"] = len(prev_text + chunks[i].content)
+
                     if prev_text:
                         overlapped_chunks.append(
                             Document(
@@ -145,6 +123,8 @@ class DocumentChunking(ChunkingStrategy):
                                 content=prev_text + chunks[i].content,
                             )
                         )
+                    else:
+                        overlapped_chunks.append(chunks[i])
                 else:
                     overlapped_chunks.append(chunks[i])
             chunks = overlapped_chunks

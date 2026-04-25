@@ -48,7 +48,7 @@ def surrealize_dates(record: dict) -> dict:
         if isinstance(value, date):
             copy[key] = datetime.combine(value, datetime.min.time()).replace(tzinfo=timezone.utc)
         elif key in ["created_at", "updated_at"] and isinstance(value, (int, float)):
-            copy[key] = datetime.fromtimestamp(value).replace(tzinfo=timezone.utc)
+            copy[key] = datetime.fromtimestamp(value, tz=timezone.utc)
         elif key in ["created_at", "updated_at"] and isinstance(value, str):
             # Handle ISO string format - convert back to datetime object for SurrealDB
             try:
@@ -98,14 +98,12 @@ def serialize_session(session: Session, table_names: dict[TableType, str]) -> di
     return _dict
 
 
-def desurrealize_session(session_raw: dict, session_type: Optional[SessionType] = None) -> dict:
+def desurrealize_session(session_raw: dict) -> dict:
     session_raw = deserialize_record_id(session_raw, "session_id", "id")
-    if session_type == SessionType.AGENT:
-        session_raw = deserialize_record_id(session_raw, "agent_id", "agent")
-    elif session_type == SessionType.TEAM:
-        session_raw = deserialize_record_id(session_raw, "team_id", "team")
-    elif session_type == SessionType.WORKFLOW:
-        session_raw = deserialize_record_id(session_raw, "workflow_id", "workflow")
+    # Always attempt to convert all RecordID fields so agent_id/team_id/workflow_id are populated
+    session_raw = deserialize_record_id(session_raw, "agent_id", "agent")
+    session_raw = deserialize_record_id(session_raw, "team_id", "team")
+    session_raw = deserialize_record_id(session_raw, "workflow_id", "workflow")
 
     session_raw = desurrealize_dates(session_raw)
 
@@ -117,23 +115,6 @@ def desurrealize_session(session_raw: dict, session_type: Optional[SessionType] 
         session_raw["session_type"] = SessionType.WORKFLOW
 
     return session_raw
-
-
-def deserialize_session(session_type: SessionType, session_raw: dict) -> Optional[Session]:
-    session_raw = desurrealize_session(session_raw, session_type)
-
-    if session_type == SessionType.AGENT:
-        return AgentSession.from_dict(session_raw)
-    elif session_type == SessionType.TEAM:
-        return TeamSession.from_dict(session_raw)
-    elif session_type == SessionType.WORKFLOW:
-        return WorkflowSession.from_dict(session_raw)
-    else:
-        raise ValueError(f"Invalid session type: {session_type}")
-
-
-def deserialize_sessions(session_type: SessionType, sessions_raw: List[dict]) -> List[Session]:
-    return [x for x in [deserialize_session(session_type, x) for x in sessions_raw] if x is not None]
 
 
 def get_session_type(session: Session) -> SessionType:
@@ -292,25 +273,25 @@ def get_schema(table_type: TableType, table_name: str) -> str:
     elif table_type == "knowledge":
         return dedent(f"""
             {define_table}
-            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
             """)
     elif table_type == "culture":
         return dedent(f"""
             {define_table}
-            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
             """)
     elif table_type == "sessions":
         return dedent(f"""
             {define_table}
-            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
             DEFINE FIELD OVERWRITE updated_at ON {table_name} TYPE datetime VALUE time::now();
             """)
     elif table_type == "traces":
         return dedent(f"""
             {define_table}
-            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
             DEFINE INDEX idx_trace_id ON {table_name} FIELDS trace_id UNIQUE;
             DEFINE INDEX idx_run_id ON {table_name} FIELDS run_id;
             DEFINE INDEX idx_session_id ON {table_name} FIELDS session_id;
@@ -324,7 +305,7 @@ def get_schema(table_type: TableType, table_name: str) -> str:
     elif table_type == "spans":
         return dedent(f"""
             {define_table}
-            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime VALUE time::now();
+            DEFINE FIELD OVERWRITE created_at ON {table_name} TYPE datetime DEFAULT time::now();
             DEFINE INDEX idx_span_id ON {table_name} FIELDS span_id UNIQUE;
             DEFINE INDEX idx_trace_id ON {table_name} FIELDS trace_id;
             DEFINE INDEX idx_parent_span_id ON {table_name} FIELDS parent_span_id;

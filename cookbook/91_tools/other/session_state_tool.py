@@ -7,6 +7,10 @@ from agno.tools import tool
 from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 @tool()
 def answer_from_known_questions(question: str, run_context: RunContext) -> str:
@@ -57,18 +61,22 @@ q_and_a_agent = Agent(
 )
 
 # First run
-q_and_a_agent.print_response("What is the capital of France?", stream=True)
 
-# Print session_state
-session_state = q_and_a_agent.get_session_state()
-if session_state and "last_answer" in session_state:
-    print(f"\nSession state after first run -> {session_state['last_answer']}\n")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    q_and_a_agent.print_response("What is the capital of France?", stream=True)
 
+    # Print session_state
+    session_state = q_and_a_agent.get_session_state()
+    if session_state and "last_answer" in session_state:
+        print(f"\nSession state after first run -> {session_state['last_answer']}\n")
 
-# Second run
-q_and_a_agent.print_response("What is the capital of Germany?", stream=True)
+    # Second run
+    q_and_a_agent.print_response("What is the capital of Germany?", stream=True)
 
-# Print session_state
-session_state = q_and_a_agent.get_session_state()
-if session_state and "last_answer" in session_state:
-    print(f"\nSession state after second run -> {session_state['last_answer']}\n")
+    # Print session_state
+    session_state = q_and_a_agent.get_session_state()
+    if session_state and "last_answer" in session_state:
+        print(f"\nSession state after second run -> {session_state['last_answer']}\n")

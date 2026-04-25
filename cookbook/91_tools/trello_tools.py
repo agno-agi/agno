@@ -21,6 +21,11 @@ Step 3: Generate a Token
 from agno.agent import Agent
 from agno.tools.trello import TrelloTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 agent = Agent(
     instructions=[
         "You are a Trello management assistant that helps organize and manage Trello boards, lists, and cards",
@@ -35,7 +40,11 @@ agent = Agent(
     tools=[TrelloTools()],
 )
 
-agent.print_response(
-    "Create a board called ai-agent and inside it create list called 'todo' and 'doing' and inside each of them create card called 'create agent'",
-    stream=True,
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Create a board called ai-agent and inside it create list called 'todo' and 'doing' and inside each of them create card called 'create agent'",
+        stream=True,
+    )

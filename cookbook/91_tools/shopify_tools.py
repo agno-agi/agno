@@ -25,6 +25,11 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.shopify import ShopifyTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 sales_agent = Agent(
     name="Sales Analyst",
     model=OpenAIChat(id="gpt-4o"),
@@ -45,6 +50,10 @@ sales_agent = Agent(
 )
 
 # Example usage
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     # Example 1: Get top selling products
     sales_agent.print_response(

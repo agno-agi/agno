@@ -29,6 +29,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return AzureAIFoundry(id=model_id)
 
+    elif model_provider == "azure-foundry-claude":
+        from agno.models.azure import AzureFoundryClaude
+
+        return AzureFoundryClaude(id=model_id)
+
     elif model_provider == "azure-openai":
         from agno.models.azure import AzureOpenAI
 
@@ -139,10 +144,20 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return MistralChat(id=model_id)
 
+    elif model_provider == "moonshot":
+        from agno.models.moonshot import MoonShot
+
+        return MoonShot(id=model_id)
+
     elif model_provider == "nebius":
         from agno.models.nebius import Nebius
 
         return Nebius(id=model_id)
+
+    elif model_provider == "neosantara":
+        from agno.models.neosantara import Neosantara
+
+        return Neosantara(id=model_id)
 
     elif model_provider == "nexus":
         from agno.models.nexus import Nexus
@@ -160,6 +175,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
         return Ollama(id=model_id)
 
     elif model_provider == "openai":
+        from agno.models.openai import OpenAIResponses
+
+        return OpenAIResponses(id=model_id)
+
+    elif model_provider == "openai-chat":
         from agno.models.openai import OpenAIChat
 
         return OpenAIChat(id=model_id)

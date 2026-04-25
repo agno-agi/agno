@@ -1,8 +1,19 @@
+"""
+Vllm Structured Output
+======================
+
+Cookbook example for `vllm/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent
 from agno.models.vllm import VLLM
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -31,3 +42,10 @@ agent = Agent(
 )
 
 agent.print_response("Llamas ruling the world")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -17,9 +17,9 @@ from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, LearningMode, UserProfileConfig
 from agno.models.openai import OpenAIResponses
 
-# ============================================================================
-# Setup
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
@@ -34,9 +34,9 @@ agent = Agent(
     markdown=True,
 )
 
-# ============================================================================
-# Demo: Gradual Profile Building
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Run: Gradual Profile Building
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     user_id = "marcus@example.com"
@@ -52,7 +52,7 @@ if __name__ == "__main__":
         session_id="conv_1",
         stream=True,
     )
-    agent.get_learning_machine().user_profile_store.print(user_id=user_id)
+    agent.learning_machine.user_profile_store.print(user_id=user_id)
 
     # Conversation 2: Share work context
     print("\n" + "=" * 60)
@@ -65,7 +65,7 @@ if __name__ == "__main__":
         session_id="conv_2",
         stream=True,
     )
-    agent.get_learning_machine().user_profile_store.print(user_id=user_id)
+    agent.learning_machine.user_profile_store.print(user_id=user_id)
 
     # Conversation 3: Preferences
     print("\n" + "=" * 60)
@@ -79,7 +79,7 @@ if __name__ == "__main__":
         session_id="conv_3",
         stream=True,
     )
-    agent.get_learning_machine().user_profile_store.print(user_id=user_id)
+    agent.learning_machine.user_profile_store.print(user_id=user_id)
 
     # Conversation 4: Nickname
     print("\n" + "=" * 60)
@@ -92,4 +92,4 @@ if __name__ == "__main__":
         session_id="conv_4",
         stream=True,
     )
-    agent.get_learning_machine().user_profile_store.print(user_id=user_id)
+    agent.learning_machine.user_profile_store.print(user_id=user_id)

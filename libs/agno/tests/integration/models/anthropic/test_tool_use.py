@@ -102,10 +102,8 @@ def test_tool_use_tool_call_limit():
         model=Claude(id="claude-sonnet-4-20250514"),
         tools=[
             YFinanceTools(
-                include_tools=[
-                    "get_current_stock_price",
-                    "get_company_news",
-                ],
+                enable_stock_price=True,
+                enable_company_news=True,
                 cache_results=True,
             )
         ],

@@ -1,6 +1,16 @@
+"""
+Workflow With Conditional
+=========================
+
+Demonstrates workflow with conditional.
+"""
+
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 # Import the workflows
 from agno.os import AgentOS
 from agno.tools.websearch import WebSearchTools
@@ -112,6 +122,10 @@ agent_os = AgentOS(
     workflows=[basic_workflow],
 )
 app = agent_os.get_app()
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent_os.serve(app="workflow_with_conditional:app", reload=True)

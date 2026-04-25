@@ -3,6 +3,10 @@
 from agno.agent import Agent
 from agno.models.groq import Groq
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 agent_with_reasoning = Agent(
     model=Groq(id="Qwen-2.5-32b"),
     reasoning=True,
@@ -11,3 +15,10 @@ agent_with_reasoning = Agent(
     ),
 )
 agent_with_reasoning.print_response("9.11 and 9.9 -- which is bigger?", markdown=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

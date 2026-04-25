@@ -117,7 +117,7 @@ class DiscordClient:
                     """)
                 if self.agent:
                     self.agent.additional_context = additional_context
-                    agent_response: RunOutput = await self.agent.arun(
+                    agent_response: RunOutput = await self.agent.arun(  # type: ignore[misc]
                         input=message_text,
                         user_id=message_user_id,
                         session_id=str(thread.id),
@@ -134,7 +134,7 @@ class DiscordClient:
                     await self._handle_response_in_thread(agent_response, thread)
                 elif self.team:
                     self.team.additional_context = additional_context
-                    team_response: TeamRunOutput = await self.team.arun(
+                    team_response: TeamRunOutput = await self.team.arun(  # type: ignore[misc]
                         input=message_text,
                         user_id=message_user_id,
                         session_id=str(thread.id),
@@ -163,7 +163,7 @@ class DiscordClient:
                 tool.confirmed = view.value if view.value is not None else False
 
             if self.agent:
-                run_response = await self.agent.acontinue_run(
+                run_response = await self.agent.acontinue_run(  # type: ignore[misc]
                     run_response=run_response,
                 )
 

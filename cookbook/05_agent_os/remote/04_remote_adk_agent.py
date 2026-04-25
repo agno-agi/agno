@@ -17,6 +17,10 @@ import asyncio
 
 from agno.agent import RemoteAgent
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 async def remote_adk_agent_example():
     """Call a remote Google ADK agent exposed via A2A interface."""
@@ -95,6 +99,10 @@ async def main():
     print("\n3. Remote Google ADK Agent Info Example:")
     await remote_adk_agent_info_example()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

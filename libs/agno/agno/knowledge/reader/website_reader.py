@@ -7,7 +7,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from agno.knowledge.chunking.semantic import SemanticChunking
+from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
@@ -32,13 +32,16 @@ class WebsiteReader(Reader):
 
     def __init__(
         self,
-        chunking_strategy: Optional[ChunkingStrategy] = SemanticChunking(),
+        chunking_strategy: Optional[ChunkingStrategy] = None,
         max_depth: int = 3,
         max_links: int = 10,
         timeout: int = 10,
         proxy: Optional[str] = None,
         **kwargs,
     ):
+        if chunking_strategy is None:
+            chunk_size = kwargs.get("chunk_size", 5000)
+            chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.max_depth = max_depth
         self.max_links = max_links
@@ -164,8 +167,10 @@ class WebsiteReader(Reader):
         num_links = 0
         crawler_result: Dict[str, str] = {}
         primary_domain = self._get_primary_domain(url)
-        # Add starting URL with its depth to the global list
-        self._urls_to_crawl.append((url, starting_depth))
+
+        # Clear state so URLs from previous crawls aren't incorrectly skipped (matches async_crawl)
+        self._visited = set()
+        self._urls_to_crawl = [(url, starting_depth)]
         while self._urls_to_crawl:
             # Unpack URL and depth from the global list
             current_url, current_depth = self._urls_to_crawl.pop(0)
@@ -232,19 +237,19 @@ class WebsiteReader(Reader):
                 if e.response.status_code >= 300 and e.response.status_code < 400:
                     log_debug(f"Redirect encountered for {current_url}, skipping: {e}")
                 else:
-                    log_warning(f"HTTP status error while crawling {current_url}: {e}")
+                    log_warning(f"HTTP status error while crawling {current_url}: {str(e)}")
                 # For the initial URL, we should raise the error only if it's not a redirect
                 if current_url == url and not crawler_result and not (300 <= e.response.status_code < 400):
                     raise
             except httpx.RequestError as e:
                 # Log request errors but continue crawling other pages
-                log_warning(f"Request error while crawling {current_url}: {e}")
+                log_warning(f"Request error while crawling {current_url}: {str(e)}")
                 # For the initial URL, we should raise the error
                 if current_url == url and not crawler_result:
                     raise
             except Exception as e:
                 # Log other exceptions but continue crawling other pages
-                log_warning(f"Failed to crawl {current_url}: {e}")
+                log_warning(f"Failed to crawl {current_url}: {str(e)}")
                 # For the initial URL, we should raise the error
                 if current_url == url and not crawler_result:
                     # Wrap non-HTTP exceptions in a RequestError
@@ -333,19 +338,19 @@ class WebsiteReader(Reader):
 
                 except httpx.HTTPStatusError as e:
                     # Log HTTP status errors but continue crawling other pages
-                    log_warning(f"HTTP status error while crawling asynchronously {current_url}: {e}")
+                    log_warning(f"HTTP status error while crawling asynchronously {current_url}: {str(e)}")
                     # For the initial URL, we should raise the error
                     if current_url == url and not crawler_result:
                         raise
                 except httpx.RequestError as e:
                     # Log request errors but continue crawling other pages
-                    log_warning(f"Request error while crawling asynchronously {current_url}: {e}")
+                    log_warning(f"Request error while crawling asynchronously {current_url}: {str(e)}")
                     # For the initial URL, we should raise the error
                     if current_url == url and not crawler_result:
                         raise
                 except Exception as e:
                     # Log other exceptions but continue crawling other pages
-                    log_warning(f"Failed to crawl asynchronously {current_url}: {e}")
+                    log_warning(f"Failed to crawl asynchronously {current_url}: {str(e)}")
                     # For the initial URL, we should raise the error
                     if current_url == url and not crawler_result:
                         # Wrap non-HTTP exceptions in a RequestError
@@ -398,8 +403,8 @@ class WebsiteReader(Reader):
                         )
                     )
             return documents
-        except (httpx.HTTPStatusError, httpx.RequestError) as e:
-            log_error(f"Error reading website {url}: {e}")
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            log_error(f"Error reading website {url}")
             raise
 
     async def async_read(self, url: str, name: Optional[str] = None) -> List[Document]:
@@ -453,6 +458,6 @@ class WebsiteReader(Reader):
                 documents.extend(doc_list)
 
             return documents
-        except (httpx.HTTPStatusError, httpx.RequestError) as e:
-            log_error(f"Error reading website asynchronously {url}: {e}")
+        except (httpx.HTTPStatusError, httpx.RequestError):
+            log_error(f"Error reading website asynchronously {url}")
             raise

@@ -14,6 +14,10 @@ from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # This is the URL of the MCP server we want to use.
 server_url = "http://localhost:7777/mcp"
 
@@ -77,5 +81,9 @@ async def run_agent() -> None:
 
 
 # Example usage
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     asyncio.run(run_agent())

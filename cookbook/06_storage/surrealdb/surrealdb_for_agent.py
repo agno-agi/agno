@@ -23,7 +23,9 @@ from agno.db.surrealdb import SurrealDb
 from agno.models.anthropic import Claude
 from agno.tools.websearch import WebSearchTools
 
-# SurrealDB connection parameters
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 SURREALDB_URL = "ws://localhost:8000"
 SURREALDB_USER = "root"
 SURREALDB_PASSWORD = "root"
@@ -33,11 +35,19 @@ SURREALDB_DATABASE = "surrealdb_for_agent"
 creds = {"username": SURREALDB_USER, "password": SURREALDB_PASSWORD}
 db = SurrealDb(None, SURREALDB_URL, creds, SURREALDB_NAMESPACE, SURREALDB_DATABASE)
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     db=db,
     model=Claude(id="claude-sonnet-4-5-20250929"),
     tools=[WebSearchTools()],
     add_history_to_context=True,
 )
-agent.print_response("How many people live in Costa Rica?")
-agent.print_response("What is their national anthem called?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("How many people live in Costa Rica?")
+    agent.print_response("What is their national anthem called?")

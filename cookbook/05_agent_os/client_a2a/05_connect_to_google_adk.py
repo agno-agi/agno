@@ -21,6 +21,10 @@ import asyncio
 
 from agno.client.a2a import A2AClient
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 # Google ADK server URL
 ADK_SERVER_URL = "http://localhost:8001/"
 
@@ -92,6 +96,10 @@ async def main():
     await with_user_id()
     await get_agent_info()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

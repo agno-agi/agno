@@ -18,12 +18,22 @@ Steps:
 from agno.agent import Agent
 from agno.tools.webex import WebexTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 agent = Agent(tools=[WebexTools()])
 
 # List all space in Webex
-agent.print_response("List all space on our Webex", markdown=True)
 
-# Send a message to a Space in Webex
-agent.print_response(
-    "Send a funny ice-breaking message to the webex Welcome space", markdown=True
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response("List all space on our Webex", markdown=True)
+
+    # Send a message to a Space in Webex
+    agent.print_response(
+        "Send a funny ice-breaking message to the webex Welcome space", markdown=True
+    )

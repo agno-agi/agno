@@ -19,6 +19,10 @@ from agno.agent import Agent
 from agno.media import File
 from agno.models.google import Gemini
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # Generate a pre-signed URL for your S3 object
 # Replace with your own bucket and key for private files
 s3_client = boto3.client("s3")
@@ -46,3 +50,10 @@ agent.print_response(
         )
     ],
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

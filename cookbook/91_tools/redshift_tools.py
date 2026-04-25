@@ -12,6 +12,11 @@ export REDSHIFT_DATABASE="dev"
 from agno.agent import Agent
 from agno.tools.redshift import RedshiftTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Example 1: Standard username/password authentication
 agent = Agent(
     tools=[
@@ -31,8 +36,12 @@ agent_iam = Agent(
     ]
 )
 
-agent.print_response(
-    "List the tables in the database and describe one of the tables", markdown=True
-)
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "List the tables in the database and describe one of the tables", markdown=True
+    )
 
-agent_iam.print_response("Run a query to select 1 + 1 as result", markdown=True)
+    agent_iam.print_response("Run a query to select 1 + 1 as result", markdown=True)

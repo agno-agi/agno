@@ -1,3 +1,0 @@
-"""
-Streaming-related team examples.
-"""

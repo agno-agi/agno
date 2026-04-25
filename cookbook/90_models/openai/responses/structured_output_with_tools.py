@@ -1,9 +1,20 @@
+"""
+Openai Structured Output With Tools
+===================================
+
+Cookbook example for `openai/responses/structured_output_with_tools.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.tools.websearch import WebSearchTools
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -34,3 +45,10 @@ structured_output_agent = Agent(
 )
 
 structured_output_agent.print_response("New York", stream=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

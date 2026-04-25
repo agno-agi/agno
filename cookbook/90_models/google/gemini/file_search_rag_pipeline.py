@@ -1,8 +1,19 @@
+"""
+Google File Search Rag Pipeline
+===============================
+
+Cookbook example for `google/gemini/file_search_rag_pipeline.py`.
+"""
+
 import asyncio
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.models.google import Gemini
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 # Configuration
 DOCUMENTS_DIR = (
@@ -225,5 +236,9 @@ async def main():
 
 
 # Run the async main function
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     asyncio.run(main())

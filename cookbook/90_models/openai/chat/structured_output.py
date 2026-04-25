@@ -1,9 +1,21 @@
+"""
+Openai Structured Output
+========================
+
+Cookbook example for `openai/chat/structured_output.py`.
+"""
+
+import asyncio
 from typing import Dict, List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIChat
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -51,13 +63,28 @@ guided_output_agent = Agent(
     output_schema=MovieScript,
 )
 
-
 # Get the response in a variable
 # json_mode_response: RunOutput = json_mode_agent.run("New York")
 # pprint(json_mode_response.content)
 # structured_output_response: RunOutput = structured_output_agent.run("New York")
 # pprint(structured_output_response.content)
 
-json_mode_agent.print_response("New York")
-structured_output_agent.print_response("New York")
-guided_output_agent.print_response("New York")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # --- Sync ---
+    json_mode_agent.print_response("New York")
+
+    structured_output_agent.print_response("New York")
+
+    guided_output_agent.print_response("New York")
+
+    # --- Sync + Streaming ---
+    structured_output_agent.print_response("New York", stream=True)
+
+    # --- Async + Streaming ---
+    async def main():
+        await structured_output_agent.aprint_response("New York", stream=True)
+
+    asyncio.run(main())

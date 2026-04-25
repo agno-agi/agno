@@ -1,4 +1,4 @@
-"""🛢 GibsonAI MCP Server - Create and manage databases with prompts
+"""GibsonAI MCP Server - Create and manage databases with prompts
 
 This example shows how to connect a local GibsonAI MCP to Agno agent.
 You can instantly generate, modify database schemas
@@ -42,6 +42,10 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 async def run_gibsonai_agent(message: str):
     """Run the GibsonAI agent with the given message."""
@@ -79,6 +83,10 @@ async def run_gibsonai_agent(message: str):
 
 
 # Example usage
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     asyncio.run(
         run_gibsonai_agent(

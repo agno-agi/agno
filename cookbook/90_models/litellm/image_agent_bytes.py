@@ -1,3 +1,10 @@
+"""
+Litellm Image Agent Bytes
+=========================
+
+Cookbook example for `litellm/image_agent_bytes.py`.
+"""
+
 from pathlib import Path
 
 from agno.agent import Agent
@@ -5,6 +12,10 @@ from agno.media import Image
 from agno.models.litellm import LiteLLM
 from agno.tools.websearch import WebSearchTools
 from agno.utils.media import download_image
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=LiteLLM(id="gpt-4o"),
@@ -29,3 +40,10 @@ agent.print_response(
     ],
     stream=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -152,6 +152,7 @@ def test_history():
         model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
         db=SqliteDb(db_file="tmp/together/test_basic.db"),
         add_history_to_context=True,
+        store_history_messages=True,
         telemetry=False,
     )
     run_output = agent.run("Hello")

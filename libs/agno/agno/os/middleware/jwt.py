@@ -1,6 +1,7 @@
 """JWT Middleware for AgentOS - JWT Authentication with optional RBAC."""
 
 import fnmatch
+import hmac
 import json
 import re
 from enum import Enum
@@ -13,6 +14,7 @@ from fastapi.responses import JSONResponse
 from jwt import PyJWK
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from agno.os.auth import INTERNAL_SERVICE_SCOPES
 from agno.os.scopes import (
     AgentOSScope,
     get_accessible_resource_ids,
@@ -166,7 +168,7 @@ class JWTValidator:
                     # If no kid, use a default key (for single-key JWKS)
                     self.jwks_keys["_default"] = jwk
             except Exception as e:
-                log_warning(f"Failed to parse JWKS key: {e}")
+                log_warning(f"Failed to parse JWKS key: {str(e)}")
 
     def validate_token(
         self, token: str, expected_audience: Optional[Union[str, Iterable[str]]] = None
@@ -519,6 +521,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         return [
             "/",
             "/health",
+            "/info",
             "/docs",
             "/redoc",
             "/openapi.json",
@@ -684,6 +687,35 @@ class JWTMiddleware(BaseHTTPMiddleware):
             error_msg = self._get_missing_token_error_message()
             return self._create_error_response(401, error_msg, origin, cors_allowed_origins)
 
+        # Check for internal service token (used by scheduler executor)
+        internal_token = getattr(request.app.state, "internal_service_token", None)
+        if internal_token and hmac.compare_digest(token, internal_token):
+            request.state.authenticated = True
+            request.state.user_id = "__scheduler__"
+            request.state.session_id = None
+            internal_scopes = list(INTERNAL_SERVICE_SCOPES)
+            request.state.scopes = internal_scopes
+            request.state.authorization_enabled = self.authorization or False
+
+            # Enforce RBAC for internal token (do not skip scope checks)
+            if self.authorization:
+                required_scopes = self._get_required_scopes(method, path)
+                if required_scopes:
+                    if not has_required_scopes(
+                        internal_scopes,
+                        required_scopes,
+                        admin_scope=self.admin_scope,
+                    ):
+                        log_warning(
+                            f"Internal service token denied for {method} {path}. "
+                            f"Required: {required_scopes}, Token has: {internal_scopes}"
+                        )
+                        return self._create_error_response(
+                            403, "Insufficient permissions", origin, cors_allowed_origins
+                        )
+
+            return await call_next(request)
+
         try:
             # Validate token and extract claims (with audience verification if configured)
             expected_audience = None
@@ -708,6 +740,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.user_id = user_id
             request.state.session_id = session_id
             request.state.scopes = scopes
+            request.state.claims = payload  # Full decoded JWT for factory ctx.trusted.claims
             request.state.audience = audience
             request.state.authorization_enabled = self.authorization or False
 
@@ -794,8 +827,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.token = token
             request.state.authenticated = True
 
-        except jwt.InvalidAudienceError:
-            log_warning(f"Invalid token audience - expected: {expected_audience}")
+        except jwt.InvalidAudienceError as e:
+            log_warning(f"Invalid token audience - expected: {expected_audience}: {str(e)}")
             return self._create_error_response(
                 401, "Invalid token audience - token not valid for this AgentOS instance", origin, cors_allowed_origins
             )

@@ -1,8 +1,19 @@
+"""
+Dashscope Structured Output
+===========================
+
+Cookbook example for `dashscope/structured_output.py`.
+"""
+
 from typing import List
 
 from agno.agent import Agent
 from agno.models.dashscope import DashScope
 from pydantic import BaseModel, Field
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 
 class MovieScript(BaseModel):
@@ -36,3 +47,10 @@ structured_output_agent.print_response(
     "Return a JSON object with: name (movie title), setting, ending, genre, "
     "characters (list of character names), and storyline (3 sentences)."
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
@@ -62,6 +63,20 @@ class Image(BaseModel):
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
+        return None
+
+    async def aget_content_bytes(self) -> Optional[bytes]:
+        if self.content:
+            return self.content
+        elif self.url:
+            import httpx
+
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(self.url)
+                return resp.content
+        elif self.filepath:
+            fp = self.filepath
+            return await asyncio.to_thread(lambda: Path(fp).read_bytes())
         return None
 
     def to_base64(self) -> Optional[str]:
@@ -164,6 +179,20 @@ class Audio(BaseModel):
         elif self.filepath:
             with open(self.filepath, "rb") as f:
                 return f.read()
+        return None
+
+    async def aget_content_bytes(self) -> Optional[bytes]:
+        if self.content:
+            return self.content
+        elif self.url:
+            import httpx
+
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(self.url)
+                return resp.content
+        elif self.filepath:
+            fp = self.filepath
+            return await asyncio.to_thread(lambda: Path(fp).read_bytes())
         return None
 
     def to_base64(self) -> Optional[str]:
@@ -284,6 +313,20 @@ class Video(BaseModel):
                 return f.read()
         return None
 
+    async def aget_content_bytes(self) -> Optional[bytes]:
+        if self.content:
+            return self.content
+        elif self.url:
+            import httpx
+
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(self.url)
+                return resp.content
+        elif self.filepath:
+            fp = self.filepath
+            return await asyncio.to_thread(lambda: Path(fp).read_bytes())
+        return None
+
     def to_base64(self) -> Optional[str]:
         """Convert content to base64 string"""
         content_bytes = self.get_content_bytes()
@@ -350,13 +393,22 @@ class File(BaseModel):
     external: Optional[Any] = None
     format: Optional[str] = None  # E.g. `pdf`, `txt`, `csv`, `xml`, etc.
     name: Optional[str] = None  # Name of the file, mandatory for AWS Bedrock document input
+    # Anthropic-only: per-file citation preference. Ignored by other providers.
+    #   None  = follow the caller default (Claude enables citations unless the request
+    #           would also send output_format, in which case they are suppressed).
+    #   False = do not attach citations to this file.
+    #   True  = attach citations when the caller allows it; ignored (with a warning)
+    #           when the caller has disabled citations for the request.
+    citations: Optional[bool] = None
 
     @model_validator(mode="before")
     @classmethod
     def check_at_least_one_source(cls, data):
-        """Ensure at least one of url, filepath, or content is provided."""
-        if isinstance(data, dict) and not any(data.get(field) for field in ["url", "filepath", "content", "external"]):
-            raise ValueError("At least one of url, filepath, content or external must be provided")
+        """Ensure at least one of id, url, filepath, content, or external is provided."""
+        if isinstance(data, dict) and not any(
+            data.get(field) for field in ["id", "url", "filepath", "content", "external"]
+        ):
+            raise ValueError("At least one of id, url, filepath, content or external must be provided")
         return data
 
     @field_validator("mime_type")
@@ -373,7 +425,6 @@ class File(BaseModel):
             "application/pdf",
             "application/json",
             "application/x-javascript",
-            "application/json",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "text/javascript",
             "application/x-python",
@@ -381,7 +432,7 @@ class File(BaseModel):
             "text/plain",
             "text/html",
             "text/css",
-            "text/md",
+            "text/markdown",
             "text/csv",
             "text/xml",
             "text/rtf",
@@ -430,11 +481,45 @@ class File(BaseModel):
                 content = response.content
                 mime_type = response.headers.get("Content-Type", "").split(";")[0]
                 return content, mime_type
-            except Exception:
-                log_error(f"Failed to download file from {self.url}")
+            except Exception as e:
+                log_error(f"Failed to download file from {self.url}: {str(e)}")
                 return None
         else:
             return None
+
+    def get_content_bytes(self) -> Optional[bytes]:
+        if self.content:
+            if isinstance(self.content, bytes):
+                return self.content
+            elif isinstance(self.content, str):
+                return self.content.encode("utf-8")
+            return None
+        elif self.url:
+            import httpx
+
+            return httpx.get(self.url).content
+        elif self.filepath:
+            with open(self.filepath, "rb") as f:
+                return f.read()
+        return None
+
+    async def aget_content_bytes(self) -> Optional[bytes]:
+        if self.content:
+            if isinstance(self.content, bytes):
+                return self.content
+            elif isinstance(self.content, str):
+                return self.content.encode("utf-8")
+            return None
+        elif self.url:
+            import httpx
+
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(self.url)
+                return resp.content
+        elif self.filepath:
+            fp = self.filepath
+            return await asyncio.to_thread(lambda: Path(fp).read_bytes())
+        return None
 
     def _normalise_content(self) -> Optional[Union[str, bytes]]:
         if self.content is None:

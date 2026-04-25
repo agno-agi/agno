@@ -1,0 +1,4 @@
+data/
+workspace/
+*.db
+__pycache__/

@@ -16,6 +16,10 @@ import asyncio
 
 from agno.client.a2a import A2AClient
 
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
+
 
 async def basic_streaming():
     """Stream a response from an A2A agent."""
@@ -61,6 +65,10 @@ async def main():
     await basic_streaming()
     await streaming_with_events()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(main())

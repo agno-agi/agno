@@ -1,3 +1,10 @@
+"""
+Teams
+=====
+
+Demonstrates teams.
+"""
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
@@ -5,6 +12,10 @@ from agno.tools.reasoning import ReasoningTools
 from agno.tools.websearch import WebSearchTools
 from agno.tools.yfinance import YFinanceTools
 from db import db
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 # ************* Core Agents *************
 web_agent = Agent(
@@ -111,3 +122,10 @@ Prepare for upcoming earnings season - analyze Microsoft (MSFT):
 4. Provide trading strategy recommendation
 """
 # *******************************
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    raise SystemExit("This module is intended to be imported.")

@@ -14,7 +14,11 @@ def test_print_response_with_message_panel():
     def get_the_weather():
         return "It is currently 70 degrees and cloudy in Tokyo"
 
-    with patch("rich.live.Live") as _:
+    with patch("agno.utils.print_response.agent.Live") as mock_live_class:
+        mock_live = MagicMock()
+        mock_live_class.return_value.__enter__ = Mock(return_value=mock_live)
+        mock_live_class.return_value.__exit__ = Mock(return_value=None)
+
         with patch("agno.utils.print_response.agent.create_panel") as mock_create_panel:
             agent = Agent(
                 model=OpenAIChat(id="gpt-4o-mini"),
@@ -67,7 +71,11 @@ def test_print_response_with_message_panel():
 def test_panel_creation_and_structure():
     """Test that the right panels are created with the right structure"""
 
-    with patch("rich.live.Live") as _:
+    with patch("agno.utils.print_response.agent.Live") as mock_live_class:
+        mock_live = MagicMock()
+        mock_live_class.return_value.__enter__ = Mock(return_value=mock_live)
+        mock_live_class.return_value.__exit__ = Mock(return_value=None)
+
         with patch("agno.utils.print_response.agent.create_panel") as mock_create_panel:
             agent = Agent(
                 model=OpenAIChat(id="gpt-4o-mini"),
@@ -113,7 +121,11 @@ def test_panel_creation_and_structure():
 def test_print_response_content_verification():
     """Test that the actual response content makes it into the panel"""
 
-    with patch("rich.live.Live") as _:
+    with patch("agno.utils.print_response.agent.Live") as mock_live_class:
+        mock_live = MagicMock()
+        mock_live_class.return_value.__enter__ = Mock(return_value=mock_live)
+        mock_live_class.return_value.__exit__ = Mock(return_value=None)
+
         with patch("agno.utils.print_response.agent.create_panel") as mock_create_panel:
             agent = Agent(
                 model=OpenAIChat(id="gpt-4o-mini"),
@@ -161,7 +173,11 @@ def test_print_response_content_verification():
 def test_markdown_content_type():
     """Test that markdown=True processes content differently than markdown=False"""
 
-    with patch("rich.live.Live") as _:
+    with patch("agno.utils.print_response.agent.Live") as mock_live_class:
+        mock_live = MagicMock()
+        mock_live_class.return_value.__enter__ = Mock(return_value=mock_live)
+        mock_live_class.return_value.__exit__ = Mock(return_value=None)
+
         with patch("agno.utils.print_response.agent.create_panel") as mock_create_panel:
             agent = Agent(
                 model=OpenAIChat(id="gpt-4o-mini"),
@@ -203,7 +219,11 @@ def test_markdown_content_type():
 def test_tool_calls_panel_creation():
     """Test that tool calls are handled properly"""
 
-    with patch("rich.live.Live") as _:
+    with patch("agno.utils.print_response.agent.Live") as mock_live_class:
+        mock_live = MagicMock()
+        mock_live_class.return_value.__enter__ = Mock(return_value=mock_live)
+        mock_live_class.return_value.__exit__ = Mock(return_value=None)
+
         with patch("agno.utils.print_response.agent.create_panel") as mock_create_panel:
             agent = Agent(
                 model=OpenAIChat(id="gpt-4o-mini"),
@@ -275,8 +295,8 @@ def test_live_update_calls():
                 agent.print_response(input="Test", show_message=True, console=mock_console, stream=False)
 
                 # Live.update should be called multiple times as panels are added
-                assert mock_live_class.return_value.__enter__.return_value.update.call_count >= 0, (
-                    "Live.update should be called multiple times"
+                assert mock_live_class.return_value.__enter__.return_value.update.call_count >= 1, (
+                    "Live.update should be called at least once"
                 )
 
 

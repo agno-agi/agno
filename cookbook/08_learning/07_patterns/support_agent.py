@@ -29,9 +29,9 @@ from agno.learn import (
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.pgvector import PgVector, SearchType
 
-# ============================================================================
-# Setup
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
@@ -79,9 +79,9 @@ def create_support_agent(customer_id: str, ticket_id: str, org_id: str) -> Agent
     )
 
 
-# ============================================================================
-# Demo
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     org_id = "acme"
@@ -107,9 +107,7 @@ if __name__ == "__main__":
         "Clearing the cache worked! Thanks so much!",
         stream=True,
     )
-    agent.get_learning_machine().learned_knowledge_store.print(
-        query="login chrome cache"
-    )
+    agent.learning_machine.learned_knowledge_store.print(query="login chrome cache")
 
     # Ticket 2: Second customer with similar issue
     print("\n" + "=" * 60)

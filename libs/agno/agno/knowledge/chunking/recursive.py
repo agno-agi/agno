@@ -46,9 +46,7 @@ class RecursiveChunking(ChunkingStrategy):
             chunk = self.clean_text(content[start:end])
             meta_data = chunk_meta_data.copy()
             meta_data["chunk"] = chunk_number
-            chunk_id = None
-            if document.id:
-                chunk_id = f"{document.id}_{chunk_number}"
+            chunk_id = self._generate_chunk_id(document, chunk_number, chunk)
             chunk_number += 1
             meta_data["chunk_size"] = len(chunk)
             chunks.append(Document(id=chunk_id, name=document.name, meta_data=meta_data, content=chunk))

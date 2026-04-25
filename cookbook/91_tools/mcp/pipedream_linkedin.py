@@ -1,5 +1,5 @@
 """
-💻 Pipedream LinkedIn MCP
+ Pipedream LinkedIn MCP
 
 This example shows how to use Pipedream MCP servers (in this case the LinkedIn one) with Agno Agents.
 
@@ -16,6 +16,11 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
 from agno.utils.log import log_exception
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 mcp_server_url = os.getenv("MCP_SERVER_URL")
 
@@ -34,6 +39,10 @@ async def run_agent(task: str) -> None:
     except Exception as e:
         log_exception(f"Unexpected error: {e}")
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(

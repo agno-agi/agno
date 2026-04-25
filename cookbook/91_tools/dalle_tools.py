@@ -6,6 +6,11 @@ from agno.agent import Agent
 from agno.tools.dalle import DalleTools
 from agno.utils.media import download_image
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Example 1: Basic DALL-E agent with all functions enabled
 agent = Agent(tools=[DalleTools(all=True)], name="DALL-E Image Generator")
 
@@ -33,17 +38,22 @@ agent_custom = Agent(
 )
 
 # Test basic generation
-agent.print_response(
-    "Generate an image of a futuristic city with flying cars and tall skyscrapers",
-    markdown=True,
-)
 
-response = agent_custom.run(
-    "Create a panoramic nature scene showing a peaceful mountain lake at sunset",
-    markdown=True,
-)
-if response.images and response.images[0].url:
-    download_image(
-        url=response.images[0].url,
-        output_path=str(Path(__file__).parent.joinpath("tmp/nature.jpg")),
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Generate an image of a futuristic city with flying cars and tall skyscrapers",
+        markdown=True,
     )
+
+    response = agent_custom.run(
+        "Create a panoramic nature scene showing a peaceful mountain lake at sunset",
+        markdown=True,
+    )
+    if response.images and response.images[0].url:
+        download_image(
+            url=response.images[0].url,
+            output_path=str(Path(__file__).parent.joinpath("tmp/nature.jpg")),
+        )

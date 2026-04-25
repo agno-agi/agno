@@ -2,9 +2,11 @@
 
 > Note: Fork and clone this repository if needed
 
-### 1. [Install](https://github.com/ollama/ollama?tab=readme-ov-file#macos) ollama and run models
+## Setup
 
-Run your chat model
+### 1. Install Ollama
+
+[Install Ollama](https://github.com/ollama/ollama?tab=readme-ov-file#macos) and pull a model:
 
 ```shell
 ollama pull llama3.1:8b
@@ -17,92 +19,102 @@ python3 -m venv ~/.venvs/aienv
 source ~/.venvs/aienv/bin/activate
 ```
 
-### 3. Export your `OLLAMA_API_KEY` if using Ollama Cloud
+### 3. Install libraries
+
+```shell
+pip install -U ollama agno
+```
+
+### 4. (Optional) Export your `OLLAMA_API_KEY` for Ollama Cloud
 
 ```shell
 export OLLAMA_API_KEY=***
 ```
 
-### 4. Install libraries
+---
+
+## Chat API Examples
+
+The `chat/` folder contains examples using the native Ollama Chat API.
+
+### Basic Usage
 
 ```shell
-uv pip install -U ollama ddgs duckdb yfinance agno
+# Streaming
+python cookbook/90_models/ollama/chat/basic_stream.py
+
+# Non-streaming
+python cookbook/90_models/ollama/chat/basic.py
+
+# Async
+python cookbook/90_models/ollama/chat/async_basic.py
 ```
 
-### 5. Run basic Agent
-
-- Streaming on
+### Tools and Structured Output
 
 ```shell
-python cookbook/92_models/ollama/basic_stream.py
+# Tool use
+python cookbook/90_models/ollama/chat/tool_use.py
+
+# Structured output
+python cookbook/90_models/ollama/chat/structured_output.py
 ```
 
-- Streaming off
+### Storage and Memory
 
 ```shell
-python cookbook/92_models/ollama/basic.py
+# Database storage
+python cookbook/90_models/ollama/chat/db.py
+
+# Knowledge base
+python cookbook/90_models/ollama/chat/knowledge.py
+
+# Memory
+python cookbook/90_models/ollama/chat/memory.py
 ```
 
-### 6. Run Agent with Tools
-
-- DuckDuckGo Search
+### Vision
 
 ```shell
-python cookbook/92_models/ollama/tool_use.py
-```
-
-### 7. Run Agent that returns structured output
-
-```shell
-python cookbook/92_models/ollama/structured_output.py
-```
-
-### 8. Run Agent that uses storage
-
-```shell
-python cookbook/92_models/ollama/storage.py
-```
-
-### 9. Run Agent that uses knowledge
-
-```shell
-python cookbook/92_models/ollama/knowledge.py
-```
-
-### 10. Run Agent that uses memory
-
-```shell
-python cookbook/92_models/ollama/memory.py
-```
-
-### 11. Run Agent that interprets an image
-
-Pull the llama3.2 vision model
-
-```shell
+# Pull vision model first
 ollama pull llama3.2-vision
+
+python cookbook/90_models/ollama/chat/image_agent.py
 ```
 
+### Model Demos
+
 ```shell
-python cookbook/92_models/ollama/image_agent.py
+python cookbook/90_models/ollama/chat/demo_deepseek_r1.py
+python cookbook/90_models/ollama/chat/demo_qwen.py
+python cookbook/90_models/ollama/chat/demo_phi4.py
 ```
 
-### 12. Run Agent that manually sets the Ollama client
+---
+
+## Responses API Examples
+
+The `responses/` folder contains examples using the OpenAI-compatible Responses API (requires Ollama v0.13.3+).
+
+### Basic Usage
 
 ```shell
-python cookbook/92_models/ollama/set_client.py
+# Basic
+python cookbook/90_models/ollama/responses/basic.py
+
+# Streaming
+python cookbook/90_models/ollama/responses/basic_stream.py
+
+# Async
+python cookbook/90_models/ollama/responses/async_basic.py
 ```
 
-### 13. See demos of some widely used models used via Ollama
+### Tools and Structured Output
 
 ```shell
-python cookbook/92_models/ollama/demo_deepseek_r1.py
-```
+# Tool use
+python cookbook/90_models/ollama/responses/tool_use.py
 
-```shell
-python cookbook/92_models/ollama/demo_qwen.py
-```
-
-```shell
-python cookbook/92_models/ollama/demo_phi4.py
+# Structured output
+python cookbook/90_models/ollama/responses/structured_output.py
 ```

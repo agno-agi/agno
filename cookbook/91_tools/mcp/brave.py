@@ -15,6 +15,10 @@ from agno.models.anthropic import Claude
 from agno.tools.mcp import MCPTools
 from agno.utils.pprint import apprint_run_response
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 
 async def run_agent(message: str) -> None:
     async with MCPTools(
@@ -32,6 +36,10 @@ async def run_agent(message: str) -> None:
         response_stream = await agent.arun(message)
         await apprint_run_response(response_stream)
 
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     asyncio.run(run_agent("What is the weather in Tokyo?"))

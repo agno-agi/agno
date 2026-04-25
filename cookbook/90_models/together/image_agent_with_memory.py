@@ -1,6 +1,17 @@
+"""
+Together Image Agent With Memory
+================================
+
+Cookbook example for `together/image_agent_with_memory.py`.
+"""
+
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.together import Together
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 agent = Agent(
     model=Together(id="meta-llama/Llama-Vision-Free"),
@@ -20,3 +31,10 @@ agent.print_response(
 )
 
 agent.print_response("Tell me where I can get more images?")
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

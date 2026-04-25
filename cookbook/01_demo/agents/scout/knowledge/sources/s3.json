@@ -1,0 +1,56 @@
+{
+  "source_name": "S3",
+  "source_type": "s3",
+  "description": "AWS S3 for documents, exports, and knowledge bases. Primary source for most enterprise deployments.",
+  "content_types": [
+    "Markdown documents",
+    "PDF files",
+    "JSON/YAML configuration",
+    "CSV/data exports",
+    "Text files"
+  ],
+  "capabilities": [
+    "List buckets and files",
+    "Grep-like search across file contents",
+    "Read full documents (not chunks)",
+    "Write and update files",
+    "Hierarchical folder navigation"
+  ],
+  "limitations": [
+    "Binary files need specialized handling",
+    "Very large files may need pagination",
+    "No real-time collaboration (unlike Drive/Notion)"
+  ],
+  "common_locations": {
+    "policies": "company-docs/policies/",
+    "engineering_docs": "engineering-docs/",
+    "runbooks": "engineering-docs/runbooks/",
+    "architecture": "engineering-docs/architecture/",
+    "okrs": "company-docs/planning/",
+    "hr_docs": "company-docs/hr/",
+    "data_exports": "data-exports/reports/"
+  },
+  "search_tips": [
+    "Search by exact terms - S3 search is grep-like",
+    "Specify bucket to narrow search",
+    "Use file paths to navigate directly",
+    "Check multiple buckets for cross-functional topics"
+  ],
+  "buckets": [
+    {
+      "name": "company-docs",
+      "description": "Company policies, HR docs, planning documents",
+      "contains": ["policies", "hr", "planning", "strategy"]
+    },
+    {
+      "name": "engineering-docs",
+      "description": "Technical docs, runbooks, architecture, RFCs",
+      "contains": ["runbooks", "architecture", "guides", "rfcs"]
+    },
+    {
+      "name": "data-exports",
+      "description": "Reports, metrics, data exports",
+      "contains": ["reports", "exports", "analytics"]
+    }
+  ]
+}

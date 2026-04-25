@@ -1,9 +1,20 @@
+"""
+Airbnb Agent
+============
+
+Demonstrates airbnb agent.
+"""
+
 from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.mcp import MCPTools
+
+# ---------------------------------------------------------------------------
+# Create Example
+# ---------------------------------------------------------------------------
 
 airbnb_agent = Agent(
     id="airbnb-search-agent",
@@ -30,6 +41,10 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     """Run your AgentOS.

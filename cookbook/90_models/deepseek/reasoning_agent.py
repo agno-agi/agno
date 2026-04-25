@@ -1,5 +1,16 @@
+"""
+Deepseek Reasoning Agent
+========================
+
+Cookbook example for `deepseek/reasoning_agent.py`.
+"""
+
 from agno.agent import Agent
 from agno.models.deepseek import DeepSeek
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 task = (
     "Three missionaries and three cannibals need to cross a river. "
@@ -15,3 +26,10 @@ agent = Agent(
     markdown=True,
 )
 agent.print_response(task, stream=True)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    pass

@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.knowledge.knowledge import Knowledge
 from agno.os import AgentOS
 from agno.team.team import Team
 from agno.workflow.workflow import Workflow
@@ -140,3 +141,81 @@ def test_config_endpoint_with_databases_with_multiple_tables(test_os_client_with
     assert response_data["session"]["dbs"][1]["tables"] == ["team_sessions"]
     assert response_data["session"]["dbs"][2]["db_id"] == "workflow-test-db"
     assert response_data["session"]["dbs"][2]["tables"] == ["workflow_sessions"]
+
+
+@pytest.fixture
+def test_os_client_with_knowledge():
+    """Create a test AgentOS with knowledge databases."""
+    contents_db1 = SqliteDb("tmp/test.db", id="knowledge-db", knowledge_table="knowledge_contents1")
+    contents_db2 = SqliteDb("tmp/test.db", id="knowledge-db", knowledge_table="knowledge_contents2")
+
+    knowledge1 = Knowledge(name="knowledge1", contents_db=contents_db1)
+    knowledge2 = Knowledge(name="knowledge2", contents_db=contents_db2)
+
+    agent_os = AgentOS(
+        id="test-os-with-knowledge",
+        name="Test AgentOS with Knowledge",
+        description="Test AgentOS configuration with knowledge",
+        knowledge=[knowledge1, knowledge2],
+    )
+    app = agent_os.get_app()
+    return TestClient(app)
+
+
+def test_config_endpoint_with_knowledge_tables(test_os_client_with_knowledge: TestClient):
+    """Test that the config endpoint returns correct knowledge table information."""
+    response = test_os_client_with_knowledge.get("/config")
+    assert response.status_code == 200
+
+    response_data = response.json()
+    assert "knowledge" in response_data
+    assert response_data["knowledge"]["dbs"]
+    assert len(response_data["knowledge"]["dbs"]) == 1
+    assert response_data["knowledge"]["dbs"][0]["db_id"] == "knowledge-db"
+    # Both knowledge instances use the same db_id but different tables
+    assert sorted(response_data["knowledge"]["dbs"][0]["tables"]) == sorted(
+        ["knowledge_contents1", "knowledge_contents2"]
+    )
+
+
+def test_config_knowledge_dbs_consistent_when_contents_db_set_after_init():
+    """Tests knowledge dbs now built live, consistent with knowledge instances."""
+
+    # Create Knowledge without contents_db
+    knowledge = Knowledge(name="patient_kb")
+    assert knowledge.contents_db is None
+
+    # Build AgentOS and get app, self.knowledge_dbs stays empty
+    agent = Agent(name="test-agent", knowledge=knowledge)
+    agent_os = AgentOS(
+        id="test-os-late-init",
+        agents=[agent],
+    )
+    app = agent_os.get_app()
+
+    # Set contents_db
+    db = SqliteDb("tmp/test.db", id="patient-db", knowledge_table="patient_knowledge")
+    knowledge.contents_db = db
+
+    # Add to knowledge_instances
+    if knowledge not in agent_os.knowledge_instances:
+        agent_os.knowledge_instances.append(knowledge)
+
+    # Hit /config — both knowledge_instances and dbs should be populated
+    client = TestClient(app)
+    response = client.get("/config")
+    assert response.status_code == 200
+    data = response.json()
+
+    knowledge_config = data.get("knowledge", {})
+    knowledge_instances = knowledge_config.get("knowledge_instances") or []
+    knowledge_dbs = knowledge_config.get("dbs") or []
+
+    assert len(knowledge_instances) == 1
+    assert knowledge_instances[0]["name"] == "patient_kb"
+    assert knowledge_instances[0]["db_id"] == "patient-db"
+
+    # dbs is built live from knowledge_instances, so it's consistent
+    assert len(knowledge_dbs) == 1
+    assert knowledge_dbs[0]["db_id"] == "patient-db"
+    assert knowledge_dbs[0]["tables"] == ["patient_knowledge"]

@@ -13,6 +13,10 @@ from agno.models.dashscope import DashScope
 from agno.tools.knowledge import KnowledgeTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
 # Create a knowledge containing information from a URL
 agno_docs = Knowledge(
     # Use LanceDB as the vector database and store embeddings in the `agno_docs` table
@@ -39,6 +43,10 @@ agent = Agent(
     tools=[knowledge_tools],
     markdown=True,
 )
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     agent.print_response(

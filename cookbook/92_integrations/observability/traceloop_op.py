@@ -1,13 +1,8 @@
 """
-Integrate Agno with Traceloop to send traces and gain insights into your agent's performance.
+Traceloop Integration
+=====================
 
-Prerequisites:
-- Traceloop account
-- Traceloop API key
-
-Steps:
-1. `uv pip install agno openai traceloop-sdk`
-2. Set the Traceloop API key as an environment variable: `export TRACELOOP_API_KEY=<your-api-key>`
+Demonstrates wrapping Agno calls in Traceloop workflow spans.
 """
 
 from agno.agent import Agent
@@ -15,8 +10,15 @@ from agno.models.openai import OpenAIChat
 from traceloop.sdk import Traceloop
 from traceloop.sdk.decorators import workflow
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 Traceloop.init(app_name="agno_workflows")
 
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     name="AnalysisAgent",
     model=OpenAIChat(id="gpt-5.2"),
@@ -31,6 +33,10 @@ def analyze_data(query: str) -> str:
     return response.content
 
 
-# The workflow decorator creates a parent span
-result = analyze_data("Analyze the benefits of observability in AI systems")
-print(result)
+# ---------------------------------------------------------------------------
+# Run Example
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # The workflow decorator creates a parent span
+    result = analyze_data("Analyze the benefits of observability in AI systems")
+    print(result)

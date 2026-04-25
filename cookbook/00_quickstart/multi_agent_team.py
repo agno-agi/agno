@@ -28,19 +28,19 @@ from agno.models.google import Gemini
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Storage Configuration
-# ============================================================================
+# ---------------------------------------------------------------------------
 team_db = SqliteDb(db_file="tmp/agents.db")
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Bull Agent — Makes the Case FOR
-# ============================================================================
+# ---------------------------------------------------------------------------
 bull_agent = Agent(
     name="Bull Analyst",
     role="Make the investment case FOR a stock",
     model=Gemini(id="gemini-3-flash-preview"),
-    tools=[YFinanceTools()],
+    tools=[YFinanceTools(all=True)],
     db=team_db,
     instructions="""\
 You are a bull analyst. Your job is to make the strongest possible case
@@ -57,14 +57,14 @@ Be persuasive but grounded in data. Use the tools to get real numbers.\
     num_history_runs=5,
 )
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # Bear Agent — Makes the Case AGAINST
-# ============================================================================
+# ---------------------------------------------------------------------------
 bear_agent = Agent(
     name="Bear Analyst",
     role="Make the investment case AGAINST a stock",
     model=Gemini(id="gemini-3-flash-preview"),
-    tools=[YFinanceTools()],
+    tools=[YFinanceTools(all=True)],
     db=team_db,
     instructions="""\
 You are a bear analyst. Your job is to make the strongest possible case
@@ -81,9 +81,9 @@ Be critical but fair. Use the tools to get real numbers to support your concerns
     num_history_runs=5,
 )
 
-# ============================================================================
-# Team Leader — Synthesizes Both Views
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 multi_agent_team = Team(
     name="Multi-Agent Team",
     model=Gemini(id="gemini-3-flash-preview"),
@@ -116,9 +116,9 @@ Be decisive but acknowledge uncertainty.\
     markdown=True,
 )
 
-# ============================================================================
-# Run the Team
-# ============================================================================
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # First analysis
     multi_agent_team.print_response(
@@ -132,9 +132,9 @@ if __name__ == "__main__":
         stream=True,
     )
 
-# ============================================================================
+# ---------------------------------------------------------------------------
 # More Examples
-# ============================================================================
+# ---------------------------------------------------------------------------
 """
 When to use Teams vs single Agent:
 

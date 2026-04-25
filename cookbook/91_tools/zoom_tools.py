@@ -44,6 +44,11 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.zoom import ZoomTools
 
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
+
+
 # Get environment variables
 ACCOUNT_ID = os.getenv("ZOOM_ACCOUNT_ID")
 CLIENT_ID = os.getenv("ZOOM_CLIENT_ID")
@@ -88,14 +93,19 @@ agent = Agent(
 )
 
 # Example usage - uncomment the ones you want to try
-agent.print_response(
-    "Schedule a meeting titled 'Team Sync' for tomorrow at 2 PM UTC for 45 minutes"
-)
 
-# More examples (uncomment to use):
-# agent.print_response("What meetings do I have coming up?")
-# agent.print_response("List all my scheduled meetings")
-# agent.print_response("Get details for my most recent meeting")
-# agent.print_response("Get the recordings for my last team meeting")
-# agent.print_response("Delete the meeting titled 'Team Sync'")
-# agent.print_response("Schedule daily standup meetings for next week at 10 AM UTC")
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    agent.print_response(
+        "Schedule a meeting titled 'Team Sync' for tomorrow at 2 PM UTC for 45 minutes"
+    )
+
+    # More examples (uncomment to use):
+    # agent.print_response("What meetings do I have coming up?")
+    # agent.print_response("List all my scheduled meetings")
+    # agent.print_response("Get details for my most recent meeting")
+    # agent.print_response("Get the recordings for my last team meeting")
+    # agent.print_response("Delete the meeting titled 'Team Sync'")
+    # agent.print_response("Schedule daily standup meetings for next week at 10 AM UTC")

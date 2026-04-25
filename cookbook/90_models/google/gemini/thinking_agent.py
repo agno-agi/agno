@@ -1,5 +1,16 @@
+"""
+Google Thinking Agent
+=====================
+
+Cookbook example for `google/gemini/thinking_agent.py`.
+"""
+
 from agno.agent import Agent
 from agno.models.google import Gemini
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 task = (
     "Three missionaries and three cannibals need to cross a river. "
@@ -16,4 +27,13 @@ agent = Agent(
     ),
     markdown=True,
 )
-agent.print_response(task)
+
+# ---------------------------------------------------------------------------
+# Run Agent
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # --- Sync ---
+    agent.print_response(task)
+
+    # --- Sync + Streaming ---
+    agent.print_response(task, stream=True)
