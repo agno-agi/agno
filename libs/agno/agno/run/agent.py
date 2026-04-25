@@ -149,6 +149,7 @@ class RunEvent(str, Enum):
     run_intermediate_content = "RunIntermediateContent"
     run_completed = "RunCompleted"
     run_error = "RunError"
+    run_retry = "RunRetry"
     run_cancelled = "RunCancelled"
 
     run_paused = "RunPaused"
@@ -323,6 +324,13 @@ class RunErrorEvent(BaseAgentRunEvent):
     error_type: Optional[str] = None
     error_id: Optional[str] = None
     additional_data: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class RunRetryEvent(BaseAgentRunEvent):
+    event: str = RunEvent.run_retry.value
+    content: Optional[str] = None
+    error_type: Optional[str] = None
 
 
 @dataclass
@@ -526,6 +534,7 @@ RunOutputEvent = Union[
     RunContentCompletedEvent,
     RunCompletedEvent,
     RunErrorEvent,
+    RunRetryEvent,
     RunCancelledEvent,
     RunPausedEvent,
     RunContinuedEvent,
@@ -566,6 +575,7 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.run_intermediate_content.value: IntermediateRunContentEvent,
     RunEvent.run_completed.value: RunCompletedEvent,
     RunEvent.run_error.value: RunErrorEvent,
+    RunEvent.run_retry.value: RunRetryEvent,
     RunEvent.run_cancelled.value: RunCancelledEvent,
     RunEvent.run_paused.value: RunPausedEvent,
     RunEvent.run_continued.value: RunContinuedEvent,

@@ -6,6 +6,7 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.agent import RunEvent, RunRetryEvent
 from agno.run.base import RunStatus
 
 
@@ -33,11 +34,16 @@ def test_agent_retry():
     with patch.object(model, "response", side_effect=mock_response):
         response = agent.run("Test message")
 
-    # Should succeed on the 2nd attempt
     assert attempt_count["count"] == 2
     assert response is not None
     assert response.status == RunStatus.completed
     assert response.metrics.retry_count == 1
+    # Should have one retry event
+    retry_events = [e for e in (response.events or []) if e.event == RunEvent.run_retry.value]
+    assert len(retry_events) == 1
+    assert isinstance(retry_events[0], RunRetryEvent)
+    assert "Simulated failure" in retry_events[0].content
+    assert retry_events[0].error_type == "Exception"
 
 
 def test_agent_exponential_backoff():
@@ -92,11 +98,13 @@ def test_agent_keyboard_interrupt_stops_retries():
     with patch.object(model, "response", side_effect=mock_response):
         response = agent.run("Test message")
 
-    # Should stop on first attempt without retrying
     assert attempt_count["count"] == 1
     assert response.status == RunStatus.cancelled
     assert response.content == "Operation cancelled by user"
     assert response.metrics.retry_count == 0
+    # Should have no retry events
+    retry_events = [e for e in (response.events or []) if e.event == RunEvent.run_retry.value]
+    assert len(retry_events) == 0
 
 
 @pytest.mark.asyncio
@@ -123,8 +131,13 @@ async def test_agent_async_retry():
     with patch.object(model, "aresponse", side_effect=mock_aresponse):
         response = await agent.arun("Test message")
 
-    # Should succeed on the 2nd attempt
     assert attempt_count["count"] == 2
     assert response is not None
     assert response.status == RunStatus.completed
     assert response.metrics.retry_count == 1
+    # Should have one retry event
+    retry_events = [e for e in (response.events or []) if e.event == RunEvent.run_retry.value]
+    assert len(retry_events) == 1
+    assert isinstance(retry_events[0], RunRetryEvent)
+    assert retry_events[0].error_type == "Exception"
+    assert "Simulated failure" in retry_events[0].content

@@ -89,6 +89,7 @@ from agno.utils.events import (
     create_run_content_completed_event,
     create_run_continued_event,
     create_run_error_event,
+    create_run_retry_event,
     create_run_paused_event,
     create_run_started_event,
     create_session_summary_completed_event,
@@ -673,6 +674,10 @@ def _run(
                         delay = agent.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
+                    run_response.events = add_error_event(
+                        error=create_run_retry_event(run_response, error=str(e), error_type=type(e).__name__),
+                        events=run_response.events,
+                    )
                     time.sleep(delay)
                     continue
 
@@ -1179,6 +1184,10 @@ def _run_stream(
                         delay = agent.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
+                    run_response.events = add_error_event(
+                        error=create_run_retry_event(run_response, error=str(e), error_type=type(e).__name__),
+                        events=run_response.events,
+                    )
                     time.sleep(delay)
                     continue
 
@@ -1771,6 +1780,10 @@ async def _arun(
                         delay = agent.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
+                    run_response.events = add_error_event(
+                        error=create_run_retry_event(run_response, error=str(e), error_type=type(e).__name__),
+                        events=run_response.events,
+                    )
                     await asyncio.sleep(delay)
                     continue
 
@@ -2538,6 +2551,10 @@ async def _arun_stream(
                         delay = agent.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
+                    run_response.events = add_error_event(
+                        error=create_run_retry_event(run_response, error=str(e), error_type=type(e).__name__),
+                        events=run_response.events,
+                    )
                     await asyncio.sleep(delay)
                     continue
 
@@ -3251,6 +3268,10 @@ def _continue_run(
                         delay = agent.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
+                    run_response.events = add_error_event(
+                        error=create_run_retry_event(run_response, error=str(e), error_type=type(e).__name__),
+                        events=run_response.events,
+                    )
                     time.sleep(delay)
                     continue
                 run_response.status = RunStatus.error
@@ -3538,6 +3559,10 @@ def _continue_run_stream(
                         delay = agent.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
+                    run_response.events = add_error_event(
+                        error=create_run_retry_event(run_response, error=str(e), error_type=type(e).__name__),
+                        events=run_response.events,
+                    )
                     time.sleep(delay)
                     continue
                 run_response.status = RunStatus.error
@@ -4217,6 +4242,10 @@ async def _acontinue_run(
                         delay = agent.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
+                    run_response.events = add_error_event(
+                        error=create_run_retry_event(run_response, error=str(e), error_type=type(e).__name__),
+                        events=run_response.events,
+                    )
                     await asyncio.sleep(delay)
                     continue
 
@@ -4706,6 +4735,10 @@ async def _acontinue_run_stream(
                         delay = agent.delay_between_retries
 
                     log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
+                    run_response.events = add_error_event(
+                        error=create_run_retry_event(run_response, error=str(e), error_type=type(e).__name__),
+                        events=run_response.events,
+                    )
                     await asyncio.sleep(delay)
                     continue
 
