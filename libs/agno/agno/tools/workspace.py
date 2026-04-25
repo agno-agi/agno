@@ -13,8 +13,8 @@ Quick start:
         tools=[
             Workspace(
                 ".",
-                allowed_tools=["read", "list", "search"],
-                confirm_tools=["write", "edit", "move", "delete", "shell"],
+                allowed=["read", "list", "search"],
+                confirm=["write", "edit", "move", "delete", "shell"],
             )
         ],
     )
@@ -177,11 +177,11 @@ class Workspace(Toolkit):
     untrusted code execution, run the agent inside a real sandbox (container, VM, or
     a service like Daytona).
 
-    Permission model — ``allowed_tools`` and ``confirm_tools`` are mutually exclusive
+    Permission model — ``allowed`` and ``confirm`` are mutually exclusive
     partitions of short aliases:
 
-    - An alias in ``allowed_tools`` runs silently.
-    - An alias in ``confirm_tools`` requires user approval (Agno's HITL pause/resume).
+    - An alias in ``allowed`` runs silently.
+    - An alias in ``confirm`` requires user approval (Agno's HITL pause/resume).
     - An alias in **neither** list is not registered with the toolkit — the LLM doesn't see it.
     - An alias in **both** lists raises ``ValueError``.
 
@@ -235,8 +235,8 @@ class Workspace(Toolkit):
     def __init__(
         self,
         root: Optional[Union[str, Path]] = None,
-        allowed_tools: Optional[List[str]] = None,
-        confirm_tools: Optional[List[str]] = None,
+        allowed: Optional[List[str]] = None,
+        confirm: Optional[List[str]] = None,
         require_read_before_write: bool = False,
         max_file_lines: int = 100_000,
         max_file_length: int = 10_000_000,
@@ -259,7 +259,7 @@ class Workspace(Toolkit):
         # Resolved absolute paths so move/rename interactions are unambiguous.
         self._read_paths: set = set()
 
-        resolved_allowed_aliases, resolved_confirm_aliases = self._resolve_partitions(allowed_tools, confirm_tools)
+        resolved_allowed_aliases, resolved_confirm_aliases = self._resolve_partitions(allowed, confirm)
 
         # Translate aliases → method names. The LLM sees the descriptive names.
         resolved_allowed_methods = [self._ALIASES[a] for a in resolved_allowed_aliases]
@@ -291,44 +291,53 @@ class Workspace(Toolkit):
     @classmethod
     def _resolve_partitions(
         cls,
-        allowed_tools: Optional[List[str]],
-        confirm_tools: Optional[List[str]],
+        allowed: Optional[List[str]],
+        confirm: Optional[List[str]],
     ) -> Tuple[List[str], List[str]]:
-        """Resolve allowed_tools / confirm_tools alias lists into mutually-exclusive lists.
+        """Resolve allowed / confirm alias lists into mutually-exclusive lists.
 
         See the class docstring for the resolution rules. Both lists hold *aliases*
         (e.g. ``"read"``, not ``"read_file"``).
         """
+        # Reject obvious misuse early — these are short kwarg names so users may
+        # reach for confirm=True or confirm="write" by mistake.
+        for arg_name, arg_value in (("allowed", allowed), ("confirm", confirm)):
+            if arg_value is not None and not isinstance(arg_value, list):
+                raise TypeError(
+                    f"`{arg_name}` must be a list of aliases, got {type(arg_value).__name__}: "
+                    f"{arg_value!r}. Valid aliases: {cls.ALL_TOOLS}"
+                )
+
         # Both None → safe defaults.
-        if allowed_tools is None and confirm_tools is None:
+        if allowed is None and confirm is None:
             return list(cls.READ_TOOLS), list(cls.WRITE_TOOLS)
 
         # If one is set, the other defaults to [] — explicit user control means no
         # surprise mixing.
-        if allowed_tools is None:
-            allowed_tools = []
-        if confirm_tools is None:
-            confirm_tools = []
+        if allowed is None:
+            allowed = []
+        if confirm is None:
+            confirm = []
 
         valid = set(cls.ALL_TOOLS)
-        unknown_allowed = set(allowed_tools) - valid
+        unknown_allowed = set(allowed) - valid
         if unknown_allowed:
             raise ValueError(
-                f"Unknown alias(es) in allowed_tools: {sorted(unknown_allowed)}. Valid aliases: {cls.ALL_TOOLS}"
+                f"Unknown alias(es) in `allowed`: {sorted(unknown_allowed)}. Valid aliases: {cls.ALL_TOOLS}"
             )
-        unknown_confirm = set(confirm_tools) - valid
+        unknown_confirm = set(confirm) - valid
         if unknown_confirm:
             raise ValueError(
-                f"Unknown alias(es) in confirm_tools: {sorted(unknown_confirm)}. Valid aliases: {cls.ALL_TOOLS}"
+                f"Unknown alias(es) in `confirm`: {sorted(unknown_confirm)}. Valid aliases: {cls.ALL_TOOLS}"
             )
-        overlap = set(allowed_tools) & set(confirm_tools)
+        overlap = set(allowed) & set(confirm)
         if overlap:
             raise ValueError(
-                f"Alias(es) appear in both allowed_tools and confirm_tools: {sorted(overlap)}. "
-                "They must be mutually exclusive — allowed_tools auto-pass, "
-                "confirm_tools require approval."
+                f"Alias(es) appear in both `allowed` and `confirm`: {sorted(overlap)}. "
+                "They must be mutually exclusive — items in `allowed` auto-pass; "
+                "items in `confirm` require approval."
             )
-        return list(allowed_tools), list(confirm_tools)
+        return list(allowed), list(confirm)
 
     def _is_excluded(self, path: Path) -> bool:
         """Return True if any component of ``path`` (relative to ``root``) matches an exclude pattern."""

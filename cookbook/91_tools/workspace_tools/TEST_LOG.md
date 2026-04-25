@@ -13,7 +13,7 @@ convention.
 **Date:** 2026-04-25
 
 **Description:** Agent reads a tmp README.md, writes NOTES.md with a 2-line
-summary, then lists files. Uses `confirm_tools=[]` so all tool calls auto-pass.
+summary, then lists files. Uses `confirm=[]` so all tool calls auto-pass.
 
 **Result:** Agent called `read_file`, `write_file`, and `list_files` in the
 expected order. `write_file` returned `Wrote 95 chars to NOTES.md`. Final

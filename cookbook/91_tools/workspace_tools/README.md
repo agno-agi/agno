@@ -22,13 +22,13 @@ tools = [Workspace(".")]
 tools = [
     Workspace(
         ".",
-        allowed_tools=["read", "list", "search"],
-        confirm_tools=["write", "edit", "delete", "shell"],
+        allowed=["read", "list", "search"],
+        confirm=["write", "edit", "delete", "shell"],
     )
 ]
 
 # Read-only:
-tools = [Workspace(".", allowed_tools=["read", "list", "search"])]
+tools = [Workspace(".", allowed=["read", "list", "search"])]
 
 # Defensive: also block writes-to-files-the-agent-hasn't-read:
 tools = [Workspace(".", require_read_before_write=True)]
@@ -36,8 +36,8 @@ tools = [Workspace(".", require_read_before_write=True)]
 
 ## Permission model
 
-`allowed_tools` and `confirm_tools` are mutually exclusive partitions of short
-aliases. An alias in `allowed_tools` runs silently, an alias in `confirm_tools`
+`allowed` and `confirm` are mutually exclusive partitions of short
+aliases. An alias in `allowed` runs silently, an alias in `confirm`
 requires approval, an alias in neither isn't registered, and an alias in both
 raises `ValueError`. The full alias mapping:
 

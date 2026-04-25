@@ -9,8 +9,8 @@ agent = Agent(
     tools=[
         Workspace(
             root=".",
-            allowed_tools=["read", "list", "search"],
-            confirm_tools=["write", "edit", "delete", "shell"],
+            allowed=["read", "list", "search"],
+            confirm=["write", "edit", "delete", "shell"],
         )
     ],
 )

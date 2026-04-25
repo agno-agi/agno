@@ -3,10 +3,11 @@ Workspace — basic usage
 =======================
 
 A polished local-machine toolkit: read/write/edit/delete/search/shell, scoped to
-a sandboxed directory. Destructive operations require confirmation by default —
+a local directory (path-scoped to a `root`). Destructive operations require
+confirmation by default —
 see ``with_confirmation.py`` for the pause/resume flow.
 
-This example uses ``confirm_tools=[]`` to disable confirmation so the agent
+This example uses ``confirm=[]`` to disable confirmation so the agent
 runs end-to-end without prompts. For production, leave the defaults on.
 """
 
@@ -30,8 +31,8 @@ agent = Agent(
     tools=[
         Workspace(
             str(workspace),
-            allowed_tools=Workspace.ALL_TOOLS,
-            confirm_tools=[],
+            allowed=Workspace.ALL_TOOLS,
+            confirm=[],
         )
     ],
     markdown=True,

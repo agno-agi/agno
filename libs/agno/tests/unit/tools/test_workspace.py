@@ -47,52 +47,64 @@ def test_default_partitions_when_both_none():
 
 
 def test_only_allowed_set_makes_confirm_default_empty():
-    """allowed_tools set, confirm_tools=None → confirm defaults to [], not WRITE_TOOLS."""
+    """allowed set, confirm=None → confirm defaults to [], not WRITE_TOOLS."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        ws = Workspace(tmp_dir, allowed_tools=["read"])
+        ws = Workspace(tmp_dir, allowed=["read"])
         assert list(ws.functions.keys()) == ["read_file"]
         assert ws.functions["read_file"].requires_confirmation is False
 
 
 def test_only_confirm_set_makes_allowed_default_empty():
-    """confirm_tools set, allowed_tools=None → allowed defaults to [], not READ_TOOLS."""
+    """confirm set, allowed=None → allowed defaults to [], not READ_TOOLS."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        ws = Workspace(tmp_dir, confirm_tools=["write"])
+        ws = Workspace(tmp_dir, confirm=["write"])
         assert list(ws.functions.keys()) == ["write_file"]
         assert ws.functions["write_file"].requires_confirmation is True
 
 
 def test_unknown_alias_in_allowed_raises():
     with pytest.raises(ValueError, match="Unknown alias"):
-        Workspace(".", allowed_tools=["read", "not_a_tool"])
+        Workspace(".", allowed=["read", "not_a_tool"])
 
 
 def test_unknown_alias_in_confirm_raises():
     with pytest.raises(ValueError, match="Unknown alias"):
-        Workspace(".", confirm_tools=["bogus"])
+        Workspace(".", confirm=["bogus"])
 
 
 def test_full_method_name_in_alias_list_raises():
     """Aliases are short; passing a full method name like 'read_file' should fail loud."""
     with pytest.raises(ValueError, match="Unknown alias"):
-        Workspace(".", allowed_tools=["read_file"])
+        Workspace(".", allowed=["read_file"])
 
 
 def test_overlap_between_allowed_and_confirm_raises():
     with pytest.raises(ValueError, match="mutually exclusive"):
         Workspace(
             ".",
-            allowed_tools=["read", "write"],
-            confirm_tools=["write"],
+            allowed=["read", "write"],
+            confirm=["write"],
         )
 
 
 def test_empty_lists_in_both_registers_nothing():
     """Both empty lists → no methods registered (useful for tests)."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        ws = Workspace(tmp_dir, allowed_tools=[], confirm_tools=[])
+        ws = Workspace(tmp_dir, allowed=[], confirm=[])
         assert list(ws.functions.keys()) == []
         assert list(ws.async_functions.keys()) == []
+
+
+def test_confirm_as_bool_raises_typeerror():
+    """confirm=True is the natural typo — fail loud, not with a confusing alias error."""
+    with pytest.raises(TypeError, match="`confirm` must be a list"):
+        Workspace(".", confirm=True)
+
+
+def test_allowed_as_string_raises_typeerror():
+    """allowed='read' (not a list) → TypeError, not 4 'unknown alias' errors for r, e, a, d."""
+    with pytest.raises(TypeError, match="`allowed` must be a list"):
+        Workspace(".", allowed="read")
 
 
 def test_custom_partition_works():
@@ -100,8 +112,8 @@ def test_custom_partition_works():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(
             tmp_dir,
-            allowed_tools=["read"],
-            confirm_tools=["delete"],
+            allowed=["read"],
+            confirm=["delete"],
         )
         assert sorted(ws.functions.keys()) == ["delete_file", "read_file"]
         assert ws.functions["read_file"].requires_confirmation is False
