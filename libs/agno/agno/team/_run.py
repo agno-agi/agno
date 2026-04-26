@@ -101,7 +101,7 @@ if TYPE_CHECKING:
 
 
 def cancel_run(run_id: str) -> bool:
-    """Cancel a running team execution.
+    """Cancel a running team execution and cascade to all member runs.
 
     Args:
         run_id (str): The run_id to cancel.
@@ -109,11 +109,25 @@ def cancel_run(run_id: str) -> bool:
     Returns:
         bool: True if the run was found and marked for cancellation, False otherwise.
     """
-    return cancel_run_global(run_id)
+    from agno.team._default_tools import get_child_run_ids, _unregister_team_run
+
+    # Cancel the team run itself
+    result = cancel_run_global(run_id)
+
+    # Cascade: cancel all member runs that belong to this team run
+    child_ids = get_child_run_ids(run_id)
+    for child_id in child_ids:
+        cancel_run_global(child_id)
+        log_info(f"Cancelled member run {child_id} (cascade from team run {run_id})")
+
+    # Clean up the mapping
+    _unregister_team_run(run_id)
+
+    return result
 
 
 async def acancel_run(run_id: str) -> bool:
-    """Cancel a running team execution.
+    """Cancel a running team execution and cascade to all member runs.
 
     Args:
         run_id (str): The run_id to cancel.
@@ -121,7 +135,21 @@ async def acancel_run(run_id: str) -> bool:
     Returns:
         bool: True if the run was found and marked for cancellation, False otherwise.
     """
-    return await acancel_run_global(run_id)
+    from agno.team._default_tools import get_child_run_ids, _unregister_team_run
+
+    # Cancel the team run itself
+    result = await acancel_run_global(run_id)
+
+    # Cascade: cancel all member runs that belong to this team run
+    child_ids = get_child_run_ids(run_id)
+    for child_id in child_ids:
+        await acancel_run_global(child_id)
+        log_info(f"Cancelled member run {child_id} (cascade from team run {run_id})")
+
+    # Clean up the mapping
+    _unregister_team_run(run_id)
+
+    return result
 
 
 async def _asetup_session(
@@ -4124,7 +4152,12 @@ def _cleanup_and_store(
     import copy
 
     from agno.run.approval import update_approval_run_status
+    from agno.team._default_tools import _unregister_team_run
     from agno.team._session import update_session_metrics
+
+    # Clean up the team→member run_id mapping
+    if run_response.run_id:
+        _unregister_team_run(run_response.run_id)
 
     # Scrub a shallow copy for storage — the original run_response is never
     # mutated so the caller always sees generated media regardless of store_media.
@@ -4170,7 +4203,12 @@ async def _acleanup_and_store(
     import copy
 
     from agno.run.approval import aupdate_approval_run_status
+    from agno.team._default_tools import _unregister_team_run
     from agno.team._session import update_session_metrics
+
+    # Clean up the team→member run_id mapping
+    if run_response.run_id:
+        _unregister_team_run(run_response.run_id)
 
     # Scrub a shallow copy for storage — the original run_response is never
     # mutated so the caller always sees generated media regardless of store_media.

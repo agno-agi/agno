@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 import asyncio
 import contextlib
 import json
+import threading
 from copy import copy
 from typing import (
     Any,
@@ -18,9 +19,11 @@ from typing import (
     Iterator,
     List,
     Optional,
+    Set,
     Union,
     cast,
 )
+from uuid import uuid4
 
 from pydantic import BaseModel
 
@@ -56,6 +59,33 @@ from agno.utils.team import (
     format_member_agent_task,
 )
 from agno.utils.timer import Timer
+
+
+# ---------------------------------------------------------------------------
+# Team → Member run_id mapping for cascade cancellation
+# Maps team_run_id to a set of member_run_ids so that cancelling a team run
+# also cancels all in-flight member runs.
+# ---------------------------------------------------------------------------
+_child_runs_lock = threading.Lock()
+_child_runs: Dict[str, Set[str]] = {}
+
+
+def _register_child_run(team_run_id: str, member_run_id: str) -> None:
+    """Record that a member run belongs to a team run."""
+    with _child_runs_lock:
+        _child_runs.setdefault(team_run_id, set()).add(member_run_id)
+
+
+def _unregister_team_run(team_run_id: str) -> None:
+    """Remove the mapping when a team run finishes (success, error, or cancel)."""
+    with _child_runs_lock:
+        _child_runs.pop(team_run_id, None)
+
+
+def get_child_run_ids(team_run_id: str) -> Set[str]:
+    """Get the set of member run_ids for a team run (for cascade cancel)."""
+    with _child_runs_lock:
+        return set(_child_runs.get(team_run_id, set()))
 
 
 def _get_update_user_memory_function(team: "Team", user_id: Optional[str] = None, async_mode: bool = False) -> Function:
@@ -561,6 +591,8 @@ def _get_delegate_task_function(
         member_session_state_copy = copy(run_context.session_state)
 
         if stream:
+            member_run_id = str(uuid4())
+            _register_child_run(run_response.run_id, member_run_id)  # type: ignore[arg-type]
             member_agent_run_response_stream = member_agent.run(
                 input=member_agent_task if not history else history,
                 user_id=user_id,
@@ -581,6 +613,7 @@ def _get_delegate_task_function(
                 knowledge_filters=run_context.knowledge_filters
                 if not member_agent.knowledge_filters and member_agent.knowledge
                 else None,
+                run_id=member_run_id,
                 yield_run_output=True,
             )
             member_agent_run_response = None
@@ -599,6 +632,8 @@ def _get_delegate_task_function(
                 )
                 yield member_agent_run_output_event  # type: ignore
         else:
+            member_run_id = str(uuid4())
+            _register_child_run(run_response.run_id, member_run_id)  # type: ignore[arg-type]
             member_agent_run_response = member_agent.run(  # type: ignore
                 input=member_agent_task if not history else history,  # type: ignore
                 user_id=user_id,
@@ -618,6 +653,7 @@ def _get_delegate_task_function(
                 knowledge_filters=run_context.knowledge_filters
                 if not member_agent.knowledge_filters and member_agent.knowledge
                 else None,
+                run_id=member_run_id,
             )
 
             check_if_run_cancelled(member_agent_run_response)  # type: ignore
@@ -830,6 +866,8 @@ def _get_delegate_task_function(
 
             member_session_state_copy = copy(run_context.session_state)
             if stream:
+                member_run_id = str(uuid4())
+                _register_child_run(run_response.run_id, member_run_id)  # type: ignore[arg-type]
                 member_agent_run_response_stream = member_agent.run(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
@@ -850,6 +888,7 @@ def _get_delegate_task_function(
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=run_context.metadata,
+                    run_id=member_run_id,
                     yield_run_output=True,
                 )
                 member_agent_run_response = None
@@ -869,6 +908,8 @@ def _get_delegate_task_function(
                     yield member_agent_run_response_chunk  # type: ignore
 
             else:
+                member_run_id = str(uuid4())
+                _register_child_run(run_response.run_id, member_run_id)  # type: ignore[arg-type]
                 member_agent_run_response = member_agent.run(  # type: ignore
                     input=member_agent_task if not history else history,
                     user_id=user_id,
@@ -888,6 +929,7 @@ def _get_delegate_task_function(
                     add_dependencies_to_context=add_dependencies_to_context,
                     add_session_state_to_context=add_session_state_to_context,
                     metadata=run_context.metadata,
+                    run_id=member_run_id,
                 )
 
                 check_if_run_cancelled(member_agent_run_response)  # type: ignore
