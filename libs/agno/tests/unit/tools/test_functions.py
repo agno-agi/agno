@@ -1121,3 +1121,98 @@ def test_tool_hook_receives_messages_via_run_context():
     # Verify it's a copy (not the same reference), so hook mutations don't affect the run
     assert captured_messages is not run_context.messages
     assert captured_messages == run_context.messages
+
+
+def test_tool_hook_receives_tool_definition():
+    """Test that tool hooks can access the Function object via tool_definition parameter.
+
+    This enables hooks to inspect or modify tool attributes (e.g., stop_after_tool_call)
+    at runtime based on execution results.
+    """
+    captured_tool_def: Optional[Function] = None
+
+    def tool_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any], tool_definition: Any):
+        nonlocal captured_tool_def
+        captured_tool_def = tool_definition
+        return function_call(**arguments)
+
+    @tool(tool_hooks=[tool_hook], stop_after_tool_call=True)
+    def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    test_func.process_entrypoint()
+
+    call = FunctionCall(function=test_func, arguments={"param1": "value1"})
+    result = call.execute()
+
+    assert result.status == "success"
+    assert result.result == "processed-value1"
+    assert captured_tool_def is not None
+    # tool_definition should be the Function object itself
+    assert captured_tool_def is test_func
+    assert captured_tool_def.name == "test_func"
+    assert captured_tool_def.stop_after_tool_call is True
+
+
+@pytest.mark.asyncio
+async def test_tool_hook_receives_tool_definition_async():
+    """Test that async tool hooks can access the Function object via tool_definition parameter."""
+    captured_tool_def: Optional[Function] = None
+
+    async def tool_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any], tool_definition: Any):
+        nonlocal captured_tool_def
+        captured_tool_def = tool_definition
+        return await function_call(**arguments)
+
+    @tool(tool_hooks=[tool_hook])
+    async def test_func(param1: str) -> str:
+        return f"processed-{param1}"
+
+    test_func.process_entrypoint()
+
+    call = FunctionCall(function=test_func, arguments={"param1": "value1"})
+    result = await call.aexecute()
+
+    assert result.status == "success"
+    assert result.result == "processed-value1"
+    assert captured_tool_def is not None
+    assert captured_tool_def is test_func
+    assert captured_tool_def.name == "test_func"
+
+
+def test_tool_hook_can_modify_stop_after_tool_call():
+    """Test that a hook can dynamically toggle stop_after_tool_call via tool_definition.
+
+    Use case: a review/advisor hook that conditionally allows or blocks an agent
+    from stopping after a tool call (e.g., reject a decision and force retry).
+    """
+
+    def review_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any], tool_definition: Any):
+        if arguments.get("should_reject"):
+            # Disable stop so the agent continues (simulating advisor rejection)
+            tool_definition.stop_after_tool_call = False
+            return "REJECTED: please retry"
+        else:
+            # Approve: restore stop so the agent stops after this call
+            tool_definition.stop_after_tool_call = True
+            return function_call(**arguments)
+
+    @tool(tool_hooks=[review_hook], stop_after_tool_call=True)
+    def output_func(result: str, should_reject: bool = False) -> str:
+        return f"output-{result}"
+
+    output_func.process_entrypoint()
+
+    # First call: rejected — stop_after_tool_call should be toggled to False
+    call1 = FunctionCall(function=output_func, arguments={"result": "v1", "should_reject": True})
+    result1 = call1.execute()
+    assert result1.status == "success"
+    assert result1.result == "REJECTED: please retry"
+    assert output_func.stop_after_tool_call is False
+
+    # Second call: approved — stop_after_tool_call should be restored to True
+    call2 = FunctionCall(function=output_func, arguments={"result": "v2", "should_reject": False})
+    result2 = call2.execute()
+    assert result2.status == "success"
+    assert result2.result == "output-v2"
+    assert output_func.stop_after_tool_call is True

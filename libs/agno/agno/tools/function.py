@@ -966,6 +966,8 @@ class FunctionCall(BaseModel):
             hook_args["args"] = args
         if "arguments" in signature(hook).parameters:
             hook_args["arguments"] = args
+        if "tool_definition" in signature(hook).parameters:
+            hook_args["tool_definition"] = self.function
         return hook_args
 
     def _build_nested_execution_chain(self, entrypoint_args: Dict[str, Any]):
