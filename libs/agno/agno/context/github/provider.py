@@ -83,11 +83,9 @@ class GitHubContextProvider(ContextProvider):
     ) -> None:
         super().__init__(id=id, name=name, mode=mode, model=model)
         owner, repo_name = _parse_repo(repo)
-        self.owner = owner
-        self.repo_name = repo_name
         self.repo = f"{owner}/{repo_name}"
         self.root = Path(root).expanduser().resolve()
-        self.workdir: Path = self.root / repo_name
+        self.workdir: Path = self.root / owner / repo_name
         self.branch = branch
         self.github_token = github_token
         self.pr_branch_prefix = pr_branch_prefix
