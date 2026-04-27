@@ -144,7 +144,7 @@ def attach_routes(
     buffer_size: int = 100,
     max_file_size: int = 1_073_741_824,  # 1GB
     resolve_user_identity: bool = False,
-    hitl_enabled: bool = False,
+    hitl_enabled: bool = True,
 ) -> APIRouter:
     # Inner functions capture config via closure to keep each instance isolated
     entity = agent or team or workflow

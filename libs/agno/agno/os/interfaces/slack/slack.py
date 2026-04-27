@@ -1,5 +1,5 @@
 from ssl import SSLContext
-from typing import Any, Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from fastapi.routing import APIRouter
 
@@ -8,13 +8,6 @@ from agno.os.interfaces.base import BaseInterface
 from agno.os.interfaces.slack.router import attach_routes
 from agno.team import RemoteTeam, Team
 from agno.workflow import RemoteWorkflow, Workflow
-
-
-def _has_confirmation_tools(entity: Any) -> bool:
-    tools = getattr(entity, "tools", None)
-    if not tools:
-        return False
-    return any(getattr(t, "requires_confirmation", False) for t in tools)
 
 
 class Slack(BaseInterface):
@@ -63,9 +56,6 @@ class Slack(BaseInterface):
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Slack requires an agent, team, or workflow")
 
-        entity = self.agent or self.team
-        self._hitl_enabled = entity is not None and _has_confirmation_tools(entity)
-
     def get_router(self) -> APIRouter:
         self.router = attach_routes(
             router=APIRouter(prefix=self.prefix, tags=self.tags),  # type: ignore
@@ -84,7 +74,6 @@ class Slack(BaseInterface):
             buffer_size=self.buffer_size,
             max_file_size=self.max_file_size,
             resolve_user_identity=self.resolve_user_identity,
-            hitl_enabled=self._hitl_enabled,
         )
 
         return self.router
