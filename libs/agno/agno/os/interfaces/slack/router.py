@@ -30,7 +30,6 @@ from agno.tools.slack import SlackTools
 from agno.utils.log import log_error, log_info
 from agno.workflow import RemoteWorkflow, Workflow
 
-
 # Slack sends lifecycle events for bots with these subtypes. Without this
 # filter the router would try to process its own messages, causing infinite loops.
 _IGNORED_SUBTYPES = frozenset(
@@ -628,8 +627,7 @@ def attach_routes(
                         state.stream_chars_sent += len(content)
         except Exception as exc:
             log_error(
-                f"[HITL] continuation append failed: run_id={run_id} "
-                f"slack_error={_slack_err_code(exc)!r} | {exc}"
+                f"[HITL] continuation append failed: run_id={run_id} slack_error={_slack_err_code(exc)!r} | {exc}"
             )
 
         # If the continuation paused again, finalize the pre-pause bubble
