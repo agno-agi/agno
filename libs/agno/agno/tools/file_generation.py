@@ -69,6 +69,9 @@ class FileGenerationTools(Toolkit):
         Filenames are sanitized via ``Path(filename).name`` to strip any path
         components, preventing path-traversal attacks. Filenames that sanitize
         to empty, ``"."``, or ``".."`` raise ``FileGenerationSecurityError``.
+
+        The resolved write path is verified to stay inside ``output_directory``
+        (catches symlink-escape attempts).
         """
         if not self.output_directory:
             return None
@@ -80,6 +83,15 @@ class FileGenerationTools(Toolkit):
             raise FileGenerationSecurityError(f"Invalid filename after sanitization: {filename!r}")
 
         file_path = self.output_directory / safe_filename
+
+        # Verify resolved path stays inside output_directory (catches symlink escapes)
+        resolved_file = file_path.resolve()
+        resolved_dir = self.output_directory.resolve()
+        if not resolved_file.is_relative_to(resolved_dir):
+            log_warning(f"Security violation: path {filename!r} resolves outside output_directory")
+            raise FileGenerationSecurityError(
+                f"Filename {filename!r} resolves outside output_directory (possible symlink escape)"
+            )
 
         if isinstance(content, str):
             file_path.write_text(content, encoding="utf-8")

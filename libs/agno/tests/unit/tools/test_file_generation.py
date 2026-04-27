@@ -85,6 +85,23 @@ def test_only_traversal_raises():
             tool._save_file_to_disk("payload", "../")
 
 
+def test_symlink_pointing_outside_rejected():
+    """Symlink within output_directory pointing outside must be rejected."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        outside_dir = Path(tmp_dir) / "outside"
+        outside_dir.mkdir()
+        inside_dir = Path(tmp_dir) / "inside"
+        inside_dir.mkdir()
+        try:
+            (inside_dir / "escape").symlink_to(outside_dir)
+        except OSError:
+            pytest.skip("Symlink creation not permitted on this platform")
+
+        tool = FileGenerationTools(output_directory=str(inside_dir))
+        with pytest.raises(FileGenerationSecurityError, match="resolves outside|symlink escape"):
+            tool._save_file_to_disk("payload", "escape")
+
+
 def test_security_violation_logs_warning():
     """Security violations should emit a warning log for ops visibility."""
     with tempfile.TemporaryDirectory() as tmp_dir:
