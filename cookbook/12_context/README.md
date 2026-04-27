@@ -28,7 +28,6 @@ Providers ship in this package:
 | `SlackContextProvider` | A Slack workspace | `query_<id>`, `update_<id>` (separate read/write sub-agents; writer only gets `send_message` + the lookup tools it needs) |
 | `MCPContextProvider` | One MCP server | `query_<id>` (sub-agent over the server's tools) or flat tools in `mode=tools` |
 | `GDriveContextProvider` | Google Drive via service account | `query_<id>` (list / search / read sub-agent; all-drives aware) |
-| `GitHubContextProvider` | A GitHub repo (cloned locally) | `query_<id>` (Workspace + git read tools), `update_<id>` (Workspace + git write tools, scoped to a per-session worktree; ends in a PR) |
 
 ## Cookbooks
 
@@ -46,7 +45,6 @@ Providers ship in this package:
 | `09_web_plus_slack.py` | Compositional: Slack topics feed per-topic web searches |
 | `10_custom_provider.py` | Subclass `ContextProvider` for your own source |
 | `11_web_parallel_mcp.py` | Web research via Parallel's public MCP endpoint (keyless; `PARALLEL_API_KEY` raises the ceiling) |
-| `12_github.py` | GitHub repo: read public repo (always) + optional edit-via-PR via `GITHUB_WRITE_REPO` |
 
 ## Run
 
@@ -84,8 +82,4 @@ OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/08_multi_provider.
 # Compositional demo (Slack topics -> per-topic web searches)
 OPENAI_API_KEY=... EXA_API_KEY=... SLACK_BOT_TOKEN=xoxb-... \
     .venvs/demo/bin/python cookbook/12_context/09_web_plus_slack.py
-
-# GitHub repo: reads agno-agi/agno; set GITHUB_WRITE_REPO + GITHUB_TOKEN
-# (and `gh` on PATH) to also exercise the edit-via-PR path
-OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/12_github.py
 ```
