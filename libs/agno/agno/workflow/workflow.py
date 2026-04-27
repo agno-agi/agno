@@ -9714,6 +9714,9 @@ class Workflow:
                 "user_input_message",
                 "user_input_schema",
                 "on_error",
+                "requires_output_review",
+                "output_review_message",
+                "human_review",
             ]:
                 if hasattr(step, attr):
                     value = getattr(step, attr)
@@ -9742,7 +9745,7 @@ class Workflow:
         # Handle Loop steps
         if isinstance(step, Loop):
             copied_loop_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
-            return Loop(
+            loop_kwargs: Dict[str, Any] = dict(
                 steps=copied_loop_steps,
                 name=step.name,
                 description=step.description,
@@ -9752,6 +9755,9 @@ class Workflow:
                 confirmation_message=step.confirmation_message,
                 on_reject=step.on_reject,
             )
+            if getattr(step, "human_review", None) is not None:
+                loop_kwargs["human_review"] = step.human_review
+            return Loop(**loop_kwargs)
 
         # Handle Condition steps
         if isinstance(step, Condition):
@@ -9782,6 +9788,9 @@ class Workflow:
                 requires_user_input=step.requires_user_input,
                 user_input_message=step.user_input_message,
                 allow_multiple_selections=step.allow_multiple_selections,
+                requires_output_review=step.requires_output_review,
+                output_review_message=step.output_review_message,
+                hitl_max_retries=step.hitl_max_retries,
             )
 
         # Handle Steps container
