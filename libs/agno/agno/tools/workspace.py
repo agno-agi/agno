@@ -730,6 +730,8 @@ class Workspace(Toolkit):
             ``replace_all=False``, multiple matches).
         """
         try:
+            if not old_str:
+                return "Error: old_str cannot be empty"
             safe, file_path = self._check_path(path, self.root)
             if not safe:
                 return "Error: path escapes workspace root"

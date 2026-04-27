@@ -475,6 +475,27 @@ def test_edit_file_replace_all_replaces_every_occurrence():
         assert (Path(tmp_dir) / "doc.md").read_text() == "QUX bar QUX baz QUX"
 
 
+def test_edit_file_empty_old_str_rejected():
+    """Empty old_str must be rejected — str.replace('', x) corrupts the file."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        (Path(tmp_dir) / "doc.md").write_text("Hello")
+        result = ws.edit_file("doc.md", old_str="", new_str="X")
+        assert result.startswith("Error: old_str cannot be empty")
+        # File must be untouched.
+        assert (Path(tmp_dir) / "doc.md").read_text() == "Hello"
+
+
+def test_edit_file_empty_old_str_with_replace_all_rejected():
+    """Empty old_str with replace_all=True must also be rejected."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        (Path(tmp_dir) / "doc.md").write_text("Hello")
+        result = ws.edit_file("doc.md", old_str="", new_str="X", replace_all=True)
+        assert result.startswith("Error: old_str cannot be empty")
+        assert (Path(tmp_dir) / "doc.md").read_text() == "Hello"
+
+
 # ------------------------------------------------------------------
 # move_file
 # ------------------------------------------------------------------
