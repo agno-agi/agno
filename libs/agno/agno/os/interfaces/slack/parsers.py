@@ -10,6 +10,9 @@ from agno.os.interfaces.slack.types import (
     ParsedDecision,
     ParseError,
     PauseType,
+    _tool_args,
+    _tool_name,
+    _truncate,
     parse_row_block_id,
     row_block_id,
 )
@@ -235,12 +238,6 @@ def apply_decisions(
                 req.set_external_execution_result(decision.external_result)
 
 
-def _truncate(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    return text[: limit - 1] + "…"
-
-
 def _render_value(value: Any) -> str:
     try:
         rendered = value if isinstance(value, str) else json.dumps(value, default=str)
@@ -257,16 +254,6 @@ def _inline_args(args: Dict[str, Any]) -> str:
         rendered = _render_value(value).replace("\n", " ").strip()
         parts.append(f"{key}={rendered}")
     return ", ".join(parts)
-
-
-def _tool_name(requirement: RunRequirement) -> str:
-    tool = requirement.tool_execution
-    return getattr(tool, "tool_name", None) or "tool"
-
-
-def _tool_args(requirement: RunRequirement) -> Dict[str, Any]:
-    tool = requirement.tool_execution
-    return getattr(tool, "tool_args", None) or {}
 
 
 def format_decision_title(decision: ParsedDecision, requirement: RunRequirement) -> str:

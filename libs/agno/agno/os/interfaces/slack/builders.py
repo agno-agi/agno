@@ -28,6 +28,9 @@ from agno.os.interfaces.slack.types import (
     ACTION_ROW_REJECT,
     ACTION_SUBMIT,
     PauseType,
+    _tool_args,
+    _tool_name,
+    _truncate,
     pause_block_id,
     row_block_id,
 )
@@ -37,28 +40,12 @@ ARG_PREVIEW_MAX = 400
 ARG_VALUE_MAX = 120
 
 
-def _truncate(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    return text[: limit - 1] + "…"
-
-
 def render_arg_value(value: Any) -> str:
     try:
         rendered = value if isinstance(value, str) else json.dumps(value, default=str)
     except (TypeError, ValueError):
         rendered = str(value)
     return _truncate(rendered, ARG_VALUE_MAX)
-
-
-def _tool_name(requirement: RunRequirement) -> str:
-    tool = requirement.tool_execution
-    return getattr(tool, "tool_name", None) or "tool"
-
-
-def _tool_args(requirement: RunRequirement) -> Dict[str, Any]:
-    tool = requirement.tool_execution
-    return getattr(tool, "tool_args", None) or {}
 
 
 def _classify_flags(
@@ -303,7 +290,6 @@ def _build_external_row(requirement: RunRequirement) -> List[Any]:
 
 
 _BUILDERS: Dict[str, Callable[[RunRequirement], List[Any]]] = {
-    "confirmation": _build_confirmation_row,
     "user_input": _build_input_row,
     "user_feedback": _build_feedback_row,
     "external_execution": _build_external_row,

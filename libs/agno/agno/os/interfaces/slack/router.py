@@ -394,9 +394,9 @@ def attach_routes(
         from slack_sdk.web.async_client import AsyncWebClient
 
         from agno.os.interfaces.slack.blocks import (
-            _approval_task_id,
-            _format_decision_title,
             apply_decisions,
+            approval_task_id,
+            format_decision_title,
             parse_submit_payload,
         )
 
@@ -622,10 +622,10 @@ def attach_routes(
                 continue
             if decision.approved is True:
                 continue
-            title = _format_decision_title(decision, req)
+            title = format_decision_title(decision, req)
             decision_chunk = {
                 "type": "task_update",
-                "id": _approval_task_id(decision.requirement_id),
+                "id": approval_task_id(decision.requirement_id),
                 "title": title,
                 "status": "complete",
             }
@@ -692,64 +692,26 @@ def attach_routes(
         if state.paused_event is not None:
             requirements2 = list(getattr(state.paused_event, "active_requirements", None) or [])
             if requirements2:
-                pause_stop_kwargs2: Dict[str, Any] = {}
-                if state.has_content():
-                    pause_stop_kwargs2["markdown_text"] = state.flush()
-                if state.task_cards:
-                    pending_chunks2 = state.resolve_all_pending("pending")
-                    if pending_chunks2:
-                        pause_stop_kwargs2["chunks"] = pending_chunks2
-                try:
-                    await stream.stop(**pause_stop_kwargs2)
-                except Exception as exc:
-                    log_error(
-                        f"[HITL] stream.stop on re-pause failed: run_id={run_id} "
-                        f"slack_error={_slack_err_code(exc)!r} | {exc}"
-                    )
+                from agno.os.interfaces.slack.pause import finalize_pause
 
-                # Refresh registry with the SAME run_id — the continuation
-                # shares the run, only the pending requirement changed.
-                _stream_save(
-                    run_id,
-                    LiveStream(
-                        channel=live.channel,
-                        thread_ts=live.thread_ts,
-                        recipient_user_id=live.recipient_user_id,
-                        recipient_team_id=live.recipient_team_id,
-                        task_display_mode=live.task_display_mode,
-                        buffer_size=live.buffer_size,
-                    ),
+                await finalize_pause(
+                    client=client,
+                    stream=stream,
+                    state=state,
+                    run_id=run_id,
+                    channel=live.channel,
+                    thread_ts=live.thread_ts,
+                    recipient_user_id=live.recipient_user_id,
+                    recipient_team_id=live.recipient_team_id,
+                    task_display_mode=live.task_display_mode,
+                    buffer_size=live.buffer_size,
+                    requirements=requirements2,
+                    stream_save=_stream_save,
+                    stream_get=_stream_get,
+                    post_pause_card=_post_pause_card,
+                    paused_event=state.paused_event,
+                    log_prefix="re-",
                 )
-
-                from agno.os.interfaces.slack.blocks import _tool_name, classify_requirement
-
-                pause_labels2: List[str] = []
-                for requirement in requirements2:
-                    kind = classify_requirement(requirement)
-                    tool_name_for_label = _tool_name(requirement)
-                    pause_labels2.append(
-                        {
-                            "confirmation": f"⏸ *Awaiting approval of* `{tool_name_for_label}`…",
-                            "user_input": f"⏸ *Awaiting input for* `{tool_name_for_label}`…",
-                            "user_feedback": "⏸ *Awaiting feedback*…",
-                            "external_execution": f"⏸ *Awaiting output for* `{tool_name_for_label}`…",
-                        }[kind]
-                    )
-                if pause_labels2:
-                    try:
-                        awaiting_resp2 = await client.chat_postMessage(
-                            channel=live.channel,
-                            thread_ts=live.thread_ts,
-                            text="\n".join(pause_labels2),
-                            mrkdwn=True,
-                        )
-                        saved_live2 = _stream_get(run_id)
-                        if saved_live2 is not None:
-                            saved_live2.awaiting_message_ts = awaiting_resp2.get("ts")
-                    except Exception as exc:
-                        log_error(f"[HITL] chat_postMessage (awaiting indicator, re-pause) failed: {exc}")
-
-                await _post_pause_card(client, state.paused_event, live.channel, live.thread_ts)
                 paused_again = True
 
         if not paused_again:
@@ -1075,76 +1037,25 @@ def attach_routes(
                 pause_run_id = getattr(state.paused_event, "run_id", None)
                 requirements = list(getattr(state.paused_event, "active_requirements", None) or [])
                 if pause_run_id and requirements:
-                    pause_stop_kwargs: Dict[str, Any] = {}
-                    if state.has_content():
-                        pause_stop_kwargs["markdown_text"] = state.flush()
-                    if state.task_cards:
-                        pending_chunks = state.resolve_all_pending("pending")
-                        if pending_chunks:
-                            pause_stop_kwargs["chunks"] = pending_chunks
-                    try:
-                        await stream.stop(**pause_stop_kwargs)
-                    except Exception as exc:
-                        log_error(
-                            f"[HITL] stream.stop on pause failed: run_id={pause_run_id} "
-                            f"slack_error={_slack_err_code(exc)!r} | {exc}"
-                        )
-                    _stream_save(
-                        pause_run_id,
-                        LiveStream(
-                            channel=ctx["channel_id"],
-                            thread_ts=ctx["thread_id"],
-                            recipient_user_id=user_id,
-                            recipient_team_id=team_id,
-                            task_display_mode=task_display_mode,
-                            buffer_size=buffer_size,
-                        ),
+                    from agno.os.interfaces.slack.pause import finalize_pause
+
+                    await finalize_pause(
+                        client=async_client,
+                        stream=stream,
+                        state=state,
+                        run_id=pause_run_id,
+                        channel=ctx["channel_id"],
+                        thread_ts=ctx["thread_id"],
+                        recipient_user_id=user_id,
+                        recipient_team_id=team_id,
+                        task_display_mode=task_display_mode,
+                        buffer_size=buffer_size,
+                        requirements=requirements,
+                        stream_save=_stream_save,
+                        stream_get=_stream_get,
+                        post_pause_card=_post_pause_card,
+                        paused_event=state.paused_event,
                     )
-                    log_info(f"[HITL] pause saved: run_id={pause_run_id} channel={ctx['channel_id']}")
-
-                    # Post the "⏸ Awaiting approval of <tool>…" indicator as a
-                    # standalone message so the row-click handler can delete it
-                    # without touching the streamed pre-pause bubble (Thinking
-                    # + prior tool-call cards). Built here from the paused
-                    # event because events.py:_on_run_paused intentionally no
-                    # longer streams the indicator into the bubble.
-                    from agno.os.interfaces.slack.blocks import _tool_name, classify_requirement
-
-                    pause_labels: List[str] = []
-                    for requirement in requirements:
-                        kind = classify_requirement(requirement)
-                        tool_name_for_label = _tool_name(requirement)
-                        pause_labels.append(
-                            {
-                                "confirmation": f"⏸ *Awaiting approval of* `{tool_name_for_label}`…",
-                                "user_input": f"⏸ *Awaiting input for* `{tool_name_for_label}`…",
-                                "user_feedback": "⏸ *Awaiting feedback*…",
-                                "external_execution": f"⏸ *Awaiting output for* `{tool_name_for_label}`…",
-                            }[kind]
-                        )
-                    if pause_labels:
-                        try:
-                            awaiting_resp = await async_client.chat_postMessage(
-                                channel=ctx["channel_id"],
-                                thread_ts=ctx["thread_id"],
-                                text="\n".join(pause_labels),
-                                mrkdwn=True,
-                            )
-                            saved_live = _stream_get(pause_run_id)
-                            if saved_live is not None:
-                                saved_live.awaiting_message_ts = awaiting_resp.get("ts")
-                        except Exception as exc:
-                            log_error(f"[HITL] chat_postMessage (awaiting indicator) failed: {exc}")
-
-                    try:
-                        await _post_pause_card(
-                            async_client,
-                            state.paused_event,
-                            ctx["channel_id"],
-                            ctx["thread_id"],
-                        )
-                    except Exception as exc:
-                        log_error(f"[HITL] Failed to post Card block: {exc}")
                     return
 
             try:
@@ -1164,7 +1075,7 @@ def attach_routes(
                 is_msg_too_long = "msg_too_long" in str(e)
             if not is_msg_too_long:
                 log_error(
-                    f"Error streaming slack response [channel={ctx['channel_id']}, thread={ctx['thread_id']}, user={user_id}]"
+                    f"Error streaming slack response [channel={ctx['channel_id']}, thread={ctx['thread_id']}, user={user_id}]: {e}"
                 )
             try:
                 await async_client.assistant_threads_setStatus(

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
+
+if TYPE_CHECKING:
+    from agno.run.requirement import RunRequirement
 
 PauseType = Literal["confirmation", "user_input", "user_feedback", "external_execution"]
 
@@ -73,3 +76,19 @@ def parse_row_block_id(block_id: str) -> Optional[Dict[str, str]]:
 
 def pause_block_id(approval_id: str) -> str:
     return f"{PAUSE_BLOCK_PREFIX}:{approval_id}"
+
+
+def _truncate(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
+
+
+def _tool_name(requirement: "RunRequirement") -> str:
+    tool = requirement.tool_execution
+    return getattr(tool, "tool_name", None) or "tool"
+
+
+def _tool_args(requirement: "RunRequirement") -> Dict[str, Any]:
+    tool = requirement.tool_execution
+    return getattr(tool, "tool_args", None) or {}
