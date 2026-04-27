@@ -379,3 +379,78 @@ def build_pause_message(
 
 def approval_task_id(req_id: str) -> str:
     return f"approval:{req_id}"
+
+
+def response_blocks(
+    original_blocks: List[Dict[str, Any]],
+    state_values: Dict[str, Dict[str, Any]],
+    requirements: List[RunRequirement],
+) -> List[Dict[str, Any]]:
+    """Convert interactive form blocks into readonly response display.
+
+    Takes Slack input blocks + submitted values and returns sealed blocks
+    showing what the user submitted. Used as audit trail after form submission.
+    """
+    preserved: List[Dict[str, Any]] = []
+    submissions: List[Dict[str, Any]] = []
+
+    for block in original_blocks:
+        btype = block.get("type")
+
+        if btype == "actions":
+            continue
+
+        if btype == "card":
+            preserved.append({k: v for k, v in block.items() if k != "actions"})
+            continue
+
+        if btype != "input":
+            preserved.append(block)
+            continue
+
+        label = (block.get("label") or {}).get("text", "")
+        element = block.get("element") or {}
+        block_id = block.get("block_id", "")
+        action_id = element.get("action_id", "")
+        etype = element.get("type")
+
+        submitted = (state_values.get(block_id) or {}).get(action_id) or {}
+
+        if etype == "plain_text_input":
+            value = submitted.get("value") or "_(empty)_"
+        elif etype == "static_select":
+            opt = submitted.get("selected_option") or {}
+            value = (opt.get("text") or {}).get("text") or opt.get("value") or "_(none)_"
+        elif etype in ("checkboxes", "multi_static_select"):
+            opts = submitted.get("selected_options") or []
+            labels = [((o.get("text") or {}).get("text") or o.get("value") or "") for o in opts]
+            value = ", ".join(labels) if labels else "_(none)_"
+        else:
+            value = "_(submitted)_"
+
+        submissions.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*{label}*\n{value}"},
+            }
+        )
+
+    if not submissions:
+        return preserved
+
+    body_lines = [(s.get("text") or {}).get("text", "") for s in submissions]
+
+    card_title = "Submitted"
+    for req in requirements:
+        tool = _tool_name(req)
+        if tool:
+            card_title = tool
+            break
+
+    submission_card: Dict[str, Any] = {
+        "type": "card",
+        "title": {"type": "mrkdwn", "text": card_title},
+        "body": {"type": "mrkdwn", "text": "\n\n".join(body_lines)},
+    }
+
+    return preserved + [submission_card]

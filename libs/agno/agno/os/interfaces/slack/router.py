@@ -444,92 +444,13 @@ def attach_routes(
 
         apply_decisions(decisions, requirements)
 
-        # Lock the Card: drop the Submit button and convert each interactive
-        # input into a read-only section showing label + selected value. This
-        # mirrors how _handle_row_click handles Approve/Deny — the submitted
-        # selections stay visible as an audit trail, but the user can't
-        # re-submit or mutate them. Skipped when there are no input blocks
-        # (the synthetic payload from _handle_row_click has only a marker
-        # section, and _handle_row_click already did its own chat_update).
+        # Lock the form: convert interactive inputs to readonly display
         original_blocks = list((payload.get("message") or {}).get("blocks") or [])
         if any(b.get("type") == "input" for b in original_blocks):
+            from agno.os.interfaces.slack.builders import response_blocks
+
             state_values = (payload.get("state") or {}).get("values") or {}
-            # Preserve any non-input, non-actions blocks that were part of
-            # the original message (e.g., a `card` header block for the
-            # confirmation arm of a mixed-requirement pause, or dividers).
-            # Submitted-input sections go into the body of a NEW card so
-            # the user sees a bordered/styled container instead of loose
-            # text rows.
-            preserved_blocks: List[Dict[str, Any]] = []
-            submission_sections: List[Dict[str, Any]] = []
-            for block in original_blocks:
-                btype = block.get("type")
-                if btype == "actions":
-                    continue
-                if btype == "input":
-                    label_text = (block.get("label") or {}).get("text", "")
-                    element = block.get("element") or {}
-                    block_id_of_input = block.get("block_id", "")
-                    action_id_of_input = element.get("action_id", "")
-                    etype = element.get("type")
-                    submitted = (state_values.get(block_id_of_input) or {}).get(action_id_of_input) or {}
-                    if etype == "plain_text_input":
-                        value_str = submitted.get("value") or "_(empty)_"
-                    elif etype == "static_select":
-                        selected_option = submitted.get("selected_option") or {}
-                        value_str = (
-                            (selected_option.get("text") or {}).get("text")
-                            or selected_option.get("value")
-                            or "_(none)_"
-                        )
-                    elif etype in ("checkboxes", "multi_static_select"):
-                        selected_options = submitted.get("selected_options") or []
-                        labels = [
-                            ((opt.get("text") or {}).get("text") or opt.get("value") or "") for opt in selected_options
-                        ]
-                        value_str = ", ".join(labels) if labels else "_(none)_"
-                    else:
-                        value_str = "_(submitted)_"
-                    submission_sections.append(
-                        {
-                            "type": "section",
-                            "text": {"type": "mrkdwn", "text": f"*{label_text}*\n{value_str}"},
-                        }
-                    )
-                elif btype == "card":
-                    # Strip any actions from the existing card so its buttons
-                    # can't fire again, but keep its title/subtitle/body/icon
-                    # as-is for the audit trail.
-                    preserved_blocks.append({k: v for k, v in block.items() if k != "actions"})
-                else:
-                    preserved_blocks.append(block)
-
-            # Slack's card block takes `body` as a SINGLE mrkdwn object
-            # (not an array). title holds the tool name that was responded
-            # to, body holds all the question/answer rows joined with blank
-            # lines between them. This gives one bordered container with
-            # every field visible, unlike subtitle which truncates ~75 chars.
-            from agno.os.interfaces.slack.types import _tool_name as _tool_name_helper
-
-            body_lines: List[str] = []
-            for sec in submission_sections:
-                body_lines.append((sec.get("text") or {}).get("text", ""))
-            # Title: the paused tool name, so the user sees what they
-            # responded to (e.g. "ask_user", "open_ticket"). Falls back to
-            # the generic "Submitted" if no requirement metadata is present.
-            card_title = "Submitted"
-            for req_for_title in requirements:
-                tool_for_title = _tool_name_helper(req_for_title)
-                if tool_for_title:
-                    card_title = tool_for_title
-                    break
-            submission_card: Dict[str, Any] = {
-                "type": "card",
-                "title": {"type": "mrkdwn", "text": card_title},
-                "body": {"type": "mrkdwn", "text": "\n\n".join(body_lines)},
-            }
-            readonly_blocks = preserved_blocks + [submission_card]
-
+            readonly_blocks = response_blocks(original_blocks, state_values, requirements)
             try:
                 await client.chat_update(
                     channel=channel,
