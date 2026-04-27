@@ -1,31 +1,20 @@
 """
-GitHub Context Provider
-=======================
+GitHub Context Provider — read repos and open PRs via natural language.
 
-GitHubContextProvider exposes two tools to the calling agent:
+Tools exposed:
+    query_<id>(question)   Read files, search content, inspect git history
+    update_<id>(instruction)   Edit files and open a pull request
 
-- `query_<id>(question)` — read a GitHub repo: navigate files, search
-  content, inspect git history. Backed by a sub-agent with read-only
-  Workspace + git tools, scoped to a local clone.
-- `update_<id>(instruction)` — make a change and open a pull request.
-  Backed by a sub-agent with full Workspace + git tools, scoped to a
-  per-session worktree on a `<prefix>/<task>` branch. The agent can
-  never push to the default branch — branch-prefix safety enforces it.
-
-This cookbook always runs the read prompt against a public repo. If
-you set `GITHUB_WRITE_REPO=owner/yours` (a repo you own and don't mind
-a tiny PR landing in) it also runs a write prompt that opens a PR
-adding a noop line to a file. Without it, the write demo is skipped
-so a casual `python cookbook/12_context/12_github.py` never spams a
-real repo.
+The read demo always runs against agno-agi/agno (public).
+The write demo only runs if you set GITHUB_WRITE_REPO.
 
 Requires:
     OPENAI_API_KEY
-    gh                 (GitHub CLI on PATH; only needed for the write demo)
 
-    Optional:
-    GITHUB_TOKEN       (required for private repos and for writes)
-    GITHUB_WRITE_REPO  (e.g. `your-name/scratch`) — opt in to the write demo
+Optional:
+    GITHUB_TOKEN        For private repos and push access
+    GITHUB_WRITE_REPO   e.g. "your-name/scratch" to enable the write demo
+    gh                  GitHub CLI, only needed for PR creation
 """
 
 from __future__ import annotations
