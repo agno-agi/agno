@@ -134,7 +134,32 @@ agent_content_search = Agent(
     markdown=True,
 )
 
-# Example 6: Default exclusions skip noise directories (.venv, .git, __pycache__,
+# Example 6: String-based edits via edit_file. The agent must read a file fully
+# before editing it (the toolkit tracks this), and if the file changes on disk
+# between the read and the edit, the edit is rejected — the agent has to
+# re-read. This mirrors the read-before-edit discipline of modern coding
+# agents. Pass replace_all=True to rewrite every occurrence; otherwise the
+# match must be unique so the agent adds surrounding context to disambiguate.
+agent_editor = Agent(
+    tools=[
+        FileTools(
+            Path("tmp/file"),
+            enable_read_file=True,
+            enable_edit_file=True,
+            enable_save_file=True,
+            enable_list_files=True,
+        )
+    ],
+    description="You are a precise file editor that applies targeted string replacements.",
+    instructions=[
+        "Always read a file before editing it",
+        "When editing, choose old_text with enough surrounding context to be unique",
+        "Prefer edit_file over rewriting the whole file",
+    ],
+    markdown=True,
+)
+
+# Example 7: Default exclusions skip noise directories (.venv, .git, __pycache__,
 # node_modules, build artifacts, etc.) so agents don't waste context on installed
 # packages or VCS metadata. See DEFAULT_EXCLUDE_PATTERNS for the full list.
 agent_default_exclusions = Agent(
@@ -154,7 +179,7 @@ agent_default_exclusions = Agent(
     markdown=True,
 )
 
-# Example 7: Custom exclusions - start from DEFAULT_EXCLUDE_PATTERNS and remove
+# Example 8: Custom exclusions - start from DEFAULT_EXCLUDE_PATTERNS and remove
 # the entries you want visible. Future additions to the default list apply
 # automatically. Here we keep the defaults but unhide .venv so the agent can
 # inspect installed packages.
@@ -179,7 +204,7 @@ agent_can_read_venv = Agent(
     markdown=True,
 )
 
-# Example 8: Full opt-out with exclude_patterns=[]. Every file becomes visible,
+# Example 9: Full opt-out with exclude_patterns=[]. Every file becomes visible,
 # including .git internals. Use only when you need forensic access to the tree.
 agent_sees_everything = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
@@ -231,6 +256,13 @@ if __name__ == "__main__":
     print("\n=== Content Search Example ===")
     agent_content_search.print_response(
         "Search inside all files for the word 'Python' and summarize what you find",
+        markdown=True,
+    )
+
+    print("\n=== Targeted Edit Example ===")
+    agent_editor.print_response(
+        "Read 'python_guide.txt', then replace the phrase 'best practices' with "
+        "'core principles' in it. Confirm the change.",
         markdown=True,
     )
 
