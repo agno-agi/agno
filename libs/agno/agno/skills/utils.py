@@ -9,13 +9,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
+from agno.exceptions import PathSecurityError
+from agno.utils.path_safety import safe_join_subpath
+
 
 def is_safe_path(base_dir: Path, requested_path: str) -> bool:
     """Check if the requested path stays within the base directory.
 
-    This prevents path traversal attacks where a malicious path like
-    '../../../etc/passwd' could be used to access files outside the
-    intended directory.
+    Wraps ``agno.utils.path_safety.safe_join_subpath``. Multi-segment paths
+    are preserved (``subdir/file.txt`` resolves to ``base_dir/subdir/file.txt``);
+    traversal and control-char inputs are rejected. Returns False on any
+    rejection.
 
     Args:
         base_dir: The base directory that the path must stay within.
@@ -25,10 +29,9 @@ def is_safe_path(base_dir: Path, requested_path: str) -> bool:
         True if the path is safe (stays within base_dir), False otherwise.
     """
     try:
-        full_path = (base_dir / requested_path).resolve()
-        base_resolved = base_dir.resolve()
-        return full_path.is_relative_to(base_resolved)
-    except (ValueError, OSError):
+        safe_join_subpath(base_dir, requested_path)
+        return True
+    except (PathSecurityError, OSError):
         return False
 
 

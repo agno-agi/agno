@@ -3,8 +3,10 @@ from inspect import iscoroutinefunction
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
+from agno.exceptions import PathSecurityError
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.path_safety import safe_join_subpath
 
 
 class Toolkit:
@@ -348,32 +350,36 @@ class Toolkit:
     def _check_path(self, file_name: str, base_dir: Path, restrict_to_base_dir: bool = True) -> Tuple[bool, Path]:
         """Check if the file path is within the base directory.
 
-        This method validates that a given file path resolves to a location
-        within the specified base_dir, preventing directory traversal attacks.
+        Path-safety is delegated to ``agno.utils.path_safety.safe_join_subpath``,
+        which preserves multi-segment paths (subdir/file.txt), NFKC-normalizes
+        input, rejects control characters, resolves both base and target
+        before containment check (defeats symlinked base_dir bypasses).
 
         Args:
             file_name: The file name or relative path to check.
             base_dir: The base directory to validate against.
-            restrict_to_base_dir: If True, reject paths outside base_dir.
+            restrict_to_base_dir: If True (default), enforce containment via
+                safe_join_subpath. If False, return resolved path without
+                containment check (escape-hatch for callers that intentionally
+                allow paths outside base_dir).
 
         Returns:
-            Tuple of (is_safe, resolved_path). If not safe, returns base_dir as the path.
+            Tuple of (is_safe, resolved_path). On rejection, returns
+            (False, base_dir) — same contract as before migration.
         """
-        file_path = base_dir.joinpath(file_name).resolve()
-
         if not restrict_to_base_dir:
-            return True, file_path
-
-        if base_dir == file_path:
-            return True, file_path
+            try:
+                resolved = base_dir.joinpath(file_name).resolve()
+                return True, resolved
+            except OSError:
+                return False, base_dir
 
         try:
-            file_path.relative_to(base_dir)
-        except ValueError as e:
-            log_error(f"Path escapes base directory: {file_name}: {str(e)}")
+            resolved_path = safe_join_subpath(base_dir, file_name)
+            return True, resolved_path
+        except (PathSecurityError, OSError) as e:
+            log_error(f"_check_path rejected {file_name!r}: {e}")
             return False, base_dir
-
-        return True, file_path
 
     def __repr__(self):
         return f"<{self.__class__.__name__} name={self.name} functions={list(self.functions.keys())}>"
