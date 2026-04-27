@@ -21,7 +21,8 @@ from typing import TYPE_CHECKING, Optional
 
 from agno.agent import Agent
 from agno.context._utils import answer_from_run
-from agno.context.github.tools import GitReadTools, GitWriteTools, _run_git
+from agno.context.github._utils import _run_git
+from agno.context.github.tools import GitReadTools, GitWriteTools
 from agno.context.mode import ContextMode
 from agno.context.provider import Answer, ContextProvider, Status
 from agno.run import RunContext

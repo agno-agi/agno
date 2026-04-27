@@ -22,6 +22,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, List, Optional
 
+from agno.context.github._utils import _run_git
 from agno.tools import Toolkit
 from agno.utils.log import log_warning
 
@@ -32,24 +33,6 @@ def _truncate(output: str, limit: int) -> str:
     if len(output) > limit:
         return output[:limit] + f"\n\n... [truncated — output exceeds {limit} chars]"
     return output
-
-
-def _run_git(
-    args: List[str],
-    *,
-    cwd: Path,
-    timeout: int = 60,
-    env: Optional[dict] = None,
-) -> subprocess.CompletedProcess[str]:
-    """Run a git command with capture + timeout. Never raises on non-zero exit."""
-    return subprocess.run(
-        ["git", *args],
-        capture_output=True,
-        text=True,
-        cwd=str(cwd),
-        timeout=timeout,
-        env=env,
-    )
 
 
 class GitReadTools(Toolkit):
