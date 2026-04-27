@@ -1026,3 +1026,73 @@ async def test_output_check_error_propagates_to_caller_async():
         await agent.arun(input="Tell me something")
 
     assert "Async output validation failed" in str(exc_info.value)
+
+
+def test_output_check_error_propagates_in_stream():
+    """Test that OutputCheckError propagates to caller during sync streaming."""
+
+    def output_validation_hook(run_output):
+        raise OutputCheckError("Stream output validation failed", check_trigger=CheckTrigger.OUTPUT_NOT_ALLOWED)
+
+    agent = create_test_agent(
+        post_hooks=[output_validation_hook],
+        model_response_content="inappropriate content",
+    )
+
+    with pytest.raises(OutputCheckError) as exc_info:
+        for _ in agent.run(input="Tell me something", stream=True):
+            pass
+
+    assert "Stream output validation failed" in str(exc_info.value)
+
+
+def test_input_check_error_propagates_in_stream():
+    """Test that InputCheckError propagates to caller during sync streaming."""
+
+    def input_validation_hook(run_input):
+        if isinstance(run_input.input_content, str) and "forbidden" in run_input.input_content.lower():
+            raise InputCheckError("Stream input validation failed", check_trigger=CheckTrigger.INPUT_NOT_ALLOWED)
+
+    agent = create_test_agent(pre_hooks=[input_validation_hook])
+
+    with pytest.raises(InputCheckError) as exc_info:
+        for _ in agent.run(input="This is forbidden content", stream=True):
+            pass
+
+    assert "Stream input validation failed" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_output_check_error_propagates_in_async_stream():
+    """Test that OutputCheckError propagates to caller during async streaming."""
+
+    def output_validation_hook(run_output):
+        raise OutputCheckError("Async stream output validation failed", check_trigger=CheckTrigger.OUTPUT_NOT_ALLOWED)
+
+    agent = create_test_agent(
+        post_hooks=[output_validation_hook],
+        model_response_content="inappropriate content",
+    )
+
+    with pytest.raises(OutputCheckError) as exc_info:
+        async for _ in agent.arun(input="Tell me something", stream=True):
+            pass
+
+    assert "Async stream output validation failed" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_input_check_error_propagates_in_async_stream():
+    """Test that InputCheckError propagates to caller during async streaming."""
+
+    def input_validation_hook(run_input):
+        if isinstance(run_input.input_content, str) and "forbidden" in run_input.input_content.lower():
+            raise InputCheckError("Async stream input validation failed", check_trigger=CheckTrigger.INPUT_NOT_ALLOWED)
+
+    agent = create_test_agent(pre_hooks=[input_validation_hook])
+
+    with pytest.raises(InputCheckError) as exc_info:
+        async for _ in agent.arun(input="This is forbidden content", stream=True):
+            pass
+
+    assert "Async stream input validation failed" in str(exc_info.value)
