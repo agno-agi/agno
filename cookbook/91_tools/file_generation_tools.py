@@ -2,6 +2,10 @@
 File Generation Tool Example
 This cookbook shows how to use the FileGenerationTool to generate various file types (JSON, CSV, PDF, TXT).
 The tool can generate files from agent responses and make them available for download or further processing.
+
+When ``output_directory`` is set, FileGenerationTools sanitizes filenames to
+prevent path traversal, rejects symlink-escape attempts, and persists files
+only inside the configured directory. The directory is auto-created if missing.
 """
 
 from agno.agent import Agent
