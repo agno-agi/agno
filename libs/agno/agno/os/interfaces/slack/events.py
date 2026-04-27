@@ -296,7 +296,7 @@ async def _on_run_paused(chunk: BaseRunOutputEvent, state: StreamState, stream: 
     # and pause directly — without this explicit emit, their bubble has no
     # plan block and Slack's AI-Stream UI collapses the pairing, hiding
     # the user's trigger from the thread pane.
-    from agno.os.interfaces.slack.blocks import _tool_name  # local import — blocks → events cycle
+    from agno.os.interfaces.slack.types import _tool_name
 
     requirements = list(getattr(chunk, "active_requirements", None) or [])
     for req in requirements:

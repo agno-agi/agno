@@ -393,9 +393,9 @@ def attach_routes(
         """
         from slack_sdk.web.async_client import AsyncWebClient
 
-        from agno.os.interfaces.slack.blocks import (
+        from agno.os.interfaces.slack.builders import approval_task_id
+        from agno.os.interfaces.slack.parsers import (
             apply_decisions,
-            approval_task_id,
             format_decision_title,
             parse_submit_payload,
         )
@@ -530,7 +530,7 @@ def attach_routes(
             # to, body holds all the question/answer rows joined with blank
             # lines between them. This gives one bordered container with
             # every field visible, unlike subtitle which truncates ~75 chars.
-            from agno.os.interfaces.slack.blocks import _tool_name as _tool_name_helper
+            from agno.os.interfaces.slack.types import _tool_name as _tool_name_helper
 
             body_lines: List[str] = []
             for sec in submission_sections:

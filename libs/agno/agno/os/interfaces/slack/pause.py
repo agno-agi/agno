@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from agno.os.interfaces.slack.blocks import _tool_name, classify_requirement
-from agno.os.interfaces.slack.types import LiveStream
+from agno.os.interfaces.slack.builders import classify_requirement
+from agno.os.interfaces.slack.types import LiveStream, _tool_name
 from agno.utils.log import log_error, log_info
 
 if TYPE_CHECKING:
