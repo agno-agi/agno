@@ -102,21 +102,22 @@ def test_symlink_pointing_outside_rejected():
             tool._save_file_to_disk("payload", "escape")
 
 
-def test_security_violation_logs_warning():
-    """Security violations should emit a warning log for ops visibility."""
+def test_security_violation_logs_error():
+    """Security violations should emit an error log for ops visibility."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        with patch("agno.tools.file_generation.log_warning") as mock_log_warning:
+        with patch("agno.tools.file_generation.log_error") as mock_log_error:
             with pytest.raises(FileGenerationSecurityError):
                 tool._save_file_to_disk("payload", "..")
-        mock_log_warning.assert_called_once()
-        assert "Security violation" in str(mock_log_warning.call_args)
+        mock_log_error.assert_called_once()
+        assert "Security violation" in str(mock_log_error.call_args)
 
 
 def test_no_output_directory_returns_none_filepath():
     """When output_directory is not set, no disk write happens (existing behavior preserved)."""
     tool = FileGenerationTools()
     result = tool.generate_json_file({"x": 1}, filename="report.json")
+    assert result.files is not None
     assert result.files[0].filepath is None
     assert result.files[0].content is not None
 
@@ -160,3 +161,20 @@ def test_generate_csv_file_control_char_returns_error():
         tool = FileGenerationTools(output_directory=tmp_dir)
         result = tool.generate_csv_file([{"a": 1}], filename="\n")
         assert "Error" in result.content
+
+
+def test_pure_dot_filename_rejected():
+    """Filename '...' must raise FileGenerationSecurityError after rstrip('. ')."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tool = FileGenerationTools(output_directory=tmp_dir)
+        with pytest.raises(FileGenerationSecurityError, match="Invalid filename"):
+            tool._save_file_to_disk("payload", "...")
+
+
+def test_url_encoded_traversal_rejected():
+    """URL-encoded traversal ('%2e%2e/...') must land inside output_directory."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool._save_file_to_disk("payload", "%2e%2e/escape")
+        assert (Path(tmp_dir) / "escape").exists()
+        assert not (Path(tmp_dir).parent / "escape").exists()

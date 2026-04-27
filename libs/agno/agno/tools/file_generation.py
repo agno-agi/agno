@@ -9,7 +9,7 @@ from agno.exceptions import FileGenerationSecurityError
 from agno.media import File
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_warning, logger
 
 try:
     from reportlab.lib.pagesizes import letter
@@ -79,16 +79,17 @@ class FileGenerationTools(Toolkit):
         if not self.output_directory:
             return None
 
+        # NOTE: pre-migration; replaced by safe_join in path-safety centralization.
         # Sanitize filename — strip path components to prevent traversal
         safe_filename = Path(filename).name
         # Reject control chars (CWE-117 log injection prevention)
         if any(ord(c) < 32 for c in safe_filename):
-            log_warning(f"Security violation: control char in filename {filename!r}")
+            log_error(f"Security violation: control char in filename {filename!r}")
             raise FileGenerationSecurityError(f"Invalid filename (control chars): {filename!r}")
         # Trim trailing dots/spaces (CWE-42/46, Windows MagicDot)
         safe_filename = safe_filename.rstrip(". ")
         if not safe_filename.strip() or safe_filename in (".", ".."):
-            log_warning(f"Security violation: invalid filename {filename!r}")
+            log_error(f"Security violation: invalid filename {filename!r}")
             raise FileGenerationSecurityError(f"Invalid filename after sanitization: {filename!r}")
 
         file_path = self.output_directory / safe_filename
@@ -97,7 +98,7 @@ class FileGenerationTools(Toolkit):
         resolved_file = file_path.resolve()
         resolved_dir = self.output_directory.resolve()
         if not resolved_file.is_relative_to(resolved_dir):
-            log_warning(f"Security violation: path {filename!r} resolves outside output_directory")
+            log_error(f"Security violation: path {filename!r} resolves outside output_directory")
             raise FileGenerationSecurityError(
                 f"Filename {filename!r} resolves outside output_directory (possible symlink escape)"
             )
