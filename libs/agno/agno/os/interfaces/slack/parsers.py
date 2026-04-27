@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Type
 
 from agno.os.interfaces.slack.builders import classify_requirement
 from agno.os.interfaces.slack.types import (
@@ -21,65 +21,71 @@ from agno.run.requirement import RunRequirement
 DECISION_TITLE_MAX = 120
 DECISION_VALUE_MAX = 40
 
-StateValues = Dict[str, Dict[str, Any]]
+SlackState = Dict[str, Dict[str, Any]]
+SlackBlocks = List[Dict[str, Any]]
 
 
-def _type_name(field_type: Any) -> str:
-    return field_type.__name__ if isinstance(field_type, type) else str(field_type)
+# --- Type Coercion ---
+# Slack form inputs are always strings. These convert to the schema's expected type.
 
 
-def _coerce_input_value(raw: Optional[str], field_type: Any) -> Any:
+def _coerce_json(raw: str, expected: Type) -> Any:
+    parsed = json.loads(raw)
+    if not isinstance(parsed, expected):
+        raise ValueError(f"expected {expected.__name__}, got {type(parsed).__name__}")
+    return parsed
+
+
+_COERCERS: Dict[Type, Callable[[str], Any]] = {
+    str: lambda v: v,
+    int: int,
+    float: float,
+    bool: lambda v: v.lower() in ("true", "1", "yes"),
+    list: lambda v: _coerce_json(v, list),
+    dict: lambda v: _coerce_json(v, dict),
+}
+
+
+def coerce_to_type(raw: Optional[str], target_type: Type) -> Any:
     if not raw:
         return None
-
-    type_name = _type_name(field_type)
-    if type_name == "str":
+    coercer = _COERCERS.get(target_type)
+    if coercer is None:
         return raw
-    if type_name == "int":
-        return int(raw)
-    if type_name == "float":
-        return float(raw)
-    if type_name == "bool":
-        return raw.lower() in {"true", "1", "yes", "y"}
-    if type_name == "list":
-        parsed = json.loads(raw)
-        if not isinstance(parsed, list):
-            raise ValueError(f"expected list, got {type(parsed).__name__}")
-        return parsed
-    if type_name == "dict":
-        parsed = json.loads(raw)
-        if not isinstance(parsed, dict):
-            raise ValueError(f"expected dict, got {type(parsed).__name__}")
-        return parsed
-    return raw
+    return coercer(raw)
 
 
-def _get_action_state(state_values: StateValues, block_id: str, action_id: str) -> Dict[str, Any]:
-    return (state_values.get(block_id) or {}).get(action_id) or {}
+# --- Slack State Extraction ---
+# Helpers to pull values from Slack's nested state structure.
 
 
-def _single_value(action_state: Dict[str, Any]) -> Optional[str]:
+def _get_action_state(state: SlackState, block_id: str, action_id: str) -> Dict[str, Any]:
+    return state.get(block_id, {}).get(action_id, {})
+
+
+def _extract_text_value(action_state: Dict[str, Any]) -> Optional[str]:
     if action_state.get("type") == "static_select":
         return (action_state.get("selected_option") or {}).get("value")
     return action_state.get("value")
 
 
-def _selected_values(action_state: Dict[str, Any]) -> List[str]:
+def _extract_selected_values(action_state: Dict[str, Any]) -> List[str]:
     element_type = action_state.get("type")
-
     if element_type == "checkboxes":
-        return [opt.get("value") for opt in action_state.get("selected_options") or [] if opt.get("value")]
-
+        return [opt["value"] for opt in action_state.get("selected_options", []) if opt.get("value")]
     if element_type == "static_select":
-        value = (action_state.get("selected_option") or {}).get("value")
-        return [value] if value else []
-
+        selected = action_state.get("selected_option") or {}
+        return [selected["value"]] if selected.get("value") else []
     return []
 
 
-def _confirmation_decision(message_blocks: List[Dict[str, Any]], requirement_id: str) -> Optional[str]:
-    for block in message_blocks:
-        parsed = parse_row_block_id(block.get("block_id") or "")
+# --- Confirmation Parsing ---
+# Confirmations store decision in block_id: "row:<req_id>:confirmation:decided:<approve|reject>"
+
+
+def _find_confirmation_decision(blocks: SlackBlocks, requirement_id: str) -> Optional[str]:
+    for block in blocks:
+        parsed = parse_row_block_id(block.get("block_id", ""))
         if not parsed:
             continue
         if parsed.get("req_id") != requirement_id:
@@ -91,10 +97,10 @@ def _confirmation_decision(message_blocks: List[Dict[str, Any]], requirement_id:
     return None
 
 
-def _parse_confirmation(requirement: RunRequirement, message_blocks: List[Dict[str, Any]]) -> ParsedDecision:
+def _parse_confirmation(requirement: RunRequirement, blocks: SlackBlocks) -> ParsedDecision:
     req_id = requirement.id or ""
-    decided = _confirmation_decision(message_blocks, req_id)
-    if decided is None:
+    decision = _find_confirmation_decision(blocks, req_id)
+    if decision is None:
         return ParsedDecision(
             requirement_id=req_id,
             pause_type="confirmation",
@@ -104,13 +110,17 @@ def _parse_confirmation(requirement: RunRequirement, message_blocks: List[Dict[s
     return ParsedDecision(
         requirement_id=req_id,
         pause_type="confirmation",
-        approved=decided == "approve",
+        approved=(decision == "approve"),
     )
+
+
+# --- User Input Parsing ---
+# Each field has block_id: "row:<req_id>:user_input:<field_name>"
 
 
 def _parse_user_input(
     requirement: RunRequirement,
-    state_values: StateValues,
+    state: SlackState,
     errors: List[ParseError],
 ) -> ParsedDecision:
     req_id = requirement.id or ""
@@ -120,10 +130,11 @@ def _parse_user_input(
     for field in requirement.user_input_schema or []:
         block_id = f"{row_prefix}:{field.name}"
         action_id = f"{ACTION_INPUT_FIELD_PREFIX}{field.name}"
-        action_state = _get_action_state(state_values, block_id, action_id)
+        action_state = _get_action_state(state, block_id, action_id)
+        raw_value = _extract_text_value(action_state)
 
         try:
-            values[field.name] = _coerce_input_value(_single_value(action_state), field.field_type)
+            values[field.name] = coerce_to_type(raw_value, field.field_type)
         except (ValueError, TypeError) as exc:
             errors.append(ParseError(requirement_id=req_id, field=field.name, message=str(exc)))
             values[field.name] = None
@@ -135,9 +146,13 @@ def _parse_user_input(
     )
 
 
+# --- User Feedback Parsing ---
+# Each question has block_id: "row:<req_id>:user_feedback:q<index>"
+
+
 def _parse_user_feedback(
     requirement: RunRequirement,
-    state_values: StateValues,
+    state: SlackState,
     errors: List[ParseError],
 ) -> ParsedDecision:
     req_id = requirement.id or ""
@@ -147,11 +162,11 @@ def _parse_user_feedback(
     for index, question in enumerate(requirement.user_feedback_schema or []):
         block_id = f"{row_prefix}:q{index}"
         action_id = f"{ACTION_FEEDBACK_SELECT}:{index}"
-        picked = _selected_values(_get_action_state(state_values, block_id, action_id))
+        action_state = _get_action_state(state, block_id, action_id)
+        picked = _extract_selected_values(action_state)
 
         if not picked:
             errors.append(ParseError(requirement_id=req_id, field=question.question, message="No option selected"))
-
         selections[question.question] = picked
 
     return ParsedDecision(
@@ -161,14 +176,18 @@ def _parse_user_feedback(
     )
 
 
+# --- External Execution Parsing ---
+# Result field has block_id: "row:<req_id>:external_execution:result"
+
+
 def _parse_external(
     requirement: RunRequirement,
-    state_values: StateValues,
+    state: SlackState,
     errors: List[ParseError],
 ) -> ParsedDecision:
     req_id = requirement.id or ""
     block_id = f"{row_block_id(req_id, 'external_execution')}:result"
-    action_state = _get_action_state(state_values, block_id, ACTION_EXTERNAL_RESULT)
+    action_state = _get_action_state(state, block_id, ACTION_EXTERNAL_RESULT)
     result = (action_state.get("value") or "").strip()
 
     if not result:
@@ -181,12 +200,15 @@ def _parse_external(
     )
 
 
+# --- Main Entry Points ---
+
+
 def parse_submit_payload(
     payload: Dict[str, Any],
     requirements: List[RunRequirement],
 ) -> tuple[List[ParsedDecision], List[ParseError]]:
-    message_blocks = (payload.get("message") or {}).get("blocks") or []
-    state_values = (payload.get("state") or {}).get("values") or {}
+    blocks: SlackBlocks = (payload.get("message") or {}).get("blocks") or []
+    state: SlackState = (payload.get("state") or {}).get("values") or {}
 
     decisions: List[ParsedDecision] = []
     errors: List[ParseError] = []
@@ -194,25 +216,22 @@ def parse_submit_payload(
     for requirement in requirements:
         kind = classify_requirement(requirement)
         if kind == "confirmation":
-            decisions.append(_parse_confirmation(requirement, message_blocks))
+            decisions.append(_parse_confirmation(requirement, blocks))
         elif kind == "user_input":
-            decisions.append(_parse_user_input(requirement, state_values, errors))
+            decisions.append(_parse_user_input(requirement, state, errors))
         elif kind == "user_feedback":
-            decisions.append(_parse_user_feedback(requirement, state_values, errors))
+            decisions.append(_parse_user_feedback(requirement, state, errors))
         elif kind == "external_execution":
-            decisions.append(_parse_external(requirement, state_values, errors))
+            decisions.append(_parse_external(requirement, state, errors))
 
     return decisions, errors
 
 
-def apply_decisions(
-    decisions: List[ParsedDecision],
-    requirements: List[RunRequirement],
-) -> None:
-    requirements_by_id = {requirement.id: requirement for requirement in requirements if requirement.id}
+def apply_decisions(decisions: List[ParsedDecision], requirements: List[RunRequirement]) -> None:
+    by_id = {r.id: r for r in requirements if r.id}
 
     for decision in decisions:
-        requirement = requirements_by_id.get(decision.requirement_id)
+        requirement = by_id.get(decision.requirement_id)
         if requirement is None:
             continue
 
@@ -229,6 +248,9 @@ def apply_decisions(
             requirement.set_external_execution_result(decision.external_result)
 
 
+# --- Decision Title Formatting ---
+
+
 def _render_value(value: Any) -> str:
     try:
         rendered = value if isinstance(value, str) else json.dumps(value, default=str)
@@ -237,8 +259,8 @@ def _render_value(value: Any) -> str:
     return _truncate(rendered.replace("\n", " ").strip(), DECISION_VALUE_MAX)
 
 
-def _inline_args(args: Dict[str, Any]) -> str:
-    return ", ".join(f"{key}={_render_value(value)}" for key, value in args.items())
+def _format_args(args: Dict[str, Any]) -> str:
+    return ", ".join(f"{k}={_render_value(v)}" for k, v in args.items())
 
 
 def format_decision_title(decision: ParsedDecision, requirement: RunRequirement) -> str:
@@ -246,6 +268,7 @@ def format_decision_title(decision: ParsedDecision, requirement: RunRequirement)
         raise ValueError("format_decision_title only supports confirmation decisions")
 
     verb = "Approved" if decision.approved else "Denied"
-    base = f"{verb}: {_tool_name(requirement)}"
-    inline = _inline_args(_tool_args(requirement))
-    return _truncate(f"{base}({inline})" if inline else base, DECISION_TITLE_MAX)
+    name = _tool_name(requirement)
+    args = _format_args(_tool_args(requirement))
+    title = f"{verb}: {name}({args})" if args else f"{verb}: {name}"
+    return _truncate(title, DECISION_TITLE_MAX)
