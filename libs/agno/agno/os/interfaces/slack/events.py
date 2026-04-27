@@ -15,7 +15,7 @@ Key concepts:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Awaitable, Callable, Dict
+from typing import TYPE_CHECKING, Awaitable, Callable, Dict, List
 
 from agno.agent import RunEvent
 from agno.os.interfaces.slack.helpers import member_name, task_id
@@ -71,6 +71,22 @@ def _extract_tool_ref(chunk: BaseRunOutputEvent, state: StreamState, *, fallback
     return _ToolRef(tid=tid, label=label, errored=errored)
 
 
+def _as_rich_text(text: str) -> dict:
+    # Slack rejects plain strings in task_card details/output slots — the
+    # server-side validator requires a rich_text object even though slack_sdk's
+    # TaskUpdateChunk types output as Optional[str]. See block_kit.py:164-167.
+    # Newlines inside the text render as soft line breaks.
+    return {
+        "type": "rich_text",
+        "elements": [
+            {
+                "type": "rich_text_section",
+                "elements": [{"type": "text", "text": text}],
+            }
+        ],
+    }
+
+
 async def _emit_task(
     stream: AsyncChatStream,
     card_id: str,
@@ -82,7 +98,7 @@ async def _emit_task(
     """Send a task card update to the Slack stream."""
     chunk: dict = {"type": "task_update", "id": card_id, "title": title, "status": status}
     if output:
-        chunk["output"] = output[:200]  # Slack truncates longer task output
+        chunk["output"] = _as_rich_text(output[:200])  # Slack truncates longer task output
     await stream.append(markdown_text="", chunks=[chunk])
 
 
@@ -264,10 +280,54 @@ async def _on_run_error(chunk: BaseRunOutputEvent, state: StreamState, stream: A
 
 
 async def _on_run_paused(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
-    # Stash the pause event so the router can post the Block Kit pause card
-    # after the stream closes (chat_stream can't carry Block Kit payloads).
+    # Stash the event; the router attaches one `card` block per pending
+    # requirement via stream.stop(blocks=...). The card carries the full
+    # approval context (tool name, args, Approve/Deny buttons) and coexists
+    # with the streaming plan above it.
     state.paused_event = chunk
-    state.terminal_status = "complete"
+    # Keep pending task_cards in-progress rather than flipping to complete —
+    # the run isn't finished, it's awaiting human input.
+    state.terminal_status = "in_progress"
+
+    # Emit a "pending" task card for each paused requirement so the plan
+    # block above the awaiting indicator shows WHAT the agent is waiting on.
+    # Regular tool_call_started events create these for normal tools, but
+    # system tools like ask_user (user_feedback) bypass that event stream
+    # and pause directly — without this explicit emit, their bubble has no
+    # plan block and Slack's AI-Stream UI collapses the pairing, hiding
+    # the user's trigger from the thread pane.
+    from agno.os.interfaces.slack.blocks import _tool_name  # local import — blocks → events cycle
+
+    requirements = list(getattr(chunk, "active_requirements", None) or [])
+    for req in requirements:
+        req_id = getattr(req, "id", None) or ""
+        key = f"pause_req_{req_id}"
+        if key in state.task_cards:
+            continue
+        tool_label = _tool_name(req)
+        # Emit as "complete" — semantically "the agent has decided which
+        # tool to invoke, now awaiting human input". A non-complete status
+        # at stream.stop causes Slack's AI-Stream UI to render the bubble
+        # as "Something went wrong" with a red error icon, regardless of
+        # whether we transition to pending. The awaiting indicator and
+        # Card block posted below the bubble carry the actual pause state.
+        state.track_task(key, tool_label, "complete")
+        await _emit_task(stream, key, tool_label, "complete")
+
+    # Fallback placeholder — only if we couldn't emit any task cards (e.g.
+    # requirements empty for some reason) and no prior tool content streamed.
+    # Without at least one non-empty block, Slack's AI-Stream UI collapses
+    # the question+response pairing and hides the trigger.
+    if not state.has_content() and state.stream_chars_sent == 0 and not state.task_cards:
+        await stream.append(markdown_text="_Reviewing request…_")
+
+    # The "⏸ Awaiting approval of <tool>…" indicator is posted by the
+    # router as a SEPARATE chat.postMessage in the same thread (see the
+    # pause path in attach_to_app). Posting it separately means we can
+    # chat.delete just that message once the user decides — preserving
+    # the tool-call audit trail in THIS streamed bubble (Thinking, prior
+    # tool calls) which would otherwise be collateral damage of any
+    # cleanup that targeted the streamed message.
     return True
 
 

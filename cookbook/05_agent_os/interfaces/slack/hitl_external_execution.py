@@ -125,8 +125,6 @@ agent_os = AgentOS(
     interfaces=[
         Slack(
             agent=agent,
-            hitl_enabled=True,
-            approval_authorization="requester_only",
             reply_to_mentions_only=True,
         ),
     ],

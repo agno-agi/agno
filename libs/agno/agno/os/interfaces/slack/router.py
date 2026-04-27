@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import asdict, is_dataclass
 from ssl import SSLContext
 from typing import Any, Dict, List, Literal, Optional, Union
 
@@ -22,9 +23,9 @@ from agno.os.interfaces.slack.helpers import (
     strip_bot_mention,
     upload_response_media_async,
 )
-from agno.os.interfaces.slack.types import LiveStream
 from agno.os.interfaces.slack.security import verify_slack_signature
 from agno.os.interfaces.slack.state import StreamState, TaskStatus
+from agno.os.interfaces.slack.types import LiveStream
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
 from agno.utils.log import log_error, log_info, log_warning
@@ -112,7 +113,7 @@ async def _post_pause_card(
         return None
     try:
         blocks = build_pause_message(run_id, requirements)
-        block_dicts = [b.model_dump(exclude_none=True, mode="json") for b in blocks]
+        block_dicts = [asdict(b) if is_dataclass(b) else b.model_dump(exclude_none=True, mode="json") for b in blocks]
         resp = await async_client.chat_postMessage(
             channel=channel,
             thread_ts=thread_ts,
@@ -144,7 +145,6 @@ def attach_routes(
     max_file_size: int = 1_073_741_824,  # 1GB
     resolve_user_identity: bool = False,
     hitl_enabled: bool = False,
-    approval_authorization: Any = "requester_only",
 ) -> APIRouter:
     # Inner functions capture config via closure to keep each instance isolated
     entity = agent or team or workflow

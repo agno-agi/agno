@@ -205,8 +205,6 @@ agent_os = AgentOS(
     interfaces=[
         Slack(
             agent=agent,
-            hitl_enabled=True,
-            approval_authorization="requester_only",
             reply_to_mentions_only=True,
         ),
     ],
@@ -215,4 +213,4 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    agent_os.serve(app="hitl_incident_commander:app", reload=True)
+    agent_os.serve(app="hitl_incident_commander:app", reload=True, port=7778)

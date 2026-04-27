@@ -1,14 +1,20 @@
 from ssl import SSLContext
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi.routing import APIRouter
 
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.base import BaseInterface
-from agno.os.interfaces.slack.authorization import ApprovalPolicy, assert_hitl_backend
 from agno.os.interfaces.slack.router import attach_routes
 from agno.team import RemoteTeam, Team
 from agno.workflow import RemoteWorkflow, Workflow
+
+
+def _has_confirmation_tools(entity: Any) -> bool:
+    tools = getattr(entity, "tools", None)
+    if not tools:
+        return False
+    return any(getattr(t, "requires_confirmation", False) for t in tools)
 
 
 class Slack(BaseInterface):
@@ -35,8 +41,6 @@ class Slack(BaseInterface):
         buffer_size: int = 100,
         max_file_size: int = 1_073_741_824,  # 1GB
         resolve_user_identity: bool = False,
-        hitl_enabled: bool = False,
-        approval_authorization: ApprovalPolicy = "requester_only",
     ):
         self.agent = agent
         self.team = team
@@ -55,18 +59,12 @@ class Slack(BaseInterface):
         self.buffer_size = buffer_size
         self.max_file_size = max_file_size
         self.resolve_user_identity = resolve_user_identity
-        self.hitl_enabled = hitl_enabled
-        self.approval_authorization = approval_authorization
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Slack requires an agent, team, or workflow")
 
-        if self.hitl_enabled:
-            # Fail-fast at construction rather than at first pause event.
-            entity = self.agent or self.team
-            if entity is None:
-                raise ValueError("hitl_enabled=True requires an Agent or Team (workflow not yet supported)")
-            assert_hitl_backend(getattr(entity, "db", None))
+        entity = self.agent or self.team
+        self._hitl_enabled = entity is not None and _has_confirmation_tools(entity)
 
     def get_router(self) -> APIRouter:
         self.router = attach_routes(
@@ -86,8 +84,7 @@ class Slack(BaseInterface):
             buffer_size=self.buffer_size,
             max_file_size=self.max_file_size,
             resolve_user_identity=self.resolve_user_identity,
-            hitl_enabled=self.hitl_enabled,
-            approval_authorization=self.approval_authorization,
+            hitl_enabled=self._hitl_enabled,
         )
 
         return self.router

@@ -443,9 +443,7 @@ class TestFormatDecisionTitle:
             tool_args={"customer_id": "C-42", "reason": "pricing"},
         )
         decision = ParsedDecision(requirement_id="r1", pause_type="confirmation", approved=True)
-        assert (
-            format_decision_title(decision, req) == "Approved: cancel_subscription(customer_id=C-42, reason=pricing)"
-        )
+        assert format_decision_title(decision, req) == "Approved: cancel_subscription(customer_id=C-42, reason=pricing)"
 
     def test_denied_confirmation_inlines_args(self):
         req = _make_requirement(

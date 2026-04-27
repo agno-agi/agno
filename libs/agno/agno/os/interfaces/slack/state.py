@@ -9,8 +9,12 @@ if TYPE_CHECKING:
     from agno.media import Audio, File, Image, Video
     from agno.run.base import BaseRunOutputEvent
 
-# Literal not Enum — values flow directly into Slack API dicts as plain strings
-TaskStatus = Literal["in_progress", "complete", "error"]
+# Literal not Enum — values flow directly into Slack API dicts as plain strings.
+# "pending" is semantically "queued / awaiting external input"; distinguishing it
+# from "in_progress" ("actively working") matters for HITL pauses — Slack's AI
+# Stream UI treats in_progress cards that outlive the stream idle window as
+# errors, whereas pending cards represent legitimate waits.
+TaskStatus = Literal["pending", "in_progress", "complete", "error"]
 
 
 class TaskUpdateDict(TypedDict):
@@ -64,8 +68,8 @@ class StreamState:
     # (AsyncChatStream only handles task_update chunks, not Block Kit).
     paused_event: Optional["BaseRunOutputEvent"] = None
 
-    def track_task(self, key: str, title: str) -> None:
-        self.task_cards[key] = TaskCard(title=title)
+    def track_task(self, key: str, title: str, status: TaskStatus = "in_progress") -> None:
+        self.task_cards[key] = TaskCard(title=title, status=status)
 
     def complete_task(self, key: str) -> None:
         card = self.task_cards.get(key)
