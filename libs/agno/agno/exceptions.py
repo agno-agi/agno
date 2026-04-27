@@ -260,3 +260,13 @@ class RemoteServerUnavailableError(AgnoError):
         self.original_error = original_error
         self.type = "remote_server_unavailable_error"
         self.error_id = "remote_server_unavailable_error"
+
+
+class FileGenerationSecurityError(Exception):
+    """Exception raised when filename or path validation fails in FileGenerationTools.
+
+    Raised for path-traversal attempts, invalid filenames after sanitization
+    (empty, ".", ".."), and symlink-escape detection.
+    """
+
+    pass
