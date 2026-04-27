@@ -175,6 +175,7 @@ clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
 surrealdb = ["surrealdb>=1.0.4"]
 upstash = ["upstash-vector"]
+valkey = ["valkey-glide-sync>=1.3.4"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
@@ -312,6 +313,7 @@ vectordbs = [
   "agno[upstash]",
   "agno[pylance]",
   "agno[redis]",
+  "agno[valkey]",
 ]
 
 # All knowledge
@@ -586,6 +588,7 @@ module = [
   "surrealdb.*",
   "trafilatura.*",
   "xlrd.*",
-  "celpy.*"
+  "celpy.*",
+  "glide_sync.*"
 ]
 ignore_missing_imports = true
