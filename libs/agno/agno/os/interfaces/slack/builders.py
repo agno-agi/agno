@@ -81,6 +81,8 @@ from agno.os.interfaces.slack.types import (
     _tool_args,
     _tool_name,
     _truncate,
+    encode_row_button_value,
+    encode_submit_button_value,
     pause_block_id,
     row_block_id,
 )
@@ -259,17 +261,20 @@ def _build_feedback_question(req_id: str, question: Any, q_index: int) -> InputB
     )
 
 
-def _build_confirmation_row(requirement: RunRequirement, approval_id: str = "") -> List[Any]:
+def _build_confirmation_row(
+    requirement: RunRequirement, run_id: str = "", awaiting_ts: Optional[str] = None
+) -> List[Any]:
     req_id = requirement.id or ""
     name = _tool_name(requirement)
     args = _tool_args(requirement)
     approve_confirm, deny_confirm = _build_confirm_dialogs(name, args)
+    button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
     return [
         Card(
             block_id=f"rowact:{req_id}:confirmation",
             title=Markdown(text=f"*Approve: {name}*"),
             subtitle=Markdown(text=_subtitle_from_args(args)),
-            actions=_confirmation_buttons(f"{req_id}|{approval_id}", approve_confirm, deny_confirm),
+            actions=_confirmation_buttons(button_value, approve_confirm, deny_confirm),
         ),
     ]
 
@@ -314,23 +319,24 @@ _BUILDERS: Dict[str, Callable[[RunRequirement], List[Any]]] = {
 }
 
 
-def _submit_actions_block(approval_id: str) -> Actions:
+def _submit_actions_block(run_id: str, awaiting_ts: Optional[str] = None) -> Actions:
     return Actions(
-        block_id=pause_block_id(approval_id),
+        block_id=pause_block_id(run_id),
         elements=[
             Button(
                 action_id=ACTION_SUBMIT,
                 text=PlainText(text="Submit"),
                 style="primary",
-                value=approval_id,
+                value=encode_submit_button_value(run_id, awaiting_ts),
             ),
         ],
     )
 
 
 def build_pause_message(
-    approval_id: str,
+    run_id: str,
     requirements: List[RunRequirement],
+    awaiting_ts: Optional[str] = None,
 ) -> List[Any]:
     blocks: List[Any] = []
     processed = 0
@@ -341,7 +347,7 @@ def build_pause_message(
     for i, requirement in enumerate(requirements):
         kind = classify_requirement(requirement)
         if kind == "confirmation":
-            row_blocks = _build_confirmation_row(requirement, approval_id=approval_id)
+            row_blocks = _build_confirmation_row(requirement, run_id=run_id, awaiting_ts=awaiting_ts)
         else:
             row_blocks = _BUILDERS[kind](requirement)
         header_size = 1 if i > 0 else 0
@@ -367,7 +373,7 @@ def build_pause_message(
 
     needs_submit = any(classify_requirement(r) != "confirmation" for r in requirements[:processed])
     if needs_submit:
-        blocks.append(_submit_actions_block(approval_id))
+        blocks.append(_submit_actions_block(run_id, awaiting_ts))
     return blocks
 
 

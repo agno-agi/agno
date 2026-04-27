@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from dataclasses import asdict, is_dataclass
 from ssl import SSLContext
 from typing import Any, Dict, List, Literal, Optional, Union
@@ -25,31 +24,11 @@ from agno.os.interfaces.slack.helpers import (
 )
 from agno.os.interfaces.slack.security import verify_slack_signature
 from agno.os.interfaces.slack.state import StreamState, TaskStatus
-from agno.os.interfaces.slack.types import LiveStream
+from agno.os.interfaces.slack.types import decode_row_button_value, decode_submit_button_value
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_error, log_info
 from agno.workflow import RemoteWorkflow, Workflow
-
-# In-memory registry for active HITL streams. Keyed by run_id.
-_STREAM_MAX_AGE_S = 3600.0
-_streams: Dict[str, LiveStream] = {}
-
-
-def _stream_save(run_id: str, live: LiveStream) -> None:
-    now = time.monotonic()
-    stale = [k for k, v in _streams.items() if now - v.saved_at > _STREAM_MAX_AGE_S]
-    for k in stale:
-        del _streams[k]
-    _streams[run_id] = live
-
-
-def _stream_get(run_id: str) -> Optional[LiveStream]:
-    return _streams.get(run_id)
-
-
-def _stream_pop(run_id: str) -> Optional[LiveStream]:
-    return _streams.pop(run_id, None)
 
 
 # Slack sends lifecycle events for bots with these subtypes. Without this
@@ -101,6 +80,7 @@ async def _post_pause_card(
     paused_event: Any,
     channel: str,
     thread_ts: str,
+    awaiting_ts: Optional[str] = None,
 ) -> Optional[str]:
     """Post the Card block as a separate message in the thread.
     Runs independently of AsyncChatStream because chat_appendStream does
@@ -112,7 +92,7 @@ async def _post_pause_card(
     if not run_id or not requirements:
         return None
     try:
-        blocks = build_pause_message(run_id, requirements)
+        blocks = build_pause_message(run_id, requirements, awaiting_ts)
         block_dicts = [asdict(b) if is_dataclass(b) else b.model_dump(exclude_none=True, mode="json") for b in blocks]
         resp = await async_client.chat_postMessage(
             channel=channel,
@@ -306,7 +286,7 @@ def attach_routes(
             return
         if "|" not in button_value:
             return
-        req_id, approval_id = button_value.split("|", 1)
+        req_id, run_id, awaiting_ts = decode_row_button_value(button_value)
 
         channel = (payload.get("channel") or {}).get("id")
         message = payload.get("message") or {}
@@ -354,21 +334,23 @@ def attach_routes(
         # Submit). Keeping the delete in one place avoids double-delete races
         # and covers the non-button pause flows too.
 
-        if not approval_id:
+        if not run_id:
             return
 
         # Chain to the submit/resume flow. The synthetic payload carries
         # the run_id (in submit block_id) and the row's decided block_id
         # so parse_submit_payload can extract the decision. Block_id format
         # per blocks.py:30 is "row:<req_id>:<kind>:decided:<approve|reject>".
+        from agno.os.interfaces.slack.types import encode_submit_button_value
+
         decision_side = "approve" if action_id == "row_approve" else "reject"
         decided_block_id = f"row:{req_id}:confirmation:decided:{decision_side}"
         synthetic_payload = dict(payload)
         synthetic_payload["actions"] = [
             {
                 "action_id": "submit_pause",
-                "block_id": f"pause:{approval_id}",
-                "value": approval_id,
+                "block_id": f"pause:{run_id}",
+                "value": encode_submit_button_value(run_id, awaiting_ts),
             }
         ]
         synthetic_payload["message"] = {
@@ -417,23 +399,22 @@ def attach_routes(
         thread_ts = message.get("thread_ts") or msg_ts
         session_id = f"{entity_id}:{thread_ts}"
 
+        # Extract awaiting_ts from button value (stateless)
+        button_value = actions[0].get("value") or ""
+        _, awaiting_ts = decode_submit_button_value(button_value)
+
+        # Extract user/team from payload for streaming
+        recipient_user_id = (payload.get("user") or {}).get("id")
+        recipient_team_id = (payload.get("team") or {}).get("id")
+
         client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
 
         # Delete the standalone "⏸ Awaiting …" indicator posted at pause time.
-        # Fires for ALL pause kinds (confirmation button, user_input Submit,
-        # user_feedback Submit, external_execution Submit) because every
-        # resolution path funnels through here. The pre-pause streamed bubble
-        # (Thinking + prior tool-call cards) is untouched — that audit trail
-        # stays. We null the ts after delete so retry submissions (errors,
-        # double-clicks) don't re-attempt delete on a missing message.
-        live = _stream_get(run_id)
-        if live and live.awaiting_message_ts:
-            awaiting_ts = live.awaiting_message_ts
+        if awaiting_ts:
             try:
                 await client.chat_delete(channel=channel, ts=awaiting_ts)
             except Exception as exc:
                 log_error(f"[HITL] chat_delete (awaiting indicator) failed for ts={awaiting_ts}: {exc}")
-            live.awaiting_message_ts = None
 
         try:
             run_output = await entity.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
@@ -449,7 +430,6 @@ def attach_routes(
                 user=(payload.get("user") or {}).get("id", ""),
                 text="This approval is no longer active.",
             )
-            _stream_pop(run_id)
             return
 
         decisions, errors = parse_submit_payload(payload, requirements)
@@ -565,42 +545,14 @@ def attach_routes(
         # do not try to reuse the pre-pause ts. Slack enforces a ~5-min wall
         # clock on chat_stream regardless of pings, and human deliberation
         # routinely exceeds that. A new bubble is the predictable fallback.
-        live = _stream_get(run_id)
-        pause_age_s: Optional[float] = None
-        if live is not None:
-            pause_age_s = time.monotonic() - live.saved_at
-            log_info(f"[HITL] registry hit: run_id={run_id} pause_age={pause_age_s:.1f}s")
-        if live is None:
-            # Fallback: server lost the in-memory registry (restart) or the
-            # pause happened pre-redesign. Non-streaming resume.
-            log_warning(f"[HITL] registry miss: run_id={run_id} — falling back to non-stream resume")
-            try:
-                continued = await entity.acontinue_run(  # type: ignore[union-attr, call-arg, call-overload]
-                    run_id=run_id,
-                    requirements=requirements,
-                    session_id=session_id,
-                    stream=False,
-                )
-            except Exception as exc:
-                log_error(f"[HITL] acontinue_run (fallback) failed for run={run_id}: {exc}")
-                await send_slack_message_async(client, channel=channel, message=_ERROR_MESSAGE, thread_ts=thread_ts)
-                return
-            content = getattr(continued, "content", None) or ""
-            if content:
-                await send_slack_message_async(client, channel=channel, message=str(content), thread_ts=thread_ts)
-            return
-
-        # Open a fresh continuation stream in the same thread. The pre-pause
-        # stream was stopped when the pause fired; the approval card it sat
-        # under has already been mutated to the decision chip by
-        # _handle_row_click. The continuation renders in a new bubble below.
+        # All context reconstructed from Slack payload + config closure.
         stream = await client.chat_stream(
-            channel=live.channel,
-            thread_ts=live.thread_ts,
-            recipient_team_id=live.recipient_team_id,
-            recipient_user_id=live.recipient_user_id,
-            task_display_mode=live.task_display_mode,
-            buffer_size=live.buffer_size,
+            channel=channel,
+            thread_ts=thread_ts,
+            recipient_team_id=recipient_team_id,
+            recipient_user_id=recipient_user_id,
+            task_display_mode=task_display_mode,
+            buffer_size=buffer_size,
         )
 
         # Emit the decision task cards. Approved confirmations skip the
@@ -634,7 +586,6 @@ def attach_routes(
             except Exception as exc:
                 log_error(
                     f"[HITL] decision_update append failed: run_id={run_id} "
-                    f"pause_age={pause_age_s:.1f}s "
                     f"slack_error={_slack_err_code(exc)!r} | {exc}"
                 )
 
@@ -660,7 +611,6 @@ def attach_routes(
         except Exception as exc:
             log_error(f"[HITL] acontinue_run (stream) failed for run={run_id}: {exc}")
             await send_slack_message_async(client, channel=channel, message=_ERROR_MESSAGE, thread_ts=thread_ts)
-            _stream_pop(run_id)
             return
 
         paused_again: bool = False
@@ -679,12 +629,10 @@ def attach_routes(
         except Exception as exc:
             log_error(
                 f"[HITL] continuation append failed: run_id={run_id} "
-                f"pause_age={pause_age_s:.1f}s "
                 f"slack_error={_slack_err_code(exc)!r} | {exc}"
             )
 
-        # If the continuation paused again, finalize the pre-pause bubble,
-        # refresh the live-stream registry with the new awaiting_message_ts,
+        # If the continuation paused again, finalize the pre-pause bubble
         # and post the awaiting indicator + Card. This mirrors the main-run
         # pause path — without stream.stop() here Slack keeps the bubble in
         # a streaming state and the appended "_Reviewing…_" placeholder
@@ -694,24 +642,20 @@ def attach_routes(
             if requirements2:
                 from agno.os.interfaces.slack.pause import finalize_pause
 
-                await finalize_pause(
+                new_awaiting_ts = await finalize_pause(
                     client=client,
                     stream=stream,
                     state=state,
                     run_id=run_id,
-                    channel=live.channel,
-                    thread_ts=live.thread_ts,
-                    recipient_user_id=live.recipient_user_id,
-                    recipient_team_id=live.recipient_team_id,
-                    task_display_mode=live.task_display_mode,
-                    buffer_size=live.buffer_size,
+                    channel=channel,
+                    thread_ts=thread_ts,
                     requirements=requirements2,
-                    stream_save=_stream_save,
-                    stream_get=_stream_get,
-                    post_pause_card=_post_pause_card,
-                    paused_event=state.paused_event,
                     log_prefix="re-",
                 )
+                try:
+                    await _post_pause_card(client, state.paused_event, channel, thread_ts, new_awaiting_ts)
+                except Exception as exc:
+                    log_error(f"[HITL] Failed to post Card block (re-pause): {exc}")
                 paused_again = True
 
         if not paused_again:
@@ -728,10 +672,8 @@ def attach_routes(
             except Exception as exc:
                 log_error(
                     f"[HITL] stream.stop after resume failed: run_id={run_id} "
-                    f"pause_age={pause_age_s:.1f}s "
                     f"slack_error={_slack_err_code(exc)!r} | {exc}"
                 )
-            _stream_pop(run_id)
 
     async def _post_ephemeral(
         client: Any,
@@ -1039,23 +981,21 @@ def attach_routes(
                 if pause_run_id and requirements:
                     from agno.os.interfaces.slack.pause import finalize_pause
 
-                    await finalize_pause(
+                    awaiting_ts = await finalize_pause(
                         client=async_client,
                         stream=stream,
                         state=state,
                         run_id=pause_run_id,
                         channel=ctx["channel_id"],
                         thread_ts=ctx["thread_id"],
-                        recipient_user_id=user_id,
-                        recipient_team_id=team_id,
-                        task_display_mode=task_display_mode,
-                        buffer_size=buffer_size,
                         requirements=requirements,
-                        stream_save=_stream_save,
-                        stream_get=_stream_get,
-                        post_pause_card=_post_pause_card,
-                        paused_event=state.paused_event,
                     )
+                    try:
+                        await _post_pause_card(
+                            async_client, state.paused_event, ctx["channel_id"], ctx["thread_id"], awaiting_ts
+                        )
+                    except Exception as exc:
+                        log_error(f"[HITL] Failed to post Card block (pause): {exc}")
                     return
 
             try:

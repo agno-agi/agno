@@ -3,8 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agno.os.interfaces.slack.builders import classify_requirement
-from agno.os.interfaces.slack.types import LiveStream, _tool_name
-from agno.utils.log import log_error, log_info
+from agno.os.interfaces.slack.types import _tool_name
+from agno.utils.log import log_error
 
 if TYPE_CHECKING:
     from slack_sdk.web.async_client import AsyncWebClient
@@ -37,17 +37,9 @@ async def finalize_pause(
     run_id: str,
     channel: str,
     thread_ts: str,
-    recipient_user_id: Optional[str],
-    recipient_team_id: Optional[str],
-    task_display_mode: str,
-    buffer_size: int,
     requirements: List["RunRequirement"],
-    stream_save: Any,
-    stream_get: Any,
-    post_pause_card: Any,
-    paused_event: Any,
     log_prefix: str = "",
-) -> None:
+) -> Optional[str]:
     stop_kwargs: Dict[str, Any] = {}
     if state.has_content():
         stop_kwargs["markdown_text"] = state.flush()
@@ -66,19 +58,7 @@ async def finalize_pause(
             f"slack_error={_slack_err_code(exc)!r} | {exc}"
         )
 
-    stream_save(
-        run_id,
-        LiveStream(
-            channel=channel,
-            thread_ts=thread_ts,
-            recipient_user_id=recipient_user_id,
-            recipient_team_id=recipient_team_id,
-            task_display_mode=task_display_mode,
-            buffer_size=buffer_size,
-        ),
-    )
-    log_info(f"[HITL] {log_prefix}pause saved: run_id={run_id} channel={channel}")
-
+    awaiting_ts: Optional[str] = None
     pause_labels = build_pause_labels(requirements)
     if pause_labels:
         try:
@@ -88,13 +68,8 @@ async def finalize_pause(
                 text="\n".join(pause_labels),
                 mrkdwn=True,
             )
-            saved_live = stream_get(run_id)
-            if saved_live is not None:
-                saved_live.awaiting_message_ts = awaiting_resp.get("ts")
+            awaiting_ts = awaiting_resp.get("ts")
         except Exception as exc:
             log_error(f"[HITL] chat_postMessage (awaiting indicator, {log_prefix}pause) failed: {exc}")
 
-    try:
-        await post_pause_card(client, paused_event, channel, thread_ts)
-    except Exception as exc:
-        log_error(f"[HITL] Failed to post Card block ({log_prefix}pause): {exc}")
+    return awaiting_ts
