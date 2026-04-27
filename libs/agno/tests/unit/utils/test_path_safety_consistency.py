@@ -19,7 +19,6 @@ from agno.tools.file import FileTools
 from agno.tools.file_generation import FileGenerationTools
 from agno.tools.slack import SlackTools
 
-
 # ---------------------------------------------------------------------------
 # Input categories
 # ---------------------------------------------------------------------------
