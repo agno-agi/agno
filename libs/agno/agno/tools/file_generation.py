@@ -67,8 +67,11 @@ class FileGenerationTools(Toolkit):
         """Save file to disk if output_directory is set. Return file path or None.
 
         Filenames are sanitized via ``Path(filename).name`` to strip any path
-        components, preventing path-traversal attacks. Filenames that sanitize
-        to empty, ``"."``, or ``".."`` raise ``FileGenerationSecurityError``.
+        components, preventing path-traversal attacks. Filenames are also rejected
+        if they contain control characters (CWE-117 log injection prevention) or
+        sanitize to empty/whitespace, ``"."``, or ``".."`` — raising
+        ``FileGenerationSecurityError``. Trailing dots and spaces are stripped
+        (CWE-42/46, Windows MagicDot).
 
         The resolved write path is verified to stay inside ``output_directory``
         (catches symlink-escape attempts).
@@ -78,7 +81,13 @@ class FileGenerationTools(Toolkit):
 
         # Sanitize filename — strip path components to prevent traversal
         safe_filename = Path(filename).name
-        if not safe_filename or safe_filename in (".", ".."):
+        # Reject control chars (CWE-117 log injection prevention)
+        if any(ord(c) < 32 for c in safe_filename):
+            log_warning(f"Security violation: control char in filename {filename!r}")
+            raise FileGenerationSecurityError(f"Invalid filename (control chars): {filename!r}")
+        # Trim trailing dots/spaces (CWE-42/46, Windows MagicDot)
+        safe_filename = safe_filename.rstrip(". ")
+        if not safe_filename.strip() or safe_filename in (".", ".."):
             log_warning(f"Security violation: invalid filename {filename!r}")
             raise FileGenerationSecurityError(f"Invalid filename after sanitization: {filename!r}")
 

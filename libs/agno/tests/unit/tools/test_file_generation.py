@@ -119,3 +119,44 @@ def test_no_output_directory_returns_none_filepath():
     result = tool.generate_json_file({"x": 1}, filename="report.json")
     assert result.files[0].filepath is None
     assert result.files[0].content is not None
+
+
+def test_control_char_filename_rejected():
+    """Filenames containing control characters must raise FileGenerationSecurityError."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tool = FileGenerationTools(output_directory=tmp_dir)
+        with pytest.raises(FileGenerationSecurityError, match="control chars"):
+            tool._save_file_to_disk("payload", "report\nhacked.json")
+
+
+def test_whitespace_only_filename_rejected():
+    """Whitespace-only filenames must raise FileGenerationSecurityError."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tool = FileGenerationTools(output_directory=tmp_dir)
+        with pytest.raises(FileGenerationSecurityError, match="Invalid filename"):
+            tool._save_file_to_disk("payload", "   ")
+
+
+def test_trailing_dot_space_trimmed():
+    """Trailing dots and spaces must be stripped (Windows MagicDot defense)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool._save_file_to_disk("payload", "report.json. ")
+        assert (Path(tmp_dir) / "report.json").exists()
+
+
+def test_generate_json_file_traversal_via_public_api():
+    """Public-API integration: traversal via generate_json_file lands safely inside output_directory."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool.generate_json_file({"x": 1}, filename="../../../escape")
+        assert (Path(tmp_dir) / "escape.json").exists()
+        assert not (Path(tmp_dir).parent / "escape.json").exists()
+
+
+def test_generate_csv_file_control_char_returns_error():
+    """Public-API integration: control char in filename produces an error ToolResult (caught by except Exception)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tool = FileGenerationTools(output_directory=tmp_dir)
+        result = tool.generate_csv_file([{"a": 1}], filename="\n")
+        assert "Error" in result.content
