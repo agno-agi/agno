@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
+from agno.exceptions import FileGenerationSecurityError
 from agno.media import File
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
@@ -63,11 +64,22 @@ class FileGenerationTools(Toolkit):
         super().__init__(name="file_generation", tools=tools, **kwargs)
 
     def _save_file_to_disk(self, content: Union[str, bytes], filename: str) -> Optional[str]:
-        """Save file to disk if output_directory is set. Return file path or None."""
+        """Save file to disk if output_directory is set. Return file path or None.
+
+        Filenames are sanitized via ``Path(filename).name`` to strip any path
+        components, preventing path-traversal attacks. Filenames that sanitize
+        to empty, ``"."``, or ``".."`` raise ``FileGenerationSecurityError``.
+        """
         if not self.output_directory:
             return None
 
-        file_path = self.output_directory / filename
+        # Sanitize filename — strip path components to prevent traversal
+        safe_filename = Path(filename).name
+        if not safe_filename or safe_filename in (".", ".."):
+            log_warning(f"Security violation: invalid filename {filename!r}")
+            raise FileGenerationSecurityError(f"Invalid filename after sanitization: {filename!r}")
+
+        file_path = self.output_directory / safe_filename
 
         if isinstance(content, str):
             file_path.write_text(content, encoding="utf-8")
