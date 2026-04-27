@@ -1,3 +1,20 @@
+"""
+Slack HITL Payload Parsers
+
+Converts Slack interaction payloads into domain objects for the HITL system.
+
+Flow:
+    Slack webhook POST → router.py → parse_submit_payload() → apply_decisions() → agent resumes
+
+Key functions:
+    parse_submit_payload  - Extracts decisions from Slack's nested state structure
+    apply_decisions       - Calls requirement.confirm()/reject()/provide_user_input()
+    coerce_to_type        - Converts Slack string values to schema types (int, bool, list, dict)
+    format_decision_title - Generates task card titles like "Denied: delete_file(path=/tmp)"
+
+Slack payloads have deeply nested state: payload.state.values[block_id][action_id].value
+This module handles that extraction so router.py stays focused on HTTP handling.
+"""
 from __future__ import annotations
 
 import json
