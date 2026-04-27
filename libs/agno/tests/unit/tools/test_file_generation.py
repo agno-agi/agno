@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from agno.exceptions import FileGenerationSecurityError
+from agno.exceptions import PathSecurityError
 from agno.tools.file_generation import FileGenerationTools
 
 
@@ -54,34 +54,34 @@ def test_filename_with_dots_in_name():
 
 
 def test_empty_filename_raises():
-    """Empty filename must raise FileGenerationSecurityError."""
+    """Empty filename must raise PathSecurityError."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        with pytest.raises(FileGenerationSecurityError, match="Invalid filename"):
+        with pytest.raises(PathSecurityError, match="Invalid filename"):
             tool._save_file_to_disk("payload", "")
 
 
 def test_dot_filename_raises():
-    """Filename '.' must raise FileGenerationSecurityError."""
+    """Filename '.' must raise PathSecurityError."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        with pytest.raises(FileGenerationSecurityError, match="Invalid filename"):
+        with pytest.raises(PathSecurityError, match="Invalid filename"):
             tool._save_file_to_disk("payload", ".")
 
 
 def test_dotdot_filename_raises():
-    """Filename '..' must raise FileGenerationSecurityError."""
+    """Filename '..' must raise PathSecurityError."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        with pytest.raises(FileGenerationSecurityError, match="Invalid filename"):
+        with pytest.raises(PathSecurityError, match="Invalid filename"):
             tool._save_file_to_disk("payload", "..")
 
 
 def test_only_traversal_raises():
-    """Filename '../' (path-only) must raise FileGenerationSecurityError."""
+    """Filename '../' (path-only) must raise PathSecurityError."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        with pytest.raises(FileGenerationSecurityError, match="Invalid filename"):
+        with pytest.raises(PathSecurityError, match="Invalid filename"):
             tool._save_file_to_disk("payload", "../")
 
 
@@ -98,16 +98,16 @@ def test_symlink_pointing_outside_rejected():
             pytest.skip("Symlink creation not permitted on this platform")
 
         tool = FileGenerationTools(output_directory=str(inside_dir))
-        with pytest.raises(FileGenerationSecurityError, match="resolves outside|symlink escape"):
+        with pytest.raises(PathSecurityError, match="resolves outside|symlink escape"):
             tool._save_file_to_disk("payload", "escape")
 
 
 def test_security_violation_logs_error():
-    """Security violations should emit an error log for ops visibility."""
+    """Security violations emit an error log via agno.utils.path_safety.log_error."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        with patch("agno.tools.file_generation.log_error") as mock_log_error:
-            with pytest.raises(FileGenerationSecurityError):
+        with patch("agno.utils.path_safety.log_error") as mock_log_error:
+            with pytest.raises(PathSecurityError):
                 tool._save_file_to_disk("payload", "..")
         mock_log_error.assert_called_once()
         assert "Security violation" in str(mock_log_error.call_args)
@@ -123,18 +123,18 @@ def test_no_output_directory_returns_none_filepath():
 
 
 def test_control_char_filename_rejected():
-    """Filenames containing control characters must raise FileGenerationSecurityError."""
+    """Filenames containing control characters must raise PathSecurityError."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        with pytest.raises(FileGenerationSecurityError, match="control chars"):
+        with pytest.raises(PathSecurityError, match="control chars"):
             tool._save_file_to_disk("payload", "report\nhacked.json")
 
 
 def test_whitespace_only_filename_rejected():
-    """Whitespace-only filenames must raise FileGenerationSecurityError."""
+    """Whitespace-only filenames must raise PathSecurityError."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        with pytest.raises(FileGenerationSecurityError, match="Invalid filename"):
+        with pytest.raises(PathSecurityError, match="Invalid filename"):
             tool._save_file_to_disk("payload", "   ")
 
 
@@ -164,10 +164,10 @@ def test_generate_csv_file_control_char_returns_error():
 
 
 def test_pure_dot_filename_rejected():
-    """Filename '...' must raise FileGenerationSecurityError after rstrip('. ')."""
+    """Filename '...' must raise PathSecurityError after rstrip('. ')."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        with pytest.raises(FileGenerationSecurityError, match="Invalid filename"):
+        with pytest.raises(PathSecurityError, match="Invalid filename"):
             tool._save_file_to_disk("payload", "...")
 
 

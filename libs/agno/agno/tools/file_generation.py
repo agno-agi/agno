@@ -5,11 +5,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
-from agno.exceptions import FileGenerationSecurityError
 from agno.media import File
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_debug, log_error, log_warning, logger
+from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.path_safety import safe_join
 
 try:
     from reportlab.lib.pagesizes import letter
@@ -66,42 +66,17 @@ class FileGenerationTools(Toolkit):
     def _save_file_to_disk(self, content: Union[str, bytes], filename: str) -> Optional[str]:
         """Save file to disk if output_directory is set. Return file path or None.
 
-        Filenames are sanitized via ``Path(filename).name`` to strip any path
-        components, preventing path-traversal attacks. Filenames are also rejected
-        if they contain control characters (CWE-117 log injection prevention) or
-        sanitize to empty/whitespace, ``"."``, or ``".."`` — raising
-        ``FileGenerationSecurityError``. Trailing dots and spaces are stripped
-        (CWE-42/46, Windows MagicDot).
-
-        The resolved write path is verified to stay inside ``output_directory``
-        (catches symlink-escape attempts).
+        Path-safety is delegated to ``agno.utils.path_safety.safe_join``, which
+        strips path components, NFKC-normalizes input, rejects control characters,
+        Windows-reserved names, drive letters, and UNC prefixes, trims trailing
+        dots/spaces (Windows MagicDot), and verifies the resolved write path
+        stays inside ``output_directory`` (catches symlink escapes). On rejection
+        ``PathSecurityError`` propagates to the caller.
         """
         if not self.output_directory:
             return None
 
-        # NOTE: pre-migration; replaced by safe_join in path-safety centralization.
-        # Sanitize filename — strip path components to prevent traversal
-        safe_filename = Path(filename).name
-        # Reject control chars (CWE-117 log injection prevention)
-        if any(ord(c) < 32 for c in safe_filename):
-            log_error(f"Security violation: control char in filename {filename!r}")
-            raise FileGenerationSecurityError(f"Invalid filename (control chars): {filename!r}")
-        # Trim trailing dots/spaces (CWE-42/46, Windows MagicDot)
-        safe_filename = safe_filename.rstrip(". ")
-        if not safe_filename.strip() or safe_filename in (".", ".."):
-            log_error(f"Security violation: invalid filename {filename!r}")
-            raise FileGenerationSecurityError(f"Invalid filename after sanitization: {filename!r}")
-
-        file_path = self.output_directory / safe_filename
-
-        # Verify resolved path stays inside output_directory (catches symlink escapes)
-        resolved_file = file_path.resolve()
-        resolved_dir = self.output_directory.resolve()
-        if not resolved_file.is_relative_to(resolved_dir):
-            log_error(f"Security violation: path {filename!r} resolves outside output_directory")
-            raise FileGenerationSecurityError(
-                f"Filename {filename!r} resolves outside output_directory (possible symlink escape)"
-            )
+        file_path = safe_join(self.output_directory, filename)
 
         if isinstance(content, str):
             file_path.write_text(content, encoding="utf-8")
