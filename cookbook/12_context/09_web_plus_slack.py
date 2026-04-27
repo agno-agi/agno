@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 
 from agno.agent import Agent
+from agno.context.mode import ContextMode
 from agno.context.slack import SlackContextProvider
 from agno.context.web import ExaBackend, WebContextProvider
 from agno.models.openai import OpenAIResponses
@@ -37,7 +38,9 @@ from agno.models.openai import OpenAIResponses
 provider_model = OpenAIResponses(id="gpt-5.4-mini")
 
 web = WebContextProvider(backend=ExaBackend(), model=provider_model)
-slack = SlackContextProvider(model=provider_model)
+# mode=tools exposes SlackTools directly (no sub-agent routing)
+# This allows CLI testing without action_token required by search_workspace
+slack = SlackContextProvider(model=provider_model, mode=ContextMode.tools)
 
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
@@ -54,8 +57,8 @@ if __name__ == "__main__":
     prompt = (
         "I'm prepping a short briefing for our weekly engineering sync. "
         "Do this:\n"
-        "  1. Pull the 10 most recent messages from the #agents Slack "
-        "channel and identify 2 distinct topics under discussion.\n"
+        "  1. First list_channels to find the #general channel ID, then use "
+        "get_channel_history to pull the 10 most recent messages and identify 2 topics.\n"
         "  2. For each topic, find one current (last ~month) article, "
         "release, or reference online that would be useful to link.\n"
         "\n"
