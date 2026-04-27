@@ -825,7 +825,7 @@ class Workspace(Toolkit):
             log_error(f"delete_file failed: {e}")
             return f"Error deleting file: {e}"
 
-    def run_command(self, args: List[str], tail: int = 100) -> str:
+    def run_command(self, args: List[str], tail: int = 100, timeout: int = 120) -> str:
         """Run a shell command in the workspace root and return its output.
 
         Args is a list of strings (e.g. ``["ls", "-la"]``) — the command is NOT
@@ -837,6 +837,7 @@ class Workspace(Toolkit):
 
         :param args: Command and arguments as a list of strings.
         :param tail: Maximum number of trailing lines of stdout (or stderr on error) to return.
+        :param timeout: Maximum seconds to wait before killing the process (default 120).
         :return: Tailed stdout on success, or an error message including stderr on failure.
         """
         try:
@@ -846,11 +847,15 @@ class Workspace(Toolkit):
                 capture_output=True,
                 text=True,
                 cwd=str(self.root),
+                timeout=timeout,
             )
             if result.returncode != 0:
                 err = "\n".join(_strip_ansi(result.stderr).splitlines()[-tail:])
                 return f"Error (exit {result.returncode}): {err}"
             return "\n".join(_strip_ansi(result.stdout).splitlines()[-tail:])
+        except subprocess.TimeoutExpired:
+            log_warning(f"run_command timed out after {timeout}s: {args}")
+            return f"Error: command timed out after {timeout} seconds"
         except Exception as e:
             log_warning(f"run_command failed: {e}")
             return f"Error running command: {e}"
@@ -906,7 +911,7 @@ class Workspace(Toolkit):
         """Async variant of ``delete_file``."""
         return await asyncio.to_thread(self.delete_file, path)
 
-    async def arun_command(self, args: List[str], tail: int = 100) -> str:
+    async def arun_command(self, args: List[str], tail: int = 100, timeout: int = 120) -> str:
         """Async variant of ``run_command`` using ``asyncio.create_subprocess_exec``."""
         try:
             log_info(f"arun_command: {args}")
@@ -916,7 +921,13 @@ class Workspace(Toolkit):
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(self.root),
             )
-            stdout_b, stderr_b = await proc.communicate()
+            try:
+                stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                log_warning(f"arun_command timed out after {timeout}s: {args}")
+                return f"Error: command timed out after {timeout} seconds"
             stdout = stdout_b.decode("utf-8", errors="replace") if stdout_b else ""
             stderr = stderr_b.decode("utf-8", errors="replace") if stderr_b else ""
             if proc.returncode != 0:

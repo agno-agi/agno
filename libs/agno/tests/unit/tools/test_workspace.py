@@ -660,6 +660,32 @@ def test_run_command_strips_ansi_color_codes():
         assert "\x1b" not in out
 
 
+def test_run_command_timeout_kills_long_running_process():
+    """A command exceeding the timeout should be killed and return an error."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        out = ws.run_command(["sleep", "30"], timeout=1)
+        assert "timed out" in out
+        assert "1 seconds" in out
+
+
+def test_run_command_timeout_default_allows_fast_commands():
+    """Fast commands should complete normally under the default timeout."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        out = ws.run_command(["echo", "hello"])
+        assert out.strip() == "hello"
+
+
+def test_async_run_command_timeout():
+    """Async variant should also respect timeout."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        out = asyncio.run(ws.arun_command(["sleep", "30"], timeout=1))
+        assert "timed out" in out
+        assert "1 seconds" in out
+
+
 # ------------------------------------------------------------------
 # Async siblings — spot-check parity with sync
 # ------------------------------------------------------------------
