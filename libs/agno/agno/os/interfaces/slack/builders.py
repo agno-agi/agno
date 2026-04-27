@@ -1,25 +1,76 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
-from agno.os.interfaces.slack.block_kit import (
-    MAX_MESSAGE_BLOCKS,
-    MAX_SECTION_FIELDS,
-    Actions,
-    Button,
-    Card,
-    Checkboxes,
-    ConfirmDialog,
-    Context,
-    Divider,
-    InputBlock,
-    Markdown,
-    Option,
-    PlainText,
-    PlainTextInput,
-    StaticSelect,
+from slack_sdk.models.blocks import (
+    ActionsBlock as Actions,
 )
+from slack_sdk.models.blocks import (
+    CheckboxesElement as Checkboxes,
+)
+from slack_sdk.models.blocks import (
+    ConfirmObject as ConfirmDialog,
+)
+from slack_sdk.models.blocks import (
+    ContextBlock as Context,
+)
+from slack_sdk.models.blocks import (
+    DividerBlock as Divider,
+)
+from slack_sdk.models.blocks import (
+    InputBlock,
+)
+from slack_sdk.models.blocks import (
+    PlainTextInputElement as PlainTextInput,
+)
+from slack_sdk.models.blocks import (
+    StaticSelectElement as StaticSelect,
+)
+from slack_sdk.models.blocks.basic_components import (
+    MarkdownTextObject as Markdown,
+)
+from slack_sdk.models.blocks.basic_components import (
+    Option,
+)
+from slack_sdk.models.blocks.basic_components import (
+    PlainTextObject as PlainText,
+)
+from slack_sdk.models.blocks.block_elements import ButtonElement as Button
+from slack_sdk.models.blocks.block_elements import ImageElement
+
+MAX_MESSAGE_BLOCKS = 48
+MAX_SECTION_FIELDS = 10
+
+
+@dataclass
+class Card:
+    """Slack card block for HITL approval prompts. Not in SDK yet."""
+
+    actions: List[Button]
+    icon: Optional[ImageElement] = None
+    title: Optional[PlainText | Markdown] = None
+    subtitle: Optional[PlainText | Markdown] = None
+    block_id: Optional[str] = None
+    type: str = "card"
+
+    def to_dict(self) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "type": self.type,
+            "actions": [a.to_dict() for a in self.actions],
+        }
+        if self.icon:
+            result["icon"] = self.icon.to_dict()
+        if self.title:
+            result["title"] = self.title.to_dict()
+        if self.subtitle:
+            result["subtitle"] = self.subtitle.to_dict()
+        if self.block_id:
+            result["block_id"] = self.block_id
+        return result
+
+
 from agno.os.interfaces.slack.types import (
     ACTION_EXTERNAL_RESULT,
     ACTION_FEEDBACK_SELECT,
