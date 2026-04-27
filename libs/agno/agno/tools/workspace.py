@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 from agno.tools import Toolkit
+from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS, path_matches_exclude
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 TEXT_EXTENSIONS = {
@@ -133,68 +134,6 @@ TEXT_EXTENSIONS = {
     ".bzl",
 }
 
-DEFAULT_EXCLUDE_PATTERNS = [
-    # Environments and secrets
-    ".venv",
-    "venv",
-    ".env*",
-    "*.env",
-    # Version control
-    ".git",
-    ".hg",
-    ".svn",
-    # Python caches and build artifacts
-    "__pycache__",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".pytest_cache",
-    ".tox",
-    ".nox",
-    ".ipynb_checkpoints",
-    "dist",
-    "build",
-    "*.egg-info",
-    # JavaScript and TypeScript
-    "node_modules",
-    ".next",
-    ".turbo",
-    ".nuxt",
-    ".svelte-kit",
-    ".docusaurus",
-    ".parcel-cache",
-    ".nyc_output",
-    "*.tsbuildinfo",
-    ".serverless",
-    # JVM (Java, Kotlin, Android, Gradle)
-    ".gradle",
-    ".kotlin",
-    "*.class",
-    # Dart and Flutter
-    ".dart_tool",
-    ".flutter-plugins",
-    ".flutter-plugins-dependencies",
-    # Swift and Xcode
-    ".build",
-    "xcuserdata",
-    "*.xcuserstate",
-    # Ruby
-    ".bundle",
-    "*.gem",
-    ".yardoc",
-    # Elixir
-    "_build",
-    ".elixir_ls",
-    # .NET / Visual Studio
-    ".vs",
-    # Infrastructure as Code
-    ".terraform",
-    "*.tfstate",
-    "*.tfstate.*",
-    ".terragrunt-cache",
-    # OS artifacts
-    ".DS_Store",
-]
-
 # Strips ANSI CSI sequences (color codes, cursor moves) from terminal output.
 _ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
@@ -284,8 +223,9 @@ class Workspace(Toolkit):
       and the surface is exactly what you specified.
 
     Listing results from ``list_files`` and ``search_content`` skip common noise directories
-    (``.venv``, ``.git``, ``__pycache__``, ``node_modules``, etc.) by default. Pass
-    ``exclude_patterns=[]`` to disable, or ``exclude_patterns=[...]`` to override.
+    (``.venv``, ``.venvs``, ``.context``, ``.git``, ``__pycache__``,
+    ``node_modules``, etc.) by default. Pass ``exclude_patterns=[]`` to disable,
+    or ``exclude_patterns=[...]`` to override.
 
     Optional ``require_read_before_write=True`` blocks ``write_file`` / ``edit_file`` /
     ``move_file`` / ``delete_file`` on existing files until the agent has read them in
@@ -423,13 +363,7 @@ class Workspace(Toolkit):
 
     def _is_excluded(self, path: Path) -> bool:
         """Return True if any component of ``path`` (relative to ``root``) matches an exclude pattern."""
-        if not self.exclude_patterns:
-            return False
-        try:
-            rel = path.relative_to(self.root)
-        except ValueError:
-            return False
-        return any(fnmatch(part, pattern) for part in rel.parts for pattern in self.exclude_patterns)
+        return path_matches_exclude(path, self.root, self.exclude_patterns)
 
     def _check_read_before_write(self, file_path: Path, op: str) -> Optional[str]:
         """If require_read_before_write is on, verify the file was read this session.
@@ -526,8 +460,8 @@ class Workspace(Toolkit):
         ``size`` is a human-readable string for files and ``null`` for directories.
 
         For tree-style exploration of a project use ``recursive=True`` (defaults to
-        depth 3). Default-excluded directories (``.venv``, ``.git``, ``node_modules``,
-        etc.) are always pruned.
+        depth 3). Default-excluded directories (``.venv``, ``.venvs``,
+        ``.context``, ``.git``, ``node_modules``, etc.) are always pruned.
 
         :param directory: Subdirectory relative to the workspace root (default ".").
         :param pattern: Optional glob pattern to filter by (e.g. ``"*.py"``). When

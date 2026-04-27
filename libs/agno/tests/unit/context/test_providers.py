@@ -7,6 +7,7 @@ The full end-to-end behaviour is covered by the cookbooks.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -16,8 +17,10 @@ from agno.context.database import DatabaseContextProvider
 from agno.context.fs import FilesystemContextProvider
 from agno.context.gdrive import GDriveContextProvider
 from agno.context.mcp import MCPContextProvider
+from agno.context.mode import ContextMode
 from agno.context.slack import SlackContextProvider
 from agno.context.web import ExaBackend, ExaMCPBackend, ParallelMCPBackend, WebContextProvider
+from agno.context.workspace import WorkspaceContextProvider
 
 # ---------------------------------------------------------------------------
 # Filesystem
@@ -52,6 +55,75 @@ def test_fs_default_surface_is_single_query_tool(tmp_path: Path):
     p = FilesystemContextProvider(root=tmp_path, id="docs")
     tools = p.get_tools()
     assert [t.name for t in tools] == ["query_docs"]
+
+
+def test_fs_provider_can_opt_out_of_default_excludes(tmp_path: Path):
+    hidden = tmp_path / ".context"
+    hidden.mkdir()
+    (hidden / "note.py").write_text("# marker")
+
+    p = FilesystemContextProvider(root=tmp_path, mode=ContextMode.tools, exclude_patterns=[])
+    file_tools = p.get_tools()[0]
+    result = json.loads(file_tools.search_content("marker"))
+    assert result["matches_found"] == 1
+    assert result["files"][0]["file"] == ".context/note.py"
+
+
+# ---------------------------------------------------------------------------
+# Workspace
+# ---------------------------------------------------------------------------
+
+
+def test_workspace_status_ok_for_existing_dir(tmp_path: Path):
+    p = WorkspaceContextProvider(root=tmp_path)
+    status = p.status()
+    assert status.ok is True
+    assert str(tmp_path) in status.detail
+
+
+def test_workspace_status_reports_missing_root(tmp_path: Path):
+    missing = tmp_path / "does-not-exist"
+    p = WorkspaceContextProvider(root=missing)
+    status = p.status()
+    assert status.ok is False
+    assert "does not exist" in status.detail
+
+
+def test_workspace_status_reports_non_directory(tmp_path: Path):
+    file_ = tmp_path / "a.txt"
+    file_.write_text("hi")
+    p = WorkspaceContextProvider(root=file_)
+    status = p.status()
+    assert status.ok is False
+    assert "not a directory" in status.detail
+
+
+def test_workspace_default_surface_is_single_query_tool(tmp_path: Path):
+    p = WorkspaceContextProvider(root=tmp_path, id="project")
+    tools = p.get_tools()
+    assert [t.name for t in tools] == ["query_project"]
+
+
+def test_workspace_tools_mode_is_read_only(tmp_path: Path):
+    p = WorkspaceContextProvider(root=tmp_path, mode=ContextMode.tools)
+    workspace = p.get_tools()[0]
+    assert sorted(workspace.functions.keys()) == ["list_files", "read_file", "search_content"]
+
+
+def test_workspace_context_excludes_agent_scratch_and_plural_venvs(tmp_path: Path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("# marker")
+    (tmp_path / ".context").mkdir()
+    (tmp_path / ".context" / "notes.py").write_text("# marker")
+    venvs_pkg = tmp_path / ".venvs" / "demo" / "lib"
+    venvs_pkg.mkdir(parents=True)
+    (venvs_pkg / "installed.py").write_text("# marker")
+
+    p = WorkspaceContextProvider(root=tmp_path, mode=ContextMode.tools)
+    workspace = p.get_tools()[0]
+    result = json.loads(workspace.search_content("marker", limit=10))
+    assert result["matches_found"] == 1
+    assert result["files"][0]["file"] == "src/app.py"
 
 
 # ---------------------------------------------------------------------------

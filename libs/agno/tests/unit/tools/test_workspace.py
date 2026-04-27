@@ -394,6 +394,23 @@ def test_search_content_skips_excluded_dirs():
         assert not any(".venv" in f for f in names)
 
 
+def test_search_content_skips_agent_scratch_and_plural_venvs():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "real.py").write_text("# TODO: real work")
+        (base / ".context").mkdir()
+        (base / ".context" / "notes.py").write_text("# TODO: scratch")
+        venvs_pkg = base / ".venvs" / "demo" / "lib"
+        venvs_pkg.mkdir(parents=True)
+        (venvs_pkg / "installed.py").write_text("# TODO: dependency")
+
+        result = json.loads(ws.search_content(query="TODO", limit=10))
+        names = [m["file"] for m in result["files"]]
+        assert result["matches_found"] == 1
+        assert names == ["real.py"]
+
+
 def test_search_content_empty_query():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)

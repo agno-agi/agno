@@ -145,3 +145,19 @@ dict).
 and answered the user's question.
 
 ---
+
+### 12_workspace.py
+
+**Status:** Smoke-only (no OPENAI_API_KEY available locally)
+
+**Description:** `WorkspaceContextProvider` rooted at the repository.
+It wraps the read-only `Workspace` toolkit so project searches skip
+virtualenvs, dependency folders, build outputs, caches, and agent
+scratch directories by default.
+
+**Result:** Imported the cookbook with
+`PYTHONPATH=libs/agno .venvs/demo/bin/python` to verify construction.
+Unit tests cover the provider surface and exclude behavior for
+`.context` and `.venvs`.
+
+---
