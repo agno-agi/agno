@@ -807,9 +807,16 @@ class JWTMiddleware(BaseHTTPMiddleware):
                     # Special handling for listing endpoints (no resource_id)
                     if not has_access and not resource_id and resource_type:
                         # For listing endpoints, always allow access but store accessible IDs for filtering
-                        # This allows endpoints to return filtered results (including empty list) instead of 403
+                        # This allows endpoints to return filtered results (including empty list) instead of 403.
+                        # Pass the action from required_scopes (e.g. "read" for "agents:read") so the cached
+                        # IDs only include resources the user is authorised for under that action — otherwise
+                        # a user with only `agents:run` would leak through `GET /agents`.
+                        required_action: Optional[str] = None
+                        first_required = required_scopes[0]
+                        if ":" in first_required:
+                            required_action = first_required.rsplit(":", 1)[1]
                         accessible_ids = get_accessible_resource_ids(
-                            scopes, resource_type, admin_scope=self.admin_scope
+                            scopes, resource_type, admin_scope=self.admin_scope, action=required_action
                         )
                         has_access = True  # Always allow listing endpoints
                         request.state.accessible_resource_ids = accessible_ids

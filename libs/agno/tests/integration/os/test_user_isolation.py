@@ -375,3 +375,53 @@ class TestCancelOwnership:
             headers=auth_header(admin_token),
         )
         assert resp.status_code == 200
+
+
+# --- Listing endpoint RBAC ---
+
+
+class TestListingEndpointRbacByAction:
+    """Listing endpoints (e.g. GET /agents) must enforce the action they declare.
+
+    Without the action filter, the JWT middleware's listing fallback used to
+    accept any read/run scope, letting a token with only ``agents:run`` list
+    every agent it could run. The middleware now scopes the cached
+    ``accessible_resource_ids`` to the action required by the route.
+    """
+
+    def test_run_only_token_cannot_list_agents(self, client):
+        """A token with only `agents:run` must be denied on `GET /agents`."""
+        token = create_token("run-only-user", scopes=["agents:run"])
+        resp = client.get("/agents", headers=auth_header(token))
+        assert resp.status_code == 403, resp.text
+
+    def test_run_only_token_can_still_run_agents(self, client):
+        """The same token must still be authorised to invoke a run."""
+        token = create_token("run-only-user", scopes=["agents:run"])
+        resp = client.post(
+            "/agents/test-agent/runs",
+            data={"message": "hi", "stream": "false"},
+            headers=auth_header(token),
+        )
+        # 200 if the run executes; what matters is we don't get 403.
+        assert resp.status_code != 403, resp.text
+
+    def test_read_token_can_list_agents(self, client):
+        """A token with `agents:read` must succeed on `GET /agents`."""
+        token = create_token("read-user", scopes=["agents:read"])
+        resp = client.get("/agents", headers=auth_header(token))
+        assert resp.status_code == 200, resp.text
+
+    def test_per_resource_run_only_does_not_grant_listing(self, client):
+        """`agents:test-agent:run` must not unlock the global listing endpoint."""
+        token = create_token("per-resource-runner", scopes=["agents:test-agent:run"])
+        resp = client.get("/agents", headers=auth_header(token))
+        assert resp.status_code == 403, resp.text
+
+    def test_per_resource_read_grants_filtered_listing(self, client):
+        """`agents:test-agent:read` must return that agent (and only that one)."""
+        token = create_token("per-resource-reader", scopes=["agents:test-agent:read"])
+        resp = client.get("/agents", headers=auth_header(token))
+        assert resp.status_code == 200, resp.text
+        ids = [a.get("id") for a in resp.json()]
+        assert "test-agent" in ids
