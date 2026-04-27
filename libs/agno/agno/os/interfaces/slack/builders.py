@@ -41,7 +41,6 @@ from slack_sdk.models.blocks.block_elements import ButtonElement as Button
 from slack_sdk.models.blocks.block_elements import ImageElement
 
 MAX_MESSAGE_BLOCKS = 48
-MAX_SECTION_FIELDS = 10
 
 
 @dataclass
@@ -87,7 +86,6 @@ from agno.os.interfaces.slack.types import (
 )
 from agno.run.requirement import RunRequirement
 
-ARG_PREVIEW_MAX = 400
 ARG_VALUE_MAX = 120
 
 
@@ -114,16 +112,6 @@ def _classify_flags(
     return "confirmation"
 
 
-def classify_tool_execution(tool_execution: Optional[Dict[str, Any]]) -> PauseType:
-    if not tool_execution:
-        return "confirmation"
-    return _classify_flags(
-        user_feedback_schema=tool_execution.get("user_feedback_schema"),
-        requires_user_input=bool(tool_execution.get("requires_user_input")),
-        external_execution_required=bool(tool_execution.get("external_execution_required")),
-    )
-
-
 def classify_requirement(requirement: RunRequirement) -> PauseType:
     tool = requirement.tool_execution
     if tool is None:
@@ -133,27 +121,6 @@ def classify_requirement(requirement: RunRequirement) -> PauseType:
         requires_user_input=bool(getattr(tool, "requires_user_input", False)),
         external_execution_required=bool(getattr(tool, "external_execution_required", False)),
     )
-
-
-def _build_arg_fields(args: Optional[Dict[str, Any]]) -> List[Markdown]:
-    if not args:
-        return []
-    fields: List[Markdown] = []
-    total_chars = 0
-    for key, value in args.items():
-        if len(fields) >= MAX_SECTION_FIELDS - 1:
-            remaining = len(args) - len(fields)
-            if remaining > 0:
-                fields.append(Markdown(text=f"_… {remaining} more_"))
-            break
-        rendered = f"*{key}:*\n{render_arg_value(value)}"
-        if total_chars + len(rendered) > ARG_PREVIEW_MAX:
-            remaining = len(args) - len(fields)
-            fields.append(Markdown(text=f"_… {remaining} more_"))
-            break
-        fields.append(Markdown(text=rendered))
-        total_chars += len(rendered)
-    return fields
 
 
 def _subtitle_from_args(args: Dict[str, Any]) -> str:
