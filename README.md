@@ -9,8 +9,7 @@
 </div>
 
 <p align="center">
-  The programming language for agentic software.<br/>
-  Build, run, and manage multi-agent systems at scale.
+  Build, run, and manage agentic software at scale.
 </p>
 
 <div align="center">
@@ -23,15 +22,15 @@
   <a href="https://www.agno.com/discord">Discord</a>
 </div>
 
-## What is Agno?
+## What is Agno
 
-Software is shifting from deterministic request–response to reasoning systems that plan, call tools, remember context, and make decisions. Agno is the language for building that software correctly. It provides:
+Agno is the runtime for agentic software. Build agents, teams, and workflows. Run them as scalable services. Monitor and manage them in production.
 
-| Layer | Responsibility |
-|-------|----------------|
-| **SDK** | Agents, teams, workflows, memory, knowledge, tools, guardrails, approval flows |
-| **Engine** | Model calls, tool orchestration, structured outputs, runtime enforcement |
-| **AgentOS** | Streaming APIs, isolation, auth, approval enforcement, tracing, control plane |
+| Layer | What it does |
+|-------|--------------|
+| **Framework** | Build agents, teams, and workflows with memory, knowledge, guardrails, and 100+ integrations. |
+| **Runtime** | Serve your system in production with a stateless, session-scoped FastAPI backend. |
+| **Control Plane** | Test, monitor, and manage your system using the [AgentOS UI](https://os.agno.com). |
 
 ## Quick Start
 

@@ -1,6 +1,6 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -25,7 +25,8 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import json_serializer
+from agno.db.utils import deserialize_session, deserialize_sessions, json_serializer
+from agno.run.base import RunStatus
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
@@ -290,7 +291,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     log_debug(f"Created index: {idx.name} for table {self.db_schema}.{table_name}")
 
                 except Exception as e:
-                    log_error(f"Error creating index {idx.name}: {e}")
+                    log_error(f"Error creating index {idx.name}: {str(e)}")
 
             # Store the schema version for the created table
             if table_name != self.versions_table_name and table_created:
@@ -304,10 +305,10 @@ class AsyncPostgresDb(AsyncBaseDb):
             return table
 
         except Exception as e:
-            log_error(f"Could not create table {self.db_schema}.{table_name}: {e}")
+            log_error(f"Could not create table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
-    async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Table:
+    async def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
             self.session_table = await self._get_or_create_table(
                 table_name=self.session_table_name,
@@ -419,7 +420,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
     async def _get_or_create_table(
         self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
-    ) -> Table:
+    ) -> Optional[Table]:
         """
         Check if the table exists and is valid, else create it.
 
@@ -436,7 +437,9 @@ class AsyncPostgresDb(AsyncBaseDb):
                 session=sess, table_name=table_name, db_schema=self.db_schema
             )
 
-        if (not table_is_available) and create_table_if_not_found:
+        if not table_is_available:
+            if not create_table_if_not_found:
+                return None
             return await self._create_table(table_name=table_name, table_type=table_type)
 
         if not await ais_valid_table(
@@ -458,7 +461,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return table
 
         except Exception as e:
-            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {e}")
+            log_error(f"Error loading existing table {self.db_schema}.{table_name}: {str(e)}")
             raise
 
     async def get_latest_schema_version(self, table_name: str) -> str:
@@ -517,6 +520,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return False
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
@@ -533,7 +538,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     return True
 
         except Exception as e:
-            log_error(f"Error deleting session: {e}")
+            log_error(f"Error deleting session: {str(e)}")
             return False
 
     async def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -549,6 +554,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
@@ -559,12 +566,12 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
 
         except Exception as e:
-            log_error(f"Error deleting sessions: {e}")
+            log_error(f"Error deleting sessions: {str(e)}")
 
     async def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -587,16 +594,14 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess:
                 stmt = select(table).where(table.c.session_id == session_id)
 
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
-
-                # Filter by session_type to ensure we get the correct session type
-                session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                stmt = stmt.where(table.c.session_type == session_type_value)
 
                 result = await sess.execute(stmt)
                 row = result.fetchone()
@@ -608,17 +613,10 @@ class AsyncPostgresDb(AsyncBaseDb):
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
-            log_error(f"Exception reading from session table: {e}")
+            log_error(f"Exception reading from session table: {str(e)}")
             return None
 
     async def get_sessions(
@@ -660,6 +658,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return [] if deserialize else ([], 0)
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -674,6 +674,12 @@ class AsyncPostgresDb(AsyncBaseDb):
                         stmt = stmt.where(table.c.team_id == component_id)
                     elif session_type == SessionType.WORKFLOW:
                         stmt = stmt.where(table.c.workflow_id == component_id)
+                    elif session_type is None:
+                        stmt = stmt.where(
+                            (table.c.agent_id == component_id)
+                            | (table.c.team_id == component_id)
+                            | (table.c.workflow_id == component_id)
+                        )
                 if start_timestamp is not None:
                     stmt = stmt.where(table.c.created_at >= start_timestamp)
                 if end_timestamp is not None:
@@ -707,23 +713,16 @@ class AsyncPostgresDb(AsyncBaseDb):
                 if not deserialize:
                     return session, total_count
 
-            if session_type == SessionType.AGENT:
-                return [AgentSession.from_dict(record) for record in session]  # type: ignore
-            elif session_type == SessionType.TEAM:
-                return [TeamSession.from_dict(record) for record in session]  # type: ignore
-            elif session_type == SessionType.WORKFLOW:
-                return [WorkflowSession.from_dict(record) for record in session]  # type: ignore
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_sessions(session_type, session)
 
         except Exception as e:
-            log_error(f"Exception reading from session table: {e}")
+            log_error(f"Exception reading from session table: {str(e)}")
             return [] if deserialize else ([], 0)
 
     async def rename_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType],
         session_name: str,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
@@ -733,10 +732,10 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         Args:
             session_id (str): The ID of the session to rename.
-            session_type (SessionType): The type of session to rename.
+            session_type (Optional[SessionType]): The type of session to rename. Defaults to None.
             session_name (str): The new name for the session.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -748,6 +747,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess, sess.begin():
                 # Sanitize session_name to remove null bytes
@@ -755,7 +756,6 @@ class AsyncPostgresDb(AsyncBaseDb):
                 stmt = (
                     update(table)
                     .where(table.c.session_id == session_id)
-                    .where(table.c.session_type == session_type.value)
                     .values(
                         session_data=func.cast(
                             func.jsonb_set(
@@ -768,6 +768,8 @@ class AsyncPostgresDb(AsyncBaseDb):
                     )
                     .returning(*table.c)
                 )
+                if session_type is not None:
+                    stmt = stmt.where(table.c.session_type == session_type.value)
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(stmt)
@@ -781,18 +783,10 @@ class AsyncPostgresDb(AsyncBaseDb):
             if not deserialize:
                 return session
 
-            # Return the appropriate session type
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
-            log_error(f"Exception renaming session: {e}")
+            log_error(f"Exception renaming session: {str(e)}")
             return None
 
     async def upsert_session(
@@ -815,6 +809,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
+            if table is None:
+                return None
             session_dict = session.to_dict()
             # Sanitize JSON/dict fields to remove null bytes from nested strings
             if session_dict.get("agent_data"):
@@ -959,7 +955,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 raise ValueError(f"Invalid session type: {session.session_type}")
 
         except Exception as e:
-            log_error(f"Exception upserting into sessions table: {e}")
+            log_error(f"Exception upserting into sessions table: {str(e)}")
             return None
 
     # -- Memory methods --
@@ -974,6 +970,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
@@ -988,7 +986,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     log_debug(f"No user memory found with id: {memory_id}")
 
         except Exception as e:
-            log_error(f"Error deleting user memory: {e}")
+            log_error(f"Error deleting user memory: {str(e)}")
 
     async def delete_user_memories(self, memory_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete user memories from the database.
@@ -1001,6 +999,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
@@ -1016,7 +1016,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     log_debug(f"Successfully deleted {result.rowcount} user memories")  # type: ignore
 
         except Exception as e:
-            log_error(f"Error deleting user memories: {e}")
+            log_error(f"Error deleting user memories: {str(e)}")
 
     async def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from the database.
@@ -1029,6 +1029,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return []
 
             async with self.async_session_factory() as sess, sess.begin():
                 # Filter out NULL topics and ensure topics is an array before extracting elements
@@ -1067,7 +1069,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return list(set(topics))
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             return []
 
     async def get_user_memory(
@@ -1093,6 +1095,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
@@ -1111,7 +1115,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             return None
 
     async def get_user_memories(
@@ -1151,6 +1155,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return [] if deserialize else ([], 0)
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -1192,7 +1198,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return [UserMemory.from_dict(record) for record in memories_raw]
 
         except Exception as e:
-            log_error(f"Exception reading from memory table: {e}")
+            log_error(f"Exception reading from memory table: {str(e)}")
             return [] if deserialize else ([], 0)
 
     async def clear_memories(self) -> None:
@@ -1203,12 +1209,14 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 await sess.execute(table.delete())
 
         except Exception as e:
-            log_warning(f"Exception deleting all memories: {e}")
+            log_warning(f"Exception deleting all memories: {str(e)}")
 
     # -- Cultural Knowledge methods --
     async def clear_cultural_knowledge(self) -> None:
@@ -1219,12 +1227,14 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="culture")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 await sess.execute(table.delete())
 
         except Exception as e:
-            log_error(f"Exception deleting all cultural knowledge: {e}")
+            log_error(f"Exception deleting all cultural knowledge: {str(e)}")
 
     async def delete_cultural_knowledge(self, id: str) -> None:
         """Delete cultural knowledge by ID.
@@ -1237,13 +1247,15 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="culture")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
                 await sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Exception deleting cultural knowledge: {e}")
+            log_error(f"Exception deleting cultural knowledge: {str(e)}")
 
     async def get_cultural_knowledge(
         self, id: str, deserialize: Optional[bool] = True
@@ -1262,6 +1274,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="culture")
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess:
                 stmt = select(table).where(table.c.id == id)
@@ -1279,7 +1293,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return deserialize_cultural_knowledge(db_row)
 
         except Exception as e:
-            log_error(f"Exception reading cultural knowledge: {e}")
+            log_error(f"Exception reading cultural knowledge: {str(e)}")
             return None
 
     async def get_all_cultural_knowledge(
@@ -1314,7 +1328,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
+            table = await self._get_table(table_type="culture")
+            if table is None:
+                return [] if deserialize else ([], 0)
 
             async with self.async_session_factory() as sess:
                 # Build query with filters
@@ -1352,7 +1368,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return [deserialize_cultural_knowledge(row) for row in db_rows]
 
         except Exception as e:
-            log_error(f"Exception reading all cultural knowledge: {e}")
+            log_error(f"Exception reading all cultural knowledge: {str(e)}")
             return [] if deserialize else ([], 0)
 
     async def upsert_cultural_knowledge(
@@ -1372,6 +1388,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="culture", create_table_if_not_found=True)
+            if table is None:
+                return None
 
             # Generate ID if not present
             if cultural_knowledge.id is None:
@@ -1437,7 +1455,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return deserialize_cultural_knowledge(db_row)
 
         except Exception as e:
-            log_warning(f"Exception upserting cultural knowledge: {e}")
+            log_warning(f"Exception upserting cultural knowledge: {str(e)}")
             raise e
 
     async def get_user_memory_stats(
@@ -1467,6 +1485,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories")
+            if table is None:
+                return [], 0
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(
@@ -1506,7 +1526,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 ], total_count
 
         except Exception as e:
-            log_error(f"Exception getting user memory stats: {e}")
+            log_error(f"Exception getting user memory stats: {str(e)}")
             return [], 0
 
     async def upsert_user_memory(
@@ -1528,6 +1548,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="memories", create_table_if_not_found=True)
+            if table is None:
+                return None
 
             current_time = int(time.time())
 
@@ -1587,7 +1609,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
-            log_error(f"Exception upserting user memory: {e}")
+            log_error(f"Exception upserting user memory: {str(e)}")
             return None
 
     # -- Metrics methods --
@@ -1609,6 +1631,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="sessions")
+            if table is None:
+                return []
 
             stmt = select(
                 table.c.user_id,
@@ -1630,7 +1654,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return [dict(record._mapping) for record in records]
 
         except Exception as e:
-            log_error(f"Exception reading from sessions table: {e}")
+            log_error(f"Exception reading from sessions table: {str(e)}")
             return []
 
     async def _get_metrics_calculation_starting_date(self, table: Table) -> Optional[date]:
@@ -1680,6 +1704,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
+            if table is None:
+                return None
 
             starting_date = await self._get_metrics_calculation_starting_date(table)
 
@@ -1736,7 +1762,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return results
 
         except Exception as e:
-            log_error(f"Exception refreshing metrics: {e}")
+            log_error(f"Exception refreshing metrics: {str(e)}")
             return None
 
     async def get_metrics(
@@ -1756,6 +1782,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
+            if table is None:
+                return [], None
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -1776,7 +1804,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return [dict(row._mapping) for row in records], latest_updated_at
 
         except Exception as e:
-            log_warning(f"Exception getting metrics: {e}")
+            log_warning(f"Exception getting metrics: {str(e)}")
             return [], None
 
     # -- Knowledge methods --
@@ -1787,6 +1815,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             id (str): The ID of the knowledge row to delete.
         """
         table = await self._get_table(table_type="knowledge")
+        if table is None:
+            return
 
         try:
             async with self.async_session_factory() as sess, sess.begin():
@@ -1794,7 +1824,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 await sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Exception deleting knowledge content: {e}")
+            log_error(f"Exception deleting knowledge content: {str(e)}")
 
     async def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
@@ -1805,7 +1835,9 @@ class AsyncPostgresDb(AsyncBaseDb):
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
         """
-        table = await self._get_table(table_type="knowledge", create_table_if_not_found=True)
+        table = await self._get_table(table_type="knowledge")
+        if table is None:
+            return None
 
         try:
             async with self.async_session_factory() as sess, sess.begin():
@@ -1818,7 +1850,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return KnowledgeRow.model_validate(row._mapping)
 
         except Exception as e:
-            log_error(f"Exception getting knowledge content: {e}")
+            log_error(f"Exception getting knowledge content: {str(e)}")
             return None
 
     async def get_knowledge_contents(
@@ -1845,6 +1877,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         table = await self._get_table(table_type="knowledge")
+        if table is None:
+            return [], 0
 
         try:
             async with self.async_session_factory() as sess, sess.begin():
@@ -1872,7 +1906,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return [KnowledgeRow.model_validate(record._mapping) for record in records], total_count
 
         except Exception as e:
-            log_error(f"Exception getting knowledge contents: {e}")
+            log_error(f"Exception getting knowledge contents: {str(e)}")
             return [], 0
 
     async def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
@@ -1886,6 +1920,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="knowledge", create_table_if_not_found=True)
+            if table is None:
+                return None
             async with self.async_session_factory() as sess, sess.begin():
                 # Get the actual table columns to avoid "unconsumed column names" error
                 table_columns = set(table.columns.keys())
@@ -1958,7 +1994,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge row: {e}")
+            log_error(f"Error upserting knowledge row: {str(e)}")
             return None
 
     # -- Eval methods --
@@ -1976,6 +2012,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals", create_table_if_not_found=True)
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess, sess.begin():
                 current_time = int(time.time())
@@ -2003,7 +2041,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return eval_run
 
         except Exception as e:
-            log_error(f"Error creating eval run: {e}")
+            log_error(f"Error creating eval run: {str(e)}")
             return None
 
     async def delete_eval_run(self, eval_run_id: str) -> None:
@@ -2014,6 +2052,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id == eval_run_id)
@@ -2025,7 +2065,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     log_debug(f"Deleted eval run with ID: {eval_run_id}")
 
         except Exception as e:
-            log_error(f"Error deleting eval run {eval_run_id}: {e}")
+            log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
 
     async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         """Delete multiple eval runs from the database.
@@ -2035,6 +2075,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals")
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
@@ -2046,7 +2088,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     log_debug(f"Deleted {result.rowcount} eval runs")  # type: ignore
 
         except Exception as e:
-            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_error(f"Error deleting eval runs {eval_run_ids}: {str(e)}")
 
     async def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
@@ -2067,6 +2109,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals")
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
@@ -2082,7 +2126,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}: {str(e)}")
             return None
 
     async def get_eval_runs(
@@ -2124,6 +2168,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals")
+            if table is None:
+                return [] if deserialize else ([], 0)
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -2175,7 +2221,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
 
         except Exception as e:
-            log_error(f"Exception getting eval runs: {e}")
+            log_error(f"Exception getting eval runs: {str(e)}")
             return [] if deserialize else ([], 0)
 
     async def rename_eval_run(
@@ -2195,6 +2241,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="evals")
+            if table is None:
+                return None
             async with self.async_session_factory() as sess, sess.begin():
                 # Sanitize string field to remove null bytes
                 sanitized_name = sanitize_postgres_string(name)
@@ -2212,7 +2260,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             return EvalRunRecord.model_validate(eval_run_raw)
 
         except Exception as e:
-            log_error(f"Error upserting eval run name {eval_run_id}: {e}")
+            log_error(f"Error upserting eval run name {eval_run_id}: {str(e)}")
             return None
 
     # -- Migrations --
@@ -2345,6 +2393,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="traces", create_table_if_not_found=True)
+            if table is None:
+                return
 
             trace_dict = trace.to_dict()
             trace_dict.pop("total_spans", None)
@@ -2416,7 +2466,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 await sess.execute(upsert_stmt)
 
         except Exception as e:
-            log_error(f"Error creating trace: {e}")
+            log_error(f"Error creating trace: {str(e)}")
             # Don't raise - tracing should not break the main application flow
 
     async def get_trace(
@@ -2441,6 +2491,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             from agno.tracing.schemas import Trace
 
             table = await self._get_table(table_type="traces")
+            if table is None:
+                return None
 
             # Get spans table for JOIN
             spans_table = await self._get_table(table_type="spans")
@@ -2467,7 +2519,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return None
 
         except Exception as e:
-            log_error(f"Error getting trace: {e}")
+            log_error(f"Error getting trace: {str(e)}")
             return None
 
     async def get_traces(
@@ -2483,6 +2535,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List, int]:
         """Get traces matching the provided filters with pagination.
 
@@ -2498,6 +2551,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             end_time: Filter traces ending before this datetime.
             limit: Maximum number of traces to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
 
         Returns:
             tuple[List[Trace], int]: Tuple of (list of matching traces, total count).
@@ -2506,6 +2560,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             from agno.tracing.schemas import Trace
 
             table = await self._get_table(table_type="traces")
+            if table is None:
+                return [], 0
 
             # Get spans table for JOIN
             spans_table = await self._get_table(table_type="spans")
@@ -2536,6 +2592,20 @@ class AsyncPostgresDb(AsyncBaseDb):
                     # Convert datetime to ISO string for comparison
                     base_stmt = base_stmt.where(table.c.end_time <= end_time.isoformat())
 
+                # Apply advanced filter expression
+                if filter_expr:
+                    try:
+                        from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
+
+                        base_stmt = base_stmt.where(
+                            filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
+                        )
+                    except ValueError:
+                        # Re-raise ValueError for proper 400 response at API layer
+                        raise
+                    except (KeyError, TypeError) as e:
+                        raise ValueError(f"Invalid filter expression: {e}") from e
+
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = await sess.scalar(count_stmt) or 0
@@ -2553,7 +2623,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return traces, total_count
 
         except Exception as e:
-            log_error(f"Error getting traces: {e}")
+            log_error(f"Error getting traces: {str(e)}")
             return [], 0
 
     async def get_trace_stats(
@@ -2566,6 +2636,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        filter_expr: Optional[Dict[str, Any]] = None,
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2578,6 +2649,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
@@ -2586,24 +2658,24 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="traces")
+            if table is None:
+                return [], 0
 
             async with self.async_session_factory() as sess:
                 # Build base query grouped by session_id
                 base_stmt = (
                     select(
                         table.c.session_id,
-                        table.c.user_id,
-                        table.c.agent_id,
-                        table.c.team_id,
-                        table.c.workflow_id,
+                        func.max(table.c.user_id).label("user_id"),
+                        func.max(table.c.agent_id).label("agent_id"),
+                        func.max(table.c.team_id).label("team_id"),
+                        func.max(table.c.workflow_id).label("workflow_id"),
                         func.count(table.c.trace_id).label("total_traces"),
                         func.min(table.c.created_at).label("first_trace_at"),
                         func.max(table.c.created_at).label("last_trace_at"),
                     )
                     .where(table.c.session_id.isnot(None))  # Only sessions with session_id
-                    .group_by(
-                        table.c.session_id, table.c.user_id, table.c.agent_id, table.c.team_id, table.c.workflow_id
-                    )
+                    .group_by(table.c.session_id)
                 )
 
                 # Apply filters
@@ -2621,6 +2693,20 @@ class AsyncPostgresDb(AsyncBaseDb):
                 if end_time:
                     # Convert datetime to ISO string for comparison
                     base_stmt = base_stmt.where(table.c.created_at <= end_time.isoformat())
+
+                # Apply advanced filter expression
+                if filter_expr:
+                    try:
+                        from agno.db.filter_converter import TRACE_COLUMNS, filter_expr_to_sqlalchemy
+
+                        base_stmt = base_stmt.where(
+                            filter_expr_to_sqlalchemy(filter_expr, table, allowed_columns=TRACE_COLUMNS)
+                        )
+                    except ValueError:
+                        # Re-raise ValueError for proper 400 response at API layer
+                        raise
+                    except (KeyError, TypeError) as e:
+                        raise ValueError(f"Invalid filter expression: {e}") from e
 
                 # Get total count of sessions
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
@@ -2660,7 +2746,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return stats_list, total_count
 
         except Exception as e:
-            log_error(f"Error getting trace stats: {e}")
+            log_error(f"Error getting trace stats: {str(e)}")
             return [], 0
 
     # --- Spans ---
@@ -2672,6 +2758,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 span_dict = span.to_dict()
@@ -2686,7 +2774,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 await sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Error creating span: {e}")
+            log_error(f"Error creating span: {str(e)}")
 
     async def create_spans(self, spans: List) -> None:
         """Create multiple spans in the database as a batch.
@@ -2699,6 +2787,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         try:
             table = await self._get_table(table_type="spans", create_table_if_not_found=True)
+            if table is None:
+                return
 
             async with self.async_session_factory() as sess, sess.begin():
                 for span in spans:
@@ -2714,7 +2804,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     await sess.execute(stmt)
 
         except Exception as e:
-            log_error(f"Error creating spans batch: {e}")
+            log_error(f"Error creating spans batch: {str(e)}")
 
     async def get_span(self, span_id: str):
         """Get a single span by its span_id.
@@ -2729,6 +2819,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             from agno.tracing.schemas import Span
 
             table = await self._get_table(table_type="spans")
+            if table is None:
+                return None
 
             async with self.async_session_factory() as sess:
                 stmt = select(table).where(table.c.span_id == span_id)
@@ -2739,7 +2831,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return None
 
         except Exception as e:
-            log_error(f"Error getting span: {e}")
+            log_error(f"Error getting span: {str(e)}")
             return None
 
     async def get_spans(
@@ -2762,6 +2854,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             from agno.tracing.schemas import Span
 
             table = await self._get_table(table_type="spans")
+            if table is None:
+                return []
 
             async with self.async_session_factory() as sess:
                 stmt = select(table)
@@ -2780,7 +2874,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return [Span.from_dict(dict(row._mapping)) for row in results]
 
         except Exception as e:
-            log_error(f"Error getting spans: {e}")
+            log_error(f"Error getting spans: {str(e)}")
             return []
 
     # -- Learning methods --
@@ -3032,6 +3126,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         include_deleted: bool = False,
         limit: int = 20,
         offset: int = 0,
+        exclude_component_ids: Optional[Set[str]] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -3183,7 +3278,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     await sess.execute(table.insert().values(**schedule_data))
             return schedule_data
         except Exception as e:
-            log_error(f"Error creating schedule: {e}")
+            log_error(f"Error creating schedule: {str(e)}")
             raise
 
     async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -3282,7 +3377,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     await sess.execute(table.insert().values(**run_data))
             return run_data
         except Exception as e:
-            log_error(f"Error creating schedule run: {e}")
+            log_error(f"Error creating schedule run: {str(e)}")
             raise
 
     async def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -3360,7 +3455,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     await sess.execute(table.insert().values(**data))
             return data
         except Exception as e:
-            log_error(f"Error creating approval: {e}")
+            log_error(f"Error creating approval: {str(e)}")
             raise
 
     async def get_approval(self, approval_id: str) -> Optional[Dict[str, Any]]:
@@ -3486,4 +3581,31 @@ class AsyncPostgresDb(AsyncBaseDb):
                 return (await sess.execute(stmt)).scalar() or 0
         except Exception as e:
             log_debug(f"Error counting approvals: {e}")
+            return 0
+
+    async def update_approval_run_status(self, run_id: str, run_status: RunStatus) -> int:
+        """Update run_status on all approvals for a given run_id.
+
+        Args:
+            run_id: The run ID to match.
+            run_status: The new run status.
+
+        Returns:
+            Number of approvals updated.
+        """
+        try:
+            table = await self._get_table(table_type="approvals")
+            if table is None:
+                return 0
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    stmt = (
+                        table.update()
+                        .where(table.c.run_id == run_id)
+                        .values(run_status=run_status.value, updated_at=int(time.time()))
+                    )
+                    result = await sess.execute(stmt)
+                    return result.rowcount or 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_debug(f"Error updating approval run_status: {e}")
             return 0

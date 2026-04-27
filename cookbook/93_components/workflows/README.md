@@ -9,6 +9,11 @@ Examples for saving and loading workflows with advanced step types.
 - `save_parallel_steps.py` - Workflow with `Parallel` steps.
 - `save_router_steps.py` - Workflow with `Router` steps and selector restoration via `Registry`.
 
+## HITL (Human-in-the-Loop) Config Files
+- `save_hitl_confirmation_steps.py` - Workflow with step-level confirmation that round-trips through save/load.
+- `save_hitl_user_input_steps.py` - Workflow that collects structured user input, with schema round-tripping through save/load.
+- `save_hitl_condition_loop_router.py` - HITL config on `Condition`, `Loop`, and `Router` components with save/load verification.
+
 ## Prerequisites
 - Load environment variables with `direnv allow` (requires `.envrc`).
 - Start PostgreSQL if needed: `./cookbook/scripts/run_pgvector.sh`.

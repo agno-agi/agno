@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from inspect import iscoroutinefunction
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -36,11 +37,11 @@ from agno.utils.events import (
 from agno.utils.hooks import (
     copy_args_for_background,
     filter_hook_args,
+    is_guardrail_hook,
     should_run_hook_in_background,
 )
 from agno.utils.log import (
     log_debug,
-    log_error,
     log_exception,
 )
 
@@ -73,6 +74,17 @@ def _get_team_paused_content(run_response: TeamRunOutput) -> str:
     return "Team run paused. The following require input:\n" + "\n".join(parts)
 
 
+def _member_approval_already_exists(run_response: TeamRunOutput) -> bool:
+    """Return True if all requirements are member-propagated AND already have an approval_id."""
+    reqs = run_response.requirements or []
+    if not reqs:
+        return False
+    return all(
+        getattr(r, "member_agent_id", None) is not None and getattr(r.tool_execution, "approval_id", None) is not None
+        for r in reqs
+    )
+
+
 def handle_team_run_paused(
     team: "Team",
     run_response: TeamRunOutput,
@@ -86,6 +98,13 @@ def handle_team_run_paused(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
+    # Only create a team-level approval if this is NOT a member-propagated pause.
+    # Member agents already create their own approval record when they pause.
+    if not _member_approval_already_exists(run_response):
+        create_approval_from_pause(
+            db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+        )
+
     handle_event(
         create_team_run_paused_event(
             from_run_response=run_response,
@@ -98,9 +117,6 @@ def handle_team_run_paused(
     )
 
     _cleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
-    create_approval_from_pause(
-        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
-    )
 
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
     return run_response
@@ -119,6 +135,11 @@ def handle_team_run_paused_stream(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
+    if not _member_approval_already_exists(run_response):
+        create_approval_from_pause(
+            db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+        )
+
     pause_event = handle_event(
         create_team_run_paused_event(
             from_run_response=run_response,
@@ -131,9 +152,6 @@ def handle_team_run_paused_stream(
     )
 
     _cleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
-    create_approval_from_pause(
-        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
-    )
 
     if pause_event is not None:
         yield pause_event
@@ -154,6 +172,11 @@ async def ahandle_team_run_paused(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
+    if not _member_approval_already_exists(run_response):
+        await acreate_approval_from_pause(
+            db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+        )
+
     handle_event(
         create_team_run_paused_event(
             from_run_response=run_response,
@@ -166,9 +189,6 @@ async def ahandle_team_run_paused(
     )
 
     await _acleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
-    await acreate_approval_from_pause(
-        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
-    )
 
     log_debug(f"Team Run Paused: {run_response.run_id}", center=True, symbol="*")
     return run_response
@@ -187,6 +207,11 @@ async def ahandle_team_run_paused_stream(
     if not run_response.content:
         run_response.content = _get_team_paused_content(run_response)
 
+    if not _member_approval_already_exists(run_response):
+        await acreate_approval_from_pause(
+            db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
+        )
+
     pause_event = handle_event(
         create_team_run_paused_event(
             from_run_response=run_response,
@@ -199,9 +224,6 @@ async def ahandle_team_run_paused_stream(
     )
 
     await _acleanup_and_store(team, run_response=run_response, session=session, run_context=run_context)
-    await acreate_approval_from_pause(
-        db=team.db, run_response=run_response, team_id=team.id, team_name=team.name, user_id=team.user_id
-    )
 
     if pause_event is not None:
         yield pause_event
@@ -237,28 +259,35 @@ def _execute_pre_hooks(
         "session": session,
         "user_id": user_id,
         "debug_mode": effective_debug_mode,
+        "metadata": run_context.metadata if run_context else None,
     }
 
-    # Check if background_tasks is available and ALL hooks should run in background
-    # Note: Pre-hooks running in background may not be able to modify run_input
-    if team._run_hooks_in_background is True and background_tasks is not None:
-        # Schedule ALL pre_hooks as background tasks
-        # Copy args to prevent race conditions
-        bg_args = copy_args_for_background(all_args)
-        for hook in hooks:
-            # Filter arguments to only include those that the hook accepts
-            filtered_args = filter_hook_args(hook, bg_args)
+    all_args.update(kwargs)
 
-            # Add to background tasks
+    # Global background mode: run guardrails synchronously, buffer everything else.
+    # See agent/_hooks.py execute_pre_hooks for full pattern explanation.
+    if team._run_hooks_in_background is True and background_tasks is not None:
+        pending_bg_hooks = []
+        for hook in hooks:
+            if is_guardrail_hook(hook):
+                filtered_args = filter_hook_args(hook, all_args)
+                try:
+                    hook(**filtered_args)
+                except (InputCheckError, OutputCheckError):
+                    raise
+                except Exception:
+                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
+            else:
+                pending_bg_hooks.append(hook)
+        bg_args = copy_args_for_background(all_args)
+        for hook in pending_bg_hooks:
+            filtered_args = filter_hook_args(hook, bg_args)
             background_tasks.add_task(hook, **filtered_args)
         return
-
-    all_args.update(kwargs)
 
     for i, hook in enumerate(hooks):
         # Check if this specific hook should run in background (via @hook decorator)
         if should_run_hook_in_background(hook) and background_tasks is not None:
-            # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
             filtered_args = filter_hook_args(hook, bg_args)
             background_tasks.add_task(hook, **filtered_args)
@@ -274,7 +303,6 @@ def _execute_pre_hooks(
                 store_events=team.store_events,
             )
         try:
-            # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, all_args)
 
             hook(**filtered_args)
@@ -291,11 +319,10 @@ def _execute_pre_hooks(
 
         except (InputCheckError, OutputCheckError) as e:
             raise e
-        except Exception as e:
-            log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
-            log_exception(e)
+        except Exception:
+            log_exception(f"Pre-hook #{i + 1} execution failed")
         finally:
-            # Reset global log mode incase an agent in the pre-hook changed it
+            # Reset global log mode in case an agent in the pre-hook changed it
             _set_debug(team, debug_mode=debug_mode)
 
     # Update the input on the run_response
@@ -330,28 +357,37 @@ async def _aexecute_pre_hooks(
         "session": session,
         "user_id": user_id,
         "debug_mode": effective_debug_mode,
+        "metadata": run_context.metadata if run_context else None,
     }
 
-    # Check if background_tasks is available and ALL hooks should run in background
-    # Note: Pre-hooks running in background may not be able to modify run_input
-    if team._run_hooks_in_background is True and background_tasks is not None:
-        # Schedule ALL pre_hooks as background tasks
-        # Copy args to prevent race conditions
-        bg_args = copy_args_for_background(all_args)
-        for hook in hooks:
-            # Filter arguments to only include those that the hook accepts
-            filtered_args = filter_hook_args(hook, bg_args)
+    all_args.update(kwargs)
 
-            # Add to background tasks (both sync and async hooks supported)
+    # Global background mode — see _execute_pre_hooks for pattern explanation.
+    if team._run_hooks_in_background is True and background_tasks is not None:
+        pending_bg_hooks = []
+        for hook in hooks:
+            if is_guardrail_hook(hook):
+                filtered_args = filter_hook_args(hook, all_args)
+                try:
+                    if iscoroutinefunction(hook):
+                        await hook(**filtered_args)
+                    else:
+                        hook(**filtered_args)
+                except (InputCheckError, OutputCheckError):
+                    raise
+                except Exception:
+                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
+            else:
+                pending_bg_hooks.append(hook)
+        bg_args = copy_args_for_background(all_args)
+        for hook in pending_bg_hooks:
+            filtered_args = filter_hook_args(hook, bg_args)
             background_tasks.add_task(hook, **filtered_args)
         return
-
-    all_args.update(kwargs)
 
     for i, hook in enumerate(hooks):
         # Check if this specific hook should run in background (via @hook decorator)
         if should_run_hook_in_background(hook) and background_tasks is not None:
-            # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
             filtered_args = filter_hook_args(hook, bg_args)
             background_tasks.add_task(hook, **filtered_args)
@@ -367,15 +403,11 @@ async def _aexecute_pre_hooks(
                 store_events=team.store_events,
             )
         try:
-            # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, all_args)
-
-            from inspect import iscoroutinefunction
 
             if iscoroutinefunction(hook):
                 await hook(**filtered_args)
             else:
-                # Synchronous function
                 hook(**filtered_args)
 
             if stream_events:
@@ -390,11 +422,10 @@ async def _aexecute_pre_hooks(
 
         except (InputCheckError, OutputCheckError) as e:
             raise e
-        except Exception as e:
-            log_error(f"Pre-hook #{i + 1} execution failed: {str(e)}")
-            log_exception(e)
+        except Exception:
+            log_exception(f"Pre-hook #{i + 1} execution failed")
         finally:
-            # Reset global log mode incase an agent in the pre-hook changed it
+            # Reset global log mode in case an agent in the pre-hook changed it
             _set_debug(team, debug_mode=debug_mode)
 
     # Update the input on the run_response
@@ -428,27 +459,34 @@ def _execute_post_hooks(
         "session": session,
         "user_id": user_id,
         "debug_mode": effective_debug_mode,
+        "metadata": run_context.metadata if run_context else None,
     }
 
-    # Check if background_tasks is available and ALL hooks should run in background
-    if team._run_hooks_in_background is True and background_tasks is not None:
-        # Schedule ALL post_hooks as background tasks
-        # Copy args to prevent race conditions
-        bg_args = copy_args_for_background(all_args)
-        for hook in hooks:
-            # Filter arguments to only include those that the hook accepts
-            filtered_args = filter_hook_args(hook, bg_args)
+    all_args.update(kwargs)
 
-            # Add to background tasks
+    # Global background mode — see _execute_pre_hooks for pattern explanation.
+    if team._run_hooks_in_background is True and background_tasks is not None:
+        pending_bg_hooks = []
+        for hook in hooks:
+            if is_guardrail_hook(hook):
+                filtered_args = filter_hook_args(hook, all_args)
+                try:
+                    hook(**filtered_args)
+                except (InputCheckError, OutputCheckError):
+                    raise
+                except Exception:
+                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
+            else:
+                pending_bg_hooks.append(hook)
+        bg_args = copy_args_for_background(all_args)
+        for hook in pending_bg_hooks:
+            filtered_args = filter_hook_args(hook, bg_args)
             background_tasks.add_task(hook, **filtered_args)
         return
-
-    all_args.update(kwargs)
 
     for i, hook in enumerate(hooks):
         # Check if this specific hook should run in background (via @hook decorator)
         if should_run_hook_in_background(hook) and background_tasks is not None:
-            # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
             filtered_args = filter_hook_args(hook, bg_args)
             background_tasks.add_task(hook, **filtered_args)
@@ -465,7 +503,6 @@ def _execute_post_hooks(
                 store_events=team.store_events,
             )
         try:
-            # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, all_args)
 
             hook(**filtered_args)
@@ -483,11 +520,10 @@ def _execute_post_hooks(
 
         except (InputCheckError, OutputCheckError) as e:
             raise e
-        except Exception as e:
-            log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
-            log_exception(e)
+        except Exception:
+            log_exception(f"Post-hook #{i + 1} execution failed")
         finally:
-            # Reset global log mode incase an agent in the post-hook changed it
+            # Reset global log mode in case an agent in the post-hook changed it
             _set_debug(team, debug_mode=debug_mode)
 
 
@@ -518,27 +554,37 @@ async def _aexecute_post_hooks(
         "session": session,
         "user_id": user_id,
         "debug_mode": effective_debug_mode,
+        "metadata": run_context.metadata if run_context else None,
     }
 
-    # Check if background_tasks is available and ALL hooks should run in background
-    if team._run_hooks_in_background is True and background_tasks is not None:
-        # Schedule ALL post_hooks as background tasks
-        # Copy args to prevent race conditions
-        bg_args = copy_args_for_background(all_args)
-        for hook in hooks:
-            # Filter arguments to only include those that the hook accepts
-            filtered_args = filter_hook_args(hook, bg_args)
+    all_args.update(kwargs)
 
-            # Add to background tasks (both sync and async hooks supported)
+    # Global background mode — see _execute_pre_hooks for pattern explanation.
+    if team._run_hooks_in_background is True and background_tasks is not None:
+        pending_bg_hooks = []
+        for hook in hooks:
+            if is_guardrail_hook(hook):
+                filtered_args = filter_hook_args(hook, all_args)
+                try:
+                    if iscoroutinefunction(hook):
+                        await hook(**filtered_args)
+                    else:
+                        hook(**filtered_args)
+                except (InputCheckError, OutputCheckError):
+                    raise
+                except Exception:
+                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
+            else:
+                pending_bg_hooks.append(hook)
+        bg_args = copy_args_for_background(all_args)
+        for hook in pending_bg_hooks:
+            filtered_args = filter_hook_args(hook, bg_args)
             background_tasks.add_task(hook, **filtered_args)
         return
-
-    all_args.update(kwargs)
 
     for i, hook in enumerate(hooks):
         # Check if this specific hook should run in background (via @hook decorator)
         if should_run_hook_in_background(hook) and background_tasks is not None:
-            # Copy args to prevent race conditions
             bg_args = copy_args_for_background(all_args)
             filtered_args = filter_hook_args(hook, bg_args)
             background_tasks.add_task(hook, **filtered_args)
@@ -555,10 +601,7 @@ async def _aexecute_post_hooks(
                 store_events=team.store_events,
             )
         try:
-            # Filter arguments to only include those that the hook accepts
             filtered_args = filter_hook_args(hook, all_args)
-
-            from inspect import iscoroutinefunction
 
             if iscoroutinefunction(hook):
                 await hook(**filtered_args)
@@ -577,9 +620,8 @@ async def _aexecute_post_hooks(
                 )
         except (InputCheckError, OutputCheckError) as e:
             raise e
-        except Exception as e:
-            log_error(f"Post-hook #{i + 1} execution failed: {str(e)}")
-            log_exception(e)
+        except Exception:
+            log_exception(f"Post-hook #{i + 1} execution failed")
         finally:
-            # Reset global log mode incase an agent in the post-hook changed it
+            # Reset global log mode in case an agent in the post-hook changed it
             _set_debug(team, debug_mode=debug_mode)

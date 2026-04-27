@@ -193,6 +193,96 @@ class TestStepFromDict:
             assert step.agent == mock_agent
             assert step.name == "agent-step"
 
+    def test_from_dict_agent_resolved_from_registry(self):
+        """Test from_dict resolves agent from registry before DB."""
+        mock_agent = MagicMock()
+        mock_agent.id = "registry-agent"
+        mock_copy = MagicMock()
+        mock_copy.id = "registry-agent"
+        mock_agent.deep_copy.return_value = mock_copy
+
+        registry = Registry(agents=[mock_agent])
+
+        data = {
+            "type": "Step",
+            "name": "registry-step",
+            "agent_id": "registry-agent",
+        }
+
+        with patch("agno.agent.agent.get_agent_by_id") as mock_get_agent:
+            step = Step.from_dict(data, registry=registry)
+
+            # DB fallback should NOT be called
+            mock_get_agent.assert_not_called()
+            assert step.agent is mock_copy
+            mock_agent.deep_copy.assert_called_once()
+
+    def test_from_dict_agent_falls_back_to_db(self):
+        """Test from_dict falls back to DB when agent not in registry."""
+        registry = Registry(agents=[])  # empty
+
+        mock_db_agent = MagicMock()
+        mock_db_agent.id = "db-agent"
+
+        data = {
+            "type": "Step",
+            "name": "db-step",
+            "agent_id": "db-agent",
+        }
+
+        with patch("agno.agent.agent.get_agent_by_id") as mock_get_agent:
+            mock_get_agent.return_value = mock_db_agent
+            mock_db = MagicMock()
+            step = Step.from_dict(data, registry=registry, db=mock_db)
+
+            mock_get_agent.assert_called_once_with(db=mock_db, id="db-agent", registry=registry)
+            assert step.agent is mock_db_agent
+
+    def test_from_dict_team_resolved_from_registry(self):
+        """Test from_dict resolves team from registry before DB."""
+        mock_team = MagicMock()
+        mock_team.id = "registry-team"
+        mock_copy = MagicMock()
+        mock_copy.id = "registry-team"
+        mock_team.deep_copy.return_value = mock_copy
+
+        registry = Registry(teams=[mock_team])
+
+        data = {
+            "type": "Step",
+            "name": "registry-team-step",
+            "team_id": "registry-team",
+        }
+
+        with patch("agno.team.team.get_team_by_id") as mock_get_team:
+            step = Step.from_dict(data, registry=registry)
+
+            mock_get_team.assert_not_called()
+            assert step.team is mock_copy
+            mock_team.deep_copy.assert_called_once()
+
+    def test_from_dict_unresolvable_agent_raises(self):
+        """Test from_dict raises ValueError when agent can't be resolved."""
+        data = {
+            "type": "Step",
+            "name": "broken-step",
+            "agent_id": "nonexistent-agent",
+        }
+
+        with pytest.raises(ValueError, match="must have one executor"):
+            Step.from_dict(data)
+
+    def test_from_dict_unresolvable_team_raises(self):
+        """Test from_dict raises ValueError when team can't be resolved."""
+        data = {
+            "type": "Step",
+            "name": "broken-step",
+            "team_id": "nonexistent-team",
+        }
+
+        with pytest.raises(ValueError, match="must have one executor"):
+            Step.from_dict(data)
+
     def test_from_dict_with_executor(self, registry_with_functions):
         """Test from_dict reconstructs step with executor function."""
         data = {

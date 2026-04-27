@@ -2,9 +2,10 @@
 AgentOS Demo
 
 Prerequisites:
-uv pip install -U fastapi uvicorn sqlalchemy pgvector psycopg openai ddgs yfinance
+uv pip install -U fastapi uvicorn sqlalchemy pgvector psycopg openai ddgs
 """
 
+from agno import __version__ as agno_version
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
@@ -13,8 +14,11 @@ from agno.os import AgentOS
 from agno.os.interfaces.a2a import A2A
 from agno.os.interfaces.agui import AGUI
 from agno.os.interfaces.slack import Slack
+from agno.os.interfaces.telegram import Telegram
 from agno.os.interfaces.whatsapp import Whatsapp
+from agno.registry import Registry
 from agno.team import Team
+from agno.tools.mcp import MCPTools
 from agno.vectordb.pgvector import PgVector
 from agno.workflow import Workflow
 from agno.workflow.step import Step
@@ -40,6 +44,15 @@ knowledge = Knowledge(
     vector_db=vector_db,
 )
 
+registry = Registry(
+    name="Agno Registry",
+    tools=[MCPTools(transport="streamable-http", url="https://docs.agno.com/mcp")],
+    models=[
+        OpenAIChat(id="gpt-5"),
+    ],
+    dbs=[db],
+)
+
 # Create an agent
 simple_agent = Agent(
     name="Simple Agent",
@@ -49,7 +62,6 @@ simple_agent = Agent(
     instructions=["You are a simple agent"],
     knowledge=knowledge,
 )
-
 
 # Create a team
 simple_team = Team(
@@ -76,6 +88,7 @@ simple_workflow = Workflow(
 
 # Create an interface
 slack_interface = Slack(agent=simple_team)
+telegram_interface = Telegram(agent=simple_agent)
 whatsapp_interface = Whatsapp(agent=simple_agent)
 agui_interface = AGUI(agent=simple_agent)
 a2a_interface = A2A(agents=[simple_agent])
@@ -84,10 +97,21 @@ a2a_interface = A2A(agents=[simple_agent])
 # Create the AgentOS
 agent_os = AgentOS(
     id="agentos-demo",
+    name="Agno API Reference",
+    version=agno_version,
+    description="The all-in-one, private, secure agent platform that runs in your cloud.",
     agents=[simple_agent],
     teams=[simple_team],
     workflows=[simple_workflow],
-    interfaces=[slack_interface, whatsapp_interface, agui_interface, a2a_interface],
+    interfaces=[
+        slack_interface,
+        telegram_interface,
+        whatsapp_interface,
+        agui_interface,
+        a2a_interface,
+    ],
+    registry=registry,
+    db=db,
 )
 app = agent_os.get_app()
 

@@ -1,7 +1,12 @@
-from typing import Any, Dict, List, Optional, Union
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from agno.team.factory import TeamFactory
 
 from agno.agent import Agent
 from agno.os.routers.agents.schema import AgentResponse
@@ -22,6 +27,7 @@ class TeamResponse(BaseModel):
     db_id: Optional[str] = None
     description: Optional[str] = None
     role: Optional[str] = None
+    mode: Optional[str] = None
     model: Optional[ModelResponse] = None
     tools: Optional[Dict[str, Any]] = None
     sessions: Optional[Dict[str, Any]] = None
@@ -36,9 +42,31 @@ class TeamResponse(BaseModel):
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
     metadata: Optional[Dict[str, Any]] = None
     input_schema: Optional[Dict[str, Any]] = None
+    is_factory: bool = False
+    factory_input_schema: Optional[Dict[str, Any]] = None
     is_component: bool = False
     current_version: Optional[int] = None
     stage: Optional[str] = None
+
+    @classmethod
+    def from_factory(cls, factory: TeamFactory) -> TeamResponse:
+        """Create a TeamResponse from a TeamFactory for /config discovery."""
+        factory_input_schema = None
+        if factory.input_schema is not None:
+            try:
+                factory_input_schema = factory.input_schema.model_json_schema()
+            except Exception:
+                pass
+
+        return cls(
+            id=factory.id,
+            name=factory.name,
+            description=factory.description,
+            db_id=factory.db.id if factory.db else None,
+            is_factory=True,
+            input_schema=factory_input_schema,
+            factory_input_schema=factory_input_schema,
+        )
 
     @classmethod
     async def from_team(
@@ -128,7 +156,12 @@ class TeamResponse(BaseModel):
             model_provider = model_id
 
         session_table = team.db.session_table_name if team.db else None
-        knowledge_table = team.db.knowledge_table_name if team.db and team.knowledge else None
+        contents_db = getattr(team.knowledge, "contents_db", None) if team.knowledge else None
+        knowledge_table = (
+            contents_db.knowledge_table_name
+            if contents_db
+            else (team.db.knowledge_table_name if team.db and team.knowledge else None)
+        )
 
         tools_info = {
             "tools": formatted_tools,
@@ -143,13 +176,15 @@ class TeamResponse(BaseModel):
             "num_history_runs": team.num_history_runs,
             "cache_session": team.cache_session,
         }
-
-        contents_db = getattr(team.knowledge, "contents_db", None) if team.knowledge else None
         knowledge_info = {
             "db_id": contents_db.id if contents_db else None,
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": team.enable_agentic_knowledge_filters,
-            "knowledge_filters": team.knowledge_filters,
+            "knowledge_filters": (
+                [f.to_dict() if hasattr(f, "to_dict") else f for f in team.knowledge_filters]
+                if isinstance(team.knowledge_filters, list)
+                else team.knowledge_filters
+            ),
             "references_format": team.references_format,
         }
 
@@ -270,6 +305,7 @@ class TeamResponse(BaseModel):
             db_id=team.db.id if team.db else None,
             description=team.description,
             role=team.role,
+            mode=team.mode.value if team.mode else None,
             model=ModelResponse(**_team_model_data) if _team_model_data else None,
             tools=filter_meaningful_config(tools_info, {}),
             sessions=filter_meaningful_config(sessions_info, team_defaults),

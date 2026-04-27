@@ -37,8 +37,9 @@ from agno.exceptions import (
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
+from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics, merge_background_metrics
 from agno.models.response import ModelResponse, ToolExecution
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
@@ -71,6 +72,7 @@ from agno.tools.function import Function
 from agno.utils.agent import (
     await_for_open_threads,
     await_for_thread_tasks_stream,
+    collect_background_metrics,
     scrub_history_messages_from_run_output,
     scrub_media_from_run_output,
     scrub_tool_results_from_run_output,
@@ -146,7 +148,7 @@ def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
                     run_context.dependencies[key] = result
 
             except Exception as e:
-                log_warning(f"Failed to resolve dependencies for '{key}': {e}")
+                log_warning(f"Failed to resolve dependencies for '{key}': {str(e)}")
         else:
             run_context.dependencies[key] = value
 
@@ -180,7 +182,7 @@ async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> No
 
             run_context.dependencies[key] = result
         except Exception as e:
-            log_warning(f"Failed to resolve context for '{key}': {e}")
+            log_warning(f"Failed to resolve context for '{key}': {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -199,10 +201,12 @@ def handle_agent_run_paused(
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
 
-    cleanup_and_store(agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id)
+    # Stamp approval_id on tools before storing so the DB has the complete data.
     create_approval_from_pause(
         db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
     )
+
+    cleanup_and_store(agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id)
 
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -222,7 +226,12 @@ def handle_agent_run_paused_stream(
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
 
-    # We return and await confirmation/completion for the tools that require it
+    # Stamp approval_id on tools before storing so the DB has the complete data.
+    create_approval_from_pause(
+        db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
+    )
+
+    # Create RunPausedEvent and add to run_response.events before storing
     pause_event = handle_event(
         create_run_paused_event(
             from_run_response=run_response,
@@ -235,9 +244,6 @@ def handle_agent_run_paused_stream(
     )
 
     cleanup_and_store(agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id)
-    create_approval_from_pause(
-        db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
-    )
 
     yield pause_event  # type: ignore
 
@@ -259,11 +265,12 @@ async def ahandle_agent_run_paused(
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
 
-    await acleanup_and_store(
-        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-    )
+    # Stamp approval_id on tools before storing so the DB has the complete data.
     await acreate_approval_from_pause(
         db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
+    )
+    await acleanup_and_store(
+        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
     )
 
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
@@ -284,7 +291,12 @@ async def ahandle_agent_run_paused_stream(
     if not run_response.content:
         run_response.content = get_paused_content(run_response)
 
-    # We return and await confirmation/completion for the tools that require it
+    # Stamp approval_id on tools before storing so the DB has the complete data.
+    await acreate_approval_from_pause(
+        db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
+    )
+
+    # Create RunPausedEvent and add to run_response.events before storing
     pause_event = handle_event(
         create_run_paused_event(
             from_run_response=run_response,
@@ -298,9 +310,6 @@ async def ahandle_agent_run_paused_stream(
 
     await acleanup_and_store(
         agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-    )
-    await acreate_approval_from_pause(
-        db=agent.db, run_response=run_response, agent_id=agent.id, agent_name=agent.name, user_id=user_id
     )
 
     yield pause_event  # type: ignore
@@ -352,6 +361,7 @@ def _run(
     from agno.agent._messages import get_run_messages
     from agno.agent._response import (
         convert_response_to_structured_format,
+        generate_followups,
         generate_response_with_output_model,
         handle_reasoning,
         parse_response_with_parser_model,
@@ -497,7 +507,9 @@ def _run(
                 # 6. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
 
-                model_response: ModelResponse = agent.model.response(
+                model_response: ModelResponse = call_model_with_fallback(
+                    agent.model,
+                    agent.fallback_config,
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=agent.tool_choice,
@@ -512,10 +524,12 @@ def _run(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # If an output model is provided, generate output using the output model
-                generate_response_with_output_model(agent, model_response, run_messages)
+                generate_response_with_output_model(agent, model_response, run_messages, run_response=run_response)
 
                 # If a parser model is provided, structure the response separately
-                parse_response_with_parser_model(agent, model_response, run_messages, run_context=run_context)
+                parse_response_with_parser_model(
+                    agent, model_response, run_messages, run_context=run_context, run_response=run_response
+                )
 
                 # 7. Update the RunOutput with the model response
                 update_run_response(
@@ -533,6 +547,10 @@ def _run(
                         cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
                         learning_future=learning_future,  # type: ignore
                     )
+                    merge_background_metrics(
+                        run_response.metrics,
+                        collect_background_metrics(memory_future, cultural_knowledge_future, learning_future),
+                    )
 
                     return handle_agent_run_paused(
                         agent,
@@ -542,12 +560,14 @@ def _run(
                         user_id=user_id,
                     )
 
-                # 8. Store media if enabled
-                if agent.store_media:
-                    store_media_util(run_response, model_response)
+                # 8. Store media in run output for the caller
+                store_media_util(run_response, model_response)
 
                 # 9. Convert the response to the structured format if needed
                 convert_response_to_structured_format(agent, run_response, run_context=run_context)
+
+                # 9b. Generate follow-up suggestions if enabled
+                generate_followups(agent, run_response=run_response)
 
                 # 10. Execute post-hooks after output is generated but before response is returned
                 if agent.post_hooks is not None:
@@ -573,13 +593,19 @@ def _run(
                     cultural_knowledge_future=cultural_knowledge_future,  # type: ignore
                     learning_future=learning_future,  # type: ignore
                 )
+                merge_background_metrics(
+                    run_response.metrics,
+                    collect_background_metrics(memory_future, cultural_knowledge_future, learning_future),
+                )
 
                 # 12. Create session summary
                 if agent.session_summary_manager is not None and agent.enable_session_summaries:
                     # Upsert the RunOutput to Agent Session before creating the session summary
                     agent_session.upsert_run(run=run_response)
                     try:
-                        agent.session_summary_manager.create_session_summary(session=agent_session)
+                        agent.session_summary_manager.create_session_summary(
+                            session=agent_session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -645,7 +671,7 @@ def _run(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
 
@@ -724,6 +750,7 @@ def _run_stream(
     from agno.agent._init import disconnect_connectable_tools
     from agno.agent._messages import get_run_messages
     from agno.agent._response import (
+        generate_followups_stream,
         generate_response_with_output_model_stream,
         handle_model_response_stream,
         handle_reasoning_stream,
@@ -945,6 +972,13 @@ def _run_stream(
                     run_context=run_context,
                 )
 
+                # 7b. Generate follow-up suggestions if enabled
+                yield from generate_followups_stream(
+                    agent,  # type: ignore
+                    run_response=run_response,
+                    stream_events=stream_events,
+                )
+
                 # We should break out of the run function
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
                     yield from wait_for_thread_tasks_stream(
@@ -956,6 +990,10 @@ def _run_stream(
                         events_to_skip=agent.events_to_skip,
                         store_events=agent.store_events,
                         get_memories_callback=lambda: agent.get_user_memories(user_id=user_id),
+                    )
+                    merge_background_metrics(
+                        run_response.metrics,
+                        collect_background_metrics(memory_future, cultural_knowledge_future, learning_future),
                     )
 
                     # Handle the paused run
@@ -1004,6 +1042,10 @@ def _run_stream(
                     store_events=agent.store_events,
                     get_memories_callback=lambda: agent.get_user_memories(user_id=user_id),
                 )
+                merge_background_metrics(
+                    run_response.metrics,
+                    collect_background_metrics(memory_future, cultural_knowledge_future, learning_future),
+                )
 
                 # 9. Create session summary
                 if agent.session_summary_manager is not None and agent.enable_session_summaries:
@@ -1018,7 +1060,9 @@ def _run_stream(
                             store_events=agent.store_events,
                         )
                     try:
-                        agent.session_summary_manager.create_session_summary(session=agent_session)
+                        agent.session_summary_manager.create_session_summary(
+                            session=agent_session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
                     if stream_events:
@@ -1132,7 +1176,7 @@ def _run_stream(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
 
@@ -1313,7 +1357,7 @@ def run_dispatch(
     run_response.model_provider = agent.model.provider if agent.model is not None else None
 
     # Start the run metrics timer, to calculate the run duration
-    run_response.metrics = Metrics()
+    run_response.metrics = RunMetrics()
     run_response.metrics.start_timer()
 
     if opts.stream:
@@ -1393,6 +1437,7 @@ async def _arun(
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import aget_run_messages
     from agno.agent._response import (
+        agenerate_followups,
         agenerate_response_with_output_model,
         ahandle_reasoning,
         aparse_response_with_parser_model,
@@ -1546,7 +1591,9 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 9. Generate a response from the Model (includes running function calls)
-                model_response: ModelResponse = await agent.model.aresponse(
+                model_response: ModelResponse = await acall_model_with_fallback(
+                    agent.model,
+                    agent.fallback_config,
                     messages=run_messages.messages,
                     tools=_tools,
                     tool_choice=agent.tool_choice,
@@ -1562,12 +1609,16 @@ async def _arun(
 
                 # If an output model is provided, generate output using the output model
                 await agenerate_response_with_output_model(
-                    agent, model_response=model_response, run_messages=run_messages
+                    agent, model_response=model_response, run_messages=run_messages, run_response=run_response
                 )
 
                 # If a parser model is provided, structure the response separately
                 await aparse_response_with_parser_model(
-                    agent, model_response=model_response, run_messages=run_messages, run_context=run_context
+                    agent,
+                    model_response=model_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
+                    run_response=run_response,
                 )
 
                 # 10. Update the RunOutput with the model response
@@ -1586,6 +1637,10 @@ async def _arun(
                         cultural_knowledge_task=cultural_knowledge_task,
                         learning_task=learning_task,
                     )
+                    merge_background_metrics(
+                        run_response.metrics,
+                        collect_background_metrics(memory_task, cultural_knowledge_task, learning_task),
+                    )
                     return await ahandle_agent_run_paused(
                         agent,
                         run_response=run_response,
@@ -1597,9 +1652,11 @@ async def _arun(
                 # 11. Convert the response to the structured format if needed
                 convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
-                # 12. Store media if enabled
-                if agent.store_media:
-                    store_media_util(run_response, model_response)
+                # 11b. Generate follow-up suggestions if enabled
+                await agenerate_followups(agent, run_response=run_response)
+
+                # 12. Store media in run output for the caller
+                store_media_util(run_response, model_response)
 
                 # 13. Execute post-hooks (after output is generated but before response is returned)
                 if agent.post_hooks is not None:
@@ -1625,13 +1682,19 @@ async def _arun(
                     cultural_knowledge_task=cultural_knowledge_task,
                     learning_task=learning_task,
                 )
+                merge_background_metrics(
+                    run_response.metrics,
+                    collect_background_metrics(memory_task, cultural_knowledge_task, learning_task),
+                )
 
                 # 15. Create session summary
                 if agent.session_summary_manager is not None and agent.enable_session_summaries:
                     # Upsert the RunOutput to Agent Session before creating the session summary
                     agent_session.upsert_run(run=run_response)
                     try:
-                        await agent.session_summary_manager.acreate_session_summary(session=agent_session)
+                        await agent.session_summary_manager.acreate_session_summary(
+                            session=agent_session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -1704,7 +1767,7 @@ async def _arun(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -1821,15 +1884,15 @@ async def _arun_background(
                 background_tasks=background_tasks,
                 **kwargs,
             )
-        except Exception:
-            log_error(f"Background run {run_response.run_id} failed", exc_info=True)
+        except Exception as e:
+            log_error(f"Background run {run_response.run_id} failed: {str(e)}")
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
                 agent_session.upsert_run(run=run_response)
                 await asave_session(agent, session=agent_session)
-            except Exception:
-                log_error(f"Failed to persist error state for background run {run_response.run_id}", exc_info=True)
+            except Exception as e:
+                log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
             # Note: acleanup_run is already called by _arun's finally block
 
     task = asyncio.create_task(_background_task())
@@ -1838,6 +1901,146 @@ async def _arun_background(
 
     # 5. Return immediately with the PENDING response
     return run_response
+
+
+async def _arun_background_stream(
+    agent: Agent,
+    run_response: RunOutput,
+    run_context: RunContext,
+    session_id: str,
+    user_id: Optional[str] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    stream_events: bool = False,
+    yield_run_output: Optional[bool] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> AsyncIterator[str]:
+    """Background streaming agent run that survives client disconnections.
+
+    1. Persists RUNNING status in DB
+    2. Spawns a detached asyncio.Task that runs _arun_stream
+    3. Buffers events (via event_buffer) and publishes to SSE subscribers
+    4. Yields SSE-formatted strings via an asyncio.Queue
+
+    The detached task keeps running even if the client disconnects.
+    The caller (router) just yields the SSE strings to the client.
+
+    Similar to how Workflow._arun_background_stream handles WebSocket streaming,
+    but uses SSE transport with event_buffer and sse_subscriber_manager.
+    """
+    from agno.agent._session import asave_session
+    from agno.agent._storage import aread_or_create_session, update_metadata
+
+    run_id = run_response.run_id
+    if not run_id:
+        raise ValueError("run_id is required for background streaming")
+
+    # 1. Persist RUNNING status so the run is visible in the DB immediately
+    run_response.status = RunStatus.running
+
+    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+    update_metadata(agent, session=agent_session)
+    agent_session.upsert_run(run=run_response)
+    await asave_session(agent, session=agent_session)
+
+    log_info(f"Background stream run {run_id} persisted with RUNNING status")
+
+    # 2. Create queue for forwarding SSE strings to the caller
+    sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+    # 3. Spawn detached background task
+    async def _background_producer() -> None:
+        from agno.os.managers import event_buffer, sse_subscriber_manager
+        from agno.os.utils import format_sse_event_with_index
+
+        try:
+            async for event in _arun_stream(
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                user_id=user_id,
+                response_format=response_format,
+                stream_events=stream_events,
+                yield_run_output=yield_run_output,
+                session_id=session_id,
+                add_history_to_context=add_history_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                pre_session=agent_session,
+                **kwargs,
+            ):
+                if isinstance(event, RunOutput):
+                    continue
+
+                # Buffer event for reconnection support
+                event_index: Optional[int] = None
+                try:
+                    event_index = event_buffer.add_event(run_id, event)
+                except Exception:
+                    log_warning(f"Failed to buffer event for run {run_id}")
+
+                # Format as SSE
+                sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
+
+                # Push to primary queue (original client)
+                try:
+                    await sse_queue.put(sse_data)
+                except Exception:
+                    log_warning(f"Failed to push SSE data to queue for run {run_id}")
+
+                # Publish to SSE subscribers (resumed clients)
+                try:
+                    await sse_subscriber_manager.publish(
+                        run_id, event_index if event_index is not None else -1, sse_data
+                    )
+                except Exception:
+                    log_warning(f"Failed to publish SSE data to subscribers for run {run_id}")
+
+        except Exception:
+            log_error(f"Background stream run {run_id} failed", exc_info=True)
+            # Persist ERROR status
+            try:
+                run_response.status = RunStatus.error
+                agent_session.upsert_run(run=run_response)
+                await asave_session(agent, session=agent_session)
+            except Exception:
+                log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
+
+        finally:
+            # Signal primary queue FIRST — unblocks the original client
+            try:
+                await sse_queue.put(None)
+            except Exception:
+                log_warning(f"Failed to signal primary queue for run {run_id} completion")
+
+            # Mark run completed in event buffer (status is set by _arun_stream/acleanup_and_store)
+            try:
+                event_buffer.set_run_completed(run_id, run_response.status or RunStatus.completed)
+            except Exception:
+                log_warning(f"Failed to mark run {run_id} as completed in event buffer")
+
+            # Signal SSE subscribers that run is done (shielded to survive task cancellation)
+            try:
+                await asyncio.shield(sse_subscriber_manager.complete(run_id))
+            except (Exception, asyncio.CancelledError):
+                log_warning(f"Failed to signal SSE subscribers for run {run_id} completion")
+
+    task = asyncio.create_task(_background_producer())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    # 4. Yield SSE strings from the queue
+    while True:
+        sse_data = await sse_queue.get()
+        if sse_data is None:
+            break
+        yield sse_data
 
 
 async def _arun_stream(
@@ -1878,6 +2081,7 @@ async def _arun_stream(
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import aget_run_messages
     from agno.agent._response import (
+        agenerate_followups_stream,
         agenerate_response_with_output_model_stream,
         ahandle_model_response_stream,
         ahandle_reasoning_stream,
@@ -2105,6 +2309,14 @@ async def _arun_stream(
                 ):
                     yield event  # type: ignore
 
+                # 10b. Generate follow-up suggestions if enabled
+                async for event in agenerate_followups_stream(
+                    agent,
+                    run_response=run_response,
+                    stream_events=stream_events,
+                ):
+                    yield event  # type: ignore
+
                 if stream_events:
                     yield handle_event(  # type: ignore
                         create_run_content_completed_event(from_run_response=run_response),
@@ -2126,6 +2338,10 @@ async def _arun_stream(
                         get_memories_callback=lambda: agent.aget_user_memories(user_id=user_id),
                     ):
                         yield item
+                    merge_background_metrics(
+                        run_response.metrics,
+                        collect_background_metrics(memory_task, cultural_knowledge_task, learning_task),
+                    )
 
                     async for item in ahandle_agent_run_paused_stream(  # type: ignore[assignment]
                         agent,
@@ -2166,6 +2382,10 @@ async def _arun_stream(
                     get_memories_callback=lambda: agent.aget_user_memories(user_id=user_id),
                 ):
                     yield item
+                merge_background_metrics(
+                    run_response.metrics,
+                    collect_background_metrics(memory_task, cultural_knowledge_task, learning_task),
+                )
 
                 # 12. Create session summary
                 if agent.session_summary_manager is not None and agent.enable_session_summaries:
@@ -2180,7 +2400,9 @@ async def _arun_stream(
                             store_events=agent.store_events,
                         )
                     try:
-                        await agent.session_summary_manager.acreate_session_summary(session=agent_session)
+                        await agent.session_summary_manager.acreate_session_summary(
+                            session=agent_session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
                     if stream_events:
@@ -2311,7 +2533,7 @@ async def _arun_stream(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -2515,18 +2737,32 @@ def arun_dispatch(  # type: ignore
     run_response.model_provider = agent.model.provider if agent.model is not None else None
 
     # Start the run metrics timer, to calculate the run duration
-    run_response.metrics = Metrics()
+    run_response.metrics = RunMetrics()
     run_response.metrics.start_timer()
 
-    # Background execution: return immediately with PENDING status
+    # Background execution
     if background:
-        if opts.stream:
-            raise ValueError(
-                "Background execution cannot be combined with streaming. Set stream=False when using background=True."
-            )
         if not agent.db:
             raise ValueError(
                 "Background execution requires a database to be configured on the agent for run persistence."
+            )
+        if opts.stream:
+            # background=True, stream=True: run in background task, stream events via queue
+            return _arun_background_stream(  # type: ignore[return-value]
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                user_id=user_id,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                session_id=session_id,
+                add_history_to_context=opts.add_history_to_context,
+                add_dependencies_to_context=opts.add_dependencies_to_context,
+                add_session_state_to_context=opts.add_session_state_to_context,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
             )
         return _arun_background(  # type: ignore[return-value]
             agent,
@@ -2578,6 +2814,18 @@ def arun_dispatch(  # type: ignore
             pre_session=_pre_session,
             **kwargs,
         )
+
+
+def _sync_requirements_with_tools(run_response: RunOutput, updated_tools: List[Any]) -> None:
+    """Sync requirements to reference the new tool objects so is_resolved()
+    checks operate on the same instances that handle_tool_call_updates modifies.
+    """
+    if run_response.requirements:
+        updated_tools_map = {t.tool_call_id: t for t in updated_tools if t.tool_call_id}
+
+        for req in run_response.requirements:
+            if req.tool_execution and req.tool_execution.tool_call_id in updated_tools_map:
+                req.tool_execution = updated_tools_map[req.tool_execution.tool_call_id]
 
 
 def continue_run_dispatch(
@@ -2692,10 +2940,7 @@ def continue_run_dispatch(
         # The run is continued from a provided run_response. This contains the updated tools.
         input = run_response.messages or []
     elif run_id is not None:
-        # The run is continued from a run_id, one of requirements or updated_tool (deprecated) is required.
-        if updated_tools is None and requirements is None:
-            raise ValueError("To continue a run from a given run_id, the requirements parameter must be provided.")
-
+        # The run is continued from a run_id.
         runs = agent_session.runs or []
         run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
         if run_response is None:
@@ -2711,6 +2956,7 @@ def continue_run_dispatch(
                 stacklevel=2,
             )
             run_response.tools = updated_tools
+            _sync_requirements_with_tools(run_response, updated_tools)
 
         # If we have requirements, get the updated tools and set them in the run_response
         elif requirements is not None:
@@ -2721,6 +2967,23 @@ def continue_run_dispatch(
                 run_response.tools = [updated_tools_map.get(tool.tool_call_id, tool) for tool in run_response.tools]
             else:
                 run_response.tools = updated_tools
+
+        # If no tools/requirements provided, check for resolved admin approval
+        elif run_response.tools:
+            from agno.run.approval import check_and_apply_approval_resolution
+
+            try:
+                # This will apply resolution_data to tools if approval is resolved
+                check_and_apply_approval_resolution(agent.db, run_id, run_response)
+            except RuntimeError:
+                # No resolved approval found - fall back to requiring tools/requirements
+                raise ValueError(
+                    "To continue a run from a given run_id, the requirements parameter must be provided "
+                    "(or resolve an admin approval first)."
+                )
+        else:
+            # No tools on the run_response either
+            raise ValueError("To continue a run from a given run_id, the requirements parameter must be provided.")
     else:
         raise ValueError("Either run_response or run_id must be provided.")
 
@@ -2753,6 +3016,9 @@ def continue_run_dispatch(
     run_messages = get_continue_run_messages(
         agent,
         input=input,
+        session=agent_session,
+        add_history_to_context=agent.add_history_to_context,
+        run_context=run_context,
     )
 
     # Reset the run state
@@ -2822,6 +3088,7 @@ def _continue_run(
     from agno.agent._init import disconnect_connectable_tools
     from agno.agent._response import (
         convert_response_to_structured_format,
+        generate_followups,
         generate_response_with_output_model,
         parse_response_with_parser_model,
         update_run_response,
@@ -2845,7 +3112,9 @@ def _continue_run(
 
                 # 2. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
-                model_response: ModelResponse = agent.model.response(
+                model_response: ModelResponse = call_model_with_fallback(
+                    agent.model,
+                    agent.fallback_config,
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=tools,
@@ -2860,10 +3129,12 @@ def _continue_run(
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # If an output model is provided, generate output using the output model
-                generate_response_with_output_model(agent, model_response, run_messages)
+                generate_response_with_output_model(agent, model_response, run_messages, run_response=run_response)
 
                 # If a parser model is provided, structure the response separately
-                parse_response_with_parser_model(agent, model_response, run_messages, run_context=run_context)
+                parse_response_with_parser_model(
+                    agent, model_response, run_messages, run_context=run_context, run_response=run_response
+                )
 
                 # 3. Update the RunOutput with the model response
                 update_run_response(
@@ -2883,9 +3154,11 @@ def _continue_run(
                 # 4. Convert the response to the structured format if needed
                 convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
-                # 5. Store media if enabled
-                if agent.store_media:
-                    store_media_util(run_response, model_response)
+                # 4b. Generate follow-up suggestions if enabled
+                generate_followups(agent, run_response=run_response)
+
+                # 5. Store media in run output for the caller
+                store_media_util(run_response, model_response)
 
                 # 6. Execute post-hooks
                 if agent.post_hooks is not None:
@@ -2910,7 +3183,9 @@ def _continue_run(
                     session.upsert_run(run=run_response)
 
                     try:
-                        agent.session_summary_manager.create_session_summary(session=session)
+                        agent.session_summary_manager.create_session_summary(
+                            session=session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -2970,7 +3245,7 @@ def _continue_run(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
                 run_response.status = RunStatus.error
@@ -3023,7 +3298,11 @@ def _continue_run_stream(
 
     from agno.agent._hooks import execute_post_hooks
     from agno.agent._init import disconnect_connectable_tools
-    from agno.agent._response import handle_model_response_stream, parse_response_with_parser_model_stream
+    from agno.agent._response import (
+        generate_followups_stream,
+        handle_model_response_stream,
+        parse_response_with_parser_model_stream,
+    )
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates_stream
 
@@ -3079,6 +3358,13 @@ def _continue_run_stream(
                     run_context=run_context,
                 )
 
+                # Generate follow-up suggestions if enabled
+                yield from generate_followups_stream(
+                    agent,  # type: ignore
+                    run_response=run_response,
+                    stream_events=stream_events,
+                )
+
                 # Yield RunContentCompletedEvent
                 if stream_events:
                     yield handle_event(  # type: ignore
@@ -3131,7 +3417,9 @@ def _continue_run_stream(
                             store_events=agent.store_events,
                         )
                     try:
-                        agent.session_summary_manager.create_session_summary(session=session)
+                        agent.session_summary_manager.create_session_summary(
+                            session=session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -3243,7 +3531,7 @@ def _continue_run_stream(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     time.sleep(delay)
                     continue
                 run_response.status = RunStatus.error
@@ -3287,6 +3575,7 @@ def acontinue_run_dispatch(  # type: ignore
     metadata: Optional[Dict[str, Any]] = None,
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
+    background: bool = False,
     **kwargs,
 ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
     """Continue a previous run.
@@ -3386,6 +3675,29 @@ def acontinue_run_dispatch(  # type: ignore
 
     response_format = get_response_format(agent, run_context=run_context)
 
+    if background:
+        if not agent.db:
+            raise ValueError(
+                "Background execution requires a database to be configured on the agent for run persistence."
+            )
+        if opts.stream:
+            return _acontinue_run_background_stream(  # type: ignore[return-value]
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                updated_tools=updated_tools,
+                requirements=requirements,
+                run_id=run_id,
+                user_id=user_id,
+                session_id=session_id,
+                response_format=response_format,
+                stream_events=opts.stream_events,
+                yield_run_output=opts.yield_run_output,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+
     if opts.stream:
         return _acontinue_run_stream(
             agent,
@@ -3418,6 +3730,147 @@ def acontinue_run_dispatch(  # type: ignore
             background_tasks=background_tasks,
             **kwargs,
         )
+
+
+async def _acontinue_run_background_stream(
+    agent: Agent,
+    session_id: str,
+    run_context: RunContext,
+    run_response: Optional[RunOutput] = None,
+    updated_tools: Optional[List[ToolExecution]] = None,
+    requirements: Optional[List[RunRequirement]] = None,
+    run_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    stream_events: bool = False,
+    yield_run_output: Optional[bool] = None,
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    **kwargs: Any,
+) -> AsyncIterator[str]:
+    """Background streaming continue-run that survives client disconnections.
+
+    Same pattern as _arun_background_stream but delegates to _acontinue_run_stream
+    instead of _arun_stream. Used for HITL scenarios where a paused run resumes
+    and the client needs reconnection support.
+
+    1. Persists RUNNING status in DB
+    2. Spawns a detached asyncio.Task that runs _acontinue_run_stream
+    3. Buffers events (via event_buffer) and publishes to SSE subscribers
+    4. Yields SSE-formatted strings via an asyncio.Queue
+    """
+    from agno.agent._session import asave_session
+    from agno.agent._storage import aread_or_create_session, update_metadata
+
+    _run_id = run_id or (run_response.run_id if run_response else None)
+    if not _run_id:
+        raise ValueError("run_id is required for background streaming")
+
+    # 1. Persist RUNNING status so the run is visible in the DB immediately
+    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+    update_metadata(agent, session=agent_session)
+
+    # Update the run status to RUNNING in the session
+    if run_response:
+        run_response.status = RunStatus.running
+        agent_session.upsert_run(run=run_response)
+    await asave_session(agent, session=agent_session)
+
+    log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")
+
+    # 2. Create queue for forwarding SSE strings to the caller
+    sse_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+
+    # 3. Spawn detached background task
+    async def _background_producer() -> None:
+        from agno.os.managers import event_buffer, sse_subscriber_manager
+        from agno.os.utils import format_sse_event_with_index
+
+        try:
+            async for event in _acontinue_run_stream(
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                updated_tools=updated_tools,
+                requirements=requirements,
+                run_id=run_id,
+                user_id=user_id,
+                session_id=session_id,
+                response_format=response_format,
+                stream_events=stream_events,
+                yield_run_output=yield_run_output or False,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            ):
+                if isinstance(event, RunOutput):
+                    continue
+
+                # Buffer event for reconnection support
+                event_index: Optional[int] = None
+                try:
+                    event_index = event_buffer.add_event(_run_id, event)
+                except Exception:
+                    log_warning(f"Failed to buffer event for continue-run {_run_id}")
+
+                # Format as SSE
+                sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=_run_id)
+
+                # Push to primary queue (original client)
+                try:
+                    await sse_queue.put(sse_data)
+                except Exception:
+                    log_warning(f"Failed to push SSE data to queue for continue-run {_run_id}")
+
+                # Publish to SSE subscribers (resumed clients)
+                try:
+                    await sse_subscriber_manager.publish(
+                        _run_id, event_index if event_index is not None else -1, sse_data
+                    )
+                except Exception:
+                    log_warning(f"Failed to publish SSE data to subscribers for continue-run {_run_id}")
+
+        except Exception:
+            log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
+            # Persist ERROR status
+            try:
+                if run_response:
+                    run_response.status = RunStatus.error
+                    agent_session.upsert_run(run=run_response)
+                    await asave_session(agent, session=agent_session)
+            except Exception:
+                log_error(f"Failed to persist error state for background continue-run stream {_run_id}", exc_info=True)
+
+        finally:
+            # Signal primary queue FIRST — unblocks the original client
+            try:
+                await sse_queue.put(None)
+            except Exception:
+                log_warning(f"Failed to signal primary queue for continue-run {_run_id} completion")
+
+            # Mark run completed in event buffer
+            try:
+                final_status = (run_response.status if run_response else None) or RunStatus.completed
+                event_buffer.set_run_completed(_run_id, final_status)
+            except Exception:
+                log_warning(f"Failed to mark continue-run {_run_id} as completed in event buffer")
+
+            # Signal SSE subscribers that run is done (shielded to survive task cancellation)
+            try:
+                await asyncio.shield(sse_subscriber_manager.complete(_run_id))
+            except (Exception, asyncio.CancelledError):
+                log_warning(f"Failed to signal SSE subscribers for continue-run {_run_id} completion")
+
+    task = asyncio.create_task(_background_producer())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    # 4. Yield SSE strings from the queue
+    while True:
+        sse_data = await sse_queue.get()
+        if sse_data is None:
+            break
+        yield sse_data
 
 
 async def _acontinue_run(
@@ -3456,6 +3909,7 @@ async def _acontinue_run(
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import get_continue_run_messages
     from agno.agent._response import (
+        agenerate_followups,
         agenerate_response_with_output_model,
         aparse_response_with_parser_model,
         convert_response_to_structured_format,
@@ -3504,12 +3958,7 @@ async def _acontinue_run(
                     # The run is continued from a provided run_response. This contains the updated tools.
                     input = run_response.messages or []
                 elif run_id is not None:
-                    # The run is continued from a run_id. This requires the updated tools to be passed.
-                    if updated_tools is None and requirements is None:
-                        raise ValueError(
-                            "Either updated tools or requirements are required to continue a run from a run_id."
-                        )
-
+                    # The run is continued from a run_id.
                     runs = agent_session.runs or []
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
@@ -3520,6 +3969,7 @@ async def _acontinue_run(
                     # If we have updated_tools, set them in the run_response
                     if updated_tools is not None:
                         run_response.tools = updated_tools
+                        _sync_requirements_with_tools(run_response, updated_tools)
 
                     # If we have requirements, get the updated tools and set them in the run_response
                     elif requirements is not None:
@@ -3532,12 +3982,29 @@ async def _acontinue_run(
                             ]
                         else:
                             run_response.tools = updated_tools
+
+                    # If no tools/requirements provided, check for resolved admin approval
+                    elif run_response.tools:
+                        from agno.run.approval import acheck_and_apply_approval_resolution
+
+                        try:
+                            # This will apply resolution_data to tools if approval is resolved
+                            await acheck_and_apply_approval_resolution(agent.db, run_id, run_response)
+                        except RuntimeError:
+                            # No resolved approval found - fall back to requiring tools/requirements
+                            raise ValueError(
+                                "To continue a run from a given run_id, the requirements parameter must be provided "
+                                "(or resolve an admin approval first)."
+                            )
+                    else:
+                        # No tools on the run_response either
+                        raise ValueError(
+                            "To continue a run from a given run_id, the requirements parameter must be provided."
+                        )
                 else:
                     raise ValueError("Either run_response or run_id must be provided.")
 
                 run_response = cast(RunOutput, run_response)
-
-                run_response.status = RunStatus.running
 
                 # 5. Determine tools for model
                 agent.model = cast(Model, agent.model)
@@ -3562,7 +4029,12 @@ async def _acontinue_run(
                 run_messages: RunMessages = get_continue_run_messages(
                     agent,
                     input=input,
+                    session=agent_session,
+                    add_history_to_context=agent.add_history_to_context,
                 )
+
+                # Reset the run state
+                run_response.status = RunStatus.running
 
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
@@ -3573,7 +4045,9 @@ async def _acontinue_run(
                 )
 
                 # 8. Get model response
-                model_response: ModelResponse = await agent.model.aresponse(
+                model_response: ModelResponse = await acall_model_with_fallback(
+                    agent.model,
+                    agent.fallback_config,
                     messages=run_messages.messages,
                     response_format=response_format,
                     tools=_tools,
@@ -3588,12 +4062,16 @@ async def _acontinue_run(
 
                 # If an output model is provided, generate output using the output model
                 await agenerate_response_with_output_model(
-                    agent, model_response=model_response, run_messages=run_messages
+                    agent, model_response=model_response, run_messages=run_messages, run_response=run_response
                 )
 
                 # If a parser model is provided, structure the response separately
                 await aparse_response_with_parser_model(
-                    agent, model_response=model_response, run_messages=run_messages, run_context=run_context
+                    agent,
+                    model_response=model_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
+                    run_response=run_response,
                 )
 
                 # 9. Update the RunOutput with the model response
@@ -3618,9 +4096,11 @@ async def _acontinue_run(
                 # 10. Convert the response to the structured format if needed
                 convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
-                # 11. Store media if enabled
-                if agent.store_media:
-                    store_media_util(run_response, model_response)
+                # 10b. Generate follow-up suggestions if enabled
+                await agenerate_followups(agent, run_response=run_response)
+
+                # 11. Store media in run output for the caller
+                store_media_util(run_response, model_response)
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -3648,7 +4128,9 @@ async def _acontinue_run(
                     agent_session.upsert_run(run=run_response)
 
                     try:
-                        await agent.session_summary_manager.acreate_session_summary(session=agent_session)
+                        await agent.session_summary_manager.acreate_session_summary(
+                            session=agent_session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
@@ -3679,6 +4161,7 @@ async def _acontinue_run(
                 log_info(f"Run {run_response.run_id if run_response else run_id} was cancelled")
                 run_response.status = RunStatus.cancelled
                 run_response.content = str(e)
+
                 # Cleanup and store the run response and session
                 if agent_session is not None:
                     await acleanup_and_store(
@@ -3726,7 +4209,7 @@ async def _acontinue_run(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -3802,6 +4285,7 @@ async def _acontinue_run_stream(
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import get_continue_run_messages
     from agno.agent._response import (
+        agenerate_followups_stream,
         agenerate_response_with_output_model_stream,
         ahandle_model_response_stream,
         aparse_response_with_parser_model_stream,
@@ -3848,12 +4332,7 @@ async def _acontinue_run_stream(
                     input = run_response.messages or []
 
                 elif run_id is not None:
-                    # The run is continued from a run_id. This requires the updated tools or requirements to be passed.
-                    if updated_tools is None and requirements is None:
-                        raise ValueError(
-                            "Either updated tools or requirements are required to continue a run from a run_id."
-                        )
-
+                    # The run is continued from a run_id.
                     runs = agent_session.runs or []
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
@@ -3864,6 +4343,7 @@ async def _acontinue_run_stream(
                     # If we have updated_tools, set them in the run_response
                     if updated_tools is not None:
                         run_response.tools = updated_tools
+                        _sync_requirements_with_tools(run_response, updated_tools)
 
                     # If we have requirements, get the updated tools and set them in the run_response
                     elif requirements is not None:
@@ -3876,12 +4356,29 @@ async def _acontinue_run_stream(
                             ]
                         else:
                             run_response.tools = updated_tools
+
+                    # If no tools/requirements provided, check for resolved admin approval
+                    elif run_response.tools:
+                        from agno.run.approval import acheck_and_apply_approval_resolution
+
+                        try:
+                            # This will apply resolution_data to tools if approval is resolved
+                            await acheck_and_apply_approval_resolution(agent.db, run_id, run_response)
+                        except RuntimeError:
+                            # No resolved approval found - fall back to requiring tools/requirements
+                            raise ValueError(
+                                "To continue a run from a given run_id, the requirements parameter must be provided "
+                                "(or resolve an admin approval first)."
+                            )
+                    else:
+                        # No tools on the run_response either
+                        raise ValueError(
+                            "To continue a run from a given run_id, the requirements parameter must be provided."
+                        )
                 else:
                     raise ValueError("Either run_response or run_id must be provided.")
 
                 run_response = cast(RunOutput, run_response)
-
-                run_response.status = RunStatus.running
 
                 # 5. Determine tools for model
                 agent.model = cast(Model, agent.model)
@@ -3906,7 +4403,12 @@ async def _acontinue_run_stream(
                 run_messages: RunMessages = get_continue_run_messages(
                     agent,
                     input=input,
+                    session=agent_session,
+                    add_history_to_context=agent.add_history_to_context,
                 )
+
+                # Reset the run state
+                run_response.status = RunStatus.running
 
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
@@ -3995,6 +4497,14 @@ async def _acontinue_run_stream(
                 ):
                     yield event  # type: ignore
 
+                # Generate follow-up suggestions if enabled
+                async for event in agenerate_followups_stream(
+                    agent,
+                    run_response=run_response,
+                    stream_events=stream_events,
+                ):
+                    yield event  # type: ignore
+
                 # Yield RunContentCompletedEvent
                 if stream_events:
                     yield handle_event(  # type: ignore
@@ -4049,7 +4559,9 @@ async def _acontinue_run_stream(
                             store_events=agent.store_events,
                         )
                     try:
-                        await agent.session_summary_manager.acreate_session_summary(session=agent_session)
+                        await agent.session_summary_manager.acreate_session_summary(
+                            session=agent_session, run_metrics=run_response.metrics
+                        )
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
                     if stream_events:
@@ -4185,7 +4697,7 @@ async def _acontinue_run_stream(
                     else:
                         delay = agent.delay_between_retries
 
-                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}. Retrying in {delay}s...")
+                    log_warning(f"Attempt {attempt + 1}/{num_attempts} failed. Retrying in {delay}s...: {str(e)}")
                     await asyncio.sleep(delay)
                     continue
 
@@ -4269,7 +4781,7 @@ def save_run_response_to_file(
 
                 fn_path.write_text(json.dumps(run_response.content, indent=2))
         except Exception as e:
-            log_warning(f"Failed to save output to file: {e}")
+            log_warning(f"Failed to save output to file: {str(e)}")
 
 
 def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
@@ -4291,10 +4803,15 @@ def cleanup_and_store(
     run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
 ) -> None:
-    from agno.agent import _session
+    import copy
 
-    # Scrub the stored run based on storage flags
-    scrub_run_output_for_storage(agent, run_response)
+    from agno.agent import _session
+    from agno.run.approval import update_approval_run_status
+
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(agent, storage_copy)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
@@ -4304,18 +4821,19 @@ def cleanup_and_store(
     # This ensures RunOutput reflects all tool modifications
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
 
     # Optional: Save output to file if save_response_to_file is set
     save_run_response_to_file(
         agent,
-        run_response=run_response,
+        run_response=storage_copy,
         input=run_response.input.input_content_string() if run_response.input else "",
         session_id=session.session_id,
         user_id=user_id,
     )
 
-    # Add RunOutput to Agent Session
-    session.upsert_run(run=run_response)
+    # Add scrubbed RunOutput to Agent Session
+    session.upsert_run(run=storage_copy)
 
     # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)
@@ -4330,6 +4848,11 @@ def cleanup_and_store(
     # Save session to memory
     _session.save_session(agent, session=session)
 
+    # Update approval run_status if this run has an associated approval.
+    # This is a no-op if no approval exists for this run_id.
+    if run_response.status is not None and run_response.run_id is not None:
+        update_approval_run_status(agent.db, run_response.run_id, run_response.status)
+
 
 async def acleanup_and_store(
     agent: Agent,
@@ -4338,31 +4861,36 @@ async def acleanup_and_store(
     run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
 ) -> None:
-    from agno.agent import _session
+    import copy
 
-    # Scrub the stored run based on storage flags
-    scrub_run_output_for_storage(agent, run_response)
+    from agno.agent import _session
+    from agno.run.approval import aupdate_approval_run_status
+
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = copy.copy(run_response)
+    scrub_run_output_for_storage(agent, storage_copy)
 
     # Stop the timer for the Run duration
     if run_response.metrics:
         run_response.metrics.stop_timer()
 
     # Update run_response.session_state before saving
-    # This ensures RunOutput reflects all tool modifications
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
+        storage_copy.session_state = run_context.session_state
 
     # Optional: Save output to file if save_response_to_file is set
     save_run_response_to_file(
         agent,
-        run_response=run_response,
+        run_response=storage_copy,
         input=run_response.input.input_content_string() if run_response.input else "",
         session_id=session.session_id,
         user_id=user_id,
     )
 
-    # Add RunOutput to Agent Session
-    session.upsert_run(run=run_response)
+    # Add scrubbed RunOutput to Agent Session
+    session.upsert_run(run=storage_copy)
 
     # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)
@@ -4376,6 +4904,11 @@ async def acleanup_and_store(
 
     # Save session to memory
     await _session.asave_session(agent, session=session)
+
+    # Update approval run_status if this run has an associated approval.
+    # This is a no-op if no approval exists for this run_id.
+    if run_response.status is not None and run_response.run_id is not None:
+        await aupdate_approval_run_status(agent.db, run_response.run_id, run_response.status)
 
 
 # ---------------------------------------------------------------------------

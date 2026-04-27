@@ -30,6 +30,7 @@ class FakeToolExecution:
     tool_name: Optional[str] = None
     tool_args: Optional[Dict[str, Any]] = None
     approval_type: Optional[str] = None
+    approval_id: Optional[str] = None
     requires_confirmation: Optional[bool] = None
     requires_user_input: Optional[bool] = None
     external_execution_required: Optional[bool] = None
@@ -266,6 +267,20 @@ class TestCreateApprovalFromPause:
         assert data["source_name"] == "Team"
         assert data["user_id"] == "u1"
 
+    def test_returns_approval_id_on_success(self):
+        db = MagicMock()
+        tool = FakeToolExecution(tool_name="delete", approval_type="required")
+        rr = FakeRunResponse(tools=[tool])
+        result = create_approval_from_pause(db=db, run_response=rr, agent_id="a1", agent_name="Agent")
+        assert result is not None
+        assert isinstance(result, str)
+        assert len(result) > 0
+        # The returned ID must match what was passed to db.create_approval
+        data = db.create_approval.call_args[0][0]
+        assert result == data["id"]
+        # approval_id must also be stamped on the tool itself
+        assert tool.approval_id == result
+
 
 # =============================================================================
 # acreate_approval_from_pause (async)
@@ -298,6 +313,21 @@ class TestAsyncCreateApprovalFromPause:
         db = MagicMock(spec=[])  # no create_approval attribute
         rr = FakeRunResponse(tools=[FakeToolExecution(approval_type="required")])
         await acreate_approval_from_pause(db=db, run_response=rr)  # should not raise
+
+    @pytest.mark.asyncio
+    async def test_returns_approval_id_on_success(self):
+        db = MagicMock()
+        db.create_approval = AsyncMock()
+        tool = FakeToolExecution(tool_name="delete", approval_type="required")
+        rr = FakeRunResponse(tools=[tool])
+        result = await acreate_approval_from_pause(db=db, run_response=rr, agent_id="a1", agent_name="Agent")
+        assert result is not None
+        assert isinstance(result, str)
+        assert len(result) > 0
+        data = db.create_approval.call_args[0][0]
+        assert result == data["id"]
+        # approval_id must also be stamped on the tool itself
+        assert tool.approval_id == result
 
 
 # =============================================================================
