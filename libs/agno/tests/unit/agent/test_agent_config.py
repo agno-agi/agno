@@ -243,7 +243,7 @@ class TestAgentFromDict:
 
     def test_from_dict_with_model(self):
         """Test from_dict reconstructs model from config."""
-        from agno.models.openai import OpenAIChat
+        from agno.models.openai import OpenAIResponses
 
         config = {
             "id": "model-agent",
@@ -256,7 +256,7 @@ class TestAgentFromDict:
 
         # Model should be reconstructed
         assert agent.model is not None
-        assert isinstance(agent.model, OpenAIChat)
+        assert isinstance(agent.model, OpenAIResponses)
         assert agent.model.id == "gpt-4o-mini"
 
     def test_from_dict_preserves_settings(self):

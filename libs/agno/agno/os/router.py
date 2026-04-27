@@ -8,6 +8,9 @@ from fastapi import (
     WebSocket,
 )
 
+from agno import __version__ as agno_version
+from agno.agent.factory import AgentFactory
+from agno.agent.protocol import AgentProtocol
 from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.managers import websocket_manager
@@ -27,6 +30,7 @@ from agno.os.schema import (
     WorkflowSummaryResponse,
 )
 from agno.os.settings import AgnoAPISettings
+from agno.team.factory import TeamFactory
 from agno.utils.log import logger
 
 if TYPE_CHECKING:
@@ -142,20 +146,11 @@ def get_base_router(
     )
     async def config() -> ConfigResponse:
         try:
-            agent_summaries = []
-            if os.agents:
-                for agent in os.agents:
-                    agent_summaries.append(AgentSummaryResponse.from_agent(agent))
-
-            team_summaries = []
-            if os.teams:
-                for team in os.teams:
-                    team_summaries.append(TeamSummaryResponse.from_team(team))
-
-            workflow_summaries = []
-            if os.workflows:
-                for workflow in os.workflows:
-                    workflow_summaries.append(WorkflowSummaryResponse.from_workflow(workflow))
+            agent_summaries = [AgentSummaryResponse.from_agent(a) for a in os.agents] if os.agents else []
+            team_summaries = [TeamSummaryResponse.from_team(t) for t in os.teams] if os.teams else []
+            workflow_summaries = (
+                [WorkflowSummaryResponse.from_workflow(w) for w in os.workflows] if os.workflows else []
+            )
         except RemoteServerUnavailableError as e:
             raise HTTPException(
                 status_code=502,
@@ -216,6 +211,10 @@ def get_base_router(
         # Collect models from local agents
         if os.agents:
             for agent in os.agents:
+                if isinstance(agent, AgentFactory):
+                    continue
+                if isinstance(agent, AgentProtocol):
+                    continue
                 model = cast(Model, agent.model)
                 if model and model.id is not None and model.provider is not None:
                     key = (model.id, model.provider)
@@ -225,6 +224,8 @@ def get_base_router(
         # Collect models from local teams
         if os.teams:
             for team in os.teams:
+                if isinstance(team, TeamFactory):
+                    continue
                 model = cast(Model, team.model)
                 if model and model.id is not None and model.provider is not None:
                     key = (model.id, model.provider)
@@ -251,6 +252,7 @@ def get_info_router(os: "AgentOS") -> APIRouter:
     )
     async def get_info() -> InfoResponse:
         return InfoResponse(
+            agno_version=agno_version,
             agent_count=len(os.agents or []),
             team_count=len(os.teams or []),
             workflow_count=len(os.workflows or []),

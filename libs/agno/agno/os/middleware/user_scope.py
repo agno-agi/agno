@@ -33,6 +33,7 @@ from agno.utils.log import log_debug
 
 if TYPE_CHECKING:
     from agno.agent import Agent, RemoteAgent
+    from agno.agent.protocol import AgentProtocol
     from agno.os.app import AgentOS
     from agno.team import RemoteTeam, Team
     from agno.workflow import RemoteWorkflow, Workflow
@@ -161,7 +162,7 @@ def resolve_owned_agent(os: "AgentOS") -> Callable:
             default=None,
             description="Session ID the run belongs to. Required for non-admin JWT users.",
         ),
-    ) -> "Union[Agent, RemoteAgent]":
+    ) -> "Union[Agent, RemoteAgent, AgentProtocol]":
         agent = get_agent_by_id(
             agent_id=agent_id,
             agents=os.agents,

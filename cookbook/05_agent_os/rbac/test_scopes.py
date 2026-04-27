@@ -17,13 +17,12 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import jwt
-from fastapi.testclient import TestClient
-
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 from agno.workflow.workflow import Workflow
+from fastapi.testclient import TestClient
 
 JWT_SECRET = "test-secret-key-long-enough-for-hs256!!"
 OS_ID = "test-os"
@@ -54,21 +53,34 @@ def main():
     async def noop_workflow(session_state):
         return "done"
 
-    workflow = Workflow(id="test-workflow", name="Test Workflow", steps=noop_workflow, db=db)
+    workflow = Workflow(
+        id="test-workflow", name="Test Workflow", steps=noop_workflow, db=db
+    )
 
     agent_os = AgentOS(
         id=OS_ID,
         agents=[agent],
         workflows=[workflow],
         authorization=True,
-        authorization_config=AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256"),
+        authorization_config=AuthorizationConfig(
+            verification_keys=[JWT_SECRET], algorithm="HS256"
+        ),
     )
 
     client = TestClient(agent_os.get_app())
 
     # Tokens with different scopes
     reader = make_token("reader", ["agents:read", "workflows:read", "sessions:read"])
-    runner = make_token("runner", ["agents:read", "agents:run", "workflows:run", "sessions:read", "sessions:write"])
+    runner = make_token(
+        "runner",
+        [
+            "agents:read",
+            "agents:run",
+            "workflows:run",
+            "sessions:read",
+            "sessions:write",
+        ],
+    )
     admin = make_token("admin", ["agent_os:admin"])
     no_components = make_token("user", ["agents:read"])
 
@@ -88,21 +100,33 @@ def main():
     check("reader can list agents", client.get("/agents", headers=auth(reader)), 200)
     check(
         "reader CANNOT run agent (no agents:run scope)",
-        client.post("/agents/test-agent/runs", data={"message": "hi"}, headers=auth(reader)),
+        client.post(
+            "/agents/test-agent/runs", data={"message": "hi"}, headers=auth(reader)
+        ),
         403,
     )
     check(
         "runner CAN run agent",
-        client.post("/agents/test-agent/runs", data={"message": "hi", "stream": "false"}, headers=auth(runner)),
+        client.post(
+            "/agents/test-agent/runs",
+            data={"message": "hi", "stream": "false"},
+            headers=auth(runner),
+        ),
         200,
     )
 
     # --- Workflows ---
     print("\nWorkflow endpoints:")
-    check("reader can list workflows", client.get("/workflows", headers=auth(reader)), 200)
+    check(
+        "reader can list workflows", client.get("/workflows", headers=auth(reader)), 200
+    )
     check(
         "reader CANNOT run workflow (no workflows:run scope)",
-        client.post("/workflows/test-workflow/runs", data={"message": "hi"}, headers=auth(reader)),
+        client.post(
+            "/workflows/test-workflow/runs",
+            data={"message": "hi"},
+            headers=auth(reader),
+        ),
         403,
     )
 
