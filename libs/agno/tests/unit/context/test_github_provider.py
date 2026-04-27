@@ -14,8 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from agno.context.github import GitHubContextProvider, GitReadTools, GitWriteTools
+from agno.context.github import GitHubContextProvider
 from agno.context.github.provider import _parse_repo, _sanitize_task
+from agno.context.github.tools import GitReadTools, GitWriteTools
 from agno.context.mode import ContextMode
 
 # ---------------------------------------------------------------------------
@@ -162,7 +163,7 @@ def test_status_before_setup_reports_uninitialized(tmp_path: Path):
 
 
 def test_status_when_dir_exists_but_not_git(tmp_path: Path):
-    workdir = tmp_path / "repos" / "name"
+    workdir = tmp_path / "repos" / "owner" / "name"
     workdir.mkdir(parents=True)
     p = GitHubContextProvider(repo="owner/name", root=tmp_path / "repos")
     s = p.status()
