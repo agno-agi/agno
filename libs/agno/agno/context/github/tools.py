@@ -69,10 +69,10 @@ class GitReadTools(Toolkit):
     def git_log(self, n: int = 20, since: str = "", path: str = "") -> str:
         """Show recent commits as one-line entries.
 
-        :param n: Maximum number of commits to return (default 20).
-        :param since: Optional date filter, e.g. ``"2024-01-01"`` or ``"2 weeks ago"``.
-        :param path: Optional file/directory path to filter commits to.
-        :return: One-line-per-commit log output, or an error message.
+        Args:
+            n (int): Max commits to return. Defaults to 20.
+            since (str): Date filter, e.g. "2024-01-01" or "2 weeks ago".
+            path (str): File or directory to filter commits to.
         """
         try:
             cmd = ["log", "--oneline", "-n", str(n)]
@@ -97,12 +97,11 @@ class GitReadTools(Toolkit):
     ) -> str:
         """Show the diff between two refs.
 
-        :param ref1: Starting ref. May contain ``..`` for a range
-            (e.g. ``main..feature-x``); ``ref2`` is then ignored.
-        :param ref2: Ending ref (default ``HEAD``).
-        :param path: Optional path to restrict the diff to.
-        :param stat: If True, return ``--stat`` summary instead of full diff.
-        :return: Diff text (truncated to ``max_output_chars``), or an error message.
+        Args:
+            ref1 (str): Starting ref. Use "main..feature" for a range.
+            ref2 (str): Ending ref. Defaults to HEAD.
+            path (str): Restrict diff to this file or directory.
+            stat (bool): Return --stat summary instead of full diff.
         """
         try:
             if ".." in ref1:
@@ -122,10 +121,10 @@ class GitReadTools(Toolkit):
             return f"Error: {e}"
 
     def git_show(self, ref: str) -> str:
-        """Show commit metadata and a stat summary for a ref.
+        """Show commit metadata and stat summary for a ref.
 
-        :param ref: Commit hash, branch, or tag.
-        :return: Commit info with diffstat (truncated), or an error message.
+        Args:
+            ref (str): Commit hash, branch, or tag.
         """
         try:
             result = _run_git(["show", ref, "--stat"], cwd=self.workdir)
@@ -139,9 +138,8 @@ class GitReadTools(Toolkit):
     def git_branches(self, remote: bool = True) -> str:
         """List branches.
 
-        :param remote: If True (default), include remote-tracking branches
-            (``origin/*``); otherwise list only local branches.
-        :return: Branch list, or an error message.
+        Args:
+            remote (bool): Include remote branches (origin/*). Defaults to True.
         """
         try:
             cmd = ["branch"]
@@ -158,10 +156,10 @@ class GitReadTools(Toolkit):
     def git_blame(self, path: str, start_line: int = 1, end_line: int = 50) -> str:
         """Show blame (authorship) for a line range.
 
-        :param path: File path relative to the checkout root.
-        :param start_line: First line to blame (default 1).
-        :param end_line: Last line to blame (default 50).
-        :return: Blame output, or an error message.
+        Args:
+            path (str): File path relative to repo root.
+            start_line (int): First line to blame. Defaults to 1.
+            end_line (int): Last line to blame. Defaults to 50.
         """
         try:
             result = _run_git(
@@ -276,10 +274,7 @@ class GitWriteTools(Toolkit):
     # ------------------------------------------------------------------
 
     def git_status(self) -> str:
-        """Show the short porcelain status of the worktree.
-
-        :return: Output of ``git status --short``, or an error message.
-        """
+        """Show the short status of the worktree (staged, modified, untracked files)."""
         try:
             result = _run_git(["status", "--short"], cwd=self.task_workdir)
             if result.returncode != 0:
@@ -290,11 +285,10 @@ class GitWriteTools(Toolkit):
             return f"Error: {e}"
 
     def git_add(self, paths: Optional[List[str]] = None) -> str:
-        """Stage paths.
+        """Stage files for commit.
 
-        :param paths: List of paths relative to the worktree. Defaults to
-            ``["-A"]`` (stage everything).
-        :return: Confirmation message, or an error message.
+        Args:
+            paths (list[str]): Paths to stage. Defaults to all changes (-A).
         """
         try:
             args = list(paths) if paths else ["-A"]
@@ -307,13 +301,10 @@ class GitWriteTools(Toolkit):
             return f"Error: {e}"
 
     def git_commit(self, message: str) -> str:
-        """Create a commit with the staged changes.
+        """Create a commit with staged changes.
 
-        Author identity is set per-call so the container doesn't need
-        global git config.
-
-        :param message: Commit message.
-        :return: Confirmation message with the new short SHA, or an error.
+        Args:
+            message (str): Commit message.
         """
         try:
             if not message or not message.strip():
@@ -343,11 +334,10 @@ class GitWriteTools(Toolkit):
             return f"Error: {e}"
 
     def git_push(self, branch: str = "") -> str:
-        """Push a branch to ``origin``. Refuses non-prefixed branches.
+        """Push branch to origin. Only prefixed branches (e.g. agno/*) are allowed.
 
-        :param branch: Branch name to push. Defaults to the current branch
-            of the worktree.
-        :return: Confirmation message, or an error.
+        Args:
+            branch (str): Branch to push. Defaults to current branch.
         """
         try:
             target = branch or self._current_branch()
@@ -367,15 +357,12 @@ class GitWriteTools(Toolkit):
             return f"Error: {e}"
 
     def create_pull_request(self, title: str, body: str, branch: str = "") -> str:
-        """Open a pull request via the ``gh`` CLI.
+        """Open a pull request via GitHub CLI (gh).
 
-        Requires ``gh`` on PATH. Uses ``GH_TOKEN`` / ``GITHUB_TOKEN``
-        from this toolkit's constructor (or the inherited environment).
-
-        :param title: PR title.
-        :param body: PR body (markdown).
-        :param branch: Head branch. Defaults to the current branch.
-        :return: PR URL on success, or an error message.
+        Args:
+            title (str): PR title.
+            body (str): PR description (markdown).
+            branch (str): Head branch. Defaults to current branch.
         """
         try:
             if shutil.which(self.gh_path) is None:
@@ -410,11 +397,10 @@ class GitWriteTools(Toolkit):
             return f"Error: {e}"
 
     def pr_status(self, branch: str = "") -> str:
-        """Look up the PR (if any) for a branch via ``gh pr view``.
+        """Check if a PR exists for a branch. Returns URL, state, and title.
 
-        :param branch: Branch name. Defaults to the current branch.
-        :return: JSON with ``url``, ``state``, ``title`` keys, or an
-            error / "no pr found" message.
+        Args:
+            branch (str): Branch to check. Defaults to current branch.
         """
         try:
             if shutil.which(self.gh_path) is None:
