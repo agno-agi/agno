@@ -41,7 +41,7 @@ def test_init_all_flag_enables_all():
     with patch.dict("os.environ", {"SLACK_TOKEN": "test"}):
         with patch("agno.tools.slack.WebClient"):
             tools = SlackTools(all=True)
-            assert len(tools.functions) == 12
+            assert len(tools.functions) == 19
 
 
 # === Core Tools ===
@@ -299,3 +299,156 @@ def test_build_instructions_never_references_disabled_tools():
     # search_messages without search_workspace — should NOT mention "unavailable"
     result = SlackTools._build_instructions(["search_messages", "get_channel_history"])
     assert "unavailable" not in result
+
+
+# === Canvas Tools ===
+
+
+@pytest.fixture
+def canvas_tools():
+    with patch.dict("os.environ", {"SLACK_TOKEN": "test-token"}):
+        with patch("agno.tools.slack.WebClient") as mock_web_client:
+            mock_client = Mock()
+            mock_web_client.return_value = mock_client
+            tools = SlackTools(enable_canvas=True)
+            tools.client = mock_client
+            return tools
+
+
+def test_init_canvas_disabled_by_default():
+    with patch.dict("os.environ", {"SLACK_TOKEN": "test"}):
+        with patch("agno.tools.slack.WebClient"):
+            tools = SlackTools()
+            names = [f.name for f in tools.functions.values()]
+            assert not any("canvas" in n for n in names)
+
+
+def test_list_canvases(canvas_tools):
+    canvas_tools.client.files_list.return_value = {
+        "files": [
+            {"id": "F1", "title": "Retro", "created": 1000, "updated": 2000, "user": "U1", "permalink": "https://..."},
+            {
+                "id": "F2",
+                "title": "Onboarding",
+                "created": 1001,
+                "updated": 2001,
+                "user": "U2",
+                "permalink": "https://...",
+            },
+        ]
+    }
+    result = json.loads(canvas_tools.list_canvases())
+    assert result["ok"] is True
+    assert result["count"] == 2
+    assert result["canvases"][0]["canvas_id"] == "F1"
+    canvas_tools.client.files_list.assert_called_once_with(types="canvases", count=20)
+
+
+def test_list_canvases_by_channel(canvas_tools):
+    canvas_tools.client.files_list.return_value = {"files": []}
+    canvas_tools.list_canvases(channel="C1", limit=5)
+    canvas_tools.client.files_list.assert_called_once_with(types="canvases", count=5, channel="C1")
+
+
+def test_list_canvases_error(canvas_tools):
+    canvas_tools.client.files_list.side_effect = SlackApiError("error", response=Mock())
+    result = json.loads(canvas_tools.list_canvases())
+    assert "error" in result
+
+
+def test_read_canvas(canvas_tools):
+    canvas_tools.client.files_info.return_value = {
+        "file": {"id": "F1", "title": "My Canvas", "url_private_download": "https://files.slack.com/canvas"}
+    }
+    with patch("agno.tools.slack.httpx.get") as mock_get:
+        mock_get.return_value.text = "<h1>My Canvas</h1><p>Hello world</p>"
+        mock_get.return_value.raise_for_status = Mock()
+        result = json.loads(canvas_tools.read_canvas("F1"))
+        assert result["ok"] is True
+        assert result["title"] == "My Canvas"
+        assert "<h1>" in result["content"]
+
+
+def test_read_canvas_error(canvas_tools):
+    canvas_tools.client.files_info.side_effect = SlackApiError("not_found", response=Mock())
+    result = json.loads(canvas_tools.read_canvas("FXXX"))
+    assert "error" in result
+
+
+def test_create_canvas(canvas_tools):
+    canvas_tools.client.canvases_create.return_value = {"ok": True, "canvas_id": "F123"}
+    result = json.loads(canvas_tools.create_canvas(title="My Canvas", markdown="# Hello"))
+    assert result["ok"] is True
+    assert result["canvas_id"] == "F123"
+
+
+def test_create_canvas_error(canvas_tools):
+    canvas_tools.client.canvases_create.side_effect = SlackApiError("error", response=Mock())
+    result = json.loads(canvas_tools.create_canvas(title="Test"))
+    assert "error" in result
+
+
+def test_create_channel_canvas(canvas_tools):
+    canvas_tools.client.conversations_canvases_create.return_value = {"ok": True, "canvas_id": "F789"}
+    result = json.loads(canvas_tools.create_channel_canvas("C1", title="Channel Doc"))
+    assert result["canvas_id"] == "F789"
+
+
+def test_edit_canvas_insert_at_end(canvas_tools):
+    canvas_tools.client.canvases_edit.return_value = {"ok": True}
+    result = json.loads(canvas_tools.edit_canvas("F123", "insert_at_end", markdown="- new item"))
+    assert result["ok"] is True
+
+
+def test_edit_canvas_replace_with_section(canvas_tools):
+    canvas_tools.client.canvases_edit.return_value = {"ok": True}
+    result = json.loads(canvas_tools.edit_canvas("F123", "replace", markdown="# Updated", section_id="S1"))
+    assert result["ok"] is True
+    call_changes = canvas_tools.client.canvases_edit.call_args[1]["changes"]
+    assert call_changes[0]["section_id"] == "S1"
+
+
+def test_edit_canvas_section_op_requires_section_id(canvas_tools):
+    for op in ("insert_before", "insert_after", "replace", "delete"):
+        result = json.loads(canvas_tools.edit_canvas("F123", op, markdown="text"))
+        assert "error" in result
+        assert "section_id" in result["error"]
+
+
+def test_edit_canvas_non_delete_requires_markdown(canvas_tools):
+    result = json.loads(canvas_tools.edit_canvas("F123", "insert_at_start"))
+    assert "error" in result
+    assert "markdown" in result["error"]
+
+
+def test_delete_canvas(canvas_tools):
+    canvas_tools.client.canvases_delete.return_value = {"ok": True}
+    result = json.loads(canvas_tools.delete_canvas("F123"))
+    assert result["ok"] is True
+
+
+def test_delete_canvas_error(canvas_tools):
+    canvas_tools.client.canvases_delete.side_effect = SlackApiError("not_found", response=Mock())
+    result = json.loads(canvas_tools.delete_canvas("FXXX"))
+    assert "error" in result
+
+
+def test_lookup_canvas_sections(canvas_tools):
+    canvas_tools.client.canvases_sections_lookup.return_value = {
+        "ok": True,
+        "sections": [{"id": "temp:C:abc123"}],
+    }
+    result = json.loads(canvas_tools.lookup_canvas_sections("F123", section_types=["h1"], contains_text="Intro"))
+    assert result["ok"] is True
+    assert len(result["sections"]) == 1
+
+
+def test_lookup_canvas_sections_no_filters(canvas_tools):
+    canvas_tools.client.canvases_sections_lookup.return_value = {"ok": True, "sections": []}
+    result = json.loads(canvas_tools.lookup_canvas_sections("F123"))
+    assert result["sections"] == []
+
+
+def test_build_instructions_includes_canvas():
+    result = SlackTools._build_instructions(["create_canvas", "edit_canvas", "get_channel_history"])
+    assert "Canvas tools" in result
