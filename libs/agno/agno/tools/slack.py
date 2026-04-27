@@ -7,9 +7,11 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 import httpx
 
+from agno.exceptions import PathSecurityError
 from agno.run.base import RunContext
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning, logger
+from agno.utils.path_safety import safe_join
 
 try:
     from slack_sdk import WebClient
@@ -246,15 +248,23 @@ class SlackTools(Toolkit):
         return entry
 
     def _save_file_to_disk(self, content: bytes, filename: str) -> Optional[str]:
-        """Save file to disk if output_directory is set. Return file path or None."""
+        """Save file to disk if output_directory is set. Return file path or None.
+
+        Path-safety is delegated to ``agno.utils.path_safety.safe_join``. Returns
+        ``None`` on rejection (``PathSecurityError``) or filesystem failure
+        (``OSError``).
+        """
         if not self.output_directory:
             return None
 
-        file_path = self.output_directory / Path(filename).name
         try:
+            file_path = safe_join(self.output_directory, filename)
             file_path.write_bytes(content)
             log_debug(f"File saved to: {file_path}")
             return str(file_path)
+        except PathSecurityError as e:
+            log_error(f"Failed to save file: security violation: {e}")
+            return None
         except OSError as e:
             log_warning(f"Failed to save file locally: {str(e)}")
             return None
