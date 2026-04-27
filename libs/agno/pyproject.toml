@@ -390,6 +390,10 @@ demo = [
     "sqlalchemy",
     "yfinance",
     "youtube-transcript-api",
+    "claude-agent-sdk",
+    "langgraph",
+    "langchain-openai",
+    "dspy",
 ]
 
 [project.urls]
