@@ -1,27 +1,14 @@
 """
-GitHub Context Provider
-=======================
+GitHub Context Provider — read repos and open PRs via natural language.
 
-Read + write access to a Git repository hosted on GitHub via two tools:
+Exposes two tools:
+    query_<id>    Read files, search content, git log/diff/blame
+    update_<id>   Edit files and open a pull request
 
-- ``query_<id>`` — natural-language reads against a checkout (file
-  navigation + git log/diff/blame), backed by a sub-agent with
-  read-only Workspace + git tools.
-- ``update_<id>`` — natural-language writes that end in a pull
-  request, backed by a sub-agent with full Workspace + git tools
-  scoped to a per-session worktree.
+Writes use per-session worktrees on ``<prefix>/<task>`` branches.
+Push/PR creation refuses non-prefixed branches (can't push to main).
 
-The write sub-agent never operates on the main checkout — every
-session gets its own ``<workdir>/worktrees/<task>/`` worktree on a
-``<prefix>/<task>`` branch. ``git push`` and ``gh pr create`` refuse
-any branch that doesn't match the prefix, so the agent can't push
-to the default branch.
-
-Authentication: ``github_token`` kwarg, or ``GITHUB_TOKEN`` env var.
-The token is embedded into the clone URL as
-``https://x-access-token:<token>@github.com/...`` so subsequent
-pushes use it without further setup. ``gh`` calls receive the same
-token via ``GH_TOKEN`` / ``GITHUB_TOKEN`` env.
+Auth: ``github_token`` kwarg or ``GITHUB_TOKEN`` env var.
 """
 
 from __future__ import annotations
