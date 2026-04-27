@@ -25,14 +25,12 @@ from typing import Any, List, Optional
 from agno.tools import Toolkit
 from agno.utils.log import log_warning
 
-# Cap large outputs (diffs, blames) so a single tool call can't blow
-# the sub-agent's context. Matches Coda's prior art.
-_MAX_OUTPUT_CHARS = 20_000
+DEFAULT_MAX_OUTPUT_CHARS = 20_000
 
 
-def _truncate(output: str) -> str:
-    if len(output) > _MAX_OUTPUT_CHARS:
-        return output[:_MAX_OUTPUT_CHARS] + f"\n\n... [truncated — output exceeds {_MAX_OUTPUT_CHARS} chars]"
+def _truncate(output: str, limit: int) -> str:
+    if len(output) > limit:
+        return output[:limit] + f"\n\n... [truncated — output exceeds {limit} chars]"
     return output
 
 
@@ -58,12 +56,22 @@ class GitReadTools(Toolkit):
     """Read-only git operations over a single checkout.
 
     All commands run with ``cwd=workdir``. Output is truncated to
-    20 000 chars per call so the sub-agent can't be flooded by a
-    multi-megabyte diff.
+    ``max_output_chars`` per call (default 20K) so the sub-agent can't
+    be flooded by a multi-megabyte diff.
+
+    :param workdir: Path to the git checkout.
+    :param max_output_chars: Truncation limit for tool output. Increase
+        for models with larger context windows.
     """
 
-    def __init__(self, *, workdir: Path) -> None:
+    def __init__(
+        self,
+        *,
+        workdir: Path,
+        max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS,
+    ) -> None:
         self.workdir = Path(workdir)
+        self.max_output_chars = max_output_chars
         super().__init__(
             name="git_read_tools",
             tools=[
@@ -92,7 +100,7 @@ class GitReadTools(Toolkit):
             result = _run_git(cmd, cwd=self.workdir)
             if result.returncode != 0:
                 return f"Error: {result.stderr.strip()}"
-            return _truncate(result.stdout.strip()) or "(no commits)"
+            return _truncate(result.stdout.strip(), self.max_output_chars) or "(no commits)"
         except Exception as e:
             log_warning(f"git_log failed: {e}")
             return f"Error: {e}"
@@ -111,7 +119,7 @@ class GitReadTools(Toolkit):
         :param ref2: Ending ref (default ``HEAD``).
         :param path: Optional path to restrict the diff to.
         :param stat: If True, return ``--stat`` summary instead of full diff.
-        :return: Diff text (truncated to 20 000 chars), or an error message.
+        :return: Diff text (truncated to ``max_output_chars``), or an error message.
         """
         try:
             if ".." in ref1:
@@ -125,7 +133,7 @@ class GitReadTools(Toolkit):
             result = _run_git(cmd, cwd=self.workdir)
             if result.returncode != 0:
                 return f"Error: {result.stderr.strip()}"
-            return _truncate(result.stdout.strip()) or "(no diff)"
+            return _truncate(result.stdout.strip(), self.max_output_chars) or "(no diff)"
         except Exception as e:
             log_warning(f"git_diff failed: {e}")
             return f"Error: {e}"
@@ -140,7 +148,7 @@ class GitReadTools(Toolkit):
             result = _run_git(["show", ref, "--stat"], cwd=self.workdir)
             if result.returncode != 0:
                 return f"Error: {result.stderr.strip()}"
-            return _truncate(result.stdout.strip()) or "(no output)"
+            return _truncate(result.stdout.strip(), self.max_output_chars) or "(no output)"
         except Exception as e:
             log_warning(f"git_show failed: {e}")
             return f"Error: {e}"
@@ -159,7 +167,7 @@ class GitReadTools(Toolkit):
             result = _run_git(cmd, cwd=self.workdir)
             if result.returncode != 0:
                 return f"Error: {result.stderr.strip()}"
-            return _truncate(result.stdout.strip()) or "(no branches)"
+            return _truncate(result.stdout.strip(), self.max_output_chars) or "(no branches)"
         except Exception as e:
             log_warning(f"git_branches failed: {e}")
             return f"Error: {e}"
@@ -179,7 +187,7 @@ class GitReadTools(Toolkit):
             )
             if result.returncode != 0:
                 return f"Error: {result.stderr.strip()}"
-            return _truncate(result.stdout.strip()) or "(no blame output)"
+            return _truncate(result.stdout.strip(), self.max_output_chars) or "(no blame output)"
         except Exception as e:
             log_warning(f"git_blame failed: {e}")
             return f"Error: {e}"
@@ -211,12 +219,14 @@ class GitWriteTools(Toolkit):
         base_branch: str,
         github_token: Optional[str] = None,
         gh_path: Optional[str] = None,
+        max_output_chars: int = DEFAULT_MAX_OUTPUT_CHARS,
     ) -> None:
         self.workdir = Path(workdir).resolve()
         self.task_workdir = Path(task_workdir).resolve()
         self.pr_branch_prefix = pr_branch_prefix
         self.base_branch = base_branch
         self.github_token = github_token
+        self.max_output_chars = max_output_chars
         # Defer `gh` lookup so tests can stub via PATH and so a missing
         # `gh` only blocks PR-time, not toolkit construction.
         self.gh_path = gh_path or "gh"
@@ -291,7 +301,7 @@ class GitWriteTools(Toolkit):
             result = _run_git(["status", "--short"], cwd=self.task_workdir)
             if result.returncode != 0:
                 return f"Error: {result.stderr.strip()}"
-            return _truncate(result.stdout) or "(clean)"
+            return _truncate(result.stdout, self.max_output_chars) or "(clean)"
         except Exception as e:
             log_warning(f"git_status failed: {e}")
             return f"Error: {e}"
