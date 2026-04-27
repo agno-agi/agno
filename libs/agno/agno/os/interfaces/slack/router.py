@@ -375,7 +375,7 @@ def attach_routes(
         from slack_sdk.web.async_client import AsyncWebClient
 
         from agno.os.interfaces.slack.builders import approval_task_id
-        from agno.os.interfaces.slack.parsers import (
+        from agno.os.interfaces.slack.interactions import (
             apply_decisions,
             format_decision_title,
             parse_submit_payload,

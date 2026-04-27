@@ -1,7 +1,7 @@
 """
-Slack HITL Payload Parsers
+Slack HITL Interactions
 
-Converts Slack interaction payloads into domain objects for the HITL system.
+Handles Slack interaction payloads (button clicks, form submissions) for the HITL system.
 
 Flow:
     Slack webhook POST → router.py → parse_submit_payload() → apply_decisions() → agent resumes

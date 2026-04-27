@@ -2,7 +2,7 @@ from typing import Any, Dict
 
 from agno.models.response import ToolExecution
 from agno.os.interfaces.slack.builders import build_pause_message, classify_requirement
-from agno.os.interfaces.slack.parsers import format_decision_title, parse_submit_payload
+from agno.os.interfaces.slack.interactions import format_decision_title, parse_submit_payload
 from agno.os.interfaces.slack.types import (
     ACTION_EXTERNAL_RESULT,
     ACTION_FEEDBACK_SELECT,
