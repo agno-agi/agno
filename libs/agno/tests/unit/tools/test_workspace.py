@@ -298,7 +298,7 @@ def test_list_files_recursive_walks_tree():
 
 
 def test_list_files_recursive_respects_max_depth():
-    """max_depth=1 should not return entries deeper than one level."""
+    """max_depth=1 returns root children plus entries one level inside them."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         base = Path(tmp_dir)
@@ -312,9 +312,36 @@ def test_list_files_recursive_respects_max_depth():
         paths = sorted(e["path"] for e in result["files"])
         assert "top.txt" in paths
         assert "lvl1" in paths
-        # lvl1/mid.txt and below should be pruned by max_depth=1.
-        assert "lvl1/mid.txt" not in paths
+        # Files at the boundary (depth 1) are shown.
+        assert "lvl1/mid.txt" in paths
+        assert "lvl1/lvl2" in paths
+        # Files beyond max_depth are not shown.
         assert "lvl1/lvl2/deep.txt" not in paths
+
+
+def test_list_files_recursive_max_depth_2_shows_two_levels():
+    """max_depth=2 shows entries up to depth 2 but not depth 3."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "root.txt").write_text("a")
+        (base / "d1").mkdir()
+        (base / "d1" / "f1.txt").write_text("b")
+        (base / "d1" / "d2").mkdir()
+        (base / "d1" / "d2" / "f2.txt").write_text("c")
+        (base / "d1" / "d2" / "d3").mkdir()
+        (base / "d1" / "d2" / "d3" / "f3.txt").write_text("d")
+
+        result = json.loads(ws.list_files(recursive=True, max_depth=2))
+        paths = sorted(e["path"] for e in result["files"])
+        assert "root.txt" in paths
+        assert "d1" in paths
+        assert "d1/f1.txt" in paths
+        assert "d1/d2" in paths
+        assert "d1/d2/f2.txt" in paths
+        assert "d1/d2/d3" in paths
+        # depth 3 is beyond max_depth=2
+        assert "d1/d2/d3/f3.txt" not in paths
 
 
 # ------------------------------------------------------------------

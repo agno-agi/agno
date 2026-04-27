@@ -33,6 +33,7 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 TEXT_EXTENSIONS = {
+    # Markup and data
     ".md",
     ".txt",
     ".csv",
@@ -40,21 +41,96 @@ TEXT_EXTENSIONS = {
     ".yaml",
     ".yml",
     ".xml",
+    ".html",
+    ".rst",
+    ".log",
+    # Config
+    ".toml",
+    ".cfg",
+    ".ini",
+    ".env",
+    ".editorconfig",
+    # Python
     ".py",
+    ".pyi",
+    # JavaScript / TypeScript
     ".js",
     ".ts",
     ".tsx",
     ".jsx",
-    ".html",
+    ".mjs",
+    ".cjs",
+    # Web
     ".css",
     ".scss",
-    ".sql",
+    ".less",
+    ".vue",
+    ".svelte",
+    # Systems languages
+    ".c",
+    ".h",
+    ".cpp",
+    ".hpp",
+    ".cc",
+    ".cxx",
+    ".rs",
+    ".go",
+    ".zig",
+    # JVM
+    ".java",
+    ".kt",
+    ".kts",
+    ".scala",
+    ".groovy",
+    ".gradle",
+    # .NET
+    ".cs",
+    ".fs",
+    ".csproj",
+    ".fsproj",
+    # Ruby / PHP / Perl
+    ".rb",
+    ".php",
+    ".pl",
+    ".pm",
+    # Functional / BEAM
+    ".ex",
+    ".exs",
+    ".erl",
+    ".hs",
+    ".ml",
+    ".mli",
+    # Other languages
+    ".swift",
+    ".m",
+    ".r",
+    ".R",
+    ".lua",
+    ".dart",
+    ".jl",
+    # Shell and scripting
     ".sh",
-    ".toml",
-    ".cfg",
-    ".ini",
-    ".log",
-    ".rst",
+    ".bash",
+    ".zsh",
+    ".fish",
+    ".ps1",
+    # SQL and query
+    ".sql",
+    ".graphql",
+    ".gql",
+    # Infrastructure / IaC
+    ".tf",
+    ".hcl",
+    ".dockerfile",
+    # Serialization / schema
+    ".proto",
+    ".avsc",
+    ".thrift",
+    # Build / CI
+    ".makefile",
+    ".cmake",
+    ".bazel",
+    ".bzl",
 }
 
 DEFAULT_EXCLUDE_PATTERNS = [
@@ -274,6 +350,12 @@ class Workspace(Toolkit):
             tools=sync_tools,
             async_tools=async_tools,
             requires_confirmation_tools=resolved_confirm_methods,
+            instructions=(
+                "Always read_file before editing — the line-numbered output gives you "
+                "the exact substring to pass to edit_file's old_str parameter. "
+                "Do not guess file contents or pass line numbers to edit_file."
+            ),
+            add_instructions=True,
             **kwargs,
         )
 
@@ -465,19 +547,20 @@ class Workspace(Toolkit):
 
             entries: List[Path] = []
             if recursive:
-                # max_depth uses tree -L semantics: max_depth=1 returns only the
-                # immediate children of the search root. An entry inside a directory
-                # walked at relative depth N has entry-depth N+1; we enumerate entries
-                # iff rel_depth < max_depth, and skip both enumeration and recursion
-                # otherwise.
+                # max_depth controls how many levels deep we return entries.
+                # At the boundary (rel_depth == max_depth) we still enumerate
+                # files and dirs at that level but stop recursing further.
                 base_depth = len(d.parts)
                 for dirpath, dirnames, filenames in os.walk(d):
                     rel_depth = len(Path(dirpath).parts) - base_depth
                     if rel_depth >= max_depth:
+                        # Stop recursion but keep dir names for enumeration below.
+                        visible_dirs = [name for name in dirnames if not self._is_excluded(Path(dirpath) / name)]
                         dirnames[:] = []
-                        continue
-                    dirnames[:] = [name for name in dirnames if not self._is_excluded(Path(dirpath) / name)]
-                    for name in filenames + dirnames:
+                    else:
+                        dirnames[:] = [name for name in dirnames if not self._is_excluded(Path(dirpath) / name)]
+                        visible_dirs = list(dirnames)
+                    for name in filenames + visible_dirs:
                         full = Path(dirpath) / name
                         if self._is_excluded(full):
                             continue
