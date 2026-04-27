@@ -28,14 +28,13 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from agno.agent import Agent
 from agno.context._utils import answer_from_run
-from agno.context.github.tools import GitReadTools, GitWriteTools
+from agno.context.github.tools import GitReadTools, GitWriteTools, _run_git
 from agno.context.mode import ContextMode
 from agno.context.provider import Answer, ContextProvider, Status
 from agno.run import RunContext
@@ -117,7 +116,6 @@ class GitHubContextProvider(ContextProvider):
         self._read_agent: Optional[Agent] = None
         self._write_agents: dict[str, Agent] = {}
         self._task_workdirs: dict[str, Path] = {}
-        self._setup_done = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -133,27 +131,25 @@ class GitHubContextProvider(ContextProvider):
         else:
             self._clone_fresh()
 
-        self._setup_done = True
-
     def _refresh_existing_checkout(self) -> None:
         # Fetch + checkout + ff-only pull. If pull fails (typically dirty
         # tree or diverged branch), warn but don't fail — the agent can
         # still see the state via git_status and decide.
-        fetch = self._run_git(["fetch", "origin"], cwd=self.workdir, timeout=120)
+        fetch = _run_git(["fetch", "origin"], cwd=self.workdir, timeout=120)
         if fetch.returncode != 0:
             log_warning(f"git fetch in {self.workdir} returned non-zero: {fetch.stderr.strip()}")
 
-        co = self._run_git(["checkout", self.branch], cwd=self.workdir)
+        co = _run_git(["checkout", self.branch], cwd=self.workdir)
         if co.returncode != 0:
             log_warning(f"git checkout {self.branch} returned non-zero: {co.stderr.strip()}")
 
-        pull = self._run_git(
+        pull = _run_git(
             ["pull", "--ff-only", "origin", self.branch],
             cwd=self.workdir,
             timeout=120,
         )
         if pull.returncode != 0:
-            status = self._run_git(["status", "--short"], cwd=self.workdir)
+            status = _run_git(["status", "--short"], cwd=self.workdir)
             log_warning(
                 f"git pull --ff-only failed in {self.workdir}: {pull.stderr.strip()}. "
                 f"git status:\n{status.stdout.strip()}"
@@ -162,7 +158,7 @@ class GitHubContextProvider(ContextProvider):
     def _clone_fresh(self) -> None:
         self.workdir.parent.mkdir(parents=True, exist_ok=True)
         clone_url = self._build_clone_url()
-        clone = self._run_git(
+        clone = _run_git(
             ["clone", clone_url, str(self.workdir)],
             cwd=self.workdir.parent,
             timeout=300,
@@ -176,7 +172,7 @@ class GitHubContextProvider(ContextProvider):
                 raise RuntimeError(f"Failed to clone {self.repo}: {err}. If this is a private repo, set GITHUB_TOKEN.")
             raise RuntimeError(f"Failed to clone {self.repo}: {err}")
 
-        co = self._run_git(["checkout", self.branch], cwd=self.workdir)
+        co = _run_git(["checkout", self.branch], cwd=self.workdir)
         if co.returncode != 0:
             log_warning(f"checkout {self.branch} after clone returned: {co.stderr.strip()}")
 
@@ -190,20 +186,17 @@ class GitHubContextProvider(ContextProvider):
         if not self.workdir.exists():
             return
         for session_id, path in list(self._task_workdirs.items()):
-            try:
-                self._run_git(
-                    ["worktree", "remove", str(path), "--force"],
-                    cwd=self.workdir,
-                )
-                task = _sanitize_task(session_id)
-                self._run_git(
-                    ["branch", "-D", f"{self.pr_branch_prefix}/{task}"],
-                    cwd=self.workdir,
-                )
-            except Exception as e:
-                log_warning(f"failed to clean up worktree {path}: {e}")
+            self._remove_worktree(session_id, path)
         self._task_workdirs.clear()
         self._write_agents.clear()
+
+    def _remove_worktree(self, session_id: str, path: Path) -> None:
+        try:
+            _run_git(["worktree", "remove", str(path), "--force"], cwd=self.workdir)
+            task = _sanitize_task(session_id)
+            _run_git(["branch", "-D", f"{self.pr_branch_prefix}/{task}"], cwd=self.workdir)
+        except Exception as e:
+            log_warning(f"failed to clean up worktree {path}: {e}")
 
     # ------------------------------------------------------------------
     # Status
@@ -218,8 +211,8 @@ class GitHubContextProvider(ContextProvider):
         if not (self.workdir / ".git").exists():
             return Status(ok=False, detail=f"not a git repo: {self.workdir}")
         try:
-            branch = self._run_git(["branch", "--show-current"], cwd=self.workdir).stdout.strip()
-            sha = self._run_git(["rev-parse", "--short", "HEAD"], cwd=self.workdir).stdout.strip()
+            branch = _run_git(["branch", "--show-current"], cwd=self.workdir).stdout.strip()
+            sha = _run_git(["rev-parse", "--short", "HEAD"], cwd=self.workdir).stdout.strip()
         except Exception as e:
             return Status(ok=False, detail=f"git error: {e}")
         return Status(
@@ -371,18 +364,18 @@ class GitHubContextProvider(ContextProvider):
         branch_name = f"{self.pr_branch_prefix}/{task}"
 
         # Refresh refs so the worktree branches off the latest base.
-        fetch = self._run_git(["fetch", "origin"], cwd=self.workdir, timeout=120)
+        fetch = _run_git(["fetch", "origin"], cwd=self.workdir, timeout=120)
         if fetch.returncode != 0:
             log_warning(f"fetch before worktree create returned: {fetch.stderr.strip()}")
 
         # Branch from origin/<base_branch> when available, fall back to
         # local <base_branch> for tests against a fake remote.
         base_ref = f"origin/{self.branch}"
-        check_remote = self._run_git(["rev-parse", "--verify", base_ref], cwd=self.workdir)
+        check_remote = _run_git(["rev-parse", "--verify", base_ref], cwd=self.workdir)
         if check_remote.returncode != 0:
             base_ref = self.branch
 
-        result = self._run_git(
+        result = _run_git(
             ["worktree", "add", str(worktree_path), "-b", branch_name, base_ref],
             cwd=self.workdir,
         )
@@ -396,33 +389,8 @@ class GitHubContextProvider(ContextProvider):
     def _teardown_session(self, session_id: str) -> None:
         path = self._task_workdirs.pop(session_id, None)
         self._write_agents.pop(session_id, None)
-        if path is None:
-            return
-        try:
-            self._run_git(["worktree", "remove", str(path), "--force"], cwd=self.workdir)
-            task = _sanitize_task(session_id)
-            self._run_git(["branch", "-D", f"{self.pr_branch_prefix}/{task}"], cwd=self.workdir)
-        except Exception as e:
-            log_warning(f"failed to tear down session {session_id}: {e}")
-
-    # ------------------------------------------------------------------
-    # Subprocess wrapper
-    # ------------------------------------------------------------------
-
-    def _run_git(
-        self,
-        args: list[str],
-        *,
-        cwd: Path,
-        timeout: int = 60,
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            ["git", *args],
-            capture_output=True,
-            text=True,
-            cwd=str(cwd),
-            timeout=timeout,
-        )
+        if path is not None:
+            self._remove_worktree(session_id, path)
 
 
 DEFAULT_GITHUB_READ_INSTRUCTIONS = """\
