@@ -493,6 +493,10 @@ class Qdrant(VectorDb):
             await self.async_client.upsert(collection_name=self.collection, wait=False, points=points)
         log_debug(f"Upserted {len(points)} documents asynchronously")
 
+    def upsert_available(self) -> bool:
+        """Check if upsert is available in Qdrant."""
+        return True
+
     def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
         Upsert documents into the database.
