@@ -465,7 +465,8 @@ class ChromaDb(VectorDb):
         if self._collection is None:
             logger.warning("Collection does not exist")
         else:
-            self._batch_operation(
+            await asyncio.to_thread(
+                self._batch_operation,
                 ids=ids,
                 embeddings=docs_embeddings,
                 documents=docs,
@@ -656,7 +657,8 @@ class ChromaDb(VectorDb):
         if self._collection is None:
             logger.warning("Collection does not exist")
         else:
-            self._batch_operation(
+            await asyncio.to_thread(
+                self._batch_operation,
                 ids=ids,
                 embeddings=docs_embeddings,
                 documents=docs,
@@ -670,8 +672,8 @@ class ChromaDb(VectorDb):
     ) -> None:
         """Upsert documents asynchronously by running in a thread."""
         try:
-            if self.content_hash_exists(content_hash):
-                self._delete_by_content_hash(content_hash)
+            if await asyncio.to_thread(self.content_hash_exists, content_hash):
+                await asyncio.to_thread(self._delete_by_content_hash, content_hash)
             await self._async_upsert(content_hash, documents, filters)
         except Exception:
             logger.exception("Error upserting documents by content hash")
