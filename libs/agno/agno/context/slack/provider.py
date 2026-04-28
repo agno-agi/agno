@@ -9,11 +9,12 @@ Read + write access to a Slack workspace via two tools:
 - ``update_<id>`` — natural-language writes (post a message, reply in
   a thread).
 
-Two sub-agents under the hood so each has only the scopes it needs:
-the read sub-agent never sees ``send_message``; the write sub-agent
-never sees ``search_workspace`` or ``get_channel_history``. If a
-write needs context ("reply to the last message in #bots"), compose
-``query_slack`` → ``update_slack`` at the caller.
+Separate sub-agents under the hood keep each scope narrow. Bot-token
+reads get channel history and thread tools; Slack-interface reads add
+assistant search to the same deterministic read surface; writes get
+posting plus lookup tools. If a write needs context ("reply to the last
+message in #bots"), compose ``query_slack`` → ``update_slack`` at the
+caller.
 
 Uses ``SLACK_BOT_TOKEN`` (bot tokens start with ``xoxb-``). Falls
 back to ``SLACK_TOKEN`` since that's the variable agno's
@@ -49,20 +50,23 @@ class SlackContextProvider(ContextProvider):
         write_instructions: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        read: bool = True,
+        write: bool = True,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model)
+        super().__init__(id=id, name=name, mode=mode, model=model, read=read, write=write)
         self.token = token or getenv("SLACK_BOT_TOKEN") or getenv("SLACK_TOKEN")
         if not self.token:
             raise ValueError("SlackContextProvider: SLACK_BOT_TOKEN (or SLACK_TOKEN) is required")
-        self.read_instructions_text = (
-            read_instructions if read_instructions is not None else DEFAULT_SLACK_READ_INSTRUCTIONS
-        )
+        self.read_instructions_text = read_instructions
         self.write_instructions_text = (
             write_instructions if write_instructions is not None else DEFAULT_SLACK_WRITE_INSTRUCTIONS
         )
-        self._read_tools: SlackTools | None = None
+        # Lazy-initialized tools and agents
+        self._bot_read_tools: SlackTools | None = None
+        self._assisted_read_tools: SlackTools | None = None
         self._write_tools: SlackTools | None = None
-        self._read_agent: Agent | None = None
+        self._bot_read_agent: Agent | None = None
+        self._assisted_read_agent: Agent | None = None
         self._write_agent: Agent | None = None
 
     def status(self) -> Status:
@@ -77,11 +81,11 @@ class SlackContextProvider(ContextProvider):
 
     def query(self, question: str, *, run_context: RunContext | None = None) -> Answer:
         kwargs = self._run_kwargs_for_sub_agent(run_context)
-        return answer_from_run(self._ensure_read_agent().run(question, **kwargs))
+        return answer_from_run(self._select_read_agent(run_context).run(question, **kwargs))
 
     async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
         kwargs = self._run_kwargs_for_sub_agent(run_context)
-        return answer_from_run(await self._ensure_read_agent().arun(question, **kwargs))
+        return answer_from_run(await self._select_read_agent(run_context).arun(question, **kwargs))
 
     def update(self, instruction: str, *, run_context: RunContext | None = None) -> Answer:
         kwargs = self._run_kwargs_for_sub_agent(run_context)
@@ -92,40 +96,101 @@ class SlackContextProvider(ContextProvider):
         return answer_from_run(await self._ensure_write_agent().arun(instruction, **kwargs))
 
     def instructions(self) -> str:
+        """Generate guidance for the calling agent based on mode.
+
+        tools  — raw SlackTools surface, caller manages tool calls directly
+        agent  — read-only query tool, no write access
+        default — both query and update tools via sub-agents
+        """
         if self.mode == ContextMode.tools:
             return (
-                f"`{self.name}`: `search_workspace` for topic/catch-up queries across the workspace; "
-                "`get_channel_history` for latest messages in a known channel; `get_thread(channel_id, ts)` "
-                "to expand a thread; `get_channel_info` / `get_user_info` to resolve names. "
-                "mode=tools exposes the read toolset only; writes require mode=default (two-tool surface)."
+                f"`{self.name}`: `get_channel_history(channel)` for latest messages in a known channel; "
+                "`get_thread(channel, ts)` to expand a thread; `get_channel_info` / `get_user_info` "
+                "to resolve names. Pass channel names like `#agents` directly."
             )
+        if self.mode == ContextMode.agent:
+            return f"`{self.name}`: call `{self.query_tool_name}(question)` to read Slack."
         return (
-            f"`{self.name}`: call `{self.query_tool_name}(question)` to read Slack, "
-            f"or `{self.update_tool_name}(instruction)` to post a message."
+            f"`{self.name}`: call `{self.query_tool_name}(question)` to read Slack. "
+            f"Use `{self.update_tool_name}(instruction)` to post a message."
         )
 
     # ------------------------------------------------------------------
     # Mode resolution
     # ------------------------------------------------------------------
+    # Sub-agents by default — seven flat SlackTools methods bloat the
+    # calling agent's prompt. Splitting reads/writes keeps each sub-agent
+    # scope minimal. mode=tools surfaces raw read tools for direct use.
 
-    # Wrap in sub-agents by default — seven flat SlackTools methods bloat
-    # the calling agent's prompt, and splitting reads/writes keeps each
-    # sub-agent's scope minimal. mode=tools surfaces the read tools flat
-    # (write needs sub-agent composition; flat write tools can be added
-    # later if someone has a concrete reason).
     def _default_tools(self) -> list:
-        return [self._query_tool(), self._update_tool()]
+        return self._read_write_tools()
+
+    def _query_tool(self):
+        query_tool = super()._query_tool()
+        query_tool.description = (
+            "Read Slack with a natural-language request. Use for channel history, workspace search, "
+            "threads, and user or channel lookups."
+        )
+        return query_tool
+
+    def _update_tool(self):
+        update_tool = super()._update_tool()
+        update_tool.description = (
+            "Post a Slack message or thread reply with a natural-language instruction. Include the "
+            "destination channel and the exact message to send. If the user asks to post, send, or "
+            "share something in Slack, call this tool before the final response. Only report that "
+            "posting is unavailable when this tool returns an error."
+        )
+        return update_tool
 
     def _all_tools(self) -> list:
-        return [self._ensure_read_tools()]
+        # mode=tools is static: the provider cannot know whether a future
+        # tool call will carry Slack interface metadata. Expose the
+        # bot-token-compatible read surface so terminal runs never see the
+        # action-token-only search_workspace tool.
+        return [self._ensure_bot_read_tools()]
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
-    def _ensure_read_tools(self) -> SlackTools:
-        if self._read_tools is None:
-            self._read_tools = SlackTools(
+    @staticmethod
+    def _has_action_token(run_context: RunContext | None) -> bool:
+        return bool(run_context and run_context.metadata and run_context.metadata.get("action_token"))
+
+    def _select_read_agent(self, run_context: RunContext | None) -> Agent:
+        if self._has_action_token(run_context):
+            return self._ensure_assisted_read_agent()
+        return self._ensure_bot_read_agent()
+
+    def _read_instructions(self, default: str) -> str:
+        return self.read_instructions_text if self.read_instructions_text is not None else default
+
+    # ------------------------------------------------------------------
+    # Lazy initialization (standard _ensure_* pattern)
+    # ------------------------------------------------------------------
+
+    def _ensure_bot_read_tools(self) -> SlackTools:
+        if self._bot_read_tools is None:
+            self._bot_read_tools = SlackTools(
+                token=self.token,
+                enable_send_message=False,
+                enable_send_message_thread=False,
+                enable_upload_file=False,
+                enable_download_file=False,
+                enable_list_channels=True,
+                enable_get_channel_history=True,
+                enable_search_workspace=False,
+                enable_get_thread=True,
+                enable_list_users=True,
+                enable_get_user_info=True,
+                enable_get_channel_info=True,
+            )
+        return self._bot_read_tools
+
+    def _ensure_assisted_read_tools(self) -> SlackTools:
+        if self._assisted_read_tools is None:
+            self._assisted_read_tools = SlackTools(
                 token=self.token,
                 enable_send_message=False,
                 enable_send_message_thread=False,
@@ -139,13 +204,9 @@ class SlackContextProvider(ContextProvider):
                 enable_get_user_info=True,
                 enable_get_channel_info=True,
             )
-        return self._read_tools
+        return self._assisted_read_tools
 
     def _ensure_write_tools(self) -> SlackTools:
-        # Writer gets just enough to resolve #channel / @user names and post.
-        # No search / history / threads / uploads / downloads — if the write
-        # instruction needs context, compose query_slack → update_slack at
-        # the caller.
         if self._write_tools is None:
             self._write_tools = SlackTools(
                 token=self.token,
@@ -163,47 +224,81 @@ class SlackContextProvider(ContextProvider):
             )
         return self._write_tools
 
-    def _ensure_read_agent(self) -> Agent:
-        if self._read_agent is None:
-            self._read_agent = self._build_read_agent()
-        return self._read_agent
+    def _ensure_bot_read_agent(self) -> Agent:
+        if self._bot_read_agent is None:
+            self._bot_read_agent = Agent(
+                id=f"{self.id}-bot-read",
+                name=f"{self.name} Bot Read",
+                model=self.model,
+                instructions=self._read_instructions(_SLACK_BOT_TOKEN_READ_INSTRUCTIONS),
+                tools=[self._ensure_bot_read_tools()],
+                markdown=True,
+            )
+        return self._bot_read_agent
+
+    def _ensure_assisted_read_agent(self) -> Agent:
+        if self._assisted_read_agent is None:
+            self._assisted_read_agent = Agent(
+                id=f"{self.id}-assisted-read",
+                name=f"{self.name} Assisted Read",
+                model=self.model,
+                instructions=self._read_instructions(_SLACK_ASSISTED_READ_INSTRUCTIONS),
+                tools=[self._ensure_assisted_read_tools()],
+                markdown=True,
+            )
+        return self._assisted_read_agent
 
     def _ensure_write_agent(self) -> Agent:
         if self._write_agent is None:
-            self._write_agent = self._build_write_agent()
+            self._write_agent = Agent(
+                id=f"{self.id}-write",
+                name=f"{self.name} Write",
+                model=self.model,
+                instructions=self.write_instructions_text,
+                tools=[self._ensure_write_tools()],
+                markdown=True,
+            )
         return self._write_agent
 
-    def _build_read_agent(self) -> Agent:
-        return Agent(
-            id=f"{self.id}-read",
-            name=f"{self.name} Read",
-            model=self.model,
-            instructions=self.read_instructions_text,
-            tools=[self._ensure_read_tools()],
-            markdown=True,
-        )
 
-    def _build_write_agent(self) -> Agent:
-        return Agent(
-            id=f"{self.id}-write",
-            name=f"{self.name} Write",
-            model=self.model,
-            instructions=self.write_instructions_text,
-            tools=[self._ensure_write_tools()],
-            markdown=True,
-        )
-
-
-DEFAULT_SLACK_READ_INSTRUCTIONS = """\
+_SLACK_ASSISTED_READ_INSTRUCTIONS = """\
 You answer questions by searching and reading Slack.
 
 Workflow:
-1. **Search first.** `search_workspace(query)` finds messages across the
-   workspace — ideal for topic / catch-up / cross-channel questions.
-2. **Drill into a channel.** `get_channel_history(channel_id)` for the
-   latest top-level messages in a specific channel.
-3. **Expand threads.** When a hit has replies, call
-   `get_thread(channel_id, ts)` for the full discussion.
+1. **Use the deterministic tools for exact reads.** If the user asks for
+   recent messages in a specific channel, call
+   `get_channel_history(channel)`. If they ask about a thread or a
+   message with replies, call `get_thread(channel, ts)`.
+2. **Use assistant search for broad reads.** `search_workspace(query)`
+   is for topic, catch-up, cross-channel, and fuzzy discovery requests
+   across the workspace using the caller's Slack interface permissions.
+3. **Shape search queries.** Include channel or topic hints from the
+   user's request. Use Slack search filters when useful, e.g.
+   `in:#agents`.
+4. **Resolve names.** `get_user_info` / `list_users` turn Slack user IDs
+   into display names. Don't invent a name when the ID doesn't resolve -
+   report the raw user id instead.
+5. **Cite.** Every claim should point to channel + author + timestamp
+   or permalink. Quote message text verbatim; don't paraphrase.
+
+You are read-only. Never send messages, upload, or download. If the
+channel cannot be read or search returns nothing, say so plainly - don't
+speculate.
+"""
+
+
+_SLACK_BOT_TOKEN_READ_INSTRUCTIONS = """\
+You answer questions by reading Slack with bot-token-compatible tools.
+
+Workflow:
+1. **Read known channels directly.** If the user provides a channel name
+   or ID, pass it straight to `get_channel_history(channel)`. The tool
+   resolves names like `#agents` to IDs.
+2. **Discover only when needed.** Use `list_channels` only when the user
+   did not name a channel. The bot must be a member of private channels.
+3. **Expand threads.** When a message has replies, call
+   `get_thread(channel, ts)` for the full discussion. Pass the same
+   channel name or ID you used for history.
 4. **Resolve names.** `get_user_info` / `list_users` turn Slack user IDs
    into display names. Don't invent a name when the ID doesn't resolve —
    report the raw user id instead.
@@ -211,7 +306,7 @@ Workflow:
    Quote message text verbatim; don't paraphrase.
 
 You are read-only. Never send messages, upload, or download. If the
-search returns nothing, say so plainly — don't speculate.
+channel cannot be found or the bot is not a member, say so plainly.
 """
 
 
