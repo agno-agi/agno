@@ -5,15 +5,13 @@ Moss manages embeddings internally and serves queries from an in-memory
 runtime, delivering sub-10ms latency with no external embedder required.
 
 Setup:
-    pip install inferedge-moss
+    pip install moss
 
 Environment variables:
     MOSS_PROJECT_ID   - Your Moss project ID
     MOSS_PROJECT_KEY  - Your Moss project key
 
 Or pass project_id / project_key directly to MossVectorDb.
-
-See also: 01_qdrant.py for a feature-rich production option.
 """
 
 from agno.agent import Agent
@@ -27,7 +25,7 @@ if __name__ == "__main__":
     # every search() after that hits Moss's in-memory runtime.
     knowledge = Knowledge(
         vector_db=MossVectorDb(
-            index_name="thai-recipes",
+            index_name="thai-recipes_",
             # project_id and project_key fall back to MOSS_PROJECT_ID / MOSS_PROJECT_KEY
             embedding_model="moss-minilm",  # or "moss-mediumlm" for higher accuracy
             alpha=0.8,  # 1.0 = pure semantic, 0.0 = pure keyword
@@ -40,8 +38,6 @@ if __name__ == "__main__":
         search_knowledge=True,
         markdown=True,
     )
-
-    print("Moss: Basic hybrid search")
 
     # Ingest content — creates the index if it doesn't exist, then loads it.
     knowledge.insert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")

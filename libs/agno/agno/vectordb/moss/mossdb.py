@@ -101,31 +101,15 @@ class MossVectorDb(VectorDb):
     def _run(self, coro: Any) -> Any:
         return asyncio.run(coro)
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
 
     def create(self) -> None:
-        """Create the Moss index if it doesn't exist, then load it into memory."""
-
-        async def _create() -> None:
-            indexes = await self.client.list_indexes()
-            if not any(idx.name == self.index_name for idx in indexes):
-                log_info(f"Creating Moss index '{self.index_name}' with model '{self.embedding_model}'")
-                seed = DocumentInfo(id="_seed", text="index initialised", metadata={"type": "seed"})
-                await self.client.create_index(self.index_name, [seed], self.embedding_model)
-            await self._load_index()
-
-        self._run(_create())
+        """Load the index into memory if it already exists. Index is created on first upsert."""
+        if self.exists():
+            self._run(self._load_index())
 
     async def async_create(self) -> None:
-        """Async version of create()."""
-        indexes = await self.client.list_indexes()
-        if not any(idx.name == self.index_name for idx in indexes):
-            log_info(f"Creating Moss index '{self.index_name}' with model '{self.embedding_model}'")
-            seed = DocumentInfo(id="_seed", text="index initialised", metadata={"type": "seed"})
-            await self.client.create_index(self.index_name, [seed], self.embedding_model)
-        await self._load_index()
+        if await self.async_exists():
+            await self._load_index()
 
     async def _load_index(self) -> None:
         if not self._index_loaded:
@@ -226,7 +210,16 @@ class MossVectorDb(VectorDb):
         try:
             from moss import MutationOptions  # type: ignore
 
-            self._run(self.client.add_docs(self.index_name, moss_docs, options=MutationOptions(upsert=True)))
+            async def _upsert() -> None:
+                if not await self.async_exists():
+                    log_info(f"Creating Moss index '{self.index_name}' with model '{self.embedding_model}'")
+                    await self.client.create_index(self.index_name, moss_docs, self.embedding_model)
+                    self._index_loaded = False
+                else:
+                    await self.client.add_docs(self.index_name, moss_docs, options=MutationOptions(upsert=True))
+                await self._load_index()
+
+            self._run(_upsert())
             log_info(f"Upserted {len(moss_docs)} documents into Moss index '{self.index_name}'")
         except Exception as e:
             log_error(f"Error upserting documents into Moss: {e}")
@@ -240,7 +233,13 @@ class MossVectorDb(VectorDb):
         try:
             from moss import MutationOptions  # type: ignore
 
-            await self.client.add_docs(self.index_name, moss_docs, options=MutationOptions(upsert=True))
+            if not await self.async_exists():
+                log_info(f"Creating Moss index '{self.index_name}' with model '{self.embedding_model}'")
+                await self.client.create_index(self.index_name, moss_docs, self.embedding_model)
+                self._index_loaded = False
+            else:
+                await self.client.add_docs(self.index_name, moss_docs, options=MutationOptions(upsert=True))
+            await self._load_index()
             log_info(f"Upserted {len(moss_docs)} documents into Moss index '{self.index_name}'")
         except Exception as e:
             log_error(f"Error upserting documents into Moss: {e}")
