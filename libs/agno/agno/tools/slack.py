@@ -531,11 +531,13 @@ class SlackTools(Toolkit):
                     if not (ch_id and ch_name):
                         continue
                     self._cache_channel(_ResolvedChannel(id=ch_id, name=ch_name))
-                    channels.append({
-                        "id": ch_id,
-                        "name": ch_name,
-                        "is_private": ch.get("is_private", False),
-                    })
+                    channels.append(
+                        {
+                            "id": ch_id,
+                            "name": ch_name,
+                            "is_private": ch.get("is_private", False),
+                        }
+                    )
                 cursor = (response.get("response_metadata") or {}).get("next_cursor")
                 if not cursor:
                     break

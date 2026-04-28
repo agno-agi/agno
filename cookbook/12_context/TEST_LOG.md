@@ -3,6 +3,40 @@
 All end-to-end runs used the demo venv (`.venvs/demo/bin/python`)
 against real OpenAI (`gpt-5.4` / `gpt-5.4-mini`).
 
+## 2026-04-28
+
+### 14_wiki_filesystem.py
+
+**Status:** PASS
+
+**Description:** `WikiContextProvider(backend=FileSystemBackend(...))` rooted
+at a fresh `demo-wiki/` directory. Asks the agent to add
+`docs/deploys.md` via `update_wiki`, then reads it back via
+`query_wiki`.
+
+**Result:** Write sub-agent created `docs/deploys.md` with the
+requested Prerequisites / Steps / Rollback sections; read sub-agent
+listed the wiki, opened the new file, and answered the question
+citing the file path. Direct filesystem assertion confirmed the
+file landed on disk (493 bytes).
+
+---
+
+### 15_wiki_git.py
+
+**Status:** Skipped (no `WIKI_REPO_URL` / `WIKI_GITHUB_TOKEN` available locally)
+
+**Description:** `WikiContextProvider(backend=GitBackend(...))` against
+a real GitHub repo. After the write sub-agent returns, the backend
+stages, commits with an LLM-summarised one-line message, rebases
+onto the remote, and pushes. PAT auth.
+
+**Result:** Without the env vars set, the cookbook prints the opt-in
+hint and exits cleanly — no side effects. Token scrubbing and
+re-clone safety are covered by the unit tests.
+
+---
+
 ## 2026-04-27
 
 ### 12_engineering_briefing.py
