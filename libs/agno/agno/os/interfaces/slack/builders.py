@@ -447,10 +447,14 @@ def response_blocks(
             card_title = tool
             break
 
+    body_text = "\n\n".join(body_lines)
+    if len(body_text) > 200:
+        body_text = body_text[:197] + "..."
+
     submission_card: Dict[str, Any] = {
         "type": "card",
         "title": {"type": "mrkdwn", "text": card_title},
-        "body": {"type": "mrkdwn", "text": "\n\n".join(body_lines)},
+        "body": {"type": "mrkdwn", "text": body_text},
     }
 
     return preserved + [submission_card]

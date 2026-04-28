@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
 from ssl import SSLContext
 from typing import Any, Dict, List, Literal, Optional, Union
 
@@ -8,7 +7,6 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RemoteAgent
-from agno.os.interfaces.slack.builders import build_pause_message
 from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import (
     build_run_metadata,
@@ -72,38 +70,6 @@ class SlackEventResponse(BaseModel):
 
 class SlackChallengeResponse(BaseModel):
     challenge: str = Field(description="Challenge string to echo back to Slack")
-
-
-async def _post_pause_card(
-    async_client: Any,
-    paused_event: Any,
-    channel: str,
-    thread_ts: str,
-    awaiting_ts: Optional[str] = None,
-) -> Optional[str]:
-    """Post the Card block as a separate message in the thread.
-    Runs independently of AsyncChatStream because chat_appendStream does
-    not accept Block Kit payloads. The decision handler later mutates
-    this message in place via chat.update to swap the buttons for a
-    permanent decision chip."""
-    run_id = getattr(paused_event, "run_id", None)
-    requirements = list(getattr(paused_event, "active_requirements", None) or [])
-    if not run_id or not requirements:
-        return None
-    try:
-        blocks = build_pause_message(run_id, requirements, awaiting_ts)
-        block_dicts = [asdict(b) if is_dataclass(b) else b.model_dump(exclude_none=True, mode="json") for b in blocks]
-        resp = await async_client.chat_postMessage(
-            channel=channel,
-            thread_ts=thread_ts,
-            text="Run paused — please resolve below",
-            blocks=block_dicts,
-        )
-        ts = resp.get("ts") if isinstance(resp, dict) else getattr(resp, "data", {}).get("ts")
-        return str(ts) if ts else None
-    except Exception as exc:
-        log_error(f"Failed to post pause card (run_id={run_id}): {exc}")
-        return None
 
 
 def attach_routes(
@@ -459,7 +425,7 @@ def attach_routes(
                     blocks=readonly_blocks,
                 )
             except Exception as exc:
-                log_error(f"[HITL] chat_update (submit readonly) failed for card {msg_ts}: {exc}")
+                log_error(f"[HITL] chat_update (submit readonly) failed for {msg_ts}: {exc}")
 
         # Resume always opens a fresh continuation stream — we intentionally
         # do not try to reuse the pre-pause ts. Slack enforces a ~5-min wall
@@ -559,7 +525,7 @@ def attach_routes(
         if state.paused_event is not None:
             requirements2 = list(getattr(state.paused_event, "active_requirements", None) or [])
             if requirements2:
-                from agno.os.interfaces.slack.pause import finalize_pause
+                from agno.os.interfaces.slack.pause import finalize_pause, post_pause_card
 
                 new_awaiting_ts = await finalize_pause(
                     client=client,
@@ -572,7 +538,7 @@ def attach_routes(
                     log_prefix="re-",
                 )
                 try:
-                    await _post_pause_card(client, state.paused_event, channel, thread_ts, new_awaiting_ts)
+                    await post_pause_card(client, state.paused_event, channel, thread_ts, new_awaiting_ts)
                 except Exception as exc:
                     log_error(f"[HITL] Failed to post Card block (re-pause): {exc}")
                 paused_again = True
@@ -898,7 +864,7 @@ def attach_routes(
                 pause_run_id = getattr(state.paused_event, "run_id", None)
                 requirements = list(getattr(state.paused_event, "active_requirements", None) or [])
                 if pause_run_id and requirements:
-                    from agno.os.interfaces.slack.pause import finalize_pause
+                    from agno.os.interfaces.slack.pause import finalize_pause, post_pause_card
 
                     awaiting_ts = await finalize_pause(
                         client=async_client,
@@ -910,7 +876,7 @@ def attach_routes(
                         requirements=requirements,
                     )
                     try:
-                        await _post_pause_card(
+                        await post_pause_card(
                             async_client, state.paused_event, ctx["channel_id"], ctx["thread_id"], awaiting_ts
                         )
                     except Exception as exc:

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from agno.os.interfaces.slack.builders import classify_requirement
+from agno.os.interfaces.slack.builders import build_pause_message, classify_requirement
 from agno.os.interfaces.slack.types import _tool_name
 from agno.utils.log import log_error
 
@@ -73,3 +74,48 @@ async def finalize_pause(
             log_error(f"[HITL] chat_postMessage (awaiting indicator, {log_prefix}pause) failed: {exc}")
 
     return awaiting_ts
+
+
+async def post_pause_card(
+    client: "AsyncWebClient",
+    paused_event: Any,
+    channel: str,
+    thread_ts: str,
+    awaiting_ts: Optional[str] = None,
+) -> Optional[str]:
+    """Post the Card block as a separate message in the thread.
+
+    Runs independently of AsyncChatStream because chat_appendStream does
+    not accept Block Kit payloads. The decision handler later mutates
+    this message in place via chat.update to swap the buttons for a
+    permanent decision chip.
+    """
+    run_id = getattr(paused_event, "run_id", None)
+    requirements = list(getattr(paused_event, "active_requirements", None) or [])
+    if not run_id or not requirements:
+        return None
+
+    try:
+        blocks = build_pause_message(run_id, requirements, awaiting_ts)
+
+        def to_dict(b: Any) -> Dict[str, Any]:
+            if hasattr(b, "to_dict"):
+                return b.to_dict()
+            if hasattr(b, "model_dump"):
+                return b.model_dump(exclude_none=True, mode="json")
+            if is_dataclass(b):
+                return asdict(b)
+            raise TypeError(f"Cannot serialize block of type {type(b).__name__}")
+
+        block_dicts = [to_dict(b) for b in blocks]
+        resp = await client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text="Run paused — please resolve below",
+            blocks=block_dicts,
+        )
+        ts = resp.get("ts") if isinstance(resp, dict) else getattr(resp, "data", {}).get("ts")
+        return str(ts) if ts else None
+    except Exception as exc:
+        log_error(f"Failed to post pause card (run_id={run_id}): {exc}")
+        return None
