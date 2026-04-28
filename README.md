@@ -10,7 +10,7 @@
 
 <p align="center">
   Agno turns agents into production software.<br/>
-  Build in any framework. Run as a service. Ship to real users.
+  Build agents in any framework. Run as a service. Ship to real users.
 </p>
 
 <div align="center">
