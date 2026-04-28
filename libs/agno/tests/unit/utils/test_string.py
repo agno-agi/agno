@@ -56,7 +56,14 @@ def test_url_safe_string_complex():
 
 def test_generate_id_from_name_non_string():
     generated_id = generate_id_from_name(lambda: "dynamic")
-    assert is_valid_uuid(generated_id)
+    assert not is_valid_uuid(generated_id)
+    parts = generated_id.split("-")
+    assert len(parts) == 3
+    adjective, name, hex_suffix = parts
+    assert adjective.isalpha()
+    assert name.isalpha()
+    assert len(hex_suffix) == 8
+    int(hex_suffix, 16)
 
 
 class MockModel(BaseModel):

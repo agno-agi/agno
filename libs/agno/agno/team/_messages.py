@@ -222,20 +222,76 @@ def _build_team_context(
     return content
 
 
+def _resolve_team_prompt_field(
+    team: "Team",
+    field_name: str,
+    value: Any,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Optional[str]:
+    if value is None:
+        return None
+    if callable(value):
+        resolved_value = execute_instructions(
+            instructions=value,
+            agent=cast(Any, team),
+            team=cast(Any, team),
+            session_state=session_state,
+            run_context=run_context,
+        )
+        if resolved_value is None:
+            return None
+        if not isinstance(resolved_value, str):
+            raise Exception(f"{field_name} must resolve to a string")
+        return resolved_value
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+async def _aresolve_team_prompt_field(
+    team: "Team",
+    field_name: str,
+    value: Any,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+) -> Optional[str]:
+    if value is None:
+        return None
+    if callable(value):
+        resolved_value = await aexecute_instructions(
+            instructions=value,
+            agent=cast(Any, team),
+            team=cast(Any, team),
+            session_state=session_state,
+            run_context=run_context,
+        )
+        if resolved_value is None:
+            return None
+        if not isinstance(resolved_value, str):
+            raise Exception(f"{field_name} must resolve to a string")
+        return resolved_value
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
 def _build_identity_sections(
     team: "Team",
     instructions: List[str],
+    resolved_description: Optional[str],
+    resolved_role: Optional[str],
 ) -> str:
     """Build description, role, and instructions sections.
 
     Shared between sync and async system-message builders.
     """
     content = ""
-    if team.description is not None:
-        content += f"<description>\n{team.description}\n</description>\n\n"
+    if resolved_description is not None:
+        content += f"<description>\n{resolved_description}\n</description>\n\n"
 
-    if team.role is not None:
-        content += f"<your_role>\n{team.role}\n</your_role>\n\n"
+    if resolved_role is not None:
+        content += f"<your_role>\n{resolved_role}\n</your_role>\n\n"
 
     if len(instructions) > 0:
         if team.use_instruction_tags:
@@ -263,6 +319,8 @@ def _build_trailing_sections(
     videos: Optional[Sequence[Video]] = None,
     files: Optional[Sequence[File]] = None,
     additional_information: List[str],
+    resolved_expected_output: Optional[str],
+    resolved_additional_context: Optional[str],
     tools: Optional[List[Union[Function, dict]]] = None,
     output_schema: Optional[Any] = None,
     run_context: Optional[RunContext] = None,
@@ -305,11 +363,11 @@ def _build_trailing_sections(
     if system_message_from_model is not None:
         content += system_message_from_model
 
-    if team.expected_output is not None:
-        content += f"<expected_output>\n{team.expected_output.strip()}\n</expected_output>\n\n"
+    if resolved_expected_output is not None:
+        content += f"<expected_output>\n{resolved_expected_output.strip()}\n</expected_output>\n\n"
 
-    if team.additional_context is not None:
-        content += f"<additional_context>\n{team.additional_context.strip()}\n</additional_context>\n\n"
+    if resolved_additional_context is not None:
+        content += f"<additional_context>\n{resolved_additional_context.strip()}\n</additional_context>\n\n"
 
     # Add skills to the system prompt
     if team.skills is not None:
@@ -392,6 +450,42 @@ def get_system_message(
         # type: ignore
         return Message(role=team.system_message_role, content=sys_message_content)
 
+    resolved_name = _resolve_team_prompt_field(
+        team=team,
+        field_name="name",
+        value=team.name,
+        session_state=session_state,
+        run_context=run_context,
+    )
+    resolved_description = _resolve_team_prompt_field(
+        team=team,
+        field_name="description",
+        value=team.description,
+        session_state=session_state,
+        run_context=run_context,
+    )
+    resolved_role = _resolve_team_prompt_field(
+        team=team,
+        field_name="role",
+        value=team.role,
+        session_state=session_state,
+        run_context=run_context,
+    )
+    resolved_expected_output = _resolve_team_prompt_field(
+        team=team,
+        field_name="expected_output",
+        value=team.expected_output,
+        session_state=session_state,
+        run_context=run_context,
+    )
+    resolved_additional_context = _resolve_team_prompt_field(
+        team=team,
+        field_name="additional_context",
+        value=team.additional_context,
+        session_state=session_state,
+        run_context=run_context,
+    )
+
     # 1. Build and return the default system message for the Team.
     # 1.1 Build the list of instructions for the system message
     team.model = cast(Model, team.model)
@@ -458,8 +552,8 @@ def get_system_message(
                 additional_information.append(f"Your approximate location is: {location_str}.")
 
     # 1.3.4 Add team name if provided
-    if team.name is not None and team.add_name_to_context:
-        additional_information.append(f"Your name is: {team.name}.")
+    if resolved_name is not None and team.add_name_to_context:
+        additional_information.append(f"Your name is: {resolved_name}.")
 
     # 2 Build the default system message for the Team.
     system_message_content: str = ""
@@ -468,7 +562,12 @@ def get_system_message(
     system_message_content += _build_team_context(team, run_context=run_context)
 
     # 2.2 Identity sections: description, role, instructions
-    system_message_content += _build_identity_sections(team, instructions)
+    system_message_content += _build_identity_sections(
+        team,
+        instructions,
+        resolved_description=resolved_description,
+        resolved_role=resolved_role,
+    )
 
     # 2.3 Knowledge base instructions
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
@@ -543,6 +642,8 @@ def get_system_message(
         videos=videos,
         files=files,
         additional_information=additional_information,
+        resolved_expected_output=resolved_expected_output,
+        resolved_additional_context=resolved_additional_context,
         tools=tools,
         output_schema=output_schema,
         run_context=run_context,
@@ -612,6 +713,41 @@ async def aget_system_message(
 
         # type: ignore
         return Message(role=team.system_message_role, content=sys_message_content)
+    resolved_name = await _aresolve_team_prompt_field(
+        team=team,
+        field_name="name",
+        value=team.name,
+        session_state=session_state,
+        run_context=run_context,
+    )
+    resolved_description = await _aresolve_team_prompt_field(
+        team=team,
+        field_name="description",
+        value=team.description,
+        session_state=session_state,
+        run_context=run_context,
+    )
+    resolved_role = await _aresolve_team_prompt_field(
+        team=team,
+        field_name="role",
+        value=team.role,
+        session_state=session_state,
+        run_context=run_context,
+    )
+    resolved_expected_output = await _aresolve_team_prompt_field(
+        team=team,
+        field_name="expected_output",
+        value=team.expected_output,
+        session_state=session_state,
+        run_context=run_context,
+    )
+    resolved_additional_context = await _aresolve_team_prompt_field(
+        team=team,
+        field_name="additional_context",
+        value=team.additional_context,
+        session_state=session_state,
+        run_context=run_context,
+    )
 
     # 1. Build and return the default system message for the Team.
     # 1.1 Build the list of instructions for the system message
@@ -679,8 +815,8 @@ async def aget_system_message(
                 additional_information.append(f"Your approximate location is: {location_str}.")
 
     # 1.3.4 Add team name if provided
-    if team.name is not None and team.add_name_to_context:
-        additional_information.append(f"Your name is: {team.name}.")
+    if resolved_name is not None and team.add_name_to_context:
+        additional_information.append(f"Your name is: {resolved_name}.")
 
     # 2 Build the default system message for the Team.
     system_message_content: str = ""
@@ -689,7 +825,12 @@ async def aget_system_message(
     system_message_content += _build_team_context(team, run_context=run_context, async_mode=True)
 
     # 2.2 Identity sections: description, role, instructions
-    system_message_content += _build_identity_sections(team, instructions)
+    system_message_content += _build_identity_sections(
+        team,
+        instructions,
+        resolved_description=resolved_description,
+        resolved_role=resolved_role,
+    )
 
     # 2.3 Knowledge base instructions
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
@@ -764,6 +905,8 @@ async def aget_system_message(
         videos=videos,
         files=files,
         additional_information=additional_information,
+        resolved_expected_output=resolved_expected_output,
+        resolved_additional_context=resolved_additional_context,
         tools=tools,
         output_schema=output_schema,
         run_context=run_context,

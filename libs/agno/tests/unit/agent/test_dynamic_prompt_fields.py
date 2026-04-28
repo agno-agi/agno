@@ -26,7 +26,6 @@ def test_dynamic_agent_prompt_fields_sync():
     message = agent.get_system_message(
         session=AgentSession(session_id="session-1"),
         run_context=run_context,
-        user_id="user-1",
     )
 
     assert message is not None
@@ -75,7 +74,6 @@ async def test_dynamic_agent_prompt_fields_async():
     message = await agent.aget_system_message(
         session=AgentSession(session_id="session-1"),
         run_context=run_context,
-        user_id="user-1",
     )
 
     assert message is not None
