@@ -4117,48 +4117,6 @@ def _update_team_media(team: "Team", run_response: Union[TeamRunOutput, RunOutpu
 
 
 # ---------------------------------------------------------------------------
-# Member metrics rollup
-# ---------------------------------------------------------------------------
-
-
-def _accumulate_member_run_metrics(run_response: TeamRunOutput) -> None:
-    """Accumulate metrics from member agent/team responses into the team run_response.metrics.
-
-    This ensures that run_response.metrics reflects the total token usage across all LLM calls
-    in a team run, including those made by member agents and nested teams.
-    """
-    if run_response.metrics is None:
-        return
-
-    for member_response in run_response.member_responses:
-        if member_response.metrics is None:
-            continue
-        m = member_response.metrics
-        run_response.metrics.input_tokens += m.input_tokens
-        run_response.metrics.output_tokens += m.output_tokens
-        run_response.metrics.total_tokens += m.total_tokens
-        run_response.metrics.audio_input_tokens += m.audio_input_tokens
-        run_response.metrics.audio_output_tokens += m.audio_output_tokens
-        run_response.metrics.audio_total_tokens += m.audio_total_tokens
-        run_response.metrics.cache_read_tokens += m.cache_read_tokens
-        run_response.metrics.cache_write_tokens += m.cache_write_tokens
-        run_response.metrics.reasoning_tokens += m.reasoning_tokens
-        if m.cost is not None:
-            run_response.metrics.cost = (run_response.metrics.cost or 0) + m.cost
-
-        # Merge per-model details
-        if m.details:
-            if run_response.metrics.details is None:
-                run_response.metrics.details = {}
-            for model_type_key, model_metrics_list in m.details.items():
-                # Prefix with "member:" to distinguish member model usage from leader usage
-                prefixed_key = f"member:{model_type_key}"
-                if prefixed_key not in run_response.metrics.details:
-                    run_response.metrics.details[prefixed_key] = []
-                run_response.metrics.details[prefixed_key].extend(model_metrics_list)
-
-
-# ---------------------------------------------------------------------------
 # Post-run cleanup (moved from _storage.py)
 # ---------------------------------------------------------------------------
 
@@ -4173,9 +4131,6 @@ def _cleanup_and_store(
 
     from agno.run.approval import update_approval_run_status
     from agno.team._session import update_session_metrics
-
-    # Accumulate member agent/team metrics into the team run_response.metrics
-    _accumulate_member_run_metrics(run_response)
 
     # Scrub a shallow copy for storage — the original run_response is never
     # mutated so the caller always sees generated media regardless of store_media.
@@ -4222,9 +4177,6 @@ async def _acleanup_and_store(
 
     from agno.run.approval import aupdate_approval_run_status
     from agno.team._session import update_session_metrics
-
-    # Accumulate member agent/team metrics into the team run_response.metrics
-    _accumulate_member_run_metrics(run_response)
 
     # Scrub a shallow copy for storage — the original run_response is never
     # mutated so the caller always sees generated media regardless of store_media.
