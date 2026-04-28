@@ -16,6 +16,7 @@ from typing import (
     Tuple,
     Type,
     Union,
+    cast,
     overload,
 )
 
@@ -579,7 +580,7 @@ class Team:
             num_past_session_runs_in_search=num_past_session_runs_in_search,
             search_session_history=search_session_history,
             num_history_sessions=num_history_sessions,
-            description=description,
+            description=cast(Optional[str], description),
             instructions=instructions,
             use_instruction_tags=use_instruction_tags,
             expected_output=expected_output,

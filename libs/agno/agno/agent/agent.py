@@ -614,7 +614,7 @@ class Agent:
         self.system_message = system_message
         self.system_message_role = system_message_role
         self.build_context = build_context
-        self.description = description
+        self.description = cast(Optional[str], description)
         self.instructions = instructions
         self.use_instruction_tags = use_instruction_tags
         self.expected_output = expected_output
