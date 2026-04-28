@@ -3,11 +3,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from agno.media import File, Image
+from agno.models.message import Message
+from agno.utils.log import log_error, log_info, log_warning
 
 if TYPE_CHECKING:
     from agno.models.anthropic.claude import SystemPromptBlock
-from agno.models.message import Message
-from agno.utils.log import log_error, log_info, log_warning
 
 # Models that support assistant message prefill. This is a closed set —
 # prefill was deprecated starting with Claude 4.6 and all future models
@@ -338,6 +338,20 @@ def build_system_blocks(
 
     Converts either a plain string or a list of SystemPromptBlock into the
     list-of-dicts format the Anthropic API expects for the ``system`` field.
+
+    Caching semantics are asymmetric by design:
+    - For a string (the agent-built system message), ``cache_system_prompt``
+      decides whether it gets ``cache_control``. That flag is the single
+      switch for the agent-built block.
+    - For a list of ``SystemPromptBlock`` (user-supplied), each block's own
+      ``block.cache`` field decides. This is independent of
+      ``cache_system_prompt`` so that you can leave the agent-built block
+      uncached while still caching selected user blocks (or vice versa).
+
+    TTL resolution for each cached block:
+    - Explicit ``block.ttl`` wins: ``"5m"`` => plain ephemeral (5m is the
+      default), ``"1h"`` => ephemeral with ttl key.
+    - ``block.ttl is None`` => falls back to model-level ``extended_cache_time``.
     """
     if isinstance(system_message, str):
         entry: Dict[str, Any] = {"text": system_message, "type": "text"}
@@ -352,6 +366,10 @@ def build_system_blocks(
     for block in system_message:
         b: Dict[str, Any] = {"text": block.text, "type": "text"}
         if block.cache:
+            # Explicit block-level ttl wins; None falls back to model-level extended_cache_time.
+            # Deliberately independent of cache_system_prompt — that flag only gates the
+            # agent-built block, so users can cache custom blocks without also caching
+            # the agent-built one (and vice versa).
             effective_ttl = block.ttl if block.ttl is not None else ("1h" if extended_cache_time else "5m")
             cc = {"type": "ephemeral"}
             if effective_ttl == "1h":
@@ -362,7 +380,12 @@ def build_system_blocks(
 
 
 def _validate_cache_ttl_order(blocks: List[Dict[str, Any]]) -> None:
-    """Validate that no 5m-cached block appears before a 1h-cached block."""
+    """Validate that no 5m-cached block appears before a 1h-cached block.
+
+    Anthropic's prompt caching rejects requests where a longer-TTL cache entry
+    follows a shorter-TTL one in the cached prefix. Catch this at assembly
+    time with an actionable error rather than letting the API reject it.
+    """
     seen_5m = False
     for block in blocks:
         cc = block.get("cache_control")
@@ -511,7 +534,7 @@ def format_messages(
     merged_messages: List[Dict[str, Union[str, list]]] = []
     for msg in chat_messages:
         if merged_messages and merged_messages[-1]["role"] == msg["role"]:
-            # Same role as previous → merge contents
+            # Same role as previous, merge contents
             prev_content = merged_messages[-1]["content"]
             curr_content = msg["content"]
 
@@ -524,7 +547,7 @@ def format_messages(
                 curr_content.insert(0, {"type": "text", "text": str(prev_content)})
                 merged_messages[-1]["content"] = curr_content
             else:
-                # Both strings → convert in list
+                # Both strings, convert to list
                 merged_messages[-1]["content"] = [
                     {"type": "text", "text": str(prev_content)},
                     {"type": "text", "text": str(curr_content)},
