@@ -229,10 +229,7 @@ class ContextProvider(ABC):
                 answer = await provider.aquery(question, run_context=run_context)
             except Exception as exc:
                 return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
-            payload: dict = {"results": [asdict(r) for r in answer.results]}
-            if answer.text is not None:
-                payload["text"] = answer.text
-            return json.dumps(payload)
+            return json.dumps(_serialize_answer(answer))
 
         return _query
 
@@ -247,10 +244,7 @@ class ContextProvider(ABC):
                 return json.dumps({"error": f"{provider.name} is read-only"})
             except Exception as exc:
                 return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
-            payload: dict = {"results": [asdict(r) for r in answer.results]}
-            if answer.text is not None:
-                payload["text"] = answer.text
-            return json.dumps(payload)
+            return json.dumps(_serialize_answer(answer))
 
         return _update
 
@@ -261,3 +255,22 @@ class ContextProvider(ABC):
 def _sanitize_id(raw: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "_", raw.lower())
     return s.strip("_") or "context"
+
+
+def _serialize_answer(answer: Answer) -> dict:
+    """Build the JSON payload returned to the calling agent.
+
+    Omit empty fields so the calling agent doesn't see filler. Today
+    no provider populates ``Answer.results`` (the ``Document`` slot
+    is reserved for providers that want to return structured hits
+    alongside synthesized text); shipping ``"results": []`` on every
+    call is dead weight in the prompt. ``text`` is omitted when None.
+    If both are absent the payload is ``{}`` — honest "this tool
+    returned nothing" signal to the calling agent.
+    """
+    payload: dict = {}
+    if answer.results:
+        payload["results"] = [asdict(r) for r in answer.results]
+    if answer.text is not None:
+        payload["text"] = answer.text
+    return payload

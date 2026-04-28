@@ -171,7 +171,10 @@ async def test_query_tool_serializes_answer_text():
     query_tool = p._query_tool()
     out = await query_tool.entrypoint(question="hello")
     payload = json.loads(out)
-    assert payload == {"results": [], "text": "q:hello"}
+    # Empty `results` is omitted — no provider populates Document
+    # results today, and shipping `"results": []` on every call is
+    # filler the calling agent has to read past.
+    assert payload == {"text": "q:hello"}
 
 
 @pytest.mark.asyncio
@@ -188,7 +191,9 @@ async def test_query_tool_catches_aquery_exceptions():
 
 
 @pytest.mark.asyncio
-async def test_query_tool_omits_text_when_answer_text_is_none():
+async def test_query_tool_omits_both_when_answer_is_empty():
+    """Both fields absent → empty payload. Honest "tool returned nothing" signal."""
+
     class _DocsOnly(_EchoProvider):
         async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
             return Answer()
@@ -196,8 +201,26 @@ async def test_query_tool_omits_text_when_answer_text_is_none():
     tool_ = _DocsOnly(id="e")._query_tool()
     out = await tool_.entrypoint(question="hello")
     payload = json.loads(out)
-    assert "text" not in payload
-    assert payload["results"] == []
+    assert payload == {}
+
+
+@pytest.mark.asyncio
+async def test_query_tool_includes_results_when_populated():
+    """When a provider does populate Document results, they're serialized."""
+    from agno.context.provider import Document
+
+    class _WithDocs(_EchoProvider):
+        async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
+            return Answer(
+                results=[Document(id="d1", name="Page 1", uri="/p/1", snippet="hello")],
+                text="see results",
+            )
+
+    tool_ = _WithDocs(id="e")._query_tool()
+    out = await tool_.entrypoint(question="hello")
+    payload = json.loads(out)
+    assert payload["text"] == "see results"
+    assert payload["results"] == [{"id": "d1", "name": "Page 1", "uri": "/p/1", "source": None, "snippet": "hello"}]
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +234,7 @@ async def test_update_tool_happy_path():
     tool_ = p._update_tool()
     out = await tool_.entrypoint(instruction="add x")
     payload = json.loads(out)
-    assert payload == {"results": [], "text": "u:add x"}
+    assert payload == {"text": "u:add x"}
 
 
 @pytest.mark.asyncio

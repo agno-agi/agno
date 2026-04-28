@@ -613,7 +613,7 @@ async def test_provider_query_tool_serialises_answer(tmp_path: Path):
     tool = next(t for t in p.get_tools() if t.name == "query_wiki")
     out = await tool.entrypoint(question="anything")
     payload = json.loads(out)
-    assert payload == {"results": [], "text": "hello"}
+    assert payload == {"text": "hello"}
 
 
 @pytest.mark.asyncio
