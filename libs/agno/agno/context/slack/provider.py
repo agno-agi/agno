@@ -50,8 +50,10 @@ class SlackContextProvider(ContextProvider):
         write_instructions: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        read: bool = True,
+        write: bool = True,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model)
+        super().__init__(id=id, name=name, mode=mode, model=model, read=read, write=write)
         self.token = token or getenv("SLACK_BOT_TOKEN") or getenv("SLACK_TOKEN")
         if not self.token:
             raise ValueError("SlackContextProvider: SLACK_BOT_TOKEN (or SLACK_TOKEN) is required")
@@ -121,7 +123,7 @@ class SlackContextProvider(ContextProvider):
     # scope minimal. mode=tools surfaces raw read tools for direct use.
 
     def _default_tools(self) -> list:
-        return [self._query_tool(), self._update_tool()]
+        return self._read_write_tools()
 
     def _query_tool(self):
         query_tool = super()._query_tool()
@@ -140,13 +142,6 @@ class SlackContextProvider(ContextProvider):
             "posting is unavailable when this tool returns an error."
         )
         return update_tool
-
-    def get_tools(self) -> list:
-        if self.mode == ContextMode.tools:
-            return self._all_tools()
-        if self.mode == ContextMode.agent:
-            return [self._query_tool()]
-        return self._default_tools()
 
     def _all_tools(self) -> list:
         # mode=tools is static: the provider cannot know whether a future
