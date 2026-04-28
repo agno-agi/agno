@@ -31,6 +31,8 @@ from agno.workflow import RemoteWorkflow, Workflow
 
 # Slack sends lifecycle events for bots with these subtypes. Without this
 # filter the router would try to process its own messages, causing infinite loops.
+# bot_message = bot posts; bot_add/remove/enable/disable = workspace config changes
+# message_changed/deleted = edits and retractions (would re-trigger on our own updates)
 _IGNORED_SUBTYPES = frozenset(
     {
         "bot_message",
@@ -46,7 +48,9 @@ _IGNORED_SUBTYPES = frozenset(
 # User-facing error message for failed requests
 _ERROR_MESSAGE = "Sorry, there was an error processing your message."
 
-# Slack caps streamed messages at ~40K total payload (text + task card blocks)
+# Slack caps streamed messages at ~40K total payload (text + task card blocks).
+# Beyond these limits Slack rejects append() with msg_too_long — we rotate to a
+# fresh stream bubble before hitting the wall rather than failing mid-response.
 _STREAM_CHAR_LIMIT = 39000
 _STREAM_CARD_LIMIT = 45
 
@@ -130,10 +134,12 @@ def attach_routes(
         if not verify_slack_signature(body, timestamp, slack_signature, signing_secret=signing_secret):
             raise HTTPException(status_code=403, detail="Invalid signature")
 
-        # Slack retries after ~3s if it doesn't get a 200. Since we ACK
-        # immediately and process in background, retries are always duplicates.
-        # Trade-off: if the server crashes mid-processing, the retried event
-        # carrying the same payload won't be reprocessed — acceptable for chat.
+        # Slack retries with X-Slack-Retry-Num header after ~3s if it doesn't
+        # get a 200. Since we ACK immediately and process in background, retries
+        # are always duplicates. Trade-off: if the server crashes mid-processing,
+        # the retried event carrying the same payload won't be reprocessed — but
+        # idempotency keys in Slack state would require external storage anyway,
+        # and for chat UX occasional lost messages beat duplicate responses.
         if request.headers.get("X-Slack-Retry-Num"):
             return SlackEventResponse(status="ok")
 
@@ -148,9 +154,11 @@ def attach_routes(
             # setSuggestedPrompts requires "Agents & AI Apps" mode (streaming UX only)
             if event_type == "assistant_thread_started" and streaming:
                 background_tasks.add_task(_handle_thread_started, event)
-            # Bot self-loop prevention: check bot_id at both the top-level event
-            # and inside message_changed's nested "message" object. Without the
-            # nested check, edited bot messages would be reprocessed as new events.
+            # Bot self-loop prevention: check bot_id at BOTH the top-level event
+            # AND inside message_changed's nested "message" object. Slack puts
+            # bot_id at different nesting levels depending on event shape — the
+            # nested check catches edited bot messages that would otherwise be
+            # reprocessed as new user events.
             elif (
                 event.get("bot_id")
                 or (event.get("message") or {}).get("bot_id")
@@ -283,13 +291,15 @@ def attach_routes(
         if not run_id:
             return
 
-        # Chain to the submit/resume flow. The synthetic payload carries
-        # the run_id (in submit block_id) and the row's decided block_id
-        # so parse_submit_payload can extract the decision. Block_id format
-        # per blocks.py:30 is "row:<req_id>:<kind>:decided:<approve|reject>".
+        # Chain to the submit/resume flow via a synthetic payload. Row clicks
+        # carry only the per-tool decision, but _handle_submit expects a full
+        # submit_pause action with run_id in block_id and message.blocks that
+        # parse_submit_payload can walk. The synthetic payload bridges this gap
+        # without duplicating the resume logic.
         from agno.os.interfaces.slack.types import encode_submit_button_value
 
         decision_side = "approve" if action_id == "row_approve" else "reject"
+        # Block_id format per blocks.py:30 is "row:<req_id>:<kind>:decided:<approve|reject>"
         decided_block_id = f"row:{req_id}:confirmation:decided:{decision_side}"
         synthetic_payload = dict(payload)
         synthetic_payload["actions"] = [
@@ -311,8 +321,10 @@ def attach_routes(
         await _handle_submit(synthetic_payload)
 
     async def _handle_submit(payload: Dict[str, Any]) -> None:
-        # Always opens a new stream — Slack's ~5-min wall clock on chat_stream
-        # expires during human deliberation; fresh bubble is the predictable fallback
+        # Always opens a new stream rather than resuming the pre-pause ts. Slack
+        # enforces a ~5-min wall-clock timeout on chat_stream regardless of keep-
+        # alive pings, and human deliberation routinely exceeds that. A fresh
+        # bubble is the only reliable continuation path.
         from slack_sdk.web.async_client import AsyncWebClient
 
         from agno.os.interfaces.slack.builders import approval_task_id
@@ -754,6 +766,9 @@ def attach_routes(
             )
 
             async def _rotate_stream(pending_text: str = ""):
+                # Close current bubble at Slack's payload limit, open a fresh one.
+                # Preserves in_progress task cards across the rotation so the user
+                # sees continuity rather than orphaned open cards in the old bubble.
                 nonlocal stream
                 assert stream is not None  # Caller only invokes after stream is opened
                 in_progress = [(k, v.title) for k, v in state.task_cards.items() if v.status == "in_progress"]

@@ -63,7 +63,7 @@ MAX_MESSAGE_BLOCKS = 48
 
 @dataclass
 class Card:
-    # Card block not in slack_sdk yet — manual dict serialization
+    # Card block shipped in Slack API 2024 but slack_sdk lacks model class
     actions: List[Button]
     icon: Optional[ImageElement] = None
     title: Optional[PlainText | Markdown] = None
@@ -100,17 +100,18 @@ def render_arg_value(value: Any) -> str:
 
 
 def _build_confirm_dialogs(name: str, args: Dict[str, Any]) -> tuple[ConfirmDialog, ConfirmDialog]:
+    # Slack ConfirmDialog hard limits: title 100 chars, text 300 chars
     bullets: List[str] = []
     running = 0
     for key, value in (args or {}).items():
         line = f"• {key}: `{render_arg_value(value)}`"
-        if running + len(line) > 180:  # ConfirmDialog text is 300 max; leave room for footer
+        # 180 leaves room for footer text within 300 char limit
+        if running + len(line) > 180:
             bullets.append(f"_… {len(args) - len(bullets)} more_")
             break
         bullets.append(line)
         running += len(line)
     args_block = "\n".join(bullets) if bullets else "_(no arguments)_"
-    # Slack ConfirmDialog: text max 300 chars, title max 100 chars
     approve_text = (f"{args_block}\n\n_Approving will resume the agent run._")[:299]
     deny_text = (f"{args_block}\n\n_The agent will continue without running this tool._")[:299]
     approve = ConfirmDialog(
@@ -130,7 +131,7 @@ def _build_confirm_dialogs(name: str, args: Dict[str, Any]) -> tuple[ConfirmDial
     return approve, deny
 
 
-# Slack has no native boolean input; use dropdown with True/False options
+# Slack lacks native boolean input; checkbox implies multi-select which is confusing
 _BOOL_OPTIONS = [
     Option(text=PlainText(text="True"), value="true"),
     Option(text=PlainText(text="False"), value="false"),
@@ -277,7 +278,7 @@ def _build_external_row(requirement: RunRequirement) -> List[Any]:
     ]
 
 
-# Dispatch table for non-confirmation pause types; confirmation uses Card with buttons
+# Confirmation is special-cased in build_pause_message because it needs run_id + awaiting_ts
 _BUILDERS: Dict[str, Callable[[RunRequirement], List[Any]]] = {
     "user_input": _build_input_row,
     "user_feedback": _build_feedback_row,
@@ -345,7 +346,7 @@ def approval_task_id(req_id: str) -> str:
     return f"approval:{req_id}"
 
 
-# Converts interactive form blocks into readonly audit trail after submission
+# Replaces interactive form with readonly summary so users see what was submitted
 def response_blocks(
     original_blocks: List[Dict[str, Any]],
     state_values: Dict[str, Dict[str, Any]],
@@ -357,9 +358,11 @@ def response_blocks(
     for block in original_blocks:
         btype = block.get("type")
 
+        # Actions block contains Submit button which is no longer relevant
         if btype == "actions":
             continue
 
+        # Keep card structure but strip approve/deny buttons
         if btype == "card":
             preserved.append({k: v for k, v in block.items() if k != "actions"})
             continue
@@ -400,6 +403,7 @@ def response_blocks(
 
     body_lines = [(s.get("text") or {}).get("text", "") for s in submissions]
 
+    # Use first tool name as title so audit trail shows what was approved
     card_title = "Submitted"
     for req in requirements:
         tool = _tool_name(req)

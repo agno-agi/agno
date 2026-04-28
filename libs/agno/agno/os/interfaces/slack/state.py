@@ -34,38 +34,40 @@ class TaskCard:
 class StreamState:
     # Slack thread title — set once on first content to avoid repeated API calls
     title_set: bool = False
-    # Incremented per error; used to generate unique fallback task card IDs
+    # Fallback ID generator — errors may lack tool_call_id so we synthesize one
     error_count: int = 0
 
+    # Accumulates streamed text until flushed to Slack via stream.append()
     text_buffer: str = ""
 
-    # Counter for unique reasoning task card keys (reasoning_0, reasoning_1, ...)
+    # Models can reason multiple times per run — each round needs a unique card ID
     reasoning_round: int = 0
 
+    # Maps card_id → TaskCard; tracks all emitted task cards for status updates
     task_cards: Dict[str, TaskCard] = field(default_factory=dict)
 
+    # Media collected during streaming — Slack requires separate upload after stream ends
     images: List["Image"] = field(default_factory=list)
     videos: List["Video"] = field(default_factory=list)
     audio: List["Audio"] = field(default_factory=list)
     files: List["File"] = field(default_factory=list)
 
-    # Used by process_event to suppress nested agent events in workflow mode
+    # Determines event suppression rules — workflows hide inner agent noise
     entity_type: Literal["agent", "team", "workflow"] = "agent"
-    # Leader/workflow name; member_name() compares against it to detect team members
+    # Compared against chunk.agent_name to detect team member vs leader content
     entity_name: str = ""
 
-    # Last StepOutput content; WorkflowCompleted uses as fallback when content is None
+    # Captured from StepOutput — WorkflowCompleted may have None content
     workflow_final_content: str = ""
 
-    # Set by handlers on terminal events; router reads this for the final flush
+    # Terminal status for final flush — "error" triggers error styling in Slack
     terminal_status: Optional[TaskStatus] = None
 
-    # Total chars sent to the current Slack stream; reset on rotation
+    # Tracks content sent for stream rotation decisions in long-running runs
     stream_chars_sent: int = 0
 
-    # HITL: set by _on_run_paused when a RunPausedEvent fires. Router reads
-    # this after stream.stop() to post the pause message via chat.postMessage
-    # (AsyncChatStream only handles task_update chunks, not Block Kit).
+    # HITL: stashed by _on_run_paused so router can post Block Kit approval card
+    # after stream.stop() — AsyncChatStream can't emit Block Kit, only markdown
     paused_event: Optional["BaseRunOutputEvent"] = None
 
     def track_task(self, key: str, title: str, status: TaskStatus = "in_progress") -> None:
@@ -82,8 +84,8 @@ class StreamState:
             card.status = "error"
 
     def resolve_all_pending(self, status: TaskStatus = "complete") -> List[TaskUpdateDict]:
-        # Called at stream end to close any cards left in_progress (e.g. if the
-        # model finished without emitting a ToolCallCompleted for every start).
+        # Close orphaned in_progress cards — model may skip ToolCallCompleted if
+        # it errors mid-call or the run terminates unexpectedly
         chunks: List[TaskUpdateDict] = []
         for key, card in self.task_cards.items():
             if card.status == "in_progress":
@@ -106,8 +108,8 @@ class StreamState:
         return result
 
     def collect_media(self, chunk: BaseRunOutputEvent) -> None:
-        # Media can't be streamed inline — Slack requires a separate upload after
-        # the stream ends. We collect here and upload_response_media() sends them.
+        # Slack AI-Stream protocol can't embed media — files must be uploaded
+        # separately after stream.stop() via files_upload_v2 API
         for img in getattr(chunk, "images", None) or []:
             if img not in self.images:
                 self.images.append(img)

@@ -87,15 +87,20 @@ async def _wf_task(
 # Values are NORMALIZED (no "Team" prefix) so one set covers agent + team events.
 _SUPPRESSED_IN_WORKFLOW: frozenset[str] = frozenset(
     {
+        # Reasoning: internal chain-of-thought, not actionable for Slack users
         RunEvent.reasoning_started.value,
         RunEvent.reasoning_completed.value,
+        # Tool calls: workflow steps already emit their own progress cards
         RunEvent.tool_call_started.value,
         RunEvent.tool_call_completed.value,
         RunEvent.tool_call_error.value,
+        # Memory: background housekeeping, no user-facing impact
         RunEvent.memory_update_started.value,
         RunEvent.memory_update_completed.value,
+        # Content: workflow consolidates final output in WorkflowCompleted
         RunEvent.run_content.value,
         RunEvent.run_intermediate_content.value,
+        # Lifecycle: workflow-level events handle start/end, not inner runs
         RunEvent.run_completed.value,
         RunEvent.run_error.value,
         RunEvent.run_cancelled.value,
@@ -169,9 +174,8 @@ async def _on_tool_call_error(chunk: BaseRunOutputEvent, state: StreamState, str
 
 
 async def _on_run_content(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
-    # In team mode, member agents stream their own RunContentEvent (which extends
-    # BaseAgentRunEvent) before the leader synthesizes a TeamRunContent (which
-    # extends BaseTeamRunEvent). Showing both would duplicate content.
+    # Suppress member agent content in team mode to avoid duplication — leader
+    # emits TeamRunContent which aggregates all member outputs into one response
     if state.entity_type == "team" and isinstance(chunk, BaseAgentRunEvent):
         return False
     content = getattr(chunk, "content", None)
@@ -181,9 +185,8 @@ async def _on_run_content(chunk: BaseRunOutputEvent, state: StreamState, stream:
 
 
 async def _on_run_intermediate_content(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
-    # Teams emit intermediate content from each member as they finish. Showing
-    # these would interleave partial outputs in the stream. The team leader
-    # emits a single consolidated RunContent at the end — that's what we show.
+    # Team intermediate content arrives per-member as they finish — showing it
+    # would interleave partial outputs. Only agents show intermediate content.
     if state.entity_type != "team":
         content = getattr(chunk, "content", None)
         if content is not None:
@@ -372,8 +375,10 @@ HANDLERS: Dict[str, _EventHandler] = {
     RunEvent.memory_update_completed.value: _on_memory_update_completed,
     RunEvent.run_completed.value: _on_run_completed,
     RunEvent.run_error.value: _on_run_error,
-    RunEvent.run_cancelled.value: _on_run_error,  # Treat cancellation as terminal error
-    RunEvent.run_paused.value: _on_run_paused,  # HITL — router posts Block Kit after stream ends
+    # Cancelled runs are terminal errors — user sees error status, not silent stop
+    RunEvent.run_cancelled.value: _on_run_error,
+    # HITL pause — stream ends, router posts Block Kit approval card separately
+    RunEvent.run_paused.value: _on_run_paused,
     # Workflow Lifecycle Events
     WorkflowRunEvent.step_output.value: _on_step_output,
     WorkflowRunEvent.workflow_started.value: _on_workflow_started,

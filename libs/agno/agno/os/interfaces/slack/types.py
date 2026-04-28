@@ -38,6 +38,8 @@ ACTION_EXTERNAL_RESULT = "external_result"
 ACTION_INPUT_FIELD_PREFIX = "input_field:"
 
 
+# Block IDs encode row:req_id:kind:status[:decided] — Slack returns block_id on interactions,
+# so we embed all routing info to avoid server-side lookups
 def row_block_id(requirement_id: str, kind: PauseType, *, decided: Optional[str] = None) -> str:
     base = f"{ROW_BLOCK_PREFIX}:{requirement_id}:{kind}:pending"
     if decided is None:
@@ -48,7 +50,8 @@ def row_block_id(requirement_id: str, kind: PauseType, *, decided: Optional[str]
 def parse_row_block_id(block_id: str) -> Optional[Dict[str, str]]:
     if not block_id.startswith(f"{ROW_BLOCK_PREFIX}:"):
         return None
-    parts = block_id.split(":", 4)  # row:req_id:kind:status[:decided] = 5 fields max
+    # Limit split to 4 so decided value (which may contain colons) stays intact
+    parts = block_id.split(":", 4)
     if len(parts) < 4:
         return None
     out: Dict[str, str] = {
@@ -65,12 +68,14 @@ def pause_block_id(approval_id: str) -> str:
     return f"{PAUSE_BLOCK_PREFIX}:{approval_id}"
 
 
+# Slack buttons have a 2000-char value limit; text fields have 3000-char limits
 def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 1] + "…"
 
 
+# tool_execution may be None or lack tool_name if requirement is for user_input/feedback
 def _tool_name(requirement: "RunRequirement") -> str:
     tool = requirement.tool_execution
     return getattr(tool, "tool_name", None) or "tool"
@@ -78,15 +83,18 @@ def _tool_name(requirement: "RunRequirement") -> str:
 
 def _tool_args(requirement: "RunRequirement") -> Dict[str, Any]:
     tool = requirement.tool_execution
+    # Empty dict fallback ensures JSON serialization never fails
     return getattr(tool, "tool_args", None) or {}
 
 
+# Pipe-delimited because Slack button values are opaque strings, not JSON — simpler to parse
 def encode_row_button_value(req_id: str, run_id: str, awaiting_ts: Optional[str]) -> str:
     return f"{req_id}|{run_id}|{awaiting_ts or ''}"
 
 
 def decode_row_button_value(value: str) -> Tuple[str, str, Optional[str]]:
-    parts = value.split("|", 2)  # req_id|run_id|awaiting_ts = 3 fields
+    # Limit split to 2 so awaiting_ts (which may contain pipes in edge cases) stays intact
+    parts = value.split("|", 2)
     if len(parts) == 2:
         return parts[0], parts[1], None
     if len(parts) == 3:
@@ -99,7 +107,8 @@ def encode_submit_button_value(run_id: str, awaiting_ts: Optional[str]) -> str:
 
 
 def decode_submit_button_value(value: str) -> Tuple[str, Optional[str]]:
-    parts = value.split("|", 1)  # run_id|awaiting_ts = 2 fields
+    # Limit split to 1 so awaiting_ts stays intact
+    parts = value.split("|", 1)
     if len(parts) == 1:
         return parts[0], None
     return parts[0], parts[1] or None

@@ -33,10 +33,12 @@ def _coerce_json(raw: str, expected: Type) -> Any:
     return parsed
 
 
+# Slack input fields always return strings; coerce back to schema-declared types
 _COERCERS: Dict[Type, Callable[[str], Any]] = {
     str: lambda v: v,
     int: int,
     float: float,
+    # Slack has no native boolean input; users type "true"/"1"/"yes" in plain_text_input
     bool: lambda v: v.lower() in ("true", "1", "yes"),
     list: lambda v: _coerce_json(v, list),
     dict: lambda v: _coerce_json(v, dict),
@@ -58,7 +60,7 @@ def _get_action_state(state: SlackState, block_id: str, action_id: str) -> Dict[
 
 def _parse_confirmation(requirement: RunRequirement, blocks: SlackBlocks) -> ParsedDecision:
     req_id = requirement.id or ""
-    # Find decision from block_id pattern: row:req_id:confirmation:decided:approve/deny
+    # Confirmation state lives in block_id, not view state — button clicks update the block itself
     decision = None
     for block in blocks:
         parsed = parse_row_block_id(block.get("block_id", ""))
@@ -93,7 +95,7 @@ def _parse_user_input(
         block_id = f"{row_prefix}:{field.name}"
         action_id = f"{ACTION_INPUT_FIELD_PREFIX}{field.name}"
         action_state = _get_action_state(state, block_id, action_id)
-        # Extract text value - static_select uses selected_option, others use value
+        # Slack nests static_select values under selected_option; text inputs use value directly
         if action_state.get("type") == "static_select":
             raw_value = (action_state.get("selected_option") or {}).get("value")
         else:
@@ -125,7 +127,7 @@ def _parse_user_feedback(
         block_id = f"{row_prefix}:q{index}"
         action_id = f"{ACTION_FEEDBACK_SELECT}:{index}"
         action_state = _get_action_state(state, block_id, action_id)
-        # Extract selected values - checkboxes use selected_options list, select uses single option
+        # Checkboxes return list of selected_options; static_select returns single selected_option
         element_type = action_state.get("type")
         if element_type == "checkboxes":
             picked = [opt["value"] for opt in action_state.get("selected_options", []) if opt.get("value")]
@@ -191,6 +193,7 @@ def parse_submit_payload(
 
 
 def apply_decisions(decisions: List[ParsedDecision], requirements: List[RunRequirement]) -> None:
+    # Mutate original RunRequirement objects — the agent holds refs to these and polls for resolution
     by_id = {r.id: r for r in requirements if r.id}
 
     for decision in decisions:
@@ -212,12 +215,12 @@ def apply_decisions(decisions: List[ParsedDecision], requirements: List[RunRequi
 
 
 def format_decision_title(decision: ParsedDecision, requirement: RunRequirement) -> str:
+    # Only confirmation decisions have a meaningful approve/deny verb to display
     if decision.pause_type != "confirmation":
         raise ValueError("format_decision_title only supports confirmation decisions")
 
     verb = "Approved" if decision.approved else "Denied"
     name = _tool_name(requirement)
-    # Format args as "k=v, k2=v2" with truncated values
     args_dict = _tool_args(requirement)
     arg_parts = []
     for k, v in args_dict.items():
@@ -225,8 +228,10 @@ def format_decision_title(decision: ParsedDecision, requirement: RunRequirement)
             rendered = v if isinstance(v, str) else json.dumps(v, default=str)
         except (TypeError, ValueError):
             rendered = str(v)
+        # Collapse newlines so multi-line JSON renders as single-line in the card header
         rendered = _truncate(rendered.replace("\n", " ").strip(), DECISION_VALUE_MAX)
         arg_parts.append(f"{k}={rendered}")
     args = ", ".join(arg_parts)
     title = f"{verb}: {name}({args})" if args else f"{verb}: {name}"
+    # Slack plan block wraps awkwardly on long titles; truncate to keep it single-line
     return _truncate(title, DECISION_TITLE_MAX)
