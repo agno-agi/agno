@@ -6,53 +6,55 @@ from typing import Any, Callable, Dict, List, Optional
 
 from slack_sdk.models.blocks import (
     ActionsBlock as Actions,
-)
-from slack_sdk.models.blocks import (
     CheckboxesElement as Checkboxes,
-)
-from slack_sdk.models.blocks import (
     ConfirmObject as ConfirmDialog,
-)
-from slack_sdk.models.blocks import (
     ContextBlock as Context,
-)
-from slack_sdk.models.blocks import (
     DividerBlock as Divider,
-)
-from slack_sdk.models.blocks import (
     InputBlock,
-)
-from slack_sdk.models.blocks import (
     PlainTextInputElement as PlainTextInput,
-)
-from slack_sdk.models.blocks import (
     StaticSelectElement as StaticSelect,
 )
 from slack_sdk.models.blocks.basic_components import (
     MarkdownTextObject as Markdown,
-)
-from slack_sdk.models.blocks.basic_components import (
     Option,
-)
-from slack_sdk.models.blocks.basic_components import (
     PlainTextObject as PlainText,
 )
-from slack_sdk.models.blocks.block_elements import ButtonElement as Button
-from slack_sdk.models.blocks.block_elements import ImageElement
+from slack_sdk.models.blocks.block_elements import ButtonElement as Button, ImageElement
 
+from agno.utils.serialize import json_serializer
+
+from agno.os.interfaces.slack.types import (
+    ACTION_EXTERNAL_RESULT,
+    ACTION_FEEDBACK_SELECT,
+    ACTION_INPUT_FIELD_PREFIX,
+    ACTION_ROW_APPROVE,
+    ACTION_ROW_REJECT,
+    ACTION_SUBMIT,
+    _tool_args,
+    _tool_name,
+    encode_row_button_value,
+    encode_submit_button_value,
+    pause_block_id,
+    row_block_id,
+)
+from agno.run.requirement import RunRequirement
+
+# Slack caps messages at 50 blocks; reserve 2 for submit button + truncation warning
 MAX_MESSAGE_BLOCKS = 48
 
 
 @dataclass
 class Card:
-    """Slack card block for HITL approval prompts. Not in SDK yet."""
-
+    # Card block not in slack_sdk yet — manual dict serialization
     actions: List[Button]
     icon: Optional[ImageElement] = None
     title: Optional[PlainText | Markdown] = None
     subtitle: Optional[PlainText | Markdown] = None
     block_id: Optional[str] = None
-    type: str = "card"
+
+    @property
+    def type(self) -> str:
+        return "card"
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -70,88 +72,13 @@ class Card:
         return result
 
 
-from agno.os.interfaces.slack.types import (
-    ACTION_EXTERNAL_RESULT,
-    ACTION_FEEDBACK_SELECT,
-    ACTION_INPUT_FIELD_PREFIX,
-    ACTION_ROW_APPROVE,
-    ACTION_ROW_REJECT,
-    ACTION_SUBMIT,
-    PauseType,
-    _tool_args,
-    _tool_name,
-    _truncate,
-    encode_row_button_value,
-    encode_submit_button_value,
-    pause_block_id,
-    row_block_id,
-)
-from agno.run.requirement import RunRequirement
-
-ARG_VALUE_MAX = 120
-
-
 def render_arg_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
     try:
-        rendered = value if isinstance(value, str) else json.dumps(value, default=str)
+        return json.dumps(value, default=json_serializer)
     except (TypeError, ValueError):
-        rendered = str(value)
-    return _truncate(rendered, ARG_VALUE_MAX)
-
-
-def _classify_flags(
-    *,
-    user_feedback_schema: Any,
-    requires_user_input: bool,
-    external_execution_required: bool,
-) -> PauseType:
-    if user_feedback_schema:
-        return "user_feedback"
-    if external_execution_required:
-        return "external_execution"
-    if requires_user_input:
-        return "user_input"
-    return "confirmation"
-
-
-def classify_requirement(requirement: RunRequirement) -> PauseType:
-    tool = requirement.tool_execution
-    if tool is None:
-        return "confirmation"
-    return _classify_flags(
-        user_feedback_schema=getattr(tool, "user_feedback_schema", None),
-        requires_user_input=bool(getattr(tool, "requires_user_input", False)),
-        external_execution_required=bool(getattr(tool, "external_execution_required", False)),
-    )
-
-
-def _subtitle_from_args(args: Dict[str, Any]) -> str:
-    parts: List[str] = []
-    for key, value in (args or {}).items():
-        rendered = render_arg_value(value)
-        if len(rendered) > 40:
-            rendered = rendered[:37] + "…"
-        parts.append(f"{key}: `{rendered}`")
-    return " · ".join(parts) if parts else "_(no arguments)_"
-
-
-def _confirmation_buttons(button_value: str, approve_confirm: Any, deny_confirm: Any) -> List[Button]:
-    return [
-        Button(
-            action_id=ACTION_ROW_APPROVE,
-            text=PlainText(text="Approve", emoji=True),
-            style="primary",
-            value=button_value,
-            confirm=approve_confirm,
-        ),
-        Button(
-            action_id=ACTION_ROW_REJECT,
-            text=PlainText(text="Deny", emoji=True),
-            style="danger",
-            value=button_value,
-            confirm=deny_confirm,
-        ),
-    ]
+        return str(value)
 
 
 def _build_confirm_dialogs(name: str, args: Dict[str, Any]) -> tuple[ConfirmDialog, ConfirmDialog]:
@@ -159,12 +86,13 @@ def _build_confirm_dialogs(name: str, args: Dict[str, Any]) -> tuple[ConfirmDial
     running = 0
     for key, value in (args or {}).items():
         line = f"• {key}: `{render_arg_value(value)}`"
-        if running + len(line) > 180:
+        if running + len(line) > 180:  # ConfirmDialog text is 300 max; leave room for footer
             bullets.append(f"_… {len(args) - len(bullets)} more_")
             break
         bullets.append(line)
         running += len(line)
     args_block = "\n".join(bullets) if bullets else "_(no arguments)_"
+    # Slack ConfirmDialog: text max 300 chars, title max 100 chars
     approve_text = (f"{args_block}\n\n_Approving will resume the agent run._")[:299]
     deny_text = (f"{args_block}\n\n_The agent will continue without running this tool._")[:299]
     approve = ConfirmDialog(
@@ -184,6 +112,7 @@ def _build_confirm_dialogs(name: str, args: Dict[str, Any]) -> tuple[ConfirmDial
     return approve, deny
 
 
+# Slack has no native boolean input; use dropdown with True/False options
 _BOOL_OPTIONS = [
     Option(text=PlainText(text="True"), value="true"),
     Option(text=PlainText(text="False"), value="false"),
@@ -213,7 +142,7 @@ def _build_input_field(req_id: str, ui_field: Any) -> InputBlock:
             action_id=f"{ACTION_INPUT_FIELD_PREFIX}{name}",
             placeholder=PlainText(text=f"Enter {name}"),
             initial_value=initial_value,
-            multiline=multiline if multiline else None,
+            multiline=multiline or None,
         )
 
     return InputBlock(
@@ -269,12 +198,30 @@ def _build_confirmation_row(
     args = _tool_args(requirement)
     approve_confirm, deny_confirm = _build_confirm_dialogs(name, args)
     button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
+    # Format args as "key: `value` · key2: `value2`" for card subtitle
+    subtitle_parts = [f"{k}: `{render_arg_value(v)}`" for k, v in (args or {}).items()]
+    subtitle = " · ".join(subtitle_parts) if subtitle_parts else "_(no arguments)_"
     return [
         Card(
             block_id=f"rowact:{req_id}:confirmation",
             title=Markdown(text=f"*Approve: {name}*"),
-            subtitle=Markdown(text=_subtitle_from_args(args)),
-            actions=_confirmation_buttons(button_value, approve_confirm, deny_confirm),
+            subtitle=Markdown(text=subtitle),
+            actions=[
+                Button(
+                    action_id=ACTION_ROW_APPROVE,
+                    text=PlainText(text="Approve", emoji=True),
+                    style="primary",
+                    value=button_value,
+                    confirm=approve_confirm,
+                ),
+                Button(
+                    action_id=ACTION_ROW_REJECT,
+                    text=PlainText(text="Deny", emoji=True),
+                    style="danger",
+                    value=button_value,
+                    confirm=deny_confirm,
+                ),
+            ],
         ),
     ]
 
@@ -312,25 +259,12 @@ def _build_external_row(requirement: RunRequirement) -> List[Any]:
     ]
 
 
+# Dispatch table for non-confirmation pause types; confirmation uses Card with buttons
 _BUILDERS: Dict[str, Callable[[RunRequirement], List[Any]]] = {
     "user_input": _build_input_row,
     "user_feedback": _build_feedback_row,
     "external_execution": _build_external_row,
 }
-
-
-def _submit_actions_block(run_id: str, awaiting_ts: Optional[str] = None) -> Actions:
-    return Actions(
-        block_id=pause_block_id(run_id),
-        elements=[
-            Button(
-                action_id=ACTION_SUBMIT,
-                text=PlainText(text="Submit"),
-                style="primary",
-                value=encode_submit_button_value(run_id, awaiting_ts),
-            ),
-        ],
-    )
 
 
 def build_pause_message(
@@ -345,7 +279,7 @@ def build_pause_message(
     budget = MAX_MESSAGE_BLOCKS - 2
 
     for i, requirement in enumerate(requirements):
-        kind = classify_requirement(requirement)
+        kind = requirement.pause_type
         if kind == "confirmation":
             row_blocks = _build_confirmation_row(requirement, run_id=run_id, awaiting_ts=awaiting_ts)
         else:
@@ -371,9 +305,21 @@ def build_pause_message(
             )
         )
 
-    needs_submit = any(classify_requirement(r) != "confirmation" for r in requirements[:processed])
+    needs_submit = any(r.pause_type != "confirmation" for r in requirements[:processed])
     if needs_submit:
-        blocks.append(_submit_actions_block(run_id, awaiting_ts))
+        blocks.append(
+            Actions(
+                block_id=pause_block_id(run_id),
+                elements=[
+                    Button(
+                        action_id=ACTION_SUBMIT,
+                        text=PlainText(text="Submit"),
+                        style="primary",
+                        value=encode_submit_button_value(run_id, awaiting_ts),
+                    ),
+                ],
+            )
+        )
     return blocks
 
 
@@ -381,16 +327,12 @@ def approval_task_id(req_id: str) -> str:
     return f"approval:{req_id}"
 
 
+# Converts interactive form blocks into readonly audit trail after submission
 def response_blocks(
     original_blocks: List[Dict[str, Any]],
     state_values: Dict[str, Dict[str, Any]],
     requirements: List[RunRequirement],
 ) -> List[Dict[str, Any]]:
-    """Convert interactive form blocks into readonly response display.
-
-    Takes Slack input blocks + submitted values and returns sealed blocks
-    showing what the user submitted. Used as audit trail after form submission.
-    """
     preserved: List[Dict[str, Any]] = []
     submissions: List[Dict[str, Any]] = []
 
@@ -448,7 +390,7 @@ def response_blocks(
             break
 
     body_text = "\n\n".join(body_lines)
-    if len(body_text) > 200:
+    if len(body_text) > 200:  # Slack Card body renders poorly past ~200 chars
         body_text = body_text[:197] + "..."
 
     submission_card: Dict[str, Any] = {

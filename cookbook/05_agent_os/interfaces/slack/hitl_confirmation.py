@@ -25,9 +25,7 @@ from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
 from agno.tools import tool
 
-# ---------------------------------------------------------------------------
 # Stand-in billing data — replace with real Stripe / internal client
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -46,9 +44,7 @@ _FAKE_DB: Dict[str, Subscription] = {
 }
 
 
-# ---------------------------------------------------------------------------
 # Read-only tools — no HITL needed, agent uses these to build context
-# ---------------------------------------------------------------------------
 
 
 @tool
@@ -78,9 +74,7 @@ def list_active_subscriptions() -> List[Dict[str, str]]:
     ]
 
 
-# ---------------------------------------------------------------------------
 # Destructive tool — pauses for human approval
-# ---------------------------------------------------------------------------
 
 
 @tool(requires_confirmation=True)
@@ -99,9 +93,7 @@ def cancel_subscription(customer_id: str, reason: str) -> str:
     return f"Subscription for {customer_id} cancelled. Reason logged: {reason!r}."
 
 
-# ---------------------------------------------------------------------------
 # Agent + AgentOS + Slack interface
-# ---------------------------------------------------------------------------
 
 db = SqliteDb(
     db_file="tmp/hitl_confirmation.db",

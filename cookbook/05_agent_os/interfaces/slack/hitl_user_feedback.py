@@ -24,9 +24,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.user_feedback import UserFeedbackTools
 from agno.tools.wikipedia import WikipediaTools
 
-# ---------------------------------------------------------------------------
 # Agent + AgentOS + Slack interface
-# ---------------------------------------------------------------------------
 
 db = SqliteDb(
     db_file="tmp/hitl_user_feedback.db",

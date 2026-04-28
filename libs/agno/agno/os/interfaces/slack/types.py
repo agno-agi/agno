@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
+from agno.run.requirement import PauseType
 
 if TYPE_CHECKING:
     from agno.run.requirement import RunRequirement
-
-PauseType = Literal["confirmation", "user_input", "user_feedback", "external_execution"]
 
 
 @dataclass
@@ -48,7 +48,7 @@ def row_block_id(requirement_id: str, kind: PauseType, *, decided: Optional[str]
 def parse_row_block_id(block_id: str) -> Optional[Dict[str, str]]:
     if not block_id.startswith(f"{ROW_BLOCK_PREFIX}:"):
         return None
-    parts = block_id.split(":", 4)
+    parts = block_id.split(":", 4)  # row:req_id:kind:status[:decided] = 5 fields max
     if len(parts) < 4:
         return None
     out: Dict[str, str] = {
@@ -86,7 +86,7 @@ def encode_row_button_value(req_id: str, run_id: str, awaiting_ts: Optional[str]
 
 
 def decode_row_button_value(value: str) -> Tuple[str, str, Optional[str]]:
-    parts = value.split("|", 2)
+    parts = value.split("|", 2)  # req_id|run_id|awaiting_ts = 3 fields
     if len(parts) == 2:
         return parts[0], parts[1], None
     if len(parts) == 3:
@@ -99,7 +99,7 @@ def encode_submit_button_value(run_id: str, awaiting_ts: Optional[str]) -> str:
 
 
 def decode_submit_button_value(value: str) -> Tuple[str, Optional[str]]:
-    parts = value.split("|", 1)
+    parts = value.split("|", 1)  # run_id|awaiting_ts = 2 fields
     if len(parts) == 1:
         return parts[0], None
     return parts[0], parts[1] or None

@@ -25,9 +25,7 @@ from agno.os.interfaces.slack import Slack
 from agno.tools import tool
 from agno.tools.duckduckgo import DuckDuckGoTools
 
-# ---------------------------------------------------------------------------
 # Stand-in runbook store — replace with Confluence / Notion client
-# ---------------------------------------------------------------------------
 
 
 _RUNBOOKS: Dict[str, str] = {
@@ -47,9 +45,7 @@ _RUNBOOKS: Dict[str, str] = {
 }
 
 
-# ---------------------------------------------------------------------------
 # Read-only runbook lookup
-# ---------------------------------------------------------------------------
 
 
 @tool
@@ -66,9 +62,7 @@ def lookup_runbook(symptom: str) -> str:
     return f"Runbook for {symptom}:\n{steps}"
 
 
-# ---------------------------------------------------------------------------
 # External tool — user runs it and pastes output back
-# ---------------------------------------------------------------------------
 
 
 @tool(external_execution=True)
@@ -85,9 +79,7 @@ def kubectl_get_pods(namespace: str, selector: str = "") -> str:
     return f"kubectl get pods -n {namespace}{flag}"
 
 
-# ---------------------------------------------------------------------------
 # Agent + AgentOS + Slack interface
-# ---------------------------------------------------------------------------
 
 db = SqliteDb(
     db_file="tmp/hitl_external_execution.db",

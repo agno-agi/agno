@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from ssl import SSLContext
 from typing import Any, Dict, List, Literal, Optional, Union
 
@@ -199,9 +200,7 @@ def attach_routes(
         if not isinstance(payload_raw, str) or not payload_raw:
             raise HTTPException(status_code=400, detail="Missing payload")
         try:
-            import json as _json
-
-            payload = _json.loads(payload_raw)
+            payload = json.loads(payload_raw)
         except Exception:
             raise HTTPException(status_code=400, detail="Malformed payload JSON")
 
@@ -225,13 +224,9 @@ def attach_routes(
     async def _handle_row_click(payload: Dict[str, Any]) -> None:
         """Approve/Deny click on a Card block.
 
-        The Card is a standalone chat.postMessage in the thread. On click we
-        chat.update it in place to swap the buttons for a permanent decision
-        chip ("<tool> — ✅ Approved" / "<tool> — ❌ Rejected"), then hand off
-        to _handle_submit which opens a fresh continuation stream. Keeping
-        the card preserves an audit trail of the decision in the thread even
-        across server restarts or long human deliberation windows — the
-        continuation simply renders in a new bubble below.
+        Strips the Approve/Deny buttons from the Card (keeping title/subtitle
+        for audit trail), then hands off to _handle_submit which opens a fresh
+        stream for the continuation.
         """
         from slack_sdk.web.async_client import AsyncWebClient
 
@@ -324,12 +319,10 @@ def attach_routes(
 
     async def _handle_submit(payload: Dict[str, Any]) -> None:
         """Approval submitted. Hydrate the paused requirements, apply the
-        user's decisions, then resume the run and append the continuation
-        events to the SAME Slack stream that paused (so the spinner keeps
-        animating and everything lives in one cohesive message).
+        user's decisions, then resume the run in a fresh Slack stream.
 
-        Falls back to stream=False + chat.postMessage if the live-stream
-        metadata is missing (e.g., server restarted between pause and click).
+        Always opens a new stream — Slack enforces ~5-min wall clock on
+        chat_stream regardless of pings, and human deliberation can exceed that.
         """
         from slack_sdk.web.async_client import AsyncWebClient
 
@@ -434,10 +427,7 @@ def attach_routes(
             buffer_size=buffer_size,
         )
 
-        # Emit the decision task cards. Approved confirmations skip the
-        # dedicated decision card (the tool's own task_call card will
-        # carry the same name + args). Denials and non-confirmation
-        # resolutions always emit a decision card.
+        # Emit decision task cards for DENIED confirmations only
         requirements_by_id = {r.id: r for r in requirements if r.id}
         for decision in decisions:
             req = requirements_by_id.get(decision.requirement_id)
@@ -591,7 +581,7 @@ def attach_routes(
                 status=loading_text,
             )
         except Exception:
-            pass
+            pass  # Best-effort UX — typing indicator failure doesn't block response
 
         try:
             # Resolve Slack user ID to email + display name when opted in
@@ -673,7 +663,7 @@ def attach_routes(
                     channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], status=""
                 )
             except Exception:
-                pass
+                pass  # Best-effort UX — clearing status indicator is cosmetic
 
     async def _stream_slack_response(data: dict):
         from slack_sdk.web.async_client import AsyncWebClient
@@ -715,7 +705,7 @@ def attach_routes(
                     status_kwargs["loading_messages"] = loading_messages
                 await async_client.assistant_threads_setStatus(**status_kwargs)
             except Exception:
-                pass
+                pass  # Best-effort UX — typing indicator failure doesn't block response
 
             # Resolve Slack user ID to email + display name when opted in
             resolved_user_id = ctx["user"]
@@ -760,7 +750,7 @@ def attach_routes(
                         channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], status=""
                     )
                 except Exception:
-                    pass
+                    pass  # Best-effort UX — clearing status indicator is cosmetic
                 return
 
             # Deferred so "Thinking..." indicator stays visible during file
@@ -828,7 +818,7 @@ def attach_routes(
                                 channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], title=title
                             )
                         except Exception:
-                            pass
+                            pass  # Best-effort UX — title update failure doesn't block response
 
                     content = state.flush()
                     content_len = len(content)
@@ -876,10 +866,7 @@ def attach_routes(
                         log_error(f"[HITL] Failed to post Card block (pause): {exc}")
                     return
 
-            try:
-                await stream.stop(**stop_kwargs)
-            except Exception:
-                raise
+            await stream.stop(**stop_kwargs)
 
             await upload_response_media_async(async_client, state, ctx["channel_id"], ctx["thread_id"])
 
@@ -900,7 +887,7 @@ def attach_routes(
                     channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], status=""
                 )
             except Exception:
-                pass
+                pass  # Best-effort UX — clearing status indicator is cosmetic
             # Clean up open stream so Slack doesn't show stuck progress indicators
             if stream is not None:
                 try:
@@ -911,7 +898,7 @@ def attach_routes(
                         )
                     await stream.stop(**stop_kwargs_err)
                 except Exception:
-                    pass
+                    pass  # Best-effort cleanup — stream may already be closed
             if not is_msg_too_long:
                 await send_slack_message_async(
                     async_client,

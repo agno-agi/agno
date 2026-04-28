@@ -1,8 +1,11 @@
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from agno.media import File, Image
+
+if TYPE_CHECKING:
+    from agno.models.anthropic.claude import SystemPromptBlock
 from agno.models.message import Message
 from agno.utils.log import log_error, log_info, log_warning
 
@@ -324,6 +327,61 @@ def _format_file_for_message(file: File, enable_citations: bool = True) -> Optio
     if document is not None and citations_on:
         document["citations"] = {"enabled": True}
     return document
+
+
+def build_system_blocks(
+    system_message: Union[str, List["SystemPromptBlock"]],
+    cache_system_prompt: bool,
+    extended_cache_time: bool = False,
+) -> List[Dict[str, Any]]:
+    """Build the system parameter blocks for the Anthropic API.
+
+    Converts either a plain string or a list of SystemPromptBlock into the
+    list-of-dicts format the Anthropic API expects for the ``system`` field.
+    """
+    if isinstance(system_message, str):
+        entry: Dict[str, Any] = {"text": system_message, "type": "text"}
+        if cache_system_prompt:
+            cc: Dict[str, str] = {"type": "ephemeral"}
+            if extended_cache_time:
+                cc["ttl"] = "1h"
+            entry["cache_control"] = cc
+        return [entry]
+
+    result: List[Dict[str, Any]] = []
+    for block in system_message:
+        b: Dict[str, Any] = {"text": block.text, "type": "text"}
+        if block.cache:
+            effective_ttl = block.ttl if block.ttl is not None else ("1h" if extended_cache_time else "5m")
+            cc = {"type": "ephemeral"}
+            if effective_ttl == "1h":
+                cc["ttl"] = "1h"
+            b["cache_control"] = cc
+        result.append(b)
+    return result
+
+
+def _validate_cache_ttl_order(blocks: List[Dict[str, Any]]) -> None:
+    """Validate that no 5m-cached block appears before a 1h-cached block."""
+    seen_5m = False
+    for block in blocks:
+        cc = block.get("cache_control")
+        if cc is None:
+            continue
+        if cc.get("ttl") == "1h":
+            if seen_5m:
+                raise ValueError(
+                    "Invalid Anthropic cache TTL ordering: a 1h cached block cannot "
+                    "follow a 5m cached block. This usually means cache_system_prompt=True "
+                    "(so the agent-built block is cached at 5m by default) together with "
+                    "a SystemPromptBlock(ttl='1h'). Fix with one of:\n"
+                    "  - Claude(extended_cache_time=True) so the agent-built block is 1h too\n"
+                    "  - Change your block ttl to '5m' or None\n"
+                    "  - Set cache_system_prompt=False to leave the agent-built block "
+                    "uncached (custom blocks still cache per their own block.cache field)"
+                )
+        else:
+            seen_5m = True
 
 
 def format_messages(

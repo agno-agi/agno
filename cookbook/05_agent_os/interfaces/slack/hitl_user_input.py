@@ -26,9 +26,7 @@ from agno.os.interfaces.slack import Slack
 from agno.tools import tool
 from agno.tools.duckduckgo import DuckDuckGoTools
 
-# ---------------------------------------------------------------------------
 # Stand-in ticket store — replace with Jira / Linear client
-# ---------------------------------------------------------------------------
 
 
 _TICKETS: List[Dict[str, str]] = [
@@ -47,9 +45,7 @@ _TICKETS: List[Dict[str, str]] = [
 ]
 
 
-# ---------------------------------------------------------------------------
 # Read-only helpers
-# ---------------------------------------------------------------------------
 
 
 @tool
@@ -64,9 +60,7 @@ def search_existing_tickets(query: str) -> List[Dict[str, str]]:
     return [t for t in _TICKETS if q in t["title"].lower() and t["status"] == "open"]
 
 
-# ---------------------------------------------------------------------------
 # Ticket creation — pauses for priority + component
-# ---------------------------------------------------------------------------
 
 
 @tool(requires_user_input=True, user_input_fields=["priority", "component"])
@@ -95,9 +89,7 @@ def create_support_ticket(
     )
 
 
-# ---------------------------------------------------------------------------
 # Agent + AgentOS + Slack interface
-# ---------------------------------------------------------------------------
 
 db = SqliteDb(
     db_file="tmp/hitl_user_input.db",

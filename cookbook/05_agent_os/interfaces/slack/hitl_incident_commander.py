@@ -33,9 +33,7 @@ from agno.tools import tool
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.user_feedback import UserFeedbackTools
 
-# ---------------------------------------------------------------------------
 # Stand-in incident registry + service catalog
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -55,9 +53,7 @@ _SERVICES: Dict[str, Service] = {
 _INCIDENTS: List[Dict[str, str]] = []
 
 
-# ---------------------------------------------------------------------------
 # Read-only context tools
-# ---------------------------------------------------------------------------
 
 
 @tool
@@ -83,9 +79,7 @@ def list_recent_incidents() -> List[Dict[str, str]]:
     return list(reversed(_INCIDENTS[-5:]))
 
 
-# ---------------------------------------------------------------------------
 # HITL tools — one per pause type
-# ---------------------------------------------------------------------------
 
 
 @tool(external_execution=True)
@@ -153,9 +147,7 @@ def file_incident_retro(
     )
 
 
-# ---------------------------------------------------------------------------
 # Agent + AgentOS + Slack interface
-# ---------------------------------------------------------------------------
 
 db = SqliteDb(
     db_file="tmp/hitl_incident_commander.db",
