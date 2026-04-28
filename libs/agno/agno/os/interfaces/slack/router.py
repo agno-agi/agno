@@ -89,7 +89,6 @@ def attach_routes(
     buffer_size: int = 100,
     max_file_size: int = 1_073_741_824,  # 1GB
     resolve_user_identity: bool = False,
-    hitl_enabled: bool = True,
 ) -> APIRouter:
     # Inner functions capture config via closure to keep each instance isolated
     entity = agent or team or workflow
@@ -180,12 +179,6 @@ def attach_routes(
         },
     )
     async def slack_interactions(request: Request, background_tasks: BackgroundTasks):
-        if not hitl_enabled:
-            # HITL not enabled — drop silently. The endpoint is always mounted
-            # so Slack's app-manifest configuration doesn't have to change per
-            # deployment, but we no-op when the feature is off.
-            return SlackEventResponse(status="ok")
-
         body = await request.body()
         timestamp = request.headers.get("X-Slack-Request-Timestamp")
         slack_signature = request.headers.get("X-Slack-Signature", "")
@@ -860,7 +853,7 @@ def attach_routes(
             # assign to in_progress cards whose stream has ended). The
             # resume handler opens a fresh chat_stream for the continuation
             # in a new bubble when the human clicks.
-            if hitl_enabled and state.paused_event is not None:
+            if state.paused_event is not None:
                 pause_run_id = getattr(state.paused_event, "run_id", None)
                 requirements = list(getattr(state.paused_event, "active_requirements", None) or [])
                 if pause_run_id and requirements:
