@@ -47,8 +47,10 @@ class DatabaseContextProvider(ContextProvider):
         write_instructions: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        read: bool = True,
+        write: bool = True,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model)
+        super().__init__(id=id, name=name, mode=mode, model=model, read=read, write=write)
         self.sql_engine = sql_engine
         self.readonly_engine = readonly_engine
         self.schema = schema
@@ -116,7 +118,7 @@ class DatabaseContextProvider(ContextProvider):
     # ------------------------------------------------------------------
 
     def _default_tools(self) -> list:
-        return [self._query_tool(), self._update_tool()]
+        return self._read_write_tools()
 
     def _all_tools(self) -> list:
         # mode=tools returns only the readonly SQLTools. The read/write
