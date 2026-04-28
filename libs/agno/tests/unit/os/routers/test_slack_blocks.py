@@ -1,7 +1,7 @@
 from typing import Any, Dict
 
 from agno.models.response import ToolExecution
-from agno.os.interfaces.slack.builders import build_pause_message, classify_requirement
+from agno.os.interfaces.slack.builders import build_pause_message
 from agno.os.interfaces.slack.interactions import format_decision_title, parse_submit_payload
 from agno.os.interfaces.slack.types import (
     ACTION_EXTERNAL_RESULT,
@@ -38,18 +38,18 @@ def _submit_payload(state_values=None, message_blocks=None) -> Dict[str, Any]:
     }
 
 
-# -- classify_requirement --
+# -- pause_type property --
 
 
-class TestClassifyRequirement:
+class TestPauseType:
     def test_user_feedback_wins(self):
-        # Order mirrors os.agno.com utils.ts: feedback > external > input > confirmation.
+        # Priority: feedback > external > input > confirmation (most specific wins)
         req = _make_requirement(
             user_feedback_schema=[UserFeedbackQuestion(question="?", options=[UserFeedbackOption(label="A")])],
             requires_user_input=True,
             requires_confirmation=True,
         )
-        assert classify_requirement(req) == "user_feedback"
+        assert req.pause_type == "user_feedback"
 
     def test_external_execution_wins_over_input_and_confirmation(self):
         req = _make_requirement(
@@ -57,21 +57,20 @@ class TestClassifyRequirement:
             requires_user_input=True,
             requires_confirmation=True,
         )
-        assert classify_requirement(req) == "external_execution"
+        assert req.pause_type == "external_execution"
 
     def test_user_input_wins_over_confirmation(self):
         req = _make_requirement(requires_user_input=True, requires_confirmation=True)
-        assert classify_requirement(req) == "user_input"
+        assert req.pause_type == "user_input"
 
     def test_defaults_to_confirmation(self):
         req = _make_requirement(requires_confirmation=True)
-        assert classify_requirement(req) == "confirmation"
+        assert req.pause_type == "confirmation"
 
     def test_missing_tool_execution_is_confirmation(self):
-        # DB round-trip can drop tool_execution; fallback keeps the run safe.
         req = _make_requirement()
         req.tool_execution = None
-        assert classify_requirement(req) == "confirmation"
+        assert req.pause_type == "confirmation"
 
 
 # -- row_block_id / parse_row_block_id --
