@@ -21,14 +21,6 @@ _PAUSE_LABELS = {
 }
 
 
-def build_pause_labels(requirements: List["RunRequirement"]) -> List[str]:
-    labels: List[str] = []
-    for requirement in requirements:
-        tool = _tool_name(requirement)
-        labels.append(_PAUSE_LABELS[requirement.pause_type].format(tool=tool))
-    return labels
-
-
 async def finalize_pause(
     *,
     client: "AsyncWebClient",
@@ -59,7 +51,8 @@ async def finalize_pause(
         )
 
     awaiting_ts: Optional[str] = None
-    pause_labels = build_pause_labels(requirements)
+    # Build pause labels inline — maps pause_type to user-visible status text
+    pause_labels = [_PAUSE_LABELS[r.pause_type].format(tool=_tool_name(r)) for r in requirements]
     if pause_labels:
         try:
             awaiting_resp = await client.chat_postMessage(

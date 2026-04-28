@@ -6,22 +6,39 @@ from typing import Any, Callable, Dict, List, Optional
 
 from slack_sdk.models.blocks import (
     ActionsBlock as Actions,
+)
+from slack_sdk.models.blocks import (
     CheckboxesElement as Checkboxes,
+)
+from slack_sdk.models.blocks import (
     ConfirmObject as ConfirmDialog,
+)
+from slack_sdk.models.blocks import (
     ContextBlock as Context,
+)
+from slack_sdk.models.blocks import (
     DividerBlock as Divider,
+)
+from slack_sdk.models.blocks import (
     InputBlock,
+)
+from slack_sdk.models.blocks import (
     PlainTextInputElement as PlainTextInput,
+)
+from slack_sdk.models.blocks import (
     StaticSelectElement as StaticSelect,
 )
 from slack_sdk.models.blocks.basic_components import (
     MarkdownTextObject as Markdown,
+)
+from slack_sdk.models.blocks.basic_components import (
     Option,
+)
+from slack_sdk.models.blocks.basic_components import (
     PlainTextObject as PlainText,
 )
-from slack_sdk.models.blocks.block_elements import ButtonElement as Button, ImageElement
-
-from agno.utils.serialize import json_serializer
+from slack_sdk.models.blocks.block_elements import ButtonElement as Button
+from slack_sdk.models.blocks.block_elements import ImageElement
 
 from agno.os.interfaces.slack.types import (
     ACTION_EXTERNAL_RESULT,
@@ -38,6 +55,7 @@ from agno.os.interfaces.slack.types import (
     row_block_id,
 )
 from agno.run.requirement import RunRequirement
+from agno.utils.serialize import json_serializer
 
 # Slack caps messages at 50 blocks; reserve 2 for submit button + truncation warning
 MAX_MESSAGE_BLOCKS = 48

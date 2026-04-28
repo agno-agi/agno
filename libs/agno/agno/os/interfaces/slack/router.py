@@ -52,10 +52,8 @@ _STREAM_CARD_LIMIT = 45
 
 
 def _slack_err_code(exc: BaseException) -> Optional[str]:
-    """Pull Slack's structured "error" field out of a SlackApiError response.
-    We use this in HITL resume logging to distinguish
-    message_not_in_streaming_state (expired stream) from other failures
-    that need different handling."""
+    # Used in HITL logging to distinguish message_not_in_streaming_state (expired
+    # stream) from other failures that need different handling
     resp = getattr(exc, "response", None)
     data = getattr(resp, "data", None) if resp is not None else None
     if isinstance(data, dict):
@@ -222,12 +220,7 @@ def attach_routes(
         return SlackEventResponse(status="ok")
 
     async def _handle_row_click(payload: Dict[str, Any]) -> None:
-        """Approve/Deny click on a Card block.
-
-        Strips the Approve/Deny buttons from the Card (keeping title/subtitle
-        for audit trail), then hands off to _handle_submit which opens a fresh
-        stream for the continuation.
-        """
+        # Strips buttons from Card (keeps title/subtitle for audit), then chains to _handle_submit
         from slack_sdk.web.async_client import AsyncWebClient
 
         actions = payload.get("actions") or []
@@ -318,12 +311,8 @@ def attach_routes(
         await _handle_submit(synthetic_payload)
 
     async def _handle_submit(payload: Dict[str, Any]) -> None:
-        """Approval submitted. Hydrate the paused requirements, apply the
-        user's decisions, then resume the run in a fresh Slack stream.
-
-        Always opens a new stream — Slack enforces ~5-min wall clock on
-        chat_stream regardless of pings, and human deliberation can exceed that.
-        """
+        # Always opens a new stream — Slack's ~5-min wall clock on chat_stream
+        # expires during human deliberation; fresh bubble is the predictable fallback
         from slack_sdk.web.async_client import AsyncWebClient
 
         from agno.os.interfaces.slack.builders import approval_task_id
@@ -765,7 +754,6 @@ def attach_routes(
             )
 
             async def _rotate_stream(pending_text: str = ""):
-                """Close current stream and open a new one, carrying over in-progress cards."""
                 nonlocal stream
                 assert stream is not None  # Caller only invokes after stream is opened
                 in_progress = [(k, v.title) for k, v in state.task_cards.items() if v.status == "in_progress"]

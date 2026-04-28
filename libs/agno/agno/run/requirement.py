@@ -3,14 +3,14 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 
-PauseType = Literal["confirmation", "user_input", "user_feedback", "external_execution"]
-
 from agno.models.response import ToolExecution, UserFeedbackQuestion, UserInputField
+
+PauseType = Literal["confirmation", "user_input", "user_feedback", "external_execution"]
 
 
 @dataclass
 class RunRequirement:
-    """Requirement to complete a paused run (used in HITL flows)"""
+    # Tracks what's needed to resume a paused run (HITL flows)
 
     tool_execution: Optional[ToolExecution] = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

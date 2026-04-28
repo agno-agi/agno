@@ -1,5 +1,3 @@
-"""Slack streaming event handlers — translates agent/team/workflow events into task cards."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -24,22 +22,14 @@ _EventHandler = Callable[
 ]
 
 
-def _normalize_event(event: str) -> str:
-    """Strip 'Team' prefix so agent and team events use the same handlers."""
-    return event.removeprefix("Team")
-
-
 @dataclass
 class _ToolRef:
-    """Reference to a tool call for task card tracking."""
-
     tid: str | None  # Slack task card ID (None when tool_call_id is missing)
     label: str  # Display title, e.g. "Researcher: web_search"
     errored: bool
 
 
 def _extract_tool_ref(chunk: BaseRunOutputEvent, state: StreamState, *, fallback_id: str | None = None) -> _ToolRef:
-    """Build unique (tid, label) for each tool call's Slack task card."""
     tool = getattr(chunk, "tool", None)
     tool_name = (tool.tool_name if tool else None) or "tool"
     call_id = (tool.tool_call_id if tool else None) or fallback_id
@@ -50,22 +40,6 @@ def _extract_tool_ref(chunk: BaseRunOutputEvent, state: StreamState, *, fallback
     return _ToolRef(tid=tid, label=label, errored=errored)
 
 
-def _as_rich_text(text: str) -> dict:
-    # Slack rejects plain strings in task_card details/output slots — the
-    # server-side validator requires a rich_text object even though slack_sdk's
-    # TaskUpdateChunk types output as Optional[str]. See block_kit.py:164-167.
-    # Newlines inside the text render as soft line breaks.
-    return {
-        "type": "rich_text",
-        "elements": [
-            {
-                "type": "rich_text_section",
-                "elements": [{"type": "text", "text": text}],
-            }
-        ],
-    }
-
-
 async def _emit_task(
     stream: AsyncChatStream,
     card_id: str,
@@ -74,10 +48,14 @@ async def _emit_task(
     *,
     output: str | None = None,
 ) -> None:
-    """Send a task card update to the Slack stream."""
     chunk: dict = {"type": "task_update", "id": card_id, "title": title, "status": status}
     if output:
-        chunk["output"] = _as_rich_text(output[:200])  # Slack truncates longer task output
+        # Slack rejects plain strings in task_card output slots — requires rich_text
+        # even though slack_sdk types output as Optional[str]. Truncate to 200 chars.
+        chunk["output"] = {
+            "type": "rich_text",
+            "elements": [{"type": "rich_text_section", "elements": [{"type": "text", "text": output[:200]}]}],
+        }
     await stream.append(markdown_text="", chunks=[chunk])
 
 
@@ -91,7 +69,6 @@ async def _wf_task(
     started: bool,
     name_attr: str = "step_name",
 ) -> None:
-    """Emit a workflow task card for paired events (Started/Completed)."""
     name = getattr(chunk, name_attr, None) or prefix
     sid = getattr(chunk, "step_id", None) or name
     key = f"wf_{prefix}_{sid}"
@@ -133,13 +110,7 @@ def _make_wf_handler(
     started: bool,
     name_attr: str = "step_name",
 ) -> _EventHandler:
-    """
-    Factory to create workflow event handlers for simple paired events.
-
-    This eliminates boilerplate for events that just call _wf_task with
-    different parameters (e.g., ParallelStarted, ConditionCompleted, etc.).
-    """
-
+    # Factory for paired events that just call _wf_task with different params
     async def handler(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
         await _wf_task(chunk, state, stream, prefix, label, started=started, name_attr=name_attr)
         return False
@@ -437,19 +408,8 @@ HANDLERS: Dict[str, _EventHandler] = {
 
 
 async def process_event(ev_raw: str, chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
-    """
-    Process a streaming event and update Slack accordingly.
-
-    Args:
-        ev_raw: Raw event name (e.g., "ToolCallStarted", "TeamRunContent")
-        chunk: Stream chunk containing event data
-        state: StreamState tracking session state
-        stream: Slack chat_stream for sending updates
-
-    Returns:
-        True if this is a terminal event and the stream loop should break.
-    """
-    ev = _normalize_event(ev_raw)
+    # Strip "Team" prefix so agent + team events share handlers
+    ev = ev_raw.removeprefix("Team")
 
     # Suppress nested agent internals in workflow mode
     if state.entity_type == "workflow" and ev in _SUPPRESSED_IN_WORKFLOW:

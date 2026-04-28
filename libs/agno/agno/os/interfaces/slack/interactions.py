@@ -1,5 +1,3 @@
-"""Parse Slack interaction payloads (button clicks, form submissions) for HITL."""
-
 from __future__ import annotations
 
 import json
@@ -58,39 +56,16 @@ def _get_action_state(state: SlackState, block_id: str, action_id: str) -> Dict[
     return state.get(block_id, {}).get(action_id, {})
 
 
-def _extract_text_value(action_state: Dict[str, Any]) -> Optional[str]:
-    if action_state.get("type") == "static_select":
-        return (action_state.get("selected_option") or {}).get("value")
-    return action_state.get("value")
-
-
-def _extract_selected_values(action_state: Dict[str, Any]) -> List[str]:
-    element_type = action_state.get("type")
-    if element_type == "checkboxes":
-        return [opt["value"] for opt in action_state.get("selected_options", []) if opt.get("value")]
-    if element_type == "static_select":
-        selected = action_state.get("selected_option") or {}
-        return [selected["value"]] if selected.get("value") else []
-    return []
-
-
-def _find_confirmation_decision(blocks: SlackBlocks, requirement_id: str) -> Optional[str]:
-    for block in blocks:
-        parsed = parse_row_block_id(block.get("block_id", ""))
-        if not parsed:
-            continue
-        if parsed.get("req_id") != requirement_id:
-            continue
-        if parsed.get("kind") != "confirmation":
-            continue
-        if parsed.get("status") == "decided":
-            return parsed.get("decided")
-    return None
-
-
 def _parse_confirmation(requirement: RunRequirement, blocks: SlackBlocks) -> ParsedDecision:
     req_id = requirement.id or ""
-    decision = _find_confirmation_decision(blocks, req_id)
+    # Find decision from block_id pattern: row:req_id:confirmation:decided:approve/deny
+    decision = None
+    for block in blocks:
+        parsed = parse_row_block_id(block.get("block_id", ""))
+        if parsed and parsed.get("req_id") == req_id and parsed.get("kind") == "confirmation":
+            if parsed.get("status") == "decided":
+                decision = parsed.get("decided")
+                break
     if decision is None:
         return ParsedDecision(
             requirement_id=req_id,
@@ -118,7 +93,11 @@ def _parse_user_input(
         block_id = f"{row_prefix}:{field.name}"
         action_id = f"{ACTION_INPUT_FIELD_PREFIX}{field.name}"
         action_state = _get_action_state(state, block_id, action_id)
-        raw_value = _extract_text_value(action_state)
+        # Extract text value - static_select uses selected_option, others use value
+        if action_state.get("type") == "static_select":
+            raw_value = (action_state.get("selected_option") or {}).get("value")
+        else:
+            raw_value = action_state.get("value")
 
         try:
             values[field.name] = coerce_to_type(raw_value, field.field_type)
@@ -146,7 +125,15 @@ def _parse_user_feedback(
         block_id = f"{row_prefix}:q{index}"
         action_id = f"{ACTION_FEEDBACK_SELECT}:{index}"
         action_state = _get_action_state(state, block_id, action_id)
-        picked = _extract_selected_values(action_state)
+        # Extract selected values - checkboxes use selected_options list, select uses single option
+        element_type = action_state.get("type")
+        if element_type == "checkboxes":
+            picked = [opt["value"] for opt in action_state.get("selected_options", []) if opt.get("value")]
+        elif element_type == "static_select":
+            selected = action_state.get("selected_option") or {}
+            picked = [selected["value"]] if selected.get("value") else []
+        else:
+            picked = []
 
         if not picked:
             errors.append(ParseError(requirement_id=req_id, field=question.question, message="No option selected"))
@@ -224,24 +211,22 @@ def apply_decisions(decisions: List[ParsedDecision], requirements: List[RunRequi
             requirement.set_external_execution_result(decision.external_result)
 
 
-def _render_value(value: Any) -> str:
-    try:
-        rendered = value if isinstance(value, str) else json.dumps(value, default=str)
-    except (TypeError, ValueError):
-        rendered = str(value)
-    return _truncate(rendered.replace("\n", " ").strip(), DECISION_VALUE_MAX)
-
-
-def _format_args(args: Dict[str, Any]) -> str:
-    return ", ".join(f"{k}={_render_value(v)}" for k, v in args.items())
-
-
 def format_decision_title(decision: ParsedDecision, requirement: RunRequirement) -> str:
     if decision.pause_type != "confirmation":
         raise ValueError("format_decision_title only supports confirmation decisions")
 
     verb = "Approved" if decision.approved else "Denied"
     name = _tool_name(requirement)
-    args = _format_args(_tool_args(requirement))
+    # Format args as "k=v, k2=v2" with truncated values
+    args_dict = _tool_args(requirement)
+    arg_parts = []
+    for k, v in args_dict.items():
+        try:
+            rendered = v if isinstance(v, str) else json.dumps(v, default=str)
+        except (TypeError, ValueError):
+            rendered = str(v)
+        rendered = _truncate(rendered.replace("\n", " ").strip(), DECISION_VALUE_MAX)
+        arg_parts.append(f"{k}={rendered}")
+    args = ", ".join(arg_parts)
     title = f"{verb}: {name}({args})" if args else f"{verb}: {name}"
     return _truncate(title, DECISION_TITLE_MAX)
