@@ -64,6 +64,7 @@ from agno.team import (
 from agno.team.mode import TeamMode
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.utils.agent import aexecute_instructions, execute_instructions
 from agno.utils.log import (
     log_error,
 )

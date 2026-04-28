@@ -2,7 +2,13 @@ from typing import List, Optional
 
 from pydantic import BaseModel
 
-from agno.utils.string import generate_id_from_name, parse_response_model_str, sanitize_postgres_string, url_safe_string
+from agno.utils.string import (
+    generate_id_from_name,
+    is_valid_uuid,
+    parse_response_model_str,
+    sanitize_postgres_string,
+    url_safe_string,
+)
 
 
 def test_url_safe_string_spaces():
