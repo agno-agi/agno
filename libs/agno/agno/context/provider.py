@@ -82,13 +82,27 @@ class ContextProvider(ABC):
         name: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        read: bool = True,
+        write: bool = True,
         query_tool_name: str | None = None,
         update_tool_name: str | None = None,
     ) -> None:
+        if not read and not write:
+            raise ValueError(
+                f"{type(self).__name__}: at least one of `read` or `write` must be True "
+                "(a provider that exposes neither tool is meaningless)"
+            )
         self.id = id
         self.name = name or id
         self.mode = mode
         self.model = model
+        # Per-direction toggles for the default surface. `read=False`
+        # drops `query_<id>`; `write=False` drops `update_<id>`. Lets
+        # callers expose an asymmetric surface (e.g. read-only voice
+        # wiki, write-only event sink) without subclassing or
+        # reaching for `mode=tools` / `mode=agent`.
+        self.read = read
+        self.write = write
         self.query_tool_name = query_tool_name or f"query_{_sanitize_id(id)}"
         self.update_tool_name = update_tool_name or f"update_{_sanitize_id(id)}"
 
@@ -190,6 +204,21 @@ class ContextProvider(ABC):
         """What `mode=default` resolves to. Override in subclasses to set
         the provider's recommended exposure."""
         return [self._query_tool()]
+
+    def _read_write_tools(self) -> list:
+        """Helper for subclasses with both query + update tools.
+
+        Honors the ``read`` / ``write`` flags so the same provider
+        can be instantiated as read-only, write-only, or both. Use
+        from a subclass's ``_default_tools`` when the provider's
+        recommended surface is the two-tool split.
+        """
+        tools: list = []
+        if self.read:
+            tools.append(self._query_tool())
+        if self.write:
+            tools.append(self._update_tool())
+        return tools
 
     def _query_tool(self):
         provider = self

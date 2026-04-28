@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from agno.agent import Agent
 from agno.context._utils import answer_from_run
+from agno.context.backend import ContextBackend
 from agno.context.mode import ContextMode
 from agno.context.provider import Answer, ContextProvider, Status
 from agno.context.wiki.backend import CommitSummary, WikiBackend
@@ -48,9 +49,20 @@ class WikiContextProvider(ContextProvider):
         write_instructions: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        read: bool = True,
+        write: bool = True,
+        web: ContextBackend | None = None,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model)
+        super().__init__(id=id, name=name, mode=mode, model=model, read=read, write=write)
         self.backend: WikiBackend = backend
+        # Optional web backend for ingestion. When set, the write
+        # sub-agent gets the backend's tools (typically web_search +
+        # web_fetch) on top of the workspace tools — so requests like
+        # "add this paper to the wiki" can fetch the URL, digest it,
+        # and write a page in one update call. Reads stay scoped to
+        # the wiki on purpose: a "what does the wiki say" query
+        # should answer from the wiki, not silently consult the web.
+        self.web: ContextBackend | None = web
         self.read_instructions_text = (
             read_instructions if read_instructions is not None else DEFAULT_WIKI_READ_INSTRUCTIONS
         )
@@ -73,7 +85,17 @@ class WikiContextProvider(ContextProvider):
         if self._setup_done:
             return
         await self.backend.setup()
+        if self.web is not None:
+            await self.web.asetup()
         self._setup_done = True
+
+    async def aclose(self) -> None:
+        # Mirror WebContextProvider's pattern: drop the cached
+        # sub-agent so a re-setup builds fresh tools, then forward
+        # close to the web backend (its tools may hold a session).
+        self._write_agent = None
+        if self.web is not None:
+            await self.web.aclose()
 
     async def sync(self) -> None:
         """Bring the local wiki up-to-date with the source of truth.
@@ -142,17 +164,24 @@ class WikiContextProvider(ContextProvider):
             )
         if self.mode == ContextMode.agent:
             return f"`{self.name}`: call `{self.query_tool_name}(question)` to read the wiki."
-        return (
-            f"`{self.name}`: call `{self.query_tool_name}(question)` to read the wiki. "
-            f"Use `{self.update_tool_name}(instruction)` to add or edit pages."
-        )
+        # default mode — describe the actual surface based on flags + web
+        parts: list[str] = [f"`{self.name}`:"]
+        if self.read:
+            parts.append(f"call `{self.query_tool_name}(question)` to read the wiki.")
+        if self.write:
+            update_hint = f"Use `{self.update_tool_name}(instruction)` to add or edit pages"
+            if self.web is not None:
+                update_hint += " — pass a URL or 'find sources on X' and it will fetch the web before writing"
+            update_hint += "."
+            parts.append(update_hint)
+        return " ".join(parts)
 
     # ------------------------------------------------------------------
     # Mode resolution
     # ------------------------------------------------------------------
 
     def _default_tools(self) -> list:
-        return [self._query_tool(), self._update_tool()]
+        return self._read_write_tools()
 
     def _all_tools(self) -> list:
         # mode=tools is read-only on purpose. The default surface
@@ -179,15 +208,29 @@ class WikiContextProvider(ContextProvider):
 
     def _ensure_write_agent(self) -> Agent:
         if self._write_agent is None:
+            tools: list = [self._build_write_tools()]
+            if self.web is not None:
+                # Append the web backend's tools so the same sub-agent
+                # can fetch a URL or run a web search before writing.
+                tools.extend(self.web.get_tools())
+            instructions = self._compose_write_instructions()
             self._write_agent = Agent(
                 id=f"{self.id}-write",
                 name=f"{self.name} Write",
                 model=self.model,
-                instructions=self.write_instructions_text.replace("{path}", str(self.backend.path)),
-                tools=[self._build_write_tools()],
+                instructions=instructions,
+                tools=tools,
                 markdown=True,
             )
         return self._write_agent
+
+    def _compose_write_instructions(self) -> str:
+        """Build the write sub-agent's instructions, optionally
+        appending a web-ingestion stanza when ``web`` is wired."""
+        text = self.write_instructions_text.replace("{path}", str(self.backend.path))
+        if self.web is None:
+            return text
+        return text + "\n\n" + WIKI_WEB_INGEST_INSTRUCTIONS
 
     def _build_read_tools(self) -> Workspace:
         return Workspace(
@@ -241,4 +284,27 @@ Workflow:
 
 Keep changes minimal and focused. The provider commits and pushes after
 you return; do not invoke git yourself.
+"""
+
+
+WIKI_WEB_INGEST_INSTRUCTIONS = """\
+## Ingesting from the web
+
+You also have web search and fetch tools (e.g. `web_search`, `web_fetch`,
+or backend-equivalents). When the user gives you a URL, asks you to
+"add this paper / article", or asks you to find sources on a topic:
+
+1. **Fetch first.** Use the web tool to retrieve the source material
+   before writing anything. Don't summarise from memory.
+2. **Digest, don't dump.** Convert what you fetched into clean markdown
+   suitable for the wiki — a `# Title`, a brief context paragraph,
+   key sections, and a `## Source` footer linking back to the URL.
+   Drop nav cruft, ad text, and boilerplate.
+3. **Pick the right path.** Use a sensible folder (`papers/`, `articles/`,
+   `runbooks/`) and a kebab-case filename derived from the title.
+4. **Cite the source URL.** Every ingested page must end with a
+   `## Source` section pointing at the original URL with the date.
+
+Search before fetching when the user gives a topic instead of a URL.
+Pick the most relevant result rather than ingesting every hit.
 """

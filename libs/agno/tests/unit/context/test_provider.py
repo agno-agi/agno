@@ -107,6 +107,60 @@ def test_mode_tools_returns_all_tools():
 
 
 # ---------------------------------------------------------------------------
+# read / write flags — applied via the _read_write_tools helper that
+# read+write subclasses call from their _default_tools override.
+# ---------------------------------------------------------------------------
+
+
+class _TwoToolProvider(_EchoProvider):
+    """Subclass that exposes both query and update — uses the helper."""
+
+    async def aupdate(self, instruction: str, *, run_context: RunContext | None = None) -> Answer:
+        return Answer(text=f"u:{instruction}")
+
+    def _default_tools(self) -> list:
+        return self._read_write_tools()
+
+
+def test_read_write_helper_default_returns_both_tools():
+    p = _TwoToolProvider(id="x")
+    assert [t.name for t in p.get_tools()] == ["query_x", "update_x"]
+
+
+def test_read_write_helper_drops_update_when_write_false():
+    p = _TwoToolProvider(id="x", write=False)
+    assert [t.name for t in p.get_tools()] == ["query_x"]
+
+
+def test_read_write_helper_drops_query_when_read_false():
+    p = _TwoToolProvider(id="x", read=False)
+    assert [t.name for t in p.get_tools()] == ["update_x"]
+
+
+def test_both_flags_false_raises():
+    with pytest.raises(ValueError, match="at least one of `read` or `write`"):
+        _TwoToolProvider(id="x", read=False, write=False)
+
+
+def test_read_write_flags_default_to_true():
+    p = _EchoProvider(id="e")
+    assert p.read is True
+    assert p.write is True
+
+
+def test_mode_agent_silently_ignores_read_false():
+    """Per the design call: mode=agent + read=False is silently allowed.
+
+    Behaviour-locking test — if we ever decide to raise, this is the
+    test that flips. mode-mode interactions stay in their lane today.
+    """
+    p = _EchoProvider(id="e", mode=ContextMode.agent, read=False)
+    tools = p.get_tools()
+    # mode=agent always returns [query_tool] regardless of read.
+    assert [t.name for t in tools] == ["query_e"]
+
+
+# ---------------------------------------------------------------------------
 # _query_tool — happy + error paths
 # ---------------------------------------------------------------------------
 

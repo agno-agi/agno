@@ -209,6 +209,32 @@ def test_provider_custom_id_renames_tools(tmp_path: Path):
     assert [t.name for t in tools] == ["query_docs", "update_docs"]
 
 
+def test_provider_write_false_drops_update_tool(tmp_path: Path):
+    """Voice-folder pattern: read+write provider configured read-only."""
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), id="voice", write=False)
+    tools = p.get_tools()
+    assert [t.name for t in tools] == ["query_voice"]
+
+
+def test_provider_read_false_drops_query_tool(tmp_path: Path):
+    """Asymmetric write-only sink — rare but supported."""
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), id="sink", read=False)
+    tools = p.get_tools()
+    assert [t.name for t in tools] == ["update_sink"]
+
+
+def test_provider_both_flags_false_raises(tmp_path: Path):
+    with pytest.raises(ValueError, match="at least one of `read` or `write`"):
+        WikiContextProvider(backend=FileSystemBackend(path=tmp_path), read=False, write=False)
+
+
+def test_provider_instructions_omit_update_when_write_false(tmp_path: Path):
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), id="voice", write=False)
+    text = p.instructions()
+    assert "query_voice" in text
+    assert "update_voice" not in text
+
+
 def test_provider_tools_mode_is_read_only(tmp_path: Path):
     p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), mode=ContextMode.tools)
     workspace = p.get_tools()[0]
@@ -588,6 +614,153 @@ async def test_provider_query_tool_serialises_answer(tmp_path: Path):
     out = await tool.entrypoint(question="anything")
     payload = json.loads(out)
     assert payload == {"results": [], "text": "hello"}
+
+
+@pytest.mark.asyncio
+async def test_web_backend_tools_attached_to_write_sub_agent(tmp_path: Path):
+    """When `web` is wired, the write sub-agent gets web tools too."""
+    from agno.context.backend import ContextBackend
+    from agno.context.provider import Status as _Status
+    from agno.tools import tool
+
+    @tool(name="web_search")
+    async def _web_search(query: str) -> str:
+        return "{}"
+
+    @tool(name="web_fetch")
+    async def _web_fetch(url: str) -> str:
+        return "{}"
+
+    class _StubWeb(ContextBackend):
+        def status(self) -> _Status:
+            return _Status(ok=True, detail="stub")
+
+        async def astatus(self) -> _Status:
+            return self.status()
+
+        def get_tools(self) -> list:
+            return [_web_search, _web_fetch]
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), web=_StubWeb())
+    write_agent = p._ensure_write_agent()
+    tool_names = [getattr(t, "name", None) for t in write_agent.tools or []]
+    assert "web_search" in tool_names
+    assert "web_fetch" in tool_names
+    # Workspace toolkit registers methods, not tool names — but it
+    # must still be in the list (name attribute on Toolkit instances).
+    assert any(getattr(t, "name", "") == "workspace" for t in write_agent.tools or [])
+
+
+@pytest.mark.asyncio
+async def test_web_backend_not_attached_to_read_sub_agent(tmp_path: Path):
+    """The read sub-agent stays scoped to the wiki even with web wired."""
+    from agno.context.backend import ContextBackend
+    from agno.context.provider import Status as _Status
+    from agno.tools import tool
+
+    @tool(name="web_search")
+    async def _web_search(query: str) -> str:
+        return "{}"
+
+    class _StubWeb(ContextBackend):
+        def status(self) -> _Status:
+            return _Status(ok=True, detail="stub")
+
+        async def astatus(self) -> _Status:
+            return self.status()
+
+        def get_tools(self) -> list:
+            return [_web_search]
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), web=_StubWeb())
+    read_agent = p._ensure_read_agent()
+    tool_names = [getattr(t, "name", None) for t in read_agent.tools or []]
+    assert "web_search" not in tool_names
+
+
+@pytest.mark.asyncio
+async def test_web_backend_asetup_aclose_forwarded(tmp_path: Path):
+    """Lifecycle hooks must reach the web backend (matters for MCP sessions)."""
+    from agno.context.backend import ContextBackend
+    from agno.context.provider import Status as _Status
+
+    calls = {"asetup": 0, "aclose": 0}
+
+    class _LifecycleWeb(ContextBackend):
+        def status(self) -> _Status:
+            return _Status(ok=True, detail="lifecycle")
+
+        async def astatus(self) -> _Status:
+            return self.status()
+
+        def get_tools(self) -> list:
+            return []
+
+        async def asetup(self) -> None:
+            calls["asetup"] += 1
+
+        async def aclose(self) -> None:
+            calls["aclose"] += 1
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), web=_LifecycleWeb())
+    await p.asetup()
+    assert calls["asetup"] == 1
+    # asetup is idempotent — second call is a no-op on the provider,
+    # which means the web backend isn't double-set-up either.
+    await p.asetup()
+    assert calls["asetup"] == 1
+    await p.aclose()
+    assert calls["aclose"] == 1
+
+
+def test_web_none_keeps_default_write_instructions(tmp_path: Path):
+    """No web backend = no ingestion stanza in the write sub-agent's prompt."""
+    from agno.context.wiki.provider import WIKI_WEB_INGEST_INSTRUCTIONS
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path))
+    composed = p._compose_write_instructions()
+    assert WIKI_WEB_INGEST_INSTRUCTIONS not in composed
+
+
+def test_web_set_appends_ingestion_stanza(tmp_path: Path):
+    from agno.context.backend import ContextBackend
+    from agno.context.provider import Status as _Status
+    from agno.context.wiki.provider import WIKI_WEB_INGEST_INSTRUCTIONS
+
+    class _StubWeb(ContextBackend):
+        def status(self) -> _Status:
+            return _Status(ok=True, detail="stub")
+
+        async def astatus(self) -> _Status:
+            return self.status()
+
+        def get_tools(self) -> list:
+            return []
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), web=_StubWeb())
+    composed = p._compose_write_instructions()
+    assert WIKI_WEB_INGEST_INSTRUCTIONS in composed
+
+
+def test_instructions_default_mode_advertises_web_when_wired(tmp_path: Path):
+    from agno.context.backend import ContextBackend
+    from agno.context.provider import Status as _Status
+
+    class _StubWeb(ContextBackend):
+        def status(self) -> _Status:
+            return _Status(ok=True, detail="stub")
+
+        async def astatus(self) -> _Status:
+            return self.status()
+
+        def get_tools(self) -> list:
+            return []
+
+    p_no_web = WikiContextProvider(backend=FileSystemBackend(path=tmp_path))
+    assert "fetch the web" not in p_no_web.instructions()
+
+    p_web = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), web=_StubWeb())
+    assert "fetch the web" in p_web.instructions()
 
 
 @pytest.mark.asyncio

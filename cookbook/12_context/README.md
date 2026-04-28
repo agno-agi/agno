@@ -31,6 +31,9 @@ Providers ship in this package:
 | `GDriveContextProvider` | Google Drive via service account | `query_<id>` (list / search / read sub-agent; all-drives aware) |
 | `WikiContextProvider` + `FileSystemBackend` | A directory of markdown files | `query_<id>`, `update_<id>` (separate read/write sub-agents over `Workspace` tools) |
 | `WikiContextProvider` + `GitBackend` | A clone of a git repo (PAT auth) | `query_<id>`, `update_<id>`; writes auto-commit, rebase, and push |
+| `WikiContextProvider` + `web=ContextBackend` | Wiki + web ingestion (e.g. `ExaMCPBackend`) | Write sub-agent gains web search/fetch so `update_<id>("add this paper")` fetches and digests in one hop |
+
+All read+write providers (`WikiContextProvider`, `DatabaseContextProvider`, `SlackContextProvider`) accept `read=True, write=True` flags. Set `write=False` for a read-only surface (e.g. a code-managed voice wiki, an analytics-only DB), or `read=False` for a write-only sink. Both `False` raises.
 
 ## Cookbooks
 
@@ -52,6 +55,8 @@ Providers ship in this package:
 | `13_workspace.py` | Browse a repository root via `WorkspaceContextProvider` without virtualenv / scratch noise |
 | `14_wiki_filesystem.py` | Read + write a local markdown wiki via `WikiContextProvider(backend=FileSystemBackend(...))` |
 | `15_wiki_git.py` | Same provider against a real git remote; auto-commits and pushes (env-gated on `WIKI_REPO_URL` / `WIKI_GITHUB_TOKEN`) |
+| `16_wiki_with_web.py` | Wiki + Exa MCP web backend; "add this paper" fetches the URL, digests it, and files it in one update call |
+| `17_wiki_dual.py` | Two `WikiContextProvider` instances on one agent — `company_knowledge` (full) + `company_voice` (`write=False`) |
 
 ## Run
 
@@ -62,6 +67,8 @@ OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/04_database_read_w
 OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/10_custom_provider.py
 OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/13_workspace.py
 OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/14_wiki_filesystem.py
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/16_wiki_with_web.py
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/17_wiki_dual.py
 
 # Wiki against a real git repo (PAT auth; pushes commits)
 OPENAI_API_KEY=... \

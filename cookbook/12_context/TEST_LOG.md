@@ -5,6 +5,40 @@ against real OpenAI (`gpt-5.4` / `gpt-5.4-mini`).
 
 ## 2026-04-28
 
+### 16_wiki_with_web.py
+
+**Status:** PASS
+
+**Description:** `WikiContextProvider(backend=FileSystemBackend(...), web=ExaMCPBackend())`.
+Asks the agent to ingest CPython's release schedule (PEP 602 / python.org)
+into `papers/cpython-release-cycle.md` via `update_wiki`, then read it
+back via `query_wiki`.
+
+**Result:** Write sub-agent called the Exa MCP `web_search` + `web_fetch`
+tools, digested the source into a markdown page (2349 bytes), and filed it
+under `papers/`. Read sub-agent answered the follow-up citing the page.
+Direct filesystem assertion confirmed at least one page under `papers/`.
+
+---
+
+### 17_wiki_dual.py
+
+**Status:** PASS
+
+**Description:** Two `WikiContextProvider` instances composed on one agent:
+`company_knowledge` (full read+write, FileSystemBackend) and `company_voice`
+(read-only via `write=False`, FileSystemBackend pre-seeded with X +
+LinkedIn voice rules).
+
+**Result:** Outer agent surface contained exactly three tools:
+`query_company_knowledge`, `update_company_knowledge`, `query_company_voice`
+— no `update_company_voice`. Agent called `query_company_voice` first,
+then drafted a LinkedIn post that followed the seeded voice rules
+(hook → proof → takeaway, plain prose, concrete example). Final
+assertion confirmed the absent update tool.
+
+---
+
 ### 14_wiki_filesystem.py
 
 **Status:** PASS
