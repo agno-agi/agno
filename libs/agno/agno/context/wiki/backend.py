@@ -286,7 +286,21 @@ class GitBackend(WikiBackend):
             check=False,
         )
         if diff_check.returncode == 0:
-            log_debug("GitBackend: nothing staged, skipping commit/push")
+            log_debug("GitBackend: nothing staged, skipping commit")
+            # Still attempt a push to flush any local commits left
+            # behind by a previous failed push (e.g. auth recovered
+            # since). `git push` with nothing pending is a cheap no-op
+            # ("Everything up-to-date"); failures stay debug-level so
+            # the agent doesn't see an error for an idle housekeeping
+            # call.
+            try:
+                await git_run(
+                    ["push", "origin", self.branch],
+                    cwd=self.path,
+                    scrubber=self._scrubber,
+                )
+            except GitError as exc:
+                log_debug(f"GitBackend: idle push skipped: {exc}")
             return None
 
         diff_text = (

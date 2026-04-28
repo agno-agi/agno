@@ -500,7 +500,10 @@ async def test_git_backend_commit_after_write_returns_none_when_nothing_staged(m
     )
     b.path.mkdir(parents=True)
 
+    seen: list[list[str]] = []
+
     async def _fake_run(args, *, cwd, scrubber=None, check=True, **kwargs):  # noqa: ANN001
+        seen.append(list(args))
         if args[:3] == ["diff", "--cached", "--quiet"]:
             # Exit 0 == no staged changes.
             return GitResult(returncode=0, stdout="", stderr="")
@@ -510,6 +513,37 @@ async def test_git_backend_commit_after_write_returns_none_when_nothing_staged(m
 
     summary = await b.commit_after_write()
     assert summary is None
+    # The no-op path still attempts a push so any commits left over from a
+    # previous failed push get flushed once auth recovers. `git push` with
+    # nothing to send is a cheap no-op.
+    assert ["push", "origin", "main"] in seen
+
+
+@pytest.mark.asyncio
+async def test_git_backend_idle_push_failure_is_swallowed(monkeypatch, tmp_path: Path):
+    """When nothing is staged, a failing idle push must not propagate."""
+    import agno.context.wiki.backend as backend_module
+
+    b = GitBackend(
+        repo_url="https://github.com/owner/repo.git",
+        github_token="ghp_x",
+        local_path=tmp_path / "clone",
+    )
+    b.path.mkdir(parents=True)
+
+    async def _fake_run(args, *, cwd, scrubber=None, check=True, **kwargs):  # noqa: ANN001
+        if args[:3] == ["diff", "--cached", "--quiet"]:
+            return GitResult(returncode=0, stdout="", stderr="")
+        if args[:1] == ["push"]:
+            from agno.context.wiki.git_ops import GitError
+
+            raise GitError(args=args, returncode=128, stderr="403")
+        return GitResult(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(backend_module, "git_run", _fake_run)
+
+    summary = await b.commit_after_write()
+    assert summary is None  # idle path, push failure swallowed
 
 
 @pytest.mark.asyncio
