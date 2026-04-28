@@ -53,10 +53,10 @@ workbench = Agent(
     tools=[Workspace(".",
         allowed=["read", "list", "search"],
         confirm=["write", "edit", "delete", "shell"],
-    )],  # read/write/edit/shell in this directory
-    enable_agentic_memory=True,  # remembers across sessions
-    add_history_to_context=True,  # include past runs
-    num_history_runs=3,  # last 3 conversations
+    )],
+    enable_agentic_memory=True,
+    add_history_to_context=True,
+    num_history_runs=3,
 )
 
 # Serve via AgentOS → streaming, auth, session isolation, API endpoints
