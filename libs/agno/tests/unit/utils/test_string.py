@@ -48,6 +48,11 @@ def test_url_safe_string_complex():
     )
 
 
+def test_generate_id_from_name_non_string():
+    generated_id = generate_id_from_name(lambda: "dynamic")
+    assert is_valid_uuid(generated_id)
+
+
 class MockModel(BaseModel):
     name: str
     value: Optional[str] = None

@@ -443,7 +443,7 @@ class Agent:
         system_message_role: str = "system",
         introduction: Optional[str] = None,
         build_context: bool = True,
-        description: Optional[str] = None,
+        description: Optional[Union[str, Callable[..., str]]] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         use_instruction_tags: bool = False,
         expected_output: Optional[str] = None,
@@ -480,7 +480,7 @@ class Agent:
         stream_events: Optional[bool] = None,
         store_events: bool = False,
         events_to_skip: Optional[List[RunEvent]] = None,
-        role: Optional[str] = None,
+        role: Optional[Union[str, Callable[..., str]]] = None,
         culture_manager: Optional[CultureManager] = None,
         enable_agentic_culture: bool = False,
         update_cultural_knowledge: bool = False,
@@ -657,7 +657,7 @@ class Agent:
         self.stream_events = stream_events
 
         self.store_events = store_events
-        self.role = role
+        self.role = cast(Optional[str], role)
         # By default, we skip the run response content event
         self.events_to_skip = events_to_skip
         if self.events_to_skip is None:

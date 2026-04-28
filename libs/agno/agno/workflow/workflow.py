@@ -68,7 +68,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowChatInteraction, WorkflowSession
 from agno.team.team import Team
-from agno.utils.agent import validate_input
+from agno.utils.agent import aexecute_instructions, execute_instructions, validate_input
 from agno.utils.log import (
     log_debug,
     log_error,
@@ -407,8 +407,8 @@ class Workflow:
     def __init__(
         self,
         id: Optional[str] = None,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
+        name: Optional[Union[str, Callable[..., str]]] = None,
+        description: Optional[Union[str, Callable[..., str]]] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         steps: Optional[WorkflowSteps] = None,
         agent: Optional[WorkflowAgent] = None,
@@ -435,8 +435,8 @@ class Workflow:
         num_history_runs: int = 3,
     ):
         self.id = id
-        self.name = name
-        self.description = description
+        self.name = cast(Optional[str], name)
+        self.description = cast(Optional[str], description)
         self.steps = steps
         self.agent = agent
         self.session_id = session_id
@@ -4175,9 +4175,58 @@ class Workflow:
 
         log_debug("Workflow agent initialized with run_workflow tool")
 
-    def _get_workflow_agent_dependencies(self, session: WorkflowSession) -> Dict[str, Any]:
+    def _resolve_workflow_prompt_field(
+        self,
+        field_name: str,
+        value: Optional[Union[str, Callable[..., str]]],
+        run_context: Optional[RunContext] = None,
+    ) -> Optional[str]:
+        if value is None:
+            return None
+        if callable(value):
+            resolved_value = execute_instructions(
+                instructions=value,
+                workflow=self,
+                run_context=run_context,
+            )
+            if resolved_value is None:
+                return None
+            if not isinstance(resolved_value, str):
+                raise Exception(f"{field_name} must resolve to a string")
+            return resolved_value
+        if isinstance(value, str):
+            return value
+        return str(value)
+
+    async def _aresolve_workflow_prompt_field(
+        self,
+        field_name: str,
+        value: Optional[Union[str, Callable[..., str]]],
+        run_context: Optional[RunContext] = None,
+    ) -> Optional[str]:
+        if value is None:
+            return None
+        if callable(value):
+            resolved_value = await aexecute_instructions(
+                instructions=value,
+                workflow=self,
+                run_context=run_context,
+            )
+            if resolved_value is None:
+                return None
+            if not isinstance(resolved_value, str):
+                raise Exception(f"{field_name} must resolve to a string")
+            return resolved_value
+        if isinstance(value, str):
+            return value
+        return str(value)
+
+    def _get_workflow_agent_dependencies(
+        self,
+        session: WorkflowSession,
+        run_context: Optional[RunContext] = None,
+    ) -> Dict[str, Any]:
         """Build dependencies dict with workflow context to pass to agent.run()"""
-        # Get configuration from the WorkflowAgent instance
         add_history = True
         num_runs = 5
 
@@ -4192,10 +4241,61 @@ class Workflow:
         else:
             history_context = "No workflow history available."
 
-        # Build workflow context with description and history
+        resolved_name = self._resolve_workflow_prompt_field("name", self.name, run_context=run_context)
+        resolved_description = self._resolve_workflow_prompt_field(
+            "description",
+            self.description,
+            run_context=run_context,
+        )
+
         workflow_context = ""
-        if self.description:
-            workflow_context += f"Workflow Description: {self.description}\n\n"
+        if resolved_name is not None:
+            workflow_context += f"Workflow Name: {resolved_name}\n"
+        if resolved_description is not None:
+            workflow_context += f"Workflow Description: {resolved_description}\n"
+        if workflow_context:
+            workflow_context += "\n"
+
+        workflow_context += history_context
+
+        return {
+            "workflow_context": workflow_context,
+        }
+
+    async def _aget_workflow_agent_dependencies(
+        self,
+        session: WorkflowSession,
+        run_context: Optional[RunContext] = None,
+    ) -> Dict[str, Any]:
+        """Build dependencies dict with workflow context to pass to agent.arun()"""
+        add_history = True
+        num_runs = 5
+
+        if self.agent and isinstance(self.agent, WorkflowAgent):
+            add_history = self.agent.add_workflow_history
+            num_runs = self.agent.num_history_runs or 5
+
+        if add_history:
+            history_context = (
+                session.get_workflow_history_context(num_runs=num_runs) or "No previous workflow runs in this session."
+            )
+        else:
+            history_context = "No workflow history available."
+
+        resolved_name = await self._aresolve_workflow_prompt_field("name", self.name, run_context=run_context)
+        resolved_description = await self._aresolve_workflow_prompt_field(
+            "description",
+            self.description,
+            run_context=run_context,
+        )
+
+        workflow_context = ""
+        if resolved_name is not None:
+            workflow_context += f"Workflow Name: {resolved_name}\n"
+        if resolved_description is not None:
+            workflow_context += f"Workflow Description: {resolved_description}\n"
+        if workflow_context:
+            workflow_context += "\n"
 
         workflow_context += history_context
 
@@ -4275,7 +4375,7 @@ class Workflow:
         self._initialize_workflow_agent(session, execution_input, run_context=run_context, stream=stream)
 
         # Build dependencies with workflow context
-        run_context.dependencies = self._get_workflow_agent_dependencies(session)
+        run_context.dependencies = self._get_workflow_agent_dependencies(session, run_context=run_context)
 
         # Run agent with streaming - workflow events will bubble up from the tool
         agent_response: Optional[RunOutput] = None
@@ -4435,7 +4535,7 @@ class Workflow:
         self._initialize_workflow_agent(session, execution_input, run_context=run_context, stream=stream)
 
         # Build dependencies with workflow context
-        run_context.dependencies = self._get_workflow_agent_dependencies(session)
+        run_context.dependencies = self._get_workflow_agent_dependencies(session, run_context=run_context)
 
         # Run the agent
         agent_response: RunOutput = self.agent.run(  # type: ignore[union-attr]
@@ -4663,8 +4763,7 @@ class Workflow:
             stream=stream,
             websocket_handler=websocket_handler,
         )
-
-        run_context.dependencies = self._get_workflow_agent_dependencies(session)
+        run_context.dependencies = await self._aget_workflow_agent_dependencies(session, run_context=run_context)
 
         agent_response: Optional[RunOutput] = None
         workflow_executed = False
@@ -4842,7 +4941,7 @@ class Workflow:
         self._async_initialize_workflow_agent(session, execution_input, run_context=run_context, stream=stream)
 
         # Build dependencies with workflow context
-        run_context.dependencies = self._get_workflow_agent_dependencies(session)
+        run_context.dependencies = await self._aget_workflow_agent_dependencies(session, run_context=run_context)
 
         # Run the agent
         agent_response: RunOutput = await self.agent.arun(  # type: ignore[union-attr]
