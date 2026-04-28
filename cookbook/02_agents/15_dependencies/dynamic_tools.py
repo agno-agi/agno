@@ -30,7 +30,7 @@ def get_runtime_tools(run_context: RunContext):
 # ---------------------------------------------------------------------------
 agent = Agent(
     name="Dynamic Tools Agent",
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=get_runtime_tools,
 )
 
