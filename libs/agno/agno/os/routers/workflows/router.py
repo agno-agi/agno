@@ -54,6 +54,66 @@ from agno.workflow.workflow import Workflow
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
+    from agno.workflow.types import StepRequirement
+
+
+def _requirement_identity(requirement: Union["StepRequirement", Dict[str, Any]]) -> tuple:
+    """Return a stable identity for matching incoming HITL patches to stored requirements."""
+    if isinstance(requirement, dict):
+        step_id = requirement.get("step_id")
+        step_name = requirement.get("step_name")
+        step_index = requirement.get("step_index")
+    else:
+        step_id = requirement.step_id
+        step_name = requirement.step_name
+        step_index = requirement.step_index
+
+    if step_id:
+        return ("step_id", step_id)
+    return ("step", step_name, step_index)
+
+
+def _merge_step_requirement_patches(
+    existing_requirements: Optional[List["StepRequirement"]],
+    requirement_patches: Optional[List[Dict[str, Any]]],
+) -> Optional[List["StepRequirement"]]:
+    """Merge frontend requirement patches into stored requirements.
+
+    WebSocket clients may send the full StepRequirement.to_dict() payload or only
+    resolution fields such as confirmed, user_input, selected_choices, or
+    executor_requirements.  The stored paused run has the hidden fields required
+    by StepRequirement.from_dict(), so merge patches into those stored objects.
+    """
+    from agno.workflow.types import StepRequirement
+
+    if not requirement_patches:
+        return existing_requirements
+
+    if existing_requirements:
+        merged_by_identity: Dict[tuple, Dict[str, Any]] = {}
+        ordered_identities = []
+        for req in existing_requirements:
+            req_dict = req.to_dict()
+            primary_identity = _requirement_identity(req)
+            fallback_identity = ("step", req.step_name, req.step_index)
+            merged_by_identity[primary_identity] = req_dict
+            merged_by_identity[fallback_identity] = req_dict
+            ordered_identities.append(primary_identity)
+
+        for patch in requirement_patches:
+            if not isinstance(patch, dict):
+                raise ValueError("Each step requirement must be an object")
+
+            identity = _requirement_identity(patch)
+            if identity in merged_by_identity:
+                merged_by_identity[identity].update(patch)
+            else:
+                merged_by_identity[identity] = patch
+                ordered_identities.append(identity)
+
+        return [StepRequirement.from_dict(merged_by_identity[identity]) for identity in ordered_identities]
+
+    return [StepRequirement.from_dict(req) for req in requirement_patches]
 
 
 async def handle_workflow_via_websocket(
@@ -251,7 +311,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
             return
 
         # Run is in buffer (still active or recently completed)
-        if buffer_status in [RunStatus.completed, RunStatus.error, RunStatus.cancelled]:
+        if buffer_status in [RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused]:
             # Run finished - send all events from buffer
             all_events = event_buffer.get_events(run_id, last_event_index=None)
 
@@ -347,6 +407,8 @@ async def handle_workflow_continue_via_websocket(websocket: WebSocket, message: 
         workflow_id = message.get("workflow_id")
         run_id = message.get("run_id")
         session_id = message.get("session_id")
+        user_id = message.get("user_id")
+        factory_input = message.get("factory_input")
         step_requirements_data = message.get("step_requirements")
 
         if not workflow_id:
@@ -356,9 +418,34 @@ async def handle_workflow_continue_via_websocket(websocket: WebSocket, message: 
             await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required"}))
             return
 
-        workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+        is_factory = os.workflows and any(
+            isinstance(w, WorkflowFactory) and w.id == workflow_id for w in (os.workflows or [])
         )
+        if is_factory:
+            from agno.factory import RequestContext, TrustedContext
+
+            ctx = RequestContext(
+                user_id=user_id,
+                session_id=session_id,
+                input=factory_input,
+                trusted=TrustedContext(),
+            )
+            try:
+                workflow = await get_workflow_by_id_async(
+                    workflow_id=workflow_id,
+                    workflows=os.workflows,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    ctx=ctx,
+                )
+            except Exception as e:
+                await websocket.send_text(json.dumps({"event": "error", "error": f"Factory error: {e}"}))
+                return
+        else:
+            workflow = get_workflow_by_id(
+                workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+            )
         if not workflow:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
             return
@@ -385,50 +472,26 @@ async def handle_workflow_continue_via_websocket(websocket: WebSocket, message: 
             )
             return
 
-        # Apply step requirements if provided
-        if step_requirements_data:
-            from agno.workflow.types import StepRequirement
+        # Apply full requirement payloads or partial frontend patches to stored requirements.
+        try:
+            parsed_requirements = _merge_step_requirement_patches(
+                existing_run.step_requirements,
+                step_requirements_data,
+            )
+        except Exception as e:
+            await websocket.send_text(json.dumps({"event": "error", "error": f"Invalid step_requirements: {str(e)}"}))
+            return
 
-            try:
-                parsed_requirements = [StepRequirement.from_dict(req) for req in step_requirements_data]
-                existing_run.step_requirements = parsed_requirements
-            except Exception as e:
-                await websocket.send_text(
-                    json.dumps({"event": "error", "error": f"Invalid step_requirements: {str(e)}"})
-                )
-                return
-
-        # TODO: acontinue_run() does not support background/websocket like arun() does.
-        # arun() delegates to _arun_background_stream() which threads a WebSocketHandler
-        # through _aexecute_stream() and all _handle_event() calls. acontinue_run() and
-        # _acontinue_execute_stream() were never built with this support. To fix properly:
-        #   1. Add background/websocket params to acontinue_run (+ overloads)
-        #   2. Add websocket_handler param to _acontinue_execute_stream
-        #   3. Thread websocket_handler through all _handle_event() calls in both
-        #      _continue_execute_stream and _acontinue_execute_stream
-        #   4. Add _acontinue_run_background_stream() mirroring _arun_background_stream()
-        # For now, iterate the stream in a background task and forward events over the
-        # WebSocket directly. This bypasses _handle_event's event buffering and websocket
-        # manager broadcasting, so reconnecting clients won't receive these events.
-        async def _drive_continue_stream():
-            try:
-                response_stream = await workflow.acontinue_run(  # type: ignore
-                    run_response=existing_run,
-                    session_id=session_id,
-                    stream=True,
-                    stream_events=True,
-                )
-                async for event in response_stream:
-                    event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
-                    await websocket.send_text(json.dumps(event_dict, default=json_serializer))
-            except Exception as e:
-                logger.error(f"Error in continue stream: {e}")
-                try:
-                    await websocket.send_text(json.dumps({"event": "error", "error": str(e)}))
-                except Exception:
-                    pass
-
-        asyncio.create_task(_drive_continue_stream())
+        await workflow.acontinue_run(  # type: ignore
+            run_response=existing_run,
+            session_id=session_id,
+            step_requirements=parsed_requirements,
+            stream=True,
+            stream_events=True,
+            background=True,
+            websocket=websocket,
+            enable_websocket=True,
+        )
 
     except (InputCheckError, OutputCheckError) as e:
         await websocket.send_text(

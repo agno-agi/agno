@@ -11,8 +11,9 @@ from agno.os import AgentOS
 from agno.workflow import OnReject
 from agno.workflow.condition import Condition
 from agno.workflow.factory import WorkflowFactory
+from agno.workflow.router import Router
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import StepInput, StepOutput, UserInputField
 from agno.workflow.workflow import Workflow
 
 
@@ -40,6 +41,11 @@ def _surface(si: StepInput) -> StepOutput:
 def _report(si: StepInput) -> StepOutput:
     prev = si.previous_step_content or "nothing"
     return StepOutput(content=f"Final report based on: {prev}")
+
+
+def _collect_user_input(si: StepInput) -> StepOutput:
+    user_input = (si.additional_data or {}).get("user_input", {})
+    return StepOutput(content=f"Research topic: {user_input.get('topic')}; details: {user_input.get('extra_details')}")
 
 
 class WorkflowFactoryInput(BaseModel):
@@ -122,6 +128,56 @@ def factory_hitl_client(temp_storage_db_file):
     return TestClient(app)
 
 
+@pytest.fixture
+def user_input_hitl_client(temp_storage_db_file):
+    """Create a TestClient with a workflow that pauses for structured user input."""
+    db = SqliteDb(db_file=temp_storage_db_file)
+    workflow = Workflow(
+        name="research-assistant",
+        id="research-assistant",
+        db=db,
+        steps=[
+            Step(
+                name="collect_research_input",
+                executor=_collect_user_input,
+                requires_user_input=True,
+                user_input_message="Please provide your research request:",
+                user_input_schema=[
+                    UserInputField(name="topic", field_type="str", required=True),
+                    UserInputField(name="extra_details", field_type="str", required=False),
+                ],
+            ),
+        ],
+    )
+    app = AgentOS(workflows=[workflow]).get_app()
+    return TestClient(app)
+
+
+@pytest.fixture
+def router_hitl_client(temp_storage_db_file):
+    """Create a TestClient with a workflow that pauses for router selection."""
+    db = SqliteDb(db_file=temp_storage_db_file)
+    workflow = Workflow(
+        name="router-workflow",
+        id="router-workflow",
+        db=db,
+        steps=[
+            Router(
+                name="analysis_router",
+                choices=[
+                    Step(name="quick_analysis", executor=_quick),
+                    Step(name="deep_analysis", executor=_deep),
+                ],
+                requires_user_input=True,
+                user_input_message="Select the type of analysis to perform:",
+            ),
+            Step(name="report", executor=_report),
+        ],
+    )
+    app = AgentOS(workflows=[workflow]).get_app()
+    return TestClient(app)
+
+
 def _collect_sse_chunks(response):
     """Parse SSE stream into list of JSON chunks."""
     chunks = []
@@ -139,6 +195,26 @@ def _find_event(chunks, event_name):
         if c.get("event") == event_name:
             return c
     return None
+
+
+def _parse_ws_message(message: str):
+    """Parse JSON or SSE-formatted WebSocket messages into event dictionaries."""
+    if message.startswith("event: "):
+        for line in message.splitlines():
+            if line.startswith("data: "):
+                return json.loads(line[6:])
+    return json.loads(message)
+
+
+def _receive_ws_event(websocket, event_name: str, max_messages: int = 20):
+    """Receive WebSocket messages until the requested event arrives."""
+    seen = []
+    for _ in range(max_messages):
+        event = _parse_ws_message(websocket.receive_text())
+        seen.append(event.get("event"))
+        if event.get("event") == event_name:
+            return event
+    raise AssertionError(f"Expected {event_name}, got: {seen}")
 
 
 # =============================================================================
@@ -360,3 +436,155 @@ def test_continue_streaming_confirm_then_reject(hitl_client):
 
     completed = _find_event(chunks3, "WorkflowCompleted")
     assert completed is not None, f"Expected WorkflowCompleted, got: {[c.get('event') for c in chunks3]}"
+
+
+# =============================================================================
+# WebSocket tests
+# =============================================================================
+
+
+def test_websocket_continue_confirmation_pauses_again(hitl_client):
+    """WebSocket continue should resolve confirmation HITL and stream the next pause."""
+    with hitl_client.websocket_connect("/workflows/ws") as websocket:
+        _receive_ws_event(websocket, "connected")
+
+        websocket.send_json({"action": "start-workflow", "workflow_id": "decision-tree", "message": "go"})
+        paused = _receive_ws_event(websocket, "StepPaused")
+        assert paused["step_name"] == "first_decision"
+
+        websocket.send_json(
+            {
+                "action": "continue-workflow",
+                "workflow_id": "decision-tree",
+                "run_id": paused["run_id"],
+                "session_id": paused["session_id"],
+                "step_requirements": [
+                    {
+                        "step_name": paused["step_name"],
+                        "step_index": paused["step_index"],
+                        "confirmed": True,
+                    }
+                ],
+            }
+        )
+
+        continued = _receive_ws_event(websocket, "StepContinued")
+        assert continued["step_name"] == "first_decision"
+        paused_again = _receive_ws_event(websocket, "StepPaused")
+        assert paused_again["step_name"] == "second_decision"
+
+
+def test_websocket_continue_user_input(user_input_hitl_client):
+    """WebSocket continue should pass user_input values into the resumed step."""
+    with user_input_hitl_client.websocket_connect("/workflows/ws") as websocket:
+        _receive_ws_event(websocket, "connected")
+
+        websocket.send_json({"action": "start-workflow", "workflow_id": "research-assistant", "message": "go"})
+        paused = _receive_ws_event(websocket, "StepPaused")
+        assert paused["step_name"] == "collect_research_input"
+        assert paused["requires_user_input"] is True
+
+        websocket.send_json(
+            {
+                "action": "continue-workflow",
+                "workflow_id": "research-assistant",
+                "run_id": paused["run_id"],
+                "session_id": paused["session_id"],
+                "step_requirements": [
+                    {
+                        "step_name": paused["step_name"],
+                        "step_index": paused["step_index"],
+                        "user_input": {
+                            "topic": "Artificial Intelligence in Healthcare",
+                            "extra_details": "Focus on diagnostics",
+                        },
+                    }
+                ],
+            }
+        )
+
+        completed = _receive_ws_event(websocket, "WorkflowCompleted")
+        assert "Artificial Intelligence in Healthcare" in completed["content"]
+        assert "Focus on diagnostics" in completed["content"]
+
+
+def test_websocket_continue_router_selection(router_hitl_client):
+    """WebSocket continue should pass selected_choices into router HITL."""
+    with router_hitl_client.websocket_connect("/workflows/ws") as websocket:
+        _receive_ws_event(websocket, "connected")
+
+        websocket.send_json({"action": "start-workflow", "workflow_id": "router-workflow", "message": "go"})
+        paused = _receive_ws_event(websocket, "RouterPaused")
+        assert paused["step_name"] == "analysis_router"
+
+        websocket.send_json(
+            {
+                "action": "continue-workflow",
+                "workflow_id": "router-workflow",
+                "run_id": paused["run_id"],
+                "session_id": paused["session_id"],
+                "step_requirements": [
+                    {
+                        "step_name": paused["step_name"],
+                        "step_index": paused["step_index"],
+                        "selected_choices": ["deep_analysis"],
+                    }
+                ],
+            }
+        )
+
+        completed = _receive_ws_event(websocket, "WorkflowCompleted")
+        assert "Deep dive complete" in completed["content"]
+
+
+def test_websocket_continue_events_replay_on_reconnect(hitl_client):
+    """Continuation events should be buffered and replayable after WebSocket reconnect."""
+    run_id = None
+    session_id = None
+    last_event_index = None
+
+    with hitl_client.websocket_connect("/workflows/ws") as websocket:
+        _receive_ws_event(websocket, "connected")
+
+        websocket.send_json({"action": "start-workflow", "workflow_id": "decision-tree", "message": "go"})
+        paused = _receive_ws_event(websocket, "StepPaused")
+        run_id = paused["run_id"]
+        session_id = paused["session_id"]
+        last_event_index = paused.get("event_index")
+
+        websocket.send_json(
+            {
+                "action": "continue-workflow",
+                "workflow_id": "decision-tree",
+                "run_id": run_id,
+                "session_id": session_id,
+                "step_requirements": [
+                    {
+                        "step_name": paused["step_name"],
+                        "step_index": paused["step_index"],
+                        "confirmed": True,
+                    }
+                ],
+            }
+        )
+        _receive_ws_event(websocket, "StepContinued")
+        _receive_ws_event(websocket, "StepPaused")
+
+    with hitl_client.websocket_connect("/workflows/ws") as websocket:
+        _receive_ws_event(websocket, "connected")
+
+        websocket.send_json(
+            {
+                "action": "reconnect",
+                "workflow_id": "decision-tree",
+                "run_id": run_id,
+                "session_id": session_id,
+                "last_event_index": last_event_index,
+            }
+        )
+        replay = _receive_ws_event(websocket, "replay")
+        assert replay["status"] == "PAUSED"
+        continued = _receive_ws_event(websocket, "StepContinued")
+        assert continued["event_index"] > last_event_index
+        paused_again = _receive_ws_event(websocket, "StepPaused")
+        assert paused_again["step_name"] == "second_decision"

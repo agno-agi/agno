@@ -14,7 +14,11 @@ from agno.agent.protocol import AgentProtocol
 from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.managers import websocket_manager
-from agno.os.routers.workflows.router import handle_workflow_subscription, handle_workflow_via_websocket
+from agno.os.routers.workflows.router import (
+    handle_workflow_continue_via_websocket,
+    handle_workflow_subscription,
+    handle_workflow_via_websocket,
+)
 from agno.os.schema import (
     AgentSummaryResponse,
     BadRequestResponse,
@@ -322,6 +326,10 @@ def get_websocket_router(
                 elif action == "reconnect":
                     # Subscribe/reconnect to an existing workflow run
                     await handle_workflow_subscription(websocket, message, os)
+
+                elif action == "continue-workflow":
+                    # Continue a paused workflow run via WebSocket
+                    await handle_workflow_continue_via_websocket(websocket, message, os)
 
                 else:
                     await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))
