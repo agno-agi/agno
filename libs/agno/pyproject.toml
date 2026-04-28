@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.5.10"
+version = "2.6.3"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -106,12 +106,13 @@ brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
 confluence = ["atlassian-python-api"]
+docling = ["docling"]
 ddg = ["ddgs"]
 duckdb = ["duckdb"]
 elevenlabs = ["elevenlabs"]
 evm = ["web3"]
-exa = ["exa_py"]
-seltz = ["seltz"]
+exa = ["exa_py>=2.0.0"]
+seltz = ["seltz>=0.2.0"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py==3.4.0"]
 tavily = ["tavily-python"]
@@ -134,7 +135,8 @@ parallel = ["parallel-web"]
 psycopg = ["psycopg-binary", "psycopg"]
 redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
-scrapegraph = ["scrapegraph-py"]
+salesforce = ["simple-salesforce"]
+scrapegraph = ["scrapegraph-py>=2.0.0"]
 todoist = ["todoist-api-python"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
@@ -152,7 +154,7 @@ sql = ["sqlalchemy"]
 postgres = ["psycopg-binary"]
 async_postgres = ["asyncpg"]
 async_mongo = ["pymongo>=4.9", "motor"]
-sqlite = ["sqlalchemy"]
+sqlite = ["sqlalchemy", "aiosqlite"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
 redis = ["redis", "redisvl>=0.12.1"]
@@ -183,14 +185,13 @@ text = ["aiofiles"]
 csv = ["aiofiles"]
 excel = ["openpyxl", "xlrd"]
 markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
-docling = ["docling"]
 chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol"]
 
 # Dependencies for A2A integration
-a2a = ["a2a-sdk"]
+a2a = ["a2a-sdk>=0.3.0,<1.0"]
 
 # Dependencies for Slack integration
 slack = ["slack_sdk>=3.40.0"]
@@ -263,10 +264,12 @@ tools = [
   "agno[agentql]",
   "agno[opencv]",
   "agno[parallel]",
+  "agno[salesforce]",
   "agno[scrapegraph]",
   "agno[valyu]",
   "agno[yfinance]",
   "agno[confluence]",
+  "agno[docling]",
   "agno[notion]",
   "agno[oxylabs]",
   "agno[zep]",
@@ -348,12 +351,12 @@ tests = [
     "agno[integration-tests]",
     "twine",
     "build",
-    "grpcio==1.74.0",
+    "grpcio>=1.76.0",
 ]
 
 # Models integration test dependencies
 integration-tests = [
-    "exa_py",
+    "exa_py>=2.0.0",
     "ddgs",
     "yfinance",
     "sqlalchemy",
@@ -369,7 +372,7 @@ demo = [
     "chromadb",
     "ddgs",
     "duckdb",
-    "exa-py",
+    "exa-py>=2.0.0",
     "fastapi[standard]",
     "google-genai",
     "matplotlib",
@@ -388,11 +391,16 @@ demo = [
     "sqlalchemy",
     "yfinance",
     "youtube-transcript-api",
+    "claude-agent-sdk",
+    "langgraph",
+    "langchain-openai",
+    "dspy",
 ]
 
 [project.urls]
-homepage = "https://agno.com"
-documentation = "https://docs.agno.com"
+Homepage = "https://agno.com"
+Documentation = "https://docs.agno.com"
+Repository = "https://github.com/agno-agi/agno"
 
 [build-system]
 requires = ["setuptools"]
@@ -451,6 +459,7 @@ module = [
   "cerebras_cloud_sdk.*",
   "chonkie.*",
   "chromadb.*",
+  "claude_agent_sdk.*",
   "clickhouse_connect.*",
   "clip.*",
   "cohere.*",
@@ -460,6 +469,7 @@ module = [
   "discord.*",
   "docker.*",
   "docling.*",
+  "dspy.*",
   "docx.*",
   "duckdb.*",
   "ddgs.*",

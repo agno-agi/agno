@@ -154,7 +154,7 @@ def create_table_if_not_exists(dynamodb_client, table_name: str, schema: Dict[st
             return True
 
         except Exception as e:
-            log_error(f"Failed to create table {table_name}: {e}")
+            log_error(f"Failed to create table {table_name}: {str(e)}")
             return False
 
 
@@ -291,40 +291,6 @@ def deserialize_session_result(
         return WorkflowSession.from_dict(serialized_session)
 
     return None
-
-
-def deserialize_session(session: Dict[str, Any]) -> Optional[Session]:
-    """Deserialize session data from DynamoDB format to Session object."""
-    try:
-        deserialized = session.copy()
-
-        # Handle JSON fields
-        json_fields = ["session_data", "memory", "tools", "functions", "additional_data"]
-        for field in json_fields:
-            if field in deserialized and deserialized[field] is not None:
-                if isinstance(deserialized[field], str):
-                    try:
-                        deserialized[field] = json.loads(deserialized[field])
-                    except json.JSONDecodeError:
-                        log_error(f"Failed to deserialize {field} field")
-                        deserialized[field] = None
-
-        # Handle timestamp fields
-        for field in ["created_at", "updated_at"]:
-            if field in deserialized and deserialized[field] is not None:
-                if isinstance(deserialized[field], (int, float)):
-                    deserialized[field] = datetime.fromtimestamp(deserialized[field], tz=timezone.utc)
-                elif isinstance(deserialized[field], str):
-                    try:
-                        deserialized[field] = datetime.fromisoformat(deserialized[field])
-                    except ValueError:
-                        deserialized[field] = datetime.fromtimestamp(float(deserialized[field]), tz=timezone.utc)
-
-        return Session.from_dict(deserialized)  # type: ignore
-
-    except Exception as e:
-        log_error(f"Failed to deserialize session: {e}")
-        return None
 
 
 # -- Metrics utils --
@@ -480,16 +446,6 @@ def fetch_all_sessions_data_by_type(
             else:
                 filter_expression = component_filter
 
-        if session_name:
-            name_filter = "#session_name = :session_name"
-            expression_attribute_names["#session_name"] = "session_name"
-            expression_attribute_values[":session_name"] = {"S": session_name}
-
-            if filter_expression:
-                filter_expression += f" AND {name_filter}"
-            else:
-                filter_expression = name_filter
-
         # Use GSI query for session_type (more efficient than scan)
         query_kwargs = {
             "TableName": table_name,
@@ -514,7 +470,7 @@ def fetch_all_sessions_data_by_type(
             items.extend(response.get("Items", []))
 
     except Exception as e:
-        log_error(f"Failed to fetch sessions: {e}")
+        log_error(f"Failed to fetch sessions: {str(e)}")
 
     return items
 
@@ -536,7 +492,7 @@ def bulk_upsert_metrics(dynamodb_client, table_name: str, metrics_data: List[Dic
             dynamodb_client.batch_write_item(RequestItems=request_items)
 
     except Exception as e:
-        log_error(f"Failed to bulk upsert metrics: {e}")
+        log_error(f"Failed to bulk upsert metrics: {str(e)}")
 
 
 # -- Query utils --
@@ -703,7 +659,7 @@ def process_query_results(
             if item:
                 deserialized_items.append(item)
         except Exception as e:
-            log_error(f"Failed to deserialize item: {e}")
+            log_error(f"Failed to deserialize item: {str(e)}")
 
     return deserialized_items
 
