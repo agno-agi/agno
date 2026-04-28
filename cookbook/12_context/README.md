@@ -20,6 +20,7 @@ Providers ship in this package:
 | Provider | Source | Tools |
 |----------|--------|-------|
 | `FilesystemContextProvider` | Local directory tree | `query_<id>` (read-only `FileTools` sub-agent) |
+| `WorkspaceContextProvider` | Local project workspace | `query_<id>` (read-only `Workspace` sub-agent with project-aware excludes) |
 | `WebContextProvider` + `ExaMCPBackend` | Web via Exa's public MCP server (keyless / keyed) | `query_<id>` (search + fetch sub-agent) |
 | `WebContextProvider` + `ExaBackend` | Web via Exa's direct SDK | `query_<id>` (search + fetch sub-agent) |
 | `WebContextProvider` + `ParallelBackend` | Web via Parallel's beta API | `query_<id>` (search + fetch sub-agent) |
@@ -45,6 +46,8 @@ Providers ship in this package:
 | `09_web_plus_slack.py` | Compositional: Slack topics feed per-topic web searches |
 | `10_custom_provider.py` | Subclass `ContextProvider` for your own source |
 | `11_web_parallel_mcp.py` | Web research via Parallel's public MCP endpoint (keyless; `PARALLEL_API_KEY` raises the ceiling) |
+| `12_engineering_briefing.py` | Slack topics + codebase workspace + Parallel web into an engineering-sync briefing |
+| `13_workspace.py` | Browse a repository root via `WorkspaceContextProvider` without virtualenv / scratch noise |
 
 ## Run
 
@@ -53,6 +56,7 @@ Providers ship in this package:
 OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/00_filesystem.py
 OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/04_database_read_write.py
 OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/10_custom_provider.py
+OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/13_workspace.py
 
 # Exa SDK (keyed) — higher throughput
 OPENAI_API_KEY=... EXA_API_KEY=... .venvs/demo/bin/python cookbook/12_context/01_web_exa.py
@@ -79,7 +83,11 @@ OPENAI_API_KEY=... GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/sa.json \
 # Multi-provider (fs + web + db) — web uses Exa MCP, so no EXA key required
 OPENAI_API_KEY=... .venvs/demo/bin/python cookbook/12_context/08_multi_provider.py
 
-# Compositional demo (Slack topics -> per-topic web searches)
-OPENAI_API_KEY=... EXA_API_KEY=... SLACK_BOT_TOKEN=xoxb-... \
+# Compositional demo (Slack topics -> per-topic Parallel web searches)
+OPENAI_API_KEY=... PARALLEL_API_KEY=... SLACK_BOT_TOKEN=xoxb-... \
     .venvs/demo/bin/python cookbook/12_context/09_web_plus_slack.py
+
+# Advanced briefing demo (Slack topics -> codebase workspace -> Parallel web)
+OPENAI_API_KEY=... PARALLEL_API_KEY=... SLACK_BOT_TOKEN=xoxb-... \
+    .venvs/demo/bin/python cookbook/12_context/12_engineering_briefing.py
 ```

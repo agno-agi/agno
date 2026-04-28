@@ -3,6 +3,26 @@
 All end-to-end runs used the demo venv (`.venvs/demo/bin/python`)
 against real OpenAI (`gpt-5.4` / `gpt-5.4-mini`).
 
+## 2026-04-27
+
+### 12_engineering_briefing.py
+
+**Status:** Smoke-only (live Slack + Parallel credentials not
+exercised locally)
+
+**Description:** Three-provider engineering briefing demo. Slack
+topics are matched against the local Agno workspace and enriched with
+Parallel web search.
+
+**Result:** `py_compile` passed; targeted Ruff passed. Import smoke
+with dummy `OPENAI_API_KEY`, `PARALLEL_API_KEY`, and
+`SLACK_BOT_TOKEN` confirmed the outer agent exposes `query_slack`,
+`update_slack`, `query_agno`, and `query_web`; Slack exposes
+bot-token-compatible reads in CLI while adding `search_workspace` only
+when Slack interface metadata provides an action token.
+
+---
+
 ## 2026-04-22
 
 ### 00_filesystem.py
@@ -143,5 +163,21 @@ dict).
 
 **Result:** Agent called `query_faq`, got the return-policy entry,
 and answered the user's question.
+
+---
+
+### 12_workspace.py
+
+**Status:** Smoke-only (no OPENAI_API_KEY available locally)
+
+**Description:** `WorkspaceContextProvider` rooted at the repository.
+It wraps the read-only `Workspace` toolkit so project searches skip
+virtualenvs, dependency folders, build outputs, caches, and agent
+scratch directories by default.
+
+**Result:** Imported the cookbook with
+`PYTHONPATH=libs/agno .venvs/demo/bin/python` to verify construction.
+Unit tests cover the provider surface and exclude behavior for
+`.context` and `.venvs`.
 
 ---
