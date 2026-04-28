@@ -1,9 +1,10 @@
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from agno.exceptions import ModelProviderError
 from agno.media import File
 from agno.models.google.gemini import Gemini
 from agno.models.message import Message
@@ -52,6 +53,76 @@ def test_gemini_get_client_ai_studio_mode():
         assert "credentials" not in kwargs
         assert "api_key" in kwargs
         assert kwargs.get("vertexai") is not True
+
+
+def test_gemini_unknown_error_includes_type_when_message_is_empty():
+    model = Gemini(api_key="test-key")
+    client = MagicMock()
+    client.models.generate_content.side_effect = TimeoutError()
+
+    with patch.object(model, "get_client", return_value=client):
+        with pytest.raises(ModelProviderError) as exc_info:
+            model.invoke([Message(role="user", content="Hello")], Message(role="assistant"))
+
+    assert exc_info.value.message == "TimeoutError"
+    assert isinstance(exc_info.value.__cause__, TimeoutError)
+
+
+def test_gemini_unknown_error_includes_type_and_message():
+    model = Gemini(api_key="test-key")
+    client = MagicMock()
+    client.models.generate_content.side_effect = RuntimeError("connection reset")
+
+    with patch.object(model, "get_client", return_value=client):
+        with pytest.raises(ModelProviderError) as exc_info:
+            model.invoke([Message(role="user", content="Hello")], Message(role="assistant"))
+
+    assert exc_info.value.message == "RuntimeError: connection reset"
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+
+def test_gemini_stream_unknown_error_includes_type_when_message_is_empty():
+    model = Gemini(api_key="test-key")
+    client = MagicMock()
+    client.models.generate_content_stream.side_effect = TimeoutError()
+
+    with patch.object(model, "get_client", return_value=client):
+        with pytest.raises(ModelProviderError) as exc_info:
+            list(model.invoke_stream([Message(role="user", content="Hello")], Message(role="assistant")))
+
+    assert exc_info.value.message == "TimeoutError"
+    assert isinstance(exc_info.value.__cause__, TimeoutError)
+
+
+@pytest.mark.asyncio
+async def test_gemini_async_unknown_error_includes_type_when_message_is_empty():
+    model = Gemini(api_key="test-key")
+    client = MagicMock()
+    client.aio.models.generate_content = AsyncMock(side_effect=TimeoutError())
+
+    with patch.object(model, "get_client", return_value=client):
+        with pytest.raises(ModelProviderError) as exc_info:
+            await model.ainvoke([Message(role="user", content="Hello")], Message(role="assistant"))
+
+    assert exc_info.value.message == "TimeoutError"
+    assert isinstance(exc_info.value.__cause__, TimeoutError)
+
+
+@pytest.mark.asyncio
+async def test_gemini_async_stream_unknown_error_includes_type_when_message_is_empty():
+    model = Gemini(api_key="test-key")
+    client = MagicMock()
+    client.aio.models.generate_content_stream = AsyncMock(side_effect=TimeoutError())
+
+    with patch.object(model, "get_client", return_value=client):
+        with pytest.raises(ModelProviderError) as exc_info:
+            async for _ in model.ainvoke_stream(
+                [Message(role="user", content="Hello")], Message(role="assistant")
+            ):
+                pass
+
+    assert exc_info.value.message == "TimeoutError"
+    assert isinstance(exc_info.value.__cause__, TimeoutError)
 
 
 class TestFormatFileForMessage:

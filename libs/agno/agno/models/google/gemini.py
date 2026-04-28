@@ -63,6 +63,14 @@ except ImportError:
     ToolParallelAiSearch = None
 
 
+def _format_unknown_gemini_error(error: Exception) -> str:
+    error_message = str(error).strip()
+    error_type = type(error).__name__
+    if error_message:
+        return f"{error_type}: {error_message}"
+    return error_type
+
+
 @dataclass
 class Gemini(Model):
     """
@@ -567,8 +575,9 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            error_message = _format_unknown_gemini_error(e)
+            log_error(f"Unknown error from Gemini API: {error_message}")
+            raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
         self,
@@ -621,8 +630,9 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            error_message = _format_unknown_gemini_error(e)
+            log_error(f"Unknown error from Gemini API: {error_message}")
+            raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
         self,
@@ -680,8 +690,9 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            error_message = _format_unknown_gemini_error(e)
+            log_error(f"Unknown error from Gemini API: {error_message}")
+            raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
         self,
@@ -737,8 +748,9 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            error_message = _format_unknown_gemini_error(e)
+            log_error(f"Unknown error from Gemini API: {error_message}")
+            raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     def _format_messages(self, messages: List[Message], compress_tool_results: bool = False):
         """
