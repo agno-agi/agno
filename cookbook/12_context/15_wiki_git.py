@@ -22,7 +22,8 @@ Requires:
 
     Optional:
     WIKI_BRANCH         (default: main)
-    WIKI_LOCAL_PATH     (default: /repos/<sanitized-repo-name>)
+    WIKI_LOCAL_PATH     (default: ./demo-wiki-git/ next to this cookbook;
+                         override to clone elsewhere, e.g. /repos/<name>)
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from pathlib import Path
 
 from agno.agent import Agent
 from agno.context.wiki import GitBackend, WikiContextProvider
@@ -38,7 +40,11 @@ from agno.models.openai import OpenAIResponses
 REPO_URL = os.getenv("WIKI_REPO_URL")
 TOKEN = os.getenv("WIKI_GITHUB_TOKEN")
 BRANCH = os.getenv("WIKI_BRANCH", "main")
-LOCAL_PATH = os.getenv("WIKI_LOCAL_PATH")  # None -> /repos/<sanitized>
+# Default the clone path next to the cookbook so a casual run doesn't
+# require write access to /repos. The directory is gitignored.
+LOCAL_PATH = os.getenv("WIKI_LOCAL_PATH") or str(
+    Path(__file__).resolve().parent / "demo-wiki-git"
+)
 
 if not REPO_URL or not TOKEN:
     print(

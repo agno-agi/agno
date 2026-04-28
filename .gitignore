@@ -76,6 +76,7 @@ agno_json_data/
 cookbook/12_context/demo-wiki/
 cookbook/12_context/demo-wiki-web/
 cookbook/12_context/demo-wiki-dual/
+cookbook/12_context/demo-wiki-git/
 
 # AI
 .claude/
