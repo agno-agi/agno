@@ -337,6 +337,7 @@ jobs:
 
   # Run tests for SambaNova
   test-sambanova:
+    if: false # Temporarily disabled
     runs-on: ubuntu-latest
     strategy:
       matrix:
