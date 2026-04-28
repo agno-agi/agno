@@ -1,5 +1,6 @@
 """Unit tests for E2BTools class."""
 
+import json
 import os
 import sys
 from unittest.mock import Mock, patch
@@ -105,6 +106,51 @@ def test_init_with_env_var():
         with patch.dict("os.environ", {"E2B_API_KEY": TEST_API_KEY}):
             tools = E2BTools()
             assert tools.api_key == TEST_API_KEY
+
+
+def test_init_does_not_create_sandbox():
+    """Test that initialization does not eagerly allocate a sandbox."""
+    with patch("agno.tools.e2b.Sandbox") as mock_sandbox_class:
+        tools = E2BTools(api_key=TEST_API_KEY)
+
+        assert tools._sandbox is None
+        mock_sandbox_class.create.assert_not_called()
+
+
+def test_run_python_code_creates_sandbox_once():
+    """Test that the sandbox is created lazily and then reused."""
+    with patch("agno.tools.e2b.Sandbox") as mock_sandbox_class:
+        mock_sandbox = Mock()
+        mock_sandbox.run_code.return_value = Mock(error=None, logs=[], results=[])
+        mock_sandbox_class.create.return_value = mock_sandbox
+        tools = E2BTools(
+            api_key=TEST_API_KEY,
+            timeout=123,
+            sandbox_options={"template": "python"},
+        )
+
+        result = tools.run_python_code("print('hello')")
+        assert result == "Code executed successfully with no output."
+        mock_sandbox_class.create.assert_called_once_with(
+            api_key=TEST_API_KEY,
+            timeout=123,
+            template="python",
+        )
+
+        tools.run_python_code("print('again')")
+        mock_sandbox_class.create.assert_called_once()
+
+
+def test_shutdown_before_use_does_not_create_sandbox():
+    """Test that shutdown is a no-op when no sandbox has been created yet."""
+    with patch("agno.tools.e2b.Sandbox") as mock_sandbox_class:
+        tools = E2BTools(api_key=TEST_API_KEY)
+
+        result = json.loads(tools.shutdown_sandbox())
+
+        assert result["status"] == "success"
+        assert result["message"] == "No sandbox has been created yet"
+        mock_sandbox_class.create.assert_not_called()
 
 
 def test_init_without_api_key():

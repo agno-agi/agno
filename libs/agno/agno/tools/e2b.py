@@ -41,15 +41,10 @@ class E2BTools(Toolkit):
         if not self.api_key:
             raise ValueError("E2B_API_KEY not set. Please set the E2B_API_KEY environment variable.")
 
-        # Create the sandbox once and reuse it
+        # Create the sandbox lazily on first use and reuse it.
+        self.timeout = timeout
         self.sandbox_options = sandbox_options or {}
-
-        # According to official docs, the parameter is 'timeout' (in seconds), not 'timeout_ms'
-        try:
-            self.sandbox = Sandbox.create(api_key=self.api_key, timeout=timeout, **self.sandbox_options)
-        except Exception as e:
-            logger.exception("Warning: Could not create sandbox")
-            raise e
+        self._sandbox = None
 
         # Last execution result for reference
         self.last_execution = None
@@ -84,6 +79,21 @@ class E2BTools(Toolkit):
         ]
 
         super().__init__(name="e2b_tools", tools=tools, **kwargs)
+
+    @property
+    def sandbox(self):
+        if self._sandbox is None:
+            # According to official docs, the parameter is 'timeout' (in seconds), not 'timeout_ms'
+            try:
+                self._sandbox = Sandbox.create(api_key=self.api_key, timeout=self.timeout, **self.sandbox_options)
+            except Exception as e:
+                logger.exception("Warning: Could not create sandbox")
+                raise e
+        return self._sandbox
+
+    @sandbox.setter
+    def sandbox(self, value):
+        self._sandbox = value
 
     # Code Execution Functions
     def run_python_code(self, code: str) -> str:
@@ -662,7 +672,10 @@ class E2BTools(Toolkit):
             str: Success message or error message
         """
         try:
+            if self._sandbox is None:
+                return json.dumps({"status": "success", "message": "No sandbox has been created yet"})
             cont = self.sandbox.kill()
+            self._sandbox = None
             return json.dumps({"status": "success", "message": "Sandbox shut down successfully", "content": cont})
         except Exception as e:
             return json.dumps({"status": "error", "message": f"Error shutting down sandbox: {str(e)}"})
