@@ -51,7 +51,8 @@ from agno.context.wiki.notion_ops import (
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 if TYPE_CHECKING:
-    pass
+    from agno.agent import Agent
+    from agno.models.base import Model
 
 
 class WikiBackendError(RuntimeError):
@@ -85,6 +86,9 @@ class WikiBackend(ABC):
 
     def __init__(self, *, path: Path) -> None:
         self.path: Path = Path(path).expanduser().resolve()
+        # Cached summarizer agent to avoid per-commit agent creation
+        self._summarizer_agent: Agent | None = None
+        self._summarizer_model: Model | None = None
 
     @abstractmethod
     async def setup(self) -> None:
@@ -152,14 +156,17 @@ class WikiBackend(ABC):
         try:
             from agno.agent import Agent
 
-            summarizer = Agent(
-                id="wiki-commit-summarizer",
-                name="Wiki Commit Summarizer",
-                model=model,
-                instructions=_COMMIT_SUMMARY_INSTRUCTIONS,
-                markdown=False,
-            )
-            output = await summarizer.arun(_truncate_diff(diff))
+            # Reuse cached agent if model unchanged
+            if self._summarizer_agent is None or self._summarizer_model is not model:
+                self._summarizer_agent = Agent(
+                    id="wiki-commit-summarizer",
+                    name="Wiki Commit Summarizer",
+                    model=model,
+                    instructions=_COMMIT_SUMMARY_INSTRUCTIONS,
+                    markdown=False,
+                )
+                self._summarizer_model = model
+            output = await self._summarizer_agent.arun(_truncate_diff(diff))
             text = (
                 output.get_content_as_string()
                 if hasattr(output, "get_content_as_string")
@@ -192,7 +199,7 @@ class FileSystemBackend(WikiBackend):
         log_debug(f"FileSystemBackend ready at {self.path}")
 
     async def sync(self) -> None:
-        return None
+        pass
 
     async def commit_after_write(self, *, model=None) -> CommitSummary | None:  # noqa: ANN001
         return None
@@ -272,7 +279,7 @@ class GitBackend(WikiBackend):
                 if not wiped:
                     needs_clone = False
             else:
-                if any(self.path.iterdir()) and not self.force_clone:
+                if next(self.path.iterdir(), None) is not None and not self.force_clone:
                     raise WikiBackendError(
                         f"GitBackend: {self.path} exists, is non-empty, and is not a git clone. "
                         "Pass force_clone=True after confirming the contents are disposable."
@@ -322,20 +329,12 @@ class GitBackend(WikiBackend):
                 log_debug(f"GitBackend: idle push skipped: {exc}")
             return None
 
-        diff_text = (
-            await git_run(
-                ["diff", "--cached", "--stat"],
-                cwd=self.path,
-                scrubber=self._scrubber,
-            )
-        ).stdout
-        diff_full = (
-            await git_run(
-                ["diff", "--cached"],
-                cwd=self.path,
-                scrubber=self._scrubber,
-            )
-        ).stdout
+        diff_stat_result, diff_full_result = await asyncio.gather(
+            git_run(["diff", "--cached", "--stat"], cwd=self.path, scrubber=self._scrubber),
+            git_run(["diff", "--cached"], cwd=self.path, scrubber=self._scrubber),
+        )
+        diff_text = diff_stat_result.stdout
+        diff_full = diff_full_result.stdout
 
         message = await self.summarize_diff(diff=diff_full or diff_text, model=model)
         await git_run(["commit", "-m", message], cwd=self.path, scrubber=self._scrubber)

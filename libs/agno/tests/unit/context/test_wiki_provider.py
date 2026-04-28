@@ -824,3 +824,115 @@ async def test_provider_threads_run_context_into_sub_agents(tmp_path: Path):
         "metadata": {"action_token": "xoxa-x"},
         "dependencies": {"tenant": "acme"},
     }
+
+
+# ---------------------------------------------------------------------------
+# Summarizer agent caching
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_summarizer_agent_is_cached_across_calls(monkeypatch, tmp_path: Path):
+    """The summarizer agent should be reused when model is unchanged."""
+    import agno.agent as agent_module
+
+    b = GitBackend(
+        repo_url="https://github.com/owner/repo.git",
+        github_token="ghp_x",
+        local_path=tmp_path / "clone",
+    )
+
+    created_agents: list = []
+    model = object()
+
+    def _fake_agent_class(**kwargs):
+        out = type("Out", (), {"get_content_as_string": lambda self: "Add page"})()
+        agent = type("FakeAgent", (), {"arun": AsyncMock(return_value=out)})()
+        created_agents.append(agent)
+        return agent
+
+    monkeypatch.setattr(agent_module, "Agent", _fake_agent_class)
+
+    assert b._summarizer_agent is None
+    await b.summarize_diff(diff="+ added line", model=model)
+    assert len(created_agents) == 1
+    first_agent = b._summarizer_agent
+
+    # Same model — agent reused, no new creation
+    await b.summarize_diff(diff="+ another line", model=model)
+    assert len(created_agents) == 1
+    assert b._summarizer_agent is first_agent
+
+
+@pytest.mark.asyncio
+async def test_summarizer_agent_rebuilds_on_model_change(monkeypatch, tmp_path: Path):
+    """The summarizer agent should be rebuilt when model changes."""
+    import agno.agent as agent_module
+
+    b = GitBackend(
+        repo_url="https://github.com/owner/repo.git",
+        github_token="ghp_x",
+        local_path=tmp_path / "clone",
+    )
+
+    created_agents: list = []
+    model_a = object()
+    model_b = object()
+
+    def _fake_agent_class(**kwargs):
+        out = type("Out", (), {"get_content_as_string": lambda self: "Add page"})()
+        agent = type("FakeAgent", (), {"arun": AsyncMock(return_value=out)})()
+        created_agents.append(agent)
+        return agent
+
+    monkeypatch.setattr(agent_module, "Agent", _fake_agent_class)
+
+    await b.summarize_diff(diff="+ added line", model=model_a)
+    assert len(created_agents) == 1
+    assert b._summarizer_model is model_a
+
+    # Different model — agent rebuilt
+    await b.summarize_diff(diff="+ another line", model=model_b)
+    assert len(created_agents) == 2
+    assert b._summarizer_model is model_b
+
+
+@pytest.mark.asyncio
+async def test_commit_after_write_runs_diffs_in_parallel(monkeypatch, tmp_path: Path):
+    """Both git diff calls should be issued (verifies asyncio.gather path)."""
+    import agno.context.wiki.backend as backend_module
+
+    b = GitBackend(
+        repo_url="https://github.com/owner/repo.git",
+        github_token="ghp_x",
+        local_path=tmp_path / "clone",
+    )
+    b.path.mkdir(parents=True)
+
+    diff_calls: list[list[str]] = []
+
+    async def _fake_run(args, *, cwd, scrubber=None, check=True, **kwargs):  # noqa: ANN001
+        if args[:2] == ["diff", "--cached"]:
+            diff_calls.append(list(args))
+        if args[:3] == ["diff", "--cached", "--quiet"]:
+            return GitResult(returncode=1, stdout="", stderr="")
+        if args[:3] == ["diff", "--cached", "--stat"]:
+            return GitResult(returncode=0, stdout="a.md | 1 +\n 1 file changed", stderr="")
+        if args[:2] == ["diff", "--cached"]:
+            return GitResult(returncode=0, stdout="diff --git a/a.md\n+hi", stderr="")
+        if args[:1] == ["commit"]:
+            return GitResult(returncode=0, stdout="", stderr="")
+        if args[:1] == ["rev-parse"]:
+            return GitResult(returncode=0, stdout="abc123\n", stderr="")
+        return GitResult(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(backend_module, "git_run", _fake_run)
+
+    await b.commit_after_write(model=None)
+
+    # Both diff calls should have been made (--stat and full)
+    stat_calls = [c for c in diff_calls if "--stat" in c]
+    # Full diff is exactly ["diff", "--cached"] (length 2, no --quiet or --stat)
+    full_calls = [c for c in diff_calls if c == ["diff", "--cached"]]
+    assert len(stat_calls) == 1, f"expected 1 --stat call, got {stat_calls}"
+    assert len(full_calls) == 1, f"expected 1 full diff call, got {full_calls}"

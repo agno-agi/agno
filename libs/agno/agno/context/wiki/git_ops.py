@@ -124,12 +124,16 @@ async def run(
         stderr=asyncio.subprocess.PIPE,
         env=full_env,
     )
+
+    def _scrub_args() -> list[str]:
+        return [scrubber.scrub(a) for a in args] if scrubber is not None else list(args)
+
     try:
         stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
-        safe_args = [scrubber.scrub(a) for a in args] if scrubber is not None else list(args)
+        safe_args = _scrub_args()
         raise GitError(
             safe_args,
             -1,
@@ -144,10 +148,7 @@ async def run(
 
     result = GitResult(returncode=proc.returncode or 0, stdout=stdout, stderr=stderr)
     if check and result.returncode != 0:
-        # Scrub args too — `git clone <authenticated-url> ...` would
-        # otherwise leak the PAT into the error string we raise.
-        safe_args = [scrubber.scrub(a) for a in args] if scrubber is not None else list(args)
-        raise GitError(safe_args, result.returncode, result.stderr.strip())
+        raise GitError(_scrub_args(), result.returncode, result.stderr.strip())
     return result
 
 
