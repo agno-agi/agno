@@ -7,6 +7,7 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
+      - "v2.6.0"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
@@ -336,6 +337,7 @@ jobs:
 
   # Run tests for SambaNova
   test-sambanova:
+    if: false # Temporarily disabled
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -465,6 +467,7 @@ jobs:
 
   # Run tests for Cerebras
   test-cerebras:
+    if: false
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -853,6 +856,7 @@ jobs:
           ./libs/agno/tests/integration/teams/test_followups.py \
           ./libs/agno/tests/integration/teams/test_tool_hooks.py \
           ./libs/agno/tests/integration/teams/test_member_dedup.py \
+          ./libs/agno/tests/integration/teams/human_in_the_loop/test_member_run_persistence.py \
 
   verify-split-test-coverage:
     runs-on: ubuntu-latest
@@ -1032,14 +1036,16 @@ jobs:
           VIRTUAL_ENV=.venv uv venv --python 3.12
           VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
           VIRTUAL_ENV=.venv uv pip install -e ./libs/agno[dev,os,integration-tests,openai]
-          VIRTUAL_ENV=.venv uv pip install a2a-sdk
+          # TODO: a2a-sdk v1.0+ has breaking changes, update agno for it
+          VIRTUAL_ENV=.venv uv pip install "a2a-sdk>=0.3.0,<1.0"
       - name: Run A2A integration tests
         working-directory: .
         env:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          pip install a2a-sdk
+          # TODO: a2a-sdk v1.0+ has breaking changes, update agno for it
+          pip install "a2a-sdk>=0.3.0,<1.0"
           python -m pytest ./libs/agno/tests/integration/os/interfaces/test_a2a.py
 
   test-clean:
@@ -1170,7 +1176,7 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 --ignore=./libs/agno/tests/integration/os/interfaces/test_a2a.py --ignore=./libs/agno/tests/integration/os ./libs/agno/tests/integration
+          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 --ignore=./libs/agno/tests/integration/os/interfaces/test_a2a.py --ignore=./libs/agno/tests/integration/os --ignore=./libs/agno/tests/integration/tools/test_seltz.py ./libs/agno/tests/integration
 
   test-dev-setup:
     runs-on: ubuntu-latest

@@ -20,6 +20,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.utils import deserialize_session, deserialize_sessions
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -223,7 +224,7 @@ class GcsJsonDb(BaseDb):
     def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
@@ -231,7 +232,7 @@ class GcsJsonDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to read.
-            session_type (SessionType): The type of the session to read.
+            session_type (Optional[SessionType]): The type of the session to read.
             user_id (Optional[str]): The ID of the user to read the session for.
             deserialize (Optional[bool]): Whether to deserialize the session.
 
@@ -254,14 +255,7 @@ class GcsJsonDb(BaseDb):
                     if not deserialize:
                         return session_data
 
-                    if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session_data)
-                    elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session_data)
-                    elif session_type == SessionType.WORKFLOW:
-                        return WorkflowSession.from_dict(session_data)
-                    else:
-                        raise ValueError(f"Invalid session type: {session_type}")
+                    return deserialize_session(session_type, session_data)
 
             return None
 
@@ -308,11 +302,11 @@ class GcsJsonDb(BaseDb):
             Exception: If an error occurs while reading the sessions.
         """
         try:
-            sessions = self._read_json_file(self.session_table_name)
+            sessions_raw = self._read_json_file(self.session_table_name)
 
             # Apply filters
             filtered_sessions = []
-            for session_data in sessions:
+            for session_data in sessions_raw:
                 if user_id is not None and session_data.get("user_id") != user_id:
                     continue
                 if component_id is not None:
@@ -322,17 +316,25 @@ class GcsJsonDb(BaseDb):
                         continue
                     elif session_type == SessionType.WORKFLOW and session_data.get("workflow_id") != component_id:
                         continue
-                if start_timestamp is not None and session_data.get("created_at", 0) < start_timestamp:
+                    elif session_type is None:
+                        if (
+                            session_data.get("agent_id") != component_id
+                            and session_data.get("team_id") != component_id
+                            and session_data.get("workflow_id") != component_id
+                        ):
+                            continue
+                if start_timestamp is not None and (session_data.get("created_at") or 0) < start_timestamp:
                     continue
-                if end_timestamp is not None and session_data.get("created_at", 0) > end_timestamp:
+                if end_timestamp is not None and (session_data.get("created_at") or 0) > end_timestamp:
                     continue
                 if session_name is not None:
-                    stored_name = session_data.get("session_data", {}).get("session_name", "")
+                    stored_name = (session_data.get("session_data") or {}).get("session_name", "")
                     if session_name.lower() not in stored_name.lower():
                         continue
-                session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                if session_data.get("session_type") != session_type_value:
-                    continue
+                if session_type is not None:
+                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
+                    if session_data.get("session_type") != session_type_value:
+                        continue
 
                 filtered_sessions.append(session_data)
 
@@ -351,14 +353,7 @@ class GcsJsonDb(BaseDb):
             if not deserialize:
                 return filtered_sessions, total_count
 
-            if session_type == SessionType.AGENT:
-                return [AgentSession.from_dict(session) for session in filtered_sessions]  # type: ignore
-            elif session_type == SessionType.TEAM:
-                return [TeamSession.from_dict(session) for session in filtered_sessions]  # type: ignore
-            elif session_type == SessionType.WORKFLOW:
-                return [WorkflowSession.from_dict(session) for session in filtered_sessions]  # type: ignore
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_sessions(session_type, filtered_sessions)
 
         except Exception as e:
             log_warning(f"Exception reading from session file: {str(e)}")
@@ -367,7 +362,7 @@ class GcsJsonDb(BaseDb):
     def rename_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType],
         session_name: str,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
@@ -377,29 +372,24 @@ class GcsJsonDb(BaseDb):
             sessions = self._read_json_file(self.session_table_name)
 
             for i, session_data in enumerate(sessions):
-                if (
-                    session_data.get("session_id") == session_id
-                    and session_data.get("session_type") == session_type.value
-                ):
-                    if user_id is not None and session_data.get("user_id") != user_id:
-                        continue
-                    # Update session name in session_data
-                    if "session_data" not in session_data:
-                        session_data["session_data"] = {}
-                    session_data["session_data"]["session_name"] = session_name
+                if session_data.get("session_id") != session_id:
+                    continue
+                if session_type is not None and session_data.get("session_type") != session_type.value:
+                    continue
+                if user_id is not None and session_data.get("user_id") != user_id:
+                    continue
+                # Update session name in session_data
+                if "session_data" not in session_data or session_data["session_data"] is None:
+                    session_data["session_data"] = {}
+                session_data["session_data"]["session_name"] = session_name
 
-                    sessions[i] = session_data
-                    self._write_json_file(self.session_table_name, sessions)
+                sessions[i] = session_data
+                self._write_json_file(self.session_table_name, sessions)
 
-                    if not deserialize:
-                        return session_data
+                if not deserialize:
+                    return session_data
 
-                    if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session_data)
-                    elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session_data)
-                    elif session_type == SessionType.WORKFLOW:
-                        return WorkflowSession.from_dict(session_data)
+                return deserialize_session(session_type, session_data)
 
             return None
         except Exception as e:

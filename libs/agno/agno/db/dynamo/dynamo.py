@@ -20,7 +20,6 @@ from agno.db.dynamo.utils import (
     deserialize_eval_record,
     deserialize_from_dynamodb_item,
     deserialize_knowledge_row,
-    deserialize_session,
     deserialize_session_result,
     execute_query_with_pagination,
     fetch_all_sessions_data,
@@ -36,7 +35,8 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.session import AgentSession, Session, TeamSession, WorkflowSession
+from agno.db.utils import deserialize_session, deserialize_sessions
+from agno.session import Session
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
 
@@ -284,7 +284,7 @@ class DynamoDb(BaseDb):
     def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -293,7 +293,7 @@ class DynamoDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to get.
-            session_type (SessionType): The type of session to get.
+            session_type (Optional[SessionType]): The type of session to get. If None, the type is inferred.
             user_id (Optional[str]): The ID of the user to get the session for.
             deserialize (Optional[bool]): Whether to deserialize the session.
 
@@ -325,14 +325,7 @@ class DynamoDb(BaseDb):
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
             log_error(f"Failed to get session {session_id}: {str(e)}")
@@ -340,7 +333,7 @@ class DynamoDb(BaseDb):
 
     def get_sessions(
         self,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -357,73 +350,126 @@ class DynamoDb(BaseDb):
             if table_name is None:
                 return [] if deserialize else ([], 0)
 
-            # Build filter expression for additional filters
-            filter_expression = None
-            expression_attribute_names = {}
-            expression_attribute_values = {":session_type": {"S": session_type.value}}
+            # Build filter parts (non-key filters used by both query and scan)
+            non_key_filters: List[str] = []
+            expression_attribute_names: Dict[str, str] = {}
+            expression_attribute_values: Dict[str, Any] = {}
 
             if user_id is not None:
-                filter_expression = "#user_id = :user_id"
+                non_key_filters.append("#user_id = :user_id")
                 expression_attribute_names["#user_id"] = "user_id"
                 expression_attribute_values[":user_id"] = {"S": user_id}
 
             if component_id:
-                # Map component_id to the appropriate field based on session type
                 if session_type == SessionType.AGENT:
-                    component_filter = "#agent_id = :component_id"
+                    non_key_filters.append("#agent_id = :component_id")
                     expression_attribute_names["#agent_id"] = "agent_id"
                 elif session_type == SessionType.TEAM:
-                    component_filter = "#team_id = :component_id"
+                    non_key_filters.append("#team_id = :component_id")
                     expression_attribute_names["#team_id"] = "team_id"
-                else:
-                    component_filter = "#workflow_id = :component_id"
+                elif session_type == SessionType.WORKFLOW:
+                    non_key_filters.append("#workflow_id = :component_id")
                     expression_attribute_names["#workflow_id"] = "workflow_id"
+                elif session_type is None:
+                    non_key_filters.append(
+                        "(#agent_id = :component_id OR #team_id = :component_id OR #workflow_id = :component_id)"
+                    )
+                    expression_attribute_names["#agent_id"] = "agent_id"
+                    expression_attribute_names["#team_id"] = "team_id"
+                    expression_attribute_names["#workflow_id"] = "workflow_id"
+                expression_attribute_values[":component_id"] = {"S": component_id}
 
-                if component_filter:
-                    expression_attribute_values[":component_id"] = {"S": component_id}
-                    if filter_expression:
-                        filter_expression += f" AND {component_filter}"
-                    else:
-                        filter_expression = component_filter
+            # Build timestamp conditions separately: they go into KeyConditionExpression
+            # when querying the session_type-created_at-index GSI (created_at is the range key),
+            # but into FilterExpression when scanning the base table.
+            #
+            # DynamoDB only allows one condition per key in KeyConditionExpression, so when
+            # both start and end are provided we must use BETWEEN instead of two separate conditions.
+            has_start = start_timestamp is not None
+            has_end = end_timestamp is not None
 
-            if session_name:
-                name_filter = "#session_name = :session_name"
-                expression_attribute_names["#session_name"] = "session_name"
-                expression_attribute_values[":session_name"] = {"S": session_name}
-                if filter_expression:
-                    filter_expression += f" AND {name_filter}"
-                else:
-                    filter_expression = name_filter
+            if has_start or has_end:
+                expression_attribute_names["#created_at"] = "created_at"
 
-            # Use GSI query for session_type
-            query_kwargs = {
-                "TableName": table_name,
-                "IndexName": "session_type-created_at-index",
-                "KeyConditionExpression": "session_type = :session_type",
-                "ExpressionAttributeValues": expression_attribute_values,
-            }
-            if filter_expression:
-                query_kwargs["FilterExpression"] = filter_expression
-            if expression_attribute_names:
-                query_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+            if has_start:
+                expression_attribute_values[":start_ts"] = {"N": str(start_timestamp)}
+            if has_end:
+                expression_attribute_values[":end_ts"] = {"N": str(end_timestamp)}
 
-            # Apply sorting
-            if sort_by == "created_at":
-                query_kwargs["ScanIndexForward"] = sort_order != "desc"  # type: ignore
+            # For the scan path, individual conditions are fine (no key constraint).
+            scan_timestamp_conditions: List[str] = []
+            if has_start:
+                scan_timestamp_conditions.append("#created_at >= :start_ts")
+            if has_end:
+                scan_timestamp_conditions.append("#created_at <= :end_ts")
 
-            # Apply limit at DynamoDB level
-            if limit and not page:
-                query_kwargs["Limit"] = limit  # type: ignore
+            # For the query path (GSI), build a single key range condition.
+            if has_start and has_end:
+                key_range_condition = "#created_at BETWEEN :start_ts AND :end_ts"
+            elif has_start:
+                key_range_condition = "#created_at >= :start_ts"
+            elif has_end:
+                key_range_condition = "#created_at <= :end_ts"
+            else:
+                key_range_condition = None
 
             items = []
-            response = self.client.query(**query_kwargs)
-            items.extend(response.get("Items", []))
+            if session_type is not None:
+                expression_attribute_values[":session_type"] = {"S": session_type.value}
 
-            # Handle pagination
-            while "LastEvaluatedKey" in response:
-                query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                # When querying session_type-created_at-index, created_at is the range key
+                # and must be part of KeyConditionExpression, not FilterExpression.
+                key_condition = "session_type = :session_type"
+                if key_range_condition:
+                    key_condition += " AND " + key_range_condition
+
+                query_kwargs: Dict[str, Any] = {
+                    "TableName": table_name,
+                    "IndexName": "session_type-created_at-index",
+                    "KeyConditionExpression": key_condition,
+                    "ExpressionAttributeValues": expression_attribute_values,
+                }
+                if non_key_filters:
+                    query_kwargs["FilterExpression"] = " AND ".join(non_key_filters)
+                if expression_attribute_names:
+                    query_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+
+                if sort_by == "created_at":
+                    query_kwargs["ScanIndexForward"] = sort_order != "desc"
+
+                if limit and not page:
+                    query_kwargs["Limit"] = limit
+
                 response = self.client.query(**query_kwargs)
                 items.extend(response.get("Items", []))
+
+                # Handle query pagination
+                while "LastEvaluatedKey" in response:
+                    query_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                    response = self.client.query(**query_kwargs)
+                    items.extend(response.get("Items", []))
+            else:
+                # For scan, timestamp conditions go into FilterExpression
+                # (created_at is not a key attribute on the base table).
+                all_scan_filters = non_key_filters + scan_timestamp_conditions
+                scan_kwargs: Dict[str, Any] = {"TableName": table_name}
+                if all_scan_filters:
+                    scan_kwargs["FilterExpression"] = " AND ".join(all_scan_filters)
+                if expression_attribute_names:
+                    scan_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+                if expression_attribute_values:
+                    scan_kwargs["ExpressionAttributeValues"] = expression_attribute_values
+                if limit and not page:
+                    scan_kwargs["Limit"] = limit
+
+                response = self.client.scan(**scan_kwargs)
+                items.extend(response.get("Items", []))
+
+                # Handle scan pagination
+                while "LastEvaluatedKey" in response:
+                    scan_kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+                    response = self.client.scan(**scan_kwargs)
+                    items.extend(response.get("Items", []))
 
             # Convert DynamoDB items to session data
             sessions_data = []
@@ -432,8 +478,16 @@ class DynamoDb(BaseDb):
                 if session_data:
                     sessions_data.append(session_data)
 
-            # Apply in-memory sorting for fields not supported by DynamoDB
-            if sort_by and sort_by != "created_at":
+            # Filter by session_name in-memory (stored inside session_data JSON)
+            if session_name:
+                sessions_data = [
+                    s
+                    for s in sessions_data
+                    if session_name.lower() in (s.get("session_data") or {}).get("session_name", "").lower()
+                ]
+
+            # Apply in-memory sorting
+            if sort_by:
                 sessions_data = apply_sorting(sessions_data, sort_by, sort_order)
 
             # Get total count before pagination
@@ -446,13 +500,7 @@ class DynamoDb(BaseDb):
             if not deserialize:
                 return sessions_data, total_count
 
-            sessions = []
-            for session_data in sessions_data:
-                session = deserialize_session(session_data)
-                if session:
-                    sessions.append(session)
-
-            return sessions
+            return deserialize_sessions(session_type, sessions_data)
 
         except Exception as e:
             log_error(f"Failed to get sessions: {str(e)}")
@@ -461,7 +509,7 @@ class DynamoDb(BaseDb):
     def rename_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType],
         session_name: str,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
@@ -494,32 +542,40 @@ class DynamoDb(BaseDb):
             if not current_item:
                 return None
 
+            # Deserialize the item once and reuse
+            item_data = deserialize_from_dynamodb_item(current_item)
+
             # Verify user_id if provided
             if user_id is not None:
-                item_data = deserialize_from_dynamodb_item(current_item)
                 if item_data.get("user_id") != user_id:
                     return None
 
             # Update session_data with the new session_name
-            session_data = deserialize_from_dynamodb_item(current_item).get("session_data", {})
+            session_data = item_data.get("session_data", {})
             session_data["session_name"] = session_name
-            condition_expr = "session_type = :session_type"
             attr_values: Dict[str, Any] = {
                 ":session_data": {"S": json.dumps(session_data)},
-                ":session_type": {"S": session_type.value},
                 ":updated_at": {"N": str(int(time.time()))},
             }
+            condition_parts: List[str] = []
+            if session_type is not None:
+                attr_values[":session_type"] = {"S": session_type.value}
+                condition_parts.append("session_type = :session_type")
             if user_id is not None:
-                condition_expr += " AND user_id = :user_id"
+                condition_parts.append("user_id = :user_id")
                 attr_values[":user_id"] = {"S": user_id}
-            response = self.client.update_item(
-                TableName=self.session_table_name,
-                Key={"session_id": {"S": session_id}},
-                UpdateExpression="SET session_data = :session_data, updated_at = :updated_at",
-                ConditionExpression=condition_expr,
-                ExpressionAttributeValues=attr_values,
-                ReturnValues="ALL_NEW",
-            )
+
+            update_kwargs: Dict[str, Any] = {
+                "TableName": self.session_table_name,
+                "Key": {"session_id": {"S": session_id}},
+                "UpdateExpression": "SET session_data = :session_data, updated_at = :updated_at",
+                "ExpressionAttributeValues": attr_values,
+                "ReturnValues": "ALL_NEW",
+            }
+            if condition_parts:
+                update_kwargs["ConditionExpression"] = " AND ".join(condition_parts)
+
+            response = self.client.update_item(**update_kwargs)
             item = response.get("Attributes")
             if not item:
                 return None
@@ -528,12 +584,11 @@ class DynamoDb(BaseDb):
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            else:
-                return WorkflowSession.from_dict(session)
+            return deserialize_session(session_type, session)
+
+        except self.client.exceptions.ConditionalCheckFailedException:
+            log_debug(f"Rename condition not met for session {session_id} (type/user mismatch)")
+            return None
 
         except Exception as e:
             log_error(f"Failed to rename session {session_id}: {str(e)}")

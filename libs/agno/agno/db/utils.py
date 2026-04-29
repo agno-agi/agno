@@ -2,7 +2,7 @@
 
 import json
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import UUID
 
 from agno.metrics import ModelMetrics, RunMetrics, SessionMetrics
@@ -10,7 +10,155 @@ from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
-    from agno.db.base import BaseDb
+    from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+    from agno.registry.registry import Registry
+    from agno.session import Session
+
+
+# Keys in a serialized db dict that correspond to table-name overrides.
+# Matches the parameters BaseDb.__init__ accepts for customizing table names.
+DB_TABLE_NAME_KEYS: frozenset = frozenset(
+    {
+        "session_table",
+        "culture_table",
+        "memory_table",
+        "metrics_table",
+        "eval_table",
+        "knowledge_table",
+        "traces_table",
+        "spans_table",
+        "versions_table",
+        "components_table",
+        "component_configs_table",
+        "component_links_table",
+        "learnings_table",
+        "schedules_table",
+        "schedule_runs_table",
+        "approvals_table",
+    }
+)
+
+
+def detect_session_type(record: Dict[str, Any]) -> str:
+    """Detect session type from a raw session dict, inferring from component IDs if needed.
+
+    Priority: stored session_type > component IDs (agent_id > team_id > workflow_id) > fallback "agent".
+
+    Args:
+        record: Raw session dictionary.
+
+    Returns:
+        Session type string ("agent", "team", or "workflow").
+    """
+    st = record.get("session_type")
+    if st:
+        return st.value if hasattr(st, "value") else st
+    if record.get("agent_id"):
+        return "agent"
+    if record.get("team_id"):
+        return "team"
+    if record.get("workflow_id"):
+        return "workflow"
+    return "agent"
+
+
+def deserialize_session_by_type(record: Dict[str, Any]) -> "Session":
+    """Deserialize a raw session dict into the correct Session subclass based on detected type.
+
+    Args:
+        record: Raw session dictionary.
+
+    Returns:
+        Session subclass instance (AgentSession, TeamSession, or WorkflowSession).
+    """
+    from agno.session import AgentSession, TeamSession, WorkflowSession
+
+    st = detect_session_type(record)
+    if st == "agent":
+        return AgentSession.from_dict(record)  # type: ignore
+    elif st == "team":
+        return TeamSession.from_dict(record)  # type: ignore
+    elif st == "workflow":
+        return WorkflowSession.from_dict(record)  # type: ignore
+    return AgentSession.from_dict(record)  # type: ignore
+
+
+def deserialize_session(session_type: Optional["SessionType"], record: Dict[str, Any]) -> "Session":
+    """Deserialize a raw session dict into the correct Session subclass.
+
+    Args:
+        session_type: The type to deserialize as. If None, auto-detects from the record's component IDs.
+        record: Raw session dictionary.
+
+    Returns:
+        Session subclass instance (AgentSession, TeamSession, or WorkflowSession).
+
+    Raises:
+        ValueError: If session_type is not a valid SessionType.
+    """
+    from agno.db.base import SessionType
+    from agno.session import AgentSession, TeamSession, WorkflowSession
+
+    if session_type is None:
+        return deserialize_session_by_type(record)
+    if session_type == SessionType.AGENT:
+        return AgentSession.from_dict(record)  # type: ignore
+    elif session_type == SessionType.TEAM:
+        return TeamSession.from_dict(record)  # type: ignore
+    elif session_type == SessionType.WORKFLOW:
+        return WorkflowSession.from_dict(record)  # type: ignore
+    raise ValueError(f"Invalid session type: {session_type}")
+
+
+def deserialize_sessions(session_type: Optional["SessionType"], records: List[Dict[str, Any]]) -> List["Session"]:
+    """Deserialize a list of raw session dicts into the correct Session subclasses.
+
+    Args:
+        session_type: The type to deserialize as. If None, auto-detects each record individually.
+        records: List of raw session dictionaries.
+
+    Returns:
+        List of Session subclass instances.
+    """
+    return [deserialize_session(session_type, record) for record in records]
+
+
+async def resolve_session_type(
+    db: Union["BaseDb", "AsyncBaseDb"],
+    session_id: str,
+    session_type: Optional["SessionType"],
+    user_id: Optional[str] = None,
+) -> Tuple[Optional["SessionType"], Optional[Any]]:
+    """Resolve session type by auto-detecting from DB if not provided.
+
+    Args:
+        db: Database adapter instance (sync or async).
+        session_id: The session ID to look up.
+        session_type: The session type if already known. If None, auto-detects from DB.
+        user_id: Optional user ID filter.
+
+    Returns:
+        Tuple of (resolved_type, raw_session):
+        - If session_type is already set: (session_type, None) — no DB fetch needed.
+        - If session_type is None and session found: (detected_type, raw_dict).
+        - If session_type is None and session not found: (None, None).
+    """
+    if session_type is not None:
+        return session_type, None
+
+    from agno.db.base import AsyncBaseDb, SessionType
+
+    if isinstance(db, AsyncBaseDb):
+        raw = await db.get_session(session_id=session_id, user_id=user_id, deserialize=False)
+    else:
+        raw = db.get_session(session_id=session_id, user_id=user_id, deserialize=False)
+
+    if not raw:
+        return None, None
+
+    detected = detect_session_type(raw if isinstance(raw, dict) else {})
+    resolved = SessionType(detected)
+    return resolved, raw
 
 
 def get_sort_value(record: Dict[str, Any], sort_by: str) -> Any:
@@ -75,7 +223,7 @@ def serialize_session_json_fields(session: dict) -> dict:
     datetime, date, UUID, Message, Metrics, etc.
 
     Args:
-        data (dict): The dictionary to serialize JSON fields in.
+        session (dict): The session dictionary to serialize JSON fields in.
 
     Returns:
         dict: The dictionary with JSON fields serialized.
@@ -193,3 +341,116 @@ def db_from_dict(db_data: Dict[str, Any]) -> Optional[Union["BaseDb"]]:
     else:
         log_warning(f"Unknown database type: {db_type}")
         return None
+
+
+def _clone_db_with_table_overrides(
+    source_db: "BaseDb",
+    db_data: Dict[str, Any],
+) -> Optional["BaseDb"]:
+    """Create a new ``BaseDb`` that shares ``source_db``'s engine but
+    applies the table-name overrides from ``db_data``.
+
+    Sharing the underlying SQLAlchemy engine is critical: otherwise every
+    component load would spin up its own connection pool and blow past
+    backend connection limits. This helper is used when the stored
+    config references a known db (same id) but customizes table names.
+
+    Connection metadata (``db_url`` / ``db_file`` / ``db_schema``) is
+    carried over from ``source_db`` so the clone's ``to_dict`` still
+    round-trips to a usable config if it is re-saved and later loaded
+    without a registry.
+
+    Returns ``None`` if the source db type is not recognized, so the
+    caller can decide how to fall back.
+    """
+    overrides: Dict[str, Any] = {key: db_data[key] for key in DB_TABLE_NAME_KEYS if key in db_data}
+
+    try:
+        from agno.db.postgres import PostgresDb
+
+        if isinstance(source_db, PostgresDb):
+            return PostgresDb(
+                db_url=source_db.db_url,
+                db_engine=source_db.db_engine,
+                db_schema=source_db.db_schema,
+                id=source_db.id,
+                **overrides,
+            )
+    except Exception as e:
+        log_error(f"Error cloning PostgresDb with table overrides: {str(e)}")
+        return None
+
+    try:
+        from agno.db.sqlite import SqliteDb
+
+        if isinstance(source_db, SqliteDb):
+            return SqliteDb(
+                db_file=source_db.db_file,
+                db_url=source_db.db_url,
+                db_engine=source_db.db_engine,
+                id=source_db.id,
+                **overrides,
+            )
+    except Exception as e:
+        log_error(f"Error cloning SqliteDb with table overrides: {str(e)}")
+        return None
+
+    return None
+
+
+def resolve_db_from_config(
+    db_data: Dict[str, Any],
+    registry: Optional["Registry"] = None,
+) -> Optional["BaseDb"]:
+    """Resolve a serialized db config to a concrete ``BaseDb`` instance.
+
+    Prefers a registered db instance (for connection reuse) when the
+    serialized config does not override any table names. If it does, a
+    clone of the registered instance is returned that **shares the same
+    engine/connection pool** but carries the table-name overrides, so
+    component reloads don't proliferate engines.
+
+    Only when there is no registry match (or the registered db type is
+    unknown to the cloner) do we fall through to :func:`db_from_dict`,
+    which builds a fresh instance with its own engine.
+
+    Args:
+        db_data: Serialized db config dict (as produced by
+            ``BaseDb.to_dict``). Expected to carry a ``type`` plus any
+            table-name overrides.
+        registry: Optional ``Registry`` to look up an already-constructed
+            db instance by id.
+
+    Returns:
+        A ``BaseDb`` instance, or ``None`` if reconstruction fails.
+    """
+    db_id = db_data.get("id")
+    if registry is not None and db_id:
+        registry_db = registry.get_db(db_id)
+        if registry_db is not None:
+            registry_dict = registry_db.to_dict()
+            has_table_overrides = any(
+                key in db_data and db_data[key] != registry_dict.get(key) for key in DB_TABLE_NAME_KEYS
+            )
+            if not has_table_overrides:
+                return registry_db
+            # Stored config customizes table names. Clone the registered
+            # db so we reuse its engine/pool and only swap table names.
+            clone = _clone_db_with_table_overrides(registry_db, db_data)
+            if clone is not None:
+                return clone
+            # The registered db type isn't one the cloner knows how to
+            # rebuild (e.g. JsonDb, RedisDb, FirestoreDb, DynamoDb, ...).
+            # Fall back to the registered instance rather than building
+            # a fresh one via db_from_dict, which only handles postgres
+            # and sqlite and would return None for these backends. This
+            # means table overrides are silently ignored for unsupported
+            # types, but the component still gets a working db — same as
+            # the pre-override behavior for those backends.
+            log_warning(
+                f"Cannot apply table-name overrides to db of type {type(registry_db).__name__}; "
+                "reusing the registered instance with its configured table names."
+            )
+            return registry_db
+
+    return db_from_dict(db_data)

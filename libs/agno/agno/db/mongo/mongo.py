@@ -28,7 +28,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session_json_fields
+from agno.db.utils import deserialize_session, deserialize_session_json_fields, deserialize_sessions
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -358,7 +358,7 @@ class MongoDb(BaseDb):
     def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -366,9 +366,9 @@ class MongoDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to get.
-            session_type (SessionType): The type of session to get.
+            session_type (Optional[SessionType]): The type of session to get. If None, auto-detected from record.
             user_id (Optional[str]): The ID of the user to get the session for.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Union[Session, Dict[str, Any], None]:
@@ -395,14 +395,7 @@ class MongoDb(BaseDb):
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
             log_error(f"Exception reading session: {str(e)}")
@@ -456,7 +449,7 @@ class MongoDb(BaseDb):
             if user_id is not None:
                 query["user_id"] = user_id
             if session_type is not None:
-                query["session_type"] = session_type
+                query["session_type"] = session_type.value if hasattr(session_type, "value") else session_type
             if component_id is not None:
                 if session_type == SessionType.AGENT:
                     query["agent_id"] = component_id
@@ -464,6 +457,12 @@ class MongoDb(BaseDb):
                     query["team_id"] = component_id
                 elif session_type == SessionType.WORKFLOW:
                     query["workflow_id"] = component_id
+                elif session_type is None:
+                    query["$or"] = [
+                        {"agent_id": component_id},
+                        {"team_id": component_id},
+                        {"workflow_id": component_id},
+                    ]
             if start_timestamp is not None:
                 query["created_at"] = {"$gte": start_timestamp}
             if end_timestamp is not None:
@@ -499,22 +498,7 @@ class MongoDb(BaseDb):
             if not deserialize:
                 return sessions_raw, total_count
 
-            sessions: List[Union[AgentSession, TeamSession, WorkflowSession]] = []
-            for record in sessions_raw:
-                if session_type == SessionType.AGENT.value:
-                    agent_session = AgentSession.from_dict(record)
-                    if agent_session is not None:
-                        sessions.append(agent_session)
-                elif session_type == SessionType.TEAM.value:
-                    team_session = TeamSession.from_dict(record)
-                    if team_session is not None:
-                        sessions.append(team_session)
-                elif session_type == SessionType.WORKFLOW.value:
-                    workflow_session = WorkflowSession.from_dict(record)
-                    if workflow_session is not None:
-                        sessions.append(workflow_session)
-
-            return sessions
+            return deserialize_sessions(session_type, sessions_raw)
 
         except Exception as e:
             log_error(f"Exception reading sessions: {str(e)}")
@@ -523,7 +507,7 @@ class MongoDb(BaseDb):
     def rename_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType],
         session_name: str,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
@@ -532,10 +516,10 @@ class MongoDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to rename.
-            session_type (SessionType): The type of session to rename.
+            session_type (Optional[SessionType]): The type of session to rename.
             session_name (str): The new name of the session.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
-            deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            deserialize (Optional[bool]): Whether to deserialize the session. Defaults to True.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -553,6 +537,8 @@ class MongoDb(BaseDb):
             query: Dict[str, Any] = {"session_id": session_id}
             if user_id is not None:
                 query["user_id"] = user_id
+            if session_type is not None:
+                query["session_type"] = session_type.value
             try:
                 result = collection.find_one_and_update(
                     query,
@@ -576,12 +562,7 @@ class MongoDb(BaseDb):
             if not deserialize:
                 return deserialized_session
 
-            if session_type == SessionType.AGENT.value:
-                return AgentSession.from_dict(deserialized_session)
-            elif session_type == SessionType.TEAM.value:
-                return TeamSession.from_dict(deserialized_session)
-            else:
-                return WorkflowSession.from_dict(deserialized_session)
+            return deserialize_session(session_type, deserialized_session)
 
         except Exception as e:
             log_error(f"Exception renaming session: {str(e)}")
