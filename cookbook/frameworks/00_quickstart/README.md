@@ -55,7 +55,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 ```
 
-Both agents share session storage, the API surface, the UI, and AgentOS-level features (auth, RBAC, scheduling, approval gates, observability).
+Both agents share session storage, the API surface and the AgentOS UI.
 
 ## Run It
 
