@@ -39,7 +39,7 @@ def prepare_response_schema(pydantic_model: Type[BaseModel]) -> Union[Type[BaseM
         try:
             converted = convert_schema(schema_dict)
         except Exception as e:
-            log_warning(f"Failed to convert schema for {pydantic_model}: {e}")
+            log_warning(f"Failed to convert schema for {pydantic_model}: {str(e)}")
             converted = None
 
         if converted is None:
@@ -139,7 +139,7 @@ def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
                 }
                 return image_data
             except Exception as e:
-                log_warning(f"Failed to download image from {image}: {e}")
+                log_warning(f"Failed to download image from {image}: {str(e)}")
                 return None
         else:
             log_warning(f"Unsupported image format: {image}")
@@ -160,7 +160,7 @@ def format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
                 "data": content_bytes,
             }
         except Exception as e:
-            log_warning(f"Failed to load image from {image.filepath}: {e}")
+            log_warning(f"Failed to load image from {image.filepath}: {str(e)}")
             return None
 
     # Case 3: Image is a bytes object

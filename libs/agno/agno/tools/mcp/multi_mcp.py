@@ -111,7 +111,7 @@ class MultiMCPTools(Toolkit):
                 # Just verify we can inspect the signature - no parameter requirements
                 inspect.signature(header_provider)
             except Exception as e:
-                log_warning(f"Could not validate header_provider signature: {e}")
+                log_warning(f"Could not validate header_provider signature: {str(e)}")
 
         if server_params_list is None and commands is None and urls is None:
             raise ValueError("Either server_params_list or commands or urls must be provided")
@@ -253,7 +253,7 @@ class MultiMCPTools(Toolkit):
                     # Function takes no parameters
                     return header_provider()
         except Exception as e:
-            log_warning(f"Error calling header_provider: {e}")
+            log_warning(f"Error calling header_provider: {str(e)}")
             return {}
 
     async def _cleanup_stale_sessions(self) -> None:
@@ -437,8 +437,8 @@ class MultiMCPTools(Toolkit):
 
         try:
             await self._connect()
-        except (RuntimeError, BaseException) as e:
-            log_error(f"Failed to connect to {str(self)}: {e}")
+        except (RuntimeError, BaseException):
+            log_error(f"Failed to connect to {str(self)}")
 
     @classmethod
     async def create_and_connect(
@@ -483,6 +483,13 @@ class MultiMCPTools(Toolkit):
 
         server_connection_errors = []
 
+        # If header_provider is set, generate initial headers for the connection.
+        # This ensures MCP servers that require auth headers for tool discovery
+        # receive them during initialization, not just during per-run sessions.
+        init_headers: dict[str, Any] = {}
+        if self.header_provider:
+            init_headers = self._call_header_provider()
+
         for server_idx, server_params in enumerate(self.server_params_list):
             try:
                 # Handle stdio connections
@@ -497,9 +504,11 @@ class MultiMCPTools(Toolkit):
 
                 # Handle SSE connections
                 elif isinstance(server_params, SSEClientParams):
-                    client_connection = await self._async_exit_stack.enter_async_context(
-                        sse_client(**asdict(server_params))
-                    )
+                    sse_params = asdict(server_params)
+                    if init_headers:
+                        existing_headers = sse_params.get("headers") or {}
+                        sse_params["headers"] = {**existing_headers, **init_headers}
+                    client_connection = await self._async_exit_stack.enter_async_context(sse_client(**sse_params))
                     read, write = client_connection
                     session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
                     await self.initialize(session, server_idx)
@@ -507,8 +516,12 @@ class MultiMCPTools(Toolkit):
 
                 # Handle Streamable HTTP connections
                 elif isinstance(server_params, StreamableHTTPClientParams):
+                    streamable_http_params = asdict(server_params)
+                    if init_headers:
+                        existing_headers = streamable_http_params.get("headers") or {}
+                        streamable_http_params["headers"] = {**existing_headers, **init_headers}
                     client_connection = await self._async_exit_stack.enter_async_context(
-                        streamablehttp_client(**asdict(server_params))
+                        streamablehttp_client(**streamable_http_params)
                     )
                     read, write = client_connection[0:2]
                     session = await self._async_exit_stack.enter_async_context(ClientSession(read, write))
@@ -519,7 +532,7 @@ class MultiMCPTools(Toolkit):
                 if not self.allow_partial_failure:
                     raise ValueError(f"MCP connection failed: {e}")
 
-                log_error(f"Failed to initialize MCP server with params {server_params}: {e}")
+                log_error(f"Failed to initialize MCP server with params {server_params}: {str(e)}")
                 server_connection_errors.append(str(e))
                 continue
 
@@ -564,8 +577,8 @@ class MultiMCPTools(Toolkit):
         """Enter the async context manager."""
         try:
             await self._connect()
-        except (RuntimeError, BaseException) as e:
-            log_error(f"Failed to connect to {str(self)}: {e}")
+        except (RuntimeError, BaseException):
+            log_error(f"Failed to connect to {str(self)}")
         return self
 
     async def __aexit__(
@@ -617,7 +630,7 @@ class MultiMCPTools(Toolkit):
                     self.functions[f.name] = f
                     log_debug(f"Function: {f.name} registered with {self.name}")
                 except Exception as e:
-                    log_error(f"Failed to register tool {tool.name}: {e}")
+                    log_error(f"Failed to register tool {tool.name}: {str(e)}")
                     raise
 
     async def initialize(self, session: ClientSession, server_idx: int = 0) -> None:
@@ -634,5 +647,5 @@ class MultiMCPTools(Toolkit):
 
             self._initialized = True
         except Exception as e:
-            log_error(f"Failed to get MCP tools: {e}")
+            log_error(f"Failed to get MCP tools: {str(e)}")
             raise

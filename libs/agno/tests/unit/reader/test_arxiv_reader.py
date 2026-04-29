@@ -212,3 +212,44 @@ async def test_async_read_with_special_characters():
         mock_search.assert_called_once_with(
             query="quantum & computing + AI", max_results=reader.max_results, sort_by=reader.sort_by
         )
+
+
+def test_arxiv_reader_chunk_size_propagation():
+    """Test that chunk_size is propagated to default chunking strategy"""
+    from agno.knowledge.chunking.fixed import FixedSizeChunking
+
+    reader = ArxivReader(chunk_size=300)
+    assert reader.chunk_size == 300
+    assert reader.chunking_strategy.chunk_size == 300
+    assert isinstance(reader.chunking_strategy, FixedSizeChunking)
+
+
+def test_arxiv_reader_default_chunk_size():
+    """Test default chunk_size is 5000"""
+    from agno.knowledge.chunking.fixed import FixedSizeChunking
+
+    reader = ArxivReader()
+    assert reader.chunk_size == 5000
+    assert reader.chunking_strategy.chunk_size == 5000
+    assert isinstance(reader.chunking_strategy, FixedSizeChunking)
+
+
+def test_arxiv_reader_explicit_strategy_preserved():
+    """Test that explicit chunking_strategy is not overridden"""
+    from agno.knowledge.chunking.semantic import SemanticChunking
+
+    custom_strategy = SemanticChunking(chunk_size=400)
+    reader = ArxivReader(chunk_size=300, chunking_strategy=custom_strategy)
+    assert reader.chunk_size == 300
+    assert reader.chunking_strategy is custom_strategy
+    assert reader.chunking_strategy.chunk_size == 400
+
+
+def test_arxiv_reader_multiple_instances_independent():
+    """Test that multiple instances don't share chunking strategies"""
+    reader1 = ArxivReader(chunk_size=500)
+    reader2 = ArxivReader(chunk_size=600)
+
+    assert reader1.chunking_strategy is not reader2.chunking_strategy
+    assert reader1.chunking_strategy.chunk_size == 500
+    assert reader2.chunking_strategy.chunk_size == 600

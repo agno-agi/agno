@@ -240,6 +240,10 @@ class Ollama(Model):
         """
         Send a chat request to the Ollama API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         request_kwargs = self._prepare_request_kwargs_for_invoke(response_format=response_format, tools=tools)
 
         assistant_message.metrics.start_timer()
@@ -268,6 +272,10 @@ class Ollama(Model):
         """
         Sends an asynchronous chat request to the Ollama API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         request_kwargs = self._prepare_request_kwargs_for_invoke(response_format=response_format, tools=tools)
 
         assistant_message.metrics.start_timer()
@@ -296,6 +304,10 @@ class Ollama(Model):
         """
         Sends a streaming chat request to the Ollama API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         assistant_message.metrics.start_timer()
 
         for chunk in self.get_client().chat(
@@ -321,6 +333,10 @@ class Ollama(Model):
         """
         Sends an asynchronous streaming chat completion request to the Ollama API.
         """
+        from agno.utils.message import normalize_tool_messages
+
+        messages = normalize_tool_messages(messages)
+
         assistant_message.metrics.start_timer()
 
         async for chunk in await self.get_async_client().chat(

@@ -260,10 +260,10 @@ class HuggingFace(Model):
             return self._parse_provider_response(provider_response, response_format=response_format)
 
         except InferenceTimeoutError as e:
-            log_error(f"Error invoking HuggingFace model: {e}")
+            log_error(f"Error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error invoking HuggingFace model: {e}")
+            log_error(f"Unexpected error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
@@ -291,10 +291,10 @@ class HuggingFace(Model):
             return self._parse_provider_response(provider_response, response_format=response_format)
 
         except InferenceTimeoutError as e:
-            log_error(f"Error invoking HuggingFace model: {e}")
+            log_error(f"Error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error invoking HuggingFace model: {e}")
+            log_error(f"Unexpected error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
@@ -327,10 +327,10 @@ class HuggingFace(Model):
             assistant_message.metrics.stop_timer()
 
         except InferenceTimeoutError as e:
-            log_error(f"Error invoking HuggingFace model: {e}")
+            log_error(f"Error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error invoking HuggingFace model: {e}")
+            log_error(f"Unexpected error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -362,10 +362,10 @@ class HuggingFace(Model):
             assistant_message.metrics.stop_timer()
 
         except InferenceTimeoutError as e:
-            log_error(f"Error invoking HuggingFace model: {e}")
+            log_error(f"Error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
         except Exception as e:
-            log_error(f"Unexpected error invoking HuggingFace model: {e}")
+            log_error(f"Unexpected error invoking HuggingFace model: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     # Override base method
@@ -390,7 +390,7 @@ class HuggingFace(Model):
             _function_arguments = _tool_call.function.arguments if _tool_call.function else None
 
             if len(tool_calls) <= _index:
-                tool_calls.extend([{}] * (_index - len(tool_calls) + 1))
+                tool_calls.extend([{} for _ in range(_index - len(tool_calls) + 1)])
             tool_call_entry = tool_calls[_index]
             if not tool_call_entry:
                 tool_call_entry["id"] = _tool_call_id
@@ -401,7 +401,7 @@ class HuggingFace(Model):
                 }
             else:
                 if _function_name:
-                    tool_call_entry["function"]["name"] += _function_name
+                    tool_call_entry["function"]["name"] = _function_name
                 if _function_arguments:
                     tool_call_entry["function"]["arguments"] += _function_arguments
                 if _tool_call_id:
@@ -442,7 +442,7 @@ class HuggingFace(Model):
                 if parsed_object is not None:
                     model_response.parsed = parsed_object
         except Exception as e:
-            log_warning(f"Error retrieving structured outputs: {e}")
+            log_warning(f"Error retrieving structured outputs: {str(e)}")
 
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response)
