@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.6.1"
+version = "2.6.4"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -388,6 +388,10 @@ demo = [
     "sqlalchemy",
     "yfinance",
     "youtube-transcript-api",
+    "claude-agent-sdk",
+    "langgraph",
+    "langchain-openai",
+    "dspy",
 ]
 
 [project.urls]
