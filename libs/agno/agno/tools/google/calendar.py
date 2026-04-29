@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, cast
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import get_current_service, get_token_db, google_authenticate, save_token
+from agno.tools.google.auth import get_cache_key, get_current_service, get_token_db, google_authenticate, save_token
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
@@ -118,7 +118,7 @@ class GoogleCalendarTools(Toolkit):
         self.oauth_port = oauth_port
         self.login_hint = login_hint
         # Cached email for respond_to_event
-        self._user_email: Optional[str] = None
+        self._user_email: Dict[Optional[str], str] = {}
         tools: List[Any] = []
 
         if list_events:
@@ -204,8 +204,8 @@ class GoogleCalendarTools(Toolkit):
         """Stateless credential resolution. Returns credentials, does not cache on self."""
         user_id = getattr(run_context, "user_id", None) if run_context else None
 
-        # 1. Explicit creds from constructor
-        if self._explicit_creds and self._explicit_creds.valid:
+        # 1. Explicit creds from constructor (single-user mode only)
+        if self._explicit_creds and self._explicit_creds.valid and user_id is None:
             return self._explicit_creds
 
         # 2. Service account (never stored in DB)
@@ -1069,24 +1069,26 @@ class GoogleCalendarTools(Toolkit):
         try:
             service = cast(Resource, self.service)
 
-            # Get authenticated user's email (cached)
-            if not self._user_email:
+            # Get authenticated user's email (cached per user)
+            cache_key = get_cache_key()
+            if cache_key not in self._user_email:
                 cal = service.calendarList().get(calendarId="primary").execute()
-                self._user_email = cal.get("id")
+                self._user_email[cache_key] = cal.get("id")
+            user_email = self._user_email[cache_key]
 
             event = service.events().get(calendarId=self.calendar_id, eventId=event_id).execute()
             attendees = event.get("attendees", [])
 
             found = False
             for attendee in attendees:
-                if attendee.get("email") == self._user_email:
+                if attendee.get("email") == user_email:
                     attendee["responseStatus"] = response
                     found = True
                     break
 
             if not found:
                 # User not in attendees — add them with the response
-                attendees.append({"email": self._user_email, "responseStatus": response})
+                attendees.append({"email": user_email, "responseStatus": response})
                 event["attendees"] = attendees
 
             updated_event = (

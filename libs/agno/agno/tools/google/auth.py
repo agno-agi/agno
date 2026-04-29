@@ -11,9 +11,10 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.oauth_state import sign_state, verify_state
 
-# Per-call service and creds storage for stateless toolkit access
+# Per-call service, creds, and user_id storage for stateless toolkit access
 _google_service: ContextVar[Any] = ContextVar("google_service", default=None)
 _google_creds: ContextVar[Any] = ContextVar("google_creds", default=None)
+_google_user_id: ContextVar[Optional[str]] = ContextVar("google_user_id", default=None)
 
 
 def google_authenticate(service_name: str):
@@ -56,14 +57,17 @@ def google_authenticate(service_name: str):
                 log_error(f"{service_name.title()} service initialization failed: {str(e)}")
                 return json.dumps({"error": f"{service_name.title()} service initialization failed: {e}"})
 
-            # Store service and creds in contextvars for this call — async/thread safe
+            # Store service, creds, and user_id in contextvars — async/thread safe
+            user_id = getattr(run_context, "user_id", None) if run_context else None
             service_token = _google_service.set(service)
             creds_token = _google_creds.set(creds)
+            user_id_token = _google_user_id.set(user_id)
             try:
                 return func(self, *args, **kwargs)
             finally:
                 _google_service.reset(service_token)
                 _google_creds.reset(creds_token)
+                _google_user_id.reset(user_id_token)
 
         wrapper.__signature__ = exposed_sig  # type: ignore[attr-defined]
         return wrapper
@@ -88,6 +92,20 @@ def get_current_creds() -> Any:
     Returns None if called outside a decorated method.
     """
     return _google_creds.get()
+
+
+def get_current_user_id() -> Optional[str]:
+    """Get the user_id for the current call.
+
+    Used by toolkit methods to key per-user caches (e.g., label cache in Gmail).
+    Returns None if called outside a decorated method or in single-user mode.
+    """
+    return _google_user_id.get()
+
+
+def get_cache_key() -> Optional[str]:
+    """Get a cache key for the current user. Returns None in single-user mode."""
+    return _google_user_id.get()
 
 
 def _persist_google_token(

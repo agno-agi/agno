@@ -310,8 +310,7 @@ def test_service_account_auth():
         mock_sa.from_service_account_file.return_value = mock_creds
 
         tools = GoogleDriveTools(service_account_path="/fake/sa.json", delegated_user="user@example.com")
-        # _resolve_creds is called by the decorator; test the service account path
-        creds = tools._resolve_creds()
+        tools._resolve_creds()
 
         mock_sa.from_service_account_file.assert_called_once()
 

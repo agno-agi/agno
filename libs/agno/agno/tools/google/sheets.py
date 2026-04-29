@@ -217,8 +217,10 @@ class GoogleSheetsTools(Toolkit):
 
     def _resolve_creds(self, run_context=None, agent=None):
         """Resolve credentials without storing on self. Returns creds or None."""
-        # 1. Explicit creds passed to constructor
-        if self._explicit_creds and self._explicit_creds.valid:
+        user_id = getattr(run_context, "user_id", None) if run_context else None
+
+        # 1. Explicit creds passed to constructor (single-user mode only)
+        if self._explicit_creds and self._explicit_creds.valid and user_id is None:
             return self._explicit_creds
 
         # 2. Service account
@@ -240,8 +242,6 @@ class GoogleSheetsTools(Toolkit):
         # Check if callback mode — require OAuth via authenticate_google
         if self.google_auth and self.google_auth._callback_configured and get_token_db(self, agent=agent):
             raise PermissionError("Sheets not authenticated — user must complete OAuth via authenticate_google")
-
-        user_id = getattr(run_context, "user_id", None) if run_context else None
 
         # 4. Load from file
         token_file = Path(self.token_path or "token.json")

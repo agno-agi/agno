@@ -278,8 +278,8 @@ class GoogleDriveTools(Toolkit):
         """Resolve credentials using 5-step priority: explicit -> service account -> DB -> file -> interactive OAuth."""
         user_id = getattr(run_context, "user_id", None) if run_context else None
 
-        # 1. Explicit credentials provided at construction
-        if self._explicit_creds and self._explicit_creds.valid:
+        # 1. Explicit credentials provided at construction (single-user mode only)
+        if self._explicit_creds and self._explicit_creds.valid and user_id is None:
             return self._explicit_creds
 
         # 2. Service account takes priority over OAuth

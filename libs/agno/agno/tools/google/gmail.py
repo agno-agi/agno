@@ -73,7 +73,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import get_current_service, get_token_db, google_authenticate, save_token
+from agno.tools.google.auth import get_cache_key, get_current_service, get_token_db, google_authenticate, save_token
 from agno.utils.log import log_debug, log_error
 
 try:
@@ -232,7 +232,7 @@ class GmailTools(Toolkit):
         # Gmail API allows max 100 items per batch request
         self.max_batch_size = max(min(max_batch_size, 100), 1)
         self._temp_dir: Optional[tempfile.TemporaryDirectory] = None
-        self._label_cache: Optional[Dict[str, str]] = None
+        self._label_cache: Dict[Optional[str], Dict[str, str]] = {}
         tools: List[Any] = []
         # Reading emails
         if get_latest_emails:
@@ -380,8 +380,8 @@ class GmailTools(Toolkit):
         """Stateless credential resolution. Returns credentials, does not cache on self."""
         user_id = getattr(run_context, "user_id", None) if run_context else None
 
-        # 1. Explicit creds from constructor
-        if self._explicit_creds and self._explicit_creds.valid:
+        # 1. Explicit creds from constructor (single-user mode only)
+        if self._explicit_creds and self._explicit_creds.valid and user_id is None:
             return self._explicit_creds
 
         # 2. Service account (never stored in DB)
@@ -1035,9 +1035,9 @@ class GmailTools(Toolkit):
             if not messages:
                 return f"No emails found matching: '{context}'"
 
-            # Populate cache if needed, then check existence
+            cache_key = get_cache_key()
             self._resolve_label_ids([label_name])
-            label_id = self._label_cache.get(label_name.lower())  # type: ignore[union-attr]
+            label_id = self._label_cache.get(cache_key, {}).get(label_name.lower())
             if not label_id:
                 label = (
                     self.service.users()  # type: ignore
@@ -1049,8 +1049,8 @@ class GmailTools(Toolkit):
                     .execute()
                 )
                 label_id = label["id"]
-                # New label created — invalidate cache
-                self._label_cache = None
+                # New label created — invalidate user's cache
+                self._label_cache.pop(cache_key, None)
 
             # Apply label to all matching messages
             for msg in messages:
@@ -1078,9 +1078,9 @@ class GmailTools(Toolkit):
             str: Summary of emails with label removed
         """
         try:
-            # Populate cache if needed, then check existence
+            cache_key = get_cache_key()
             self._resolve_label_ids([label_name])
-            label_id = self._label_cache.get(label_name.lower())  # type: ignore[union-attr]
+            label_id = self._label_cache.get(cache_key, {}).get(label_name.lower())
             if not label_id:
                 return f"Label '{label_name}' not found."
 
@@ -1144,7 +1144,7 @@ class GmailTools(Toolkit):
 
             # Delete the label
             self.service.users().labels().delete(userId="me", id=target_label["id"]).execute()  # type: ignore
-            self._label_cache = None
+            self._label_cache.pop(get_cache_key(), None)
 
             return f"Successfully deleted label '{label_name}'. This label has been removed from all emails."
 
@@ -1312,10 +1312,11 @@ class GmailTools(Toolkit):
 
     def _resolve_label_ids(self, label_names: List[str]) -> List[str]:
         """Convert label names to Gmail label IDs. Falls back to raw name for system labels like INBOX."""
-        if self._label_cache is None:
+        cache_key = get_cache_key()
+        if cache_key not in self._label_cache:
             labels = self.service.users().labels().list(userId="me").execute().get("labels", [])  # type: ignore
-            self._label_cache = {lbl["name"].lower(): lbl["id"] for lbl in labels}
-        return [self._label_cache.get(name.lower(), name) for name in label_names]
+            self._label_cache[cache_key] = {lbl["name"].lower(): lbl["id"] for lbl in labels}
+        return [self._label_cache[cache_key].get(name.lower(), name) for name in label_names]
 
     def _batch_get(
         self,

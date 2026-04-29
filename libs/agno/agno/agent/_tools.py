@@ -369,7 +369,8 @@ def parse_tools(
 
         elif isinstance(tool, Toolkit):
             # Per-user isolation: clone toolkit when user_id is set so each
-            # run gets its own creds/service state. No-op for single-user.
+            # run gets its own mutable state. Credentials/service are resolved
+            # per-call via contextvar, not stored on the clone.
             if run_context and run_context.user_id is not None:
                 tool = tool._clone_for_run()
 

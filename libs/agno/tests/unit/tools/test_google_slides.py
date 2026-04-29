@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 from google.oauth2.credentials import Credentials
 
-from agno.tools.google.auth import get_current_service
 from agno.tools.google.slides import GoogleSlidesTools
 
 
