@@ -5029,6 +5029,10 @@ def regenerate_dispatch(
 
     # Read existing session from storage
     agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    # Detach from cache: regenerate mutates this session in-memory before delegating, so a
+    # failure would leak the popped state into the cache and destroy the original on next save.
+    if agent.cache_session and agent._cached_session is agent_session:
+        agent._cached_session = None
     update_metadata(agent, session=agent_session)
 
     # Find the last run
@@ -5333,6 +5337,10 @@ async def _aregenerate_prepare(
     from agno.utils.merge_dict import merge_dictionaries
 
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+    # Detach from cache: regenerate mutates this session in-memory before delegating, so a
+    # failure would leak the popped state into the cache and destroy the original on next save.
+    if agent.cache_session and agent._cached_session is agent_session:
+        agent._cached_session = None
     update_metadata(agent, session=agent_session)
 
     # Re-merge agent.metadata into run_context.metadata now that update_metadata has run.
