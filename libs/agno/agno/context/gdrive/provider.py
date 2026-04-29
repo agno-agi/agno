@@ -89,9 +89,9 @@ class GDriveContextProvider(ContextProvider):
             )
         return (
             f"`{self.name}` via `{self.query_tool_name}(question)` — company documents, policies, specs, spreadsheets.\n"
-            "Navigation: if first search returns nothing, try synonyms (engineering levels → career ladder → leveling). "
-            "If results mention a Slack channel or discussion, check Slack for context. "
-            "If a doc references another doc by name, search for that doc too."
+            "Navigation: if first search returns nothing, try alternate names (Q4 roadmap → Q4 plan → quarterly planning). "
+            "Check shared folders if direct search is empty. "
+            "If a doc references another doc or links to Slack, follow those leads."
         )
 
     # ------------------------------------------------------------------
