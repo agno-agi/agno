@@ -48,6 +48,7 @@ class SlackContextProvider(ContextProvider):
         name: str = "Slack",
         read_instructions: str | None = None,
         write_instructions: str | None = None,
+        enable_media_tools: bool = False,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
         read: bool = True,
@@ -61,7 +62,7 @@ class SlackContextProvider(ContextProvider):
         self.write_instructions_text = (
             write_instructions if write_instructions is not None else DEFAULT_SLACK_WRITE_INSTRUCTIONS
         )
-        # Lazy-initialized tools and agents
+        self.enable_media_tools = enable_media_tools
         self._bot_read_tools: SlackTools | None = None
         self._assisted_read_tools: SlackTools | None = None
         self._write_tools: SlackTools | None = None
@@ -177,9 +178,10 @@ class SlackContextProvider(ContextProvider):
                 enable_send_message=False,
                 enable_send_message_thread=False,
                 enable_upload_file=False,
-                enable_download_file=False,
+                enable_download_file=self.enable_media_tools,
                 enable_list_channels=True,
                 enable_get_channel_history=True,
+                enable_search_messages=True,
                 enable_search_workspace=False,
                 enable_get_thread=True,
                 enable_list_users=True,
@@ -195,9 +197,10 @@ class SlackContextProvider(ContextProvider):
                 enable_send_message=False,
                 enable_send_message_thread=False,
                 enable_upload_file=False,
-                enable_download_file=False,
+                enable_download_file=self.enable_media_tools,
                 enable_list_channels=True,
                 enable_get_channel_history=True,
+                enable_search_messages=True,
                 enable_search_workspace=True,
                 enable_get_thread=True,
                 enable_list_users=True,
@@ -207,12 +210,14 @@ class SlackContextProvider(ContextProvider):
         return self._assisted_read_tools
 
     def _ensure_write_tools(self) -> SlackTools:
+        # Writer gets posting + uploads + name resolution. No search / history /
+        # threads / downloads — if the write needs context, compose query → update.
         if self._write_tools is None:
             self._write_tools = SlackTools(
                 token=self.token,
                 enable_send_message=True,
                 enable_send_message_thread=True,
-                enable_upload_file=False,
+                enable_upload_file=self.enable_media_tools,
                 enable_download_file=False,
                 enable_list_channels=True,
                 enable_get_channel_history=False,
@@ -269,9 +274,9 @@ Workflow:
    recent messages in a specific channel, call
    `get_channel_history(channel)`. If they ask about a thread or a
    message with replies, call `get_thread(channel, ts)`.
-2. **Use assistant search for broad reads.** `search_workspace(query)`
-   is for topic, catch-up, cross-channel, and fuzzy discovery requests
-   across the workspace using the caller's Slack interface permissions.
+2. **Use search for broad reads.** `search_workspace(query)` uses Slack
+   interface permissions; `search_messages(query)` works with user tokens.
+   Try one, and if it fails or returns nothing relevant, try the other.
 3. **Shape search queries.** Include channel or topic hints from the
    user's request. Use Slack search filters when useful, e.g.
    `in:#agents`.
@@ -291,18 +296,21 @@ _SLACK_BOT_TOKEN_READ_INSTRUCTIONS = """\
 You answer questions by reading Slack with bot-token-compatible tools.
 
 Workflow:
-1. **Read known channels directly.** If the user provides a channel name
+1. **Search first.** Use `search_messages(query)` to find messages across
+   accessible channels. Shape queries with channel or topic hints, e.g.
+   `in:#agents topic`.
+2. **Read known channels directly.** If the user provides a channel name
    or ID, pass it straight to `get_channel_history(channel)`. The tool
    resolves names like `#agents` to IDs.
-2. **Discover only when needed.** Use `list_channels` only when the user
+3. **Discover only when needed.** Use `list_channels` only when the user
    did not name a channel. The bot must be a member of private channels.
-3. **Expand threads.** When a message has replies, call
+4. **Expand threads.** When a message has replies, call
    `get_thread(channel, ts)` for the full discussion. Pass the same
    channel name or ID you used for history.
-4. **Resolve names.** `get_user_info` / `list_users` turn Slack user IDs
+5. **Resolve names.** `get_user_info` / `list_users` turn Slack user IDs
    into display names. Don't invent a name when the ID doesn't resolve —
    report the raw user id instead.
-5. **Cite.** Every claim should point to channel + author + timestamp.
+6. **Cite.** Every claim should point to channel + author + timestamp.
    Quote message text verbatim; don't paraphrase.
 
 You are read-only. Never send messages, upload, or download. If the
