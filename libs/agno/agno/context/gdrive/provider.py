@@ -3,19 +3,16 @@ Google Drive Context Provider
 =============================
 
 Read-only Google Drive access for the calling agent — list, search,
-read files. Auth goes through a *service account* (JSON key file);
-the owner grants that identity access to the folders the agent
-should see. Upload/download are left off so this provider is purely
-for reading Drive as context.
+read files. Supports two auth methods:
 
-To enable:
+1. Service Account (headless, for bots):
+   - Set GOOGLE_SERVICE_ACCOUNT_FILE or pass service_account_path
+   - Share folders with the service account email
 
-1. Create a service account in Google Cloud Console and download the
-   JSON key file.
-2. Share the Drive folders you want the agent to see with the service
-   account's email.
-3. Set ``GOOGLE_SERVICE_ACCOUNT_FILE`` to the path of the key file,
-   or pass ``service_account_path=...`` explicitly.
+2. OAuth (interactive, for personal Drive):
+   - Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_PROJECT_ID
+   - Or pass credentials_path/token_path directly
+   - Opens browser on first use, caches token
 
 The provider uses an ``AllDrivesGoogleDriveTools`` subclass so service
 accounts can see files inside folders shared with them and files in
@@ -26,7 +23,6 @@ Shared Drives — see ``agno.context.gdrive.tools`` for why the upstream
 from __future__ import annotations
 
 from os import getenv
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agno.agent import Agent
@@ -41,12 +37,14 @@ if TYPE_CHECKING:
 
 
 class GDriveContextProvider(ContextProvider):
-    """Read-only Google Drive access via a service account."""
+    """Read-only Google Drive access via service account or OAuth."""
 
     def __init__(
         self,
         *,
         service_account_path: str | None = None,
+        credentials_path: str | None = None,
+        token_path: str | None = None,
         id: str = "gdrive",
         name: str = "Google Drive",
         instructions: str | None = None,
@@ -54,19 +52,20 @@ class GDriveContextProvider(ContextProvider):
         model: Model | None = None,
     ) -> None:
         super().__init__(id=id, name=name, mode=mode, model=model)
-        resolved = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-        if not resolved:
-            raise ValueError("GDriveContextProvider: GOOGLE_SERVICE_ACCOUNT_FILE is required")
-        self.service_account_path: str = resolved
+
+        # Store params — toolkit handles actual auth
+        self._sa_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+        self._credentials_path = credentials_path
+        self._token_path = token_path or "gdrive_token.json"
+
         self.instructions_text = instructions if instructions is not None else DEFAULT_GDRIVE_INSTRUCTIONS
         self._tools: AllDrivesGoogleDriveTools | None = None
         self._agent: Agent | None = None
 
     def status(self) -> Status:
-        path = Path(self.service_account_path).expanduser()
-        if not path.exists():
-            return Status(ok=False, detail=f"service account file not found: {path}")
-        return Status(ok=True, detail="gdrive")
+        # Toolkit handles actual auth validation
+        mode = "service_account" if self._sa_path else "oauth"
+        return Status(ok=True, detail=f"{self.id} ({mode})")
 
     async def astatus(self) -> Status:
         return self.status()
@@ -114,7 +113,9 @@ class GDriveContextProvider(ContextProvider):
     def _ensure_tools(self) -> AllDrivesGoogleDriveTools:
         if self._tools is None:
             self._tools = AllDrivesGoogleDriveTools(
-                service_account_path=self.service_account_path,
+                service_account_path=self._sa_path,
+                creds_path=self._credentials_path,
+                token_path=self._token_path,
                 list_files=True,
                 search_files=True,
                 read_file=True,

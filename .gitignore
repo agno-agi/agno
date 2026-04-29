@@ -99,3 +99,5 @@ CLAUDE_PRIVATE.md
 pyrightconfig.json
 .python-version
 CLAUDE_PRIVATE.md
+gmail_token.json
+calendar_token.json
