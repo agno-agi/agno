@@ -2760,6 +2760,7 @@ class MongoDb(BaseDb):
                 raise RuntimeError("Failed to get or create schedules collection")
 
             collection.insert_one(schedule_data)
+            schedule_data.pop("_id", None)
             return schedule_data
         except Exception as e:
             log_error(f"Error creating schedule: {e}")
@@ -2850,6 +2851,7 @@ class MongoDb(BaseDb):
                 raise RuntimeError("Failed to get or create schedule runs collection")
 
             collection.insert_one(run_data)
+            run_data.pop("_id", None)
             return run_data
         except Exception as e:
             log_error(f"Error creating schedule run: {e}")

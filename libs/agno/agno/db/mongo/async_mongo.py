@@ -2926,6 +2926,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 raise RuntimeError("Failed to get or create schedules collection")
 
             await collection.insert_one(schedule_data)
+            schedule_data.pop("_id", None)
             return schedule_data
         except Exception as e:
             log_error(f"Error creating schedule: {e}")
@@ -3016,6 +3017,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 raise RuntimeError("Failed to get or create schedule runs collection")
 
             await collection.insert_one(run_data)
+            run_data.pop("_id", None)
             return run_data
         except Exception as e:
             log_error(f"Error creating schedule run: {e}")
