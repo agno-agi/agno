@@ -230,43 +230,18 @@ class GmailContextProvider(ContextProvider):
             credentials_path=self._credentials_path,
             token_path=self._token_path,
             scopes=["https://www.googleapis.com/auth/gmail.readonly"],
-            # Search and list
-            get_latest_emails=True,
-            get_emails_from_user=True,
-            get_unread_emails=True,
-            get_starred_emails=True,
-            get_emails_by_context=True,
-            get_emails_by_date=True,
-            get_emails_by_thread=True,
-            search_emails=True,
-            # Message details
-            get_message=True,
-            get_thread=True,
-            search_threads=True,
-            # Labels and drafts (read-only)
-            list_custom_labels=True,
-            list_drafts=True,
-            get_draft=True,
-            # Disable all write operations
+            # Disable write operations (these default to True)
             mark_email_as_read=False,
             mark_email_as_unread=False,
             star_email=False,
             unstar_email=False,
-            archive_email=False,
             create_draft_email=False,
             send_email=False,
             send_email_reply=False,
             apply_label=False,
             remove_label=False,
             delete_custom_label=False,
-            modify_thread_labels=False,
-            trash_thread=False,
-            send_draft=False,
             update_draft=False,
-            list_labels=False,
-            modify_message_labels=False,
-            trash_message=False,
-            download_attachment=False,
         )
 
     def _build_write_toolkit(self) -> GmailTools:
@@ -279,26 +254,7 @@ class GmailContextProvider(ContextProvider):
                 "https://www.googleapis.com/auth/gmail.modify",
                 "https://www.googleapis.com/auth/gmail.compose",
             ],
-            # Lookup tools for grounding writes
-            search_emails=True,
-            search_threads=True,
-            get_message=True,
-            get_thread=True,
-            list_custom_labels=True,
-            # Compose and send
-            create_draft_email=True,
-            update_draft=True,
-            send_email=True,
-            send_email_reply=True,
-            # Status management
-            mark_email_as_read=True,
-            mark_email_as_unread=True,
-            star_email=True,
-            unstar_email=True,
-            # Label management
-            apply_label=True,
-            remove_label=True,
-            # Disable unused read tools (write agent has minimal lookup)
+            # Disable bulk read tools (write agent has minimal lookup)
             get_latest_emails=False,
             get_emails_from_user=False,
             get_unread_emails=False,
@@ -308,14 +264,5 @@ class GmailContextProvider(ContextProvider):
             get_emails_by_thread=False,
             list_drafts=False,
             get_draft=False,
-            # Disable dangerous operations
-            archive_email=False,
             delete_custom_label=False,
-            modify_thread_labels=False,
-            trash_thread=False,
-            send_draft=False,
-            list_labels=False,
-            modify_message_labels=False,
-            trash_message=False,
-            download_attachment=False,
         )

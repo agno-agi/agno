@@ -217,22 +217,10 @@ class CalendarContextProvider(ContextProvider):
             token_path=self._token_path,
             calendar_id=self._calendar_id,
             scopes=["https://www.googleapis.com/auth/calendar.readonly"],
-            # Read operations
-            list_events=True,
-            get_event=True,
-            fetch_all_events=True,
-            find_available_slots=True,
-            list_calendars=True,
-            check_availability=True,
-            get_event_attendees=True,
-            search_events=True,
-            # Disable all write operations
+            # Disable write operations (these default to True)
             create_event=False,
             update_event=False,
             delete_event=False,
-            quick_add_event=False,
-            move_event=False,
-            respond_to_event=False,
         )
 
     def _build_write_toolkit(self) -> GoogleCalendarTools:
@@ -243,21 +231,7 @@ class CalendarContextProvider(ContextProvider):
             token_path=self._token_path,
             calendar_id=self._calendar_id,
             scopes=["https://www.googleapis.com/auth/calendar"],
-            # Lookup tools for grounding writes
-            list_events=True,
-            get_event=True,
-            search_events=True,
-            check_availability=True,
-            list_calendars=True,
-            # Core write operations
-            create_event=True,
-            update_event=True,
-            delete_event=True,
-            # Excluded from defaults (risky or freeform)
-            quick_add_event=False,
-            move_event=False,
-            respond_to_event=False,
-            # Disable unused read tools
+            # Disable unused read tools (these default to True)
             fetch_all_events=False,
             find_available_slots=False,
             get_event_attendees=False,

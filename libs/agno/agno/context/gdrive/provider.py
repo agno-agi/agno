@@ -121,11 +121,6 @@ class GDriveContextProvider(ContextProvider):
                 service_account_path=self._sa_path,
                 creds_path=self._credentials_path,
                 token_path=self._token_path,
-                list_files=True,
-                search_files=True,
-                read_file=True,
-                upload_file=False,
-                download_file=False,
             )
         return self._tools
 
