@@ -383,6 +383,41 @@ async def aset_session_name(
     )
 
 
+def _get_session_name_messages(agent: Agent, session: AgentSession) -> List[Message]:
+    gen_session_name_prompt = "Conversation\n"
+
+    messages_for_generating_session_name = session.get_messages()
+
+    for message in messages_for_generating_session_name:
+        gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
+
+    gen_session_name_prompt += "\n\nConversation Name: "
+
+    system_message = Message(
+        role=agent.system_message_role,
+        content="Please provide a suitable name for this conversation in maximum 5 words. "
+        "Remember, do not exceed 5 words.",
+    )
+    user_message = Message(role=agent.user_message_role, content=gen_session_name_prompt)
+    return [system_message, user_message]
+
+
+def _parse_generated_session_name(content: Optional[str], max_retries: int, attempt: int) -> Optional[str]:
+    if content is None:
+        if attempt >= max_retries:
+            return "New Session"
+        log_error("Generated name is None. Trying again.")
+        return None
+
+    if len(content.split()) > 5:
+        if attempt >= max_retries:
+            return " ".join(content.split()[:5])
+        log_error("Generated name is too long. It should be less than 5 words. Trying again.")
+        return None
+
+    return content.replace('"', "").strip()
+
+
 def generate_session_name(agent: Agent, session: AgentSession, max_retries: int = 3, _attempt: int = 0) -> str:
     """
     Generate a name for the session using the first 6 messages from the memory
@@ -399,38 +434,35 @@ def generate_session_name(agent: Agent, session: AgentSession, max_retries: int 
     if agent.model is None:
         raise Exception("Model not set")
 
-    gen_session_name_prompt = "Conversation\n"
-
-    messages_for_generating_session_name = session.get_messages()
-
-    for message in messages_for_generating_session_name:
-        gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
-
-    gen_session_name_prompt += "\n\nConversation Name: "
-
-    system_message = Message(
-        role=agent.system_message_role,
-        content="Please provide a suitable name for this conversation in maximum 5 words. "
-        "Remember, do not exceed 5 words.",
-    )
-    user_message = Message(role=agent.user_message_role, content=gen_session_name_prompt)
-    generate_name_messages = [system_message, user_message]
-
     # Generate name
-    generated_name = agent.model.response(messages=generate_name_messages)
-    content = generated_name.content
-    if content is None:
-        if _attempt >= max_retries:
-            return "New Session"
-        log_error("Generated name is None. Trying again.")
+    generated_name = agent.model.response(messages=_get_session_name_messages(agent, session))
+    session_name = _parse_generated_session_name(generated_name.content, max_retries=max_retries, attempt=_attempt)
+    if session_name is None:
         return generate_session_name(agent, session=session, max_retries=max_retries, _attempt=_attempt + 1)
+    return session_name
 
-    if len(content.split()) > 5:
-        if _attempt >= max_retries:
-            return " ".join(content.split()[:5])
-        log_error("Generated name is too long. It should be less than 5 words. Trying again.")
-        return generate_session_name(agent, session=session, max_retries=max_retries, _attempt=_attempt + 1)
-    return content.replace('"', "").strip()
+
+async def agenerate_session_name(agent: Agent, session: AgentSession, max_retries: int = 3, _attempt: int = 0) -> str:
+    """
+    Generate a name for the session using the first 6 messages from the memory asynchronously
+
+    Args:
+        agent: The Agent instance.
+        session (AgentSession): The session to generate a name for.
+        max_retries: Maximum number of retries if generation fails.
+        _attempt: Current attempt number (used internally for recursion).
+    Returns:
+        str: The generated session name.
+    """
+
+    if agent.model is None:
+        raise Exception("Model not set")
+
+    generated_name = await agent.model.aresponse(messages=_get_session_name_messages(agent, session))
+    session_name = _parse_generated_session_name(generated_name.content, max_retries=max_retries, attempt=_attempt)
+    if session_name is None:
+        return await agenerate_session_name(agent, session=session, max_retries=max_retries, _attempt=_attempt + 1)
+    return session_name
 
 
 def get_session_name(agent: Agent, session_id: Optional[str] = None) -> str:

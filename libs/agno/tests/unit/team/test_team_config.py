@@ -12,12 +12,13 @@ Tests cover:
 """
 
 from typing import Any, Dict
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb, ComponentType
+from agno.models.response import ModelResponse
 from agno.registry import Registry
 from agno.session import TeamSession
 from agno.team.team import Team, get_team_by_id, get_teams
@@ -760,6 +761,19 @@ class TestTeamSessionNaming:
 
         assert session_name == "Team Session"
         assert team.model.response.call_count == 4
+
+    async def test_agenerate_session_name_uses_async_model_response(self):
+        """Test async session naming does not call the sync model response path."""
+        team = Team(id="session-name-team", members=[])
+        team.model = MagicMock()
+        team.model.response = MagicMock(side_effect=AssertionError("sync response should not be called"))
+        team.model.aresponse = AsyncMock(return_value=ModelResponse(content='"Async Team Name"'))
+
+        session_name = await team.agenerate_session_name(session=TeamSession(session_id="session-1", runs=[]))
+
+        assert session_name == "Async Team Name"
+        team.model.response.assert_not_called()
+        team.model.aresponse.assert_awaited_once()
 
 
 # =============================================================================

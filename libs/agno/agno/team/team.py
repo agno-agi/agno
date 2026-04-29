@@ -1560,6 +1560,9 @@ class Team:
     def generate_session_name(self, session: TeamSession) -> str:
         return _session.generate_session_name(self, session=session)
 
+    async def agenerate_session_name(self, session: TeamSession) -> str:
+        return await _session.agenerate_session_name(self, session=session)
+
     def set_session_name(
         self, session_id: Optional[str] = None, autogenerate: bool = False, session_name: Optional[str] = None
     ) -> TeamSession:

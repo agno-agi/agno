@@ -981,6 +981,9 @@ class Agent:
     def generate_session_name(self, session: AgentSession) -> str:
         return _session.generate_session_name(self, session=session)
 
+    async def agenerate_session_name(self, session: AgentSession) -> str:
+        return await _session.agenerate_session_name(self, session=session)
+
     def get_session_name(self, session_id: Optional[str] = None) -> str:
         return _session.get_session_name(self, session_id=session_id)
 
