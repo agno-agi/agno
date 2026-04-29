@@ -1,9 +1,11 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from mcp.types import TextContent
 
 from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
+from agno.utils.mcp import get_entrypoint_for_tool
 
 
 class _AsyncContextManager:
@@ -111,6 +113,50 @@ async def test_mcp_include_exclude_tools_bad_values(kwargs):
     with pytest.raises(ValueError, match="not present in the toolkit"):
         tools.session = session_mock
         await tools.build_tools()
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_result_preserves_meta():
+    """Test that MCP CallToolResult metadata is preserved on ToolResult."""
+    tool = MagicMock()
+    tool.name = "lookup"
+
+    session_mock = AsyncMock()
+    session_mock.send_ping = AsyncMock()
+    session_mock.call_tool = AsyncMock(
+        return_value=MagicMock(
+            isError=False,
+            content=[TextContent(type="text", text="done")],
+            meta={"trace_id": "abc-123", "cursor": "next-page"},
+        )
+    )
+
+    entrypoint = get_entrypoint_for_tool(tool=tool, session=session_mock)
+
+    result = await entrypoint(query="agno")
+
+    assert result.content == "done"
+    assert result.meta == {"trace_id": "abc-123", "cursor": "next-page"}
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_error_result_preserves_meta():
+    """Test that MCP error results keep metadata for hooks and callers."""
+    tool = MagicMock()
+    tool.name = "lookup"
+
+    session_mock = AsyncMock()
+    session_mock.send_ping = AsyncMock()
+    session_mock.call_tool = AsyncMock(
+        return_value=MagicMock(isError=True, content="rate limited", meta={"retry_after": 30})
+    )
+
+    entrypoint = get_entrypoint_for_tool(tool=tool, session=session_mock)
+
+    result = await entrypoint(query="agno")
+
+    assert result.content == "Error from MCP tool 'lookup': rate limited"
+    assert result.meta == {"retry_after": 30}
 
 
 # =============================================================================

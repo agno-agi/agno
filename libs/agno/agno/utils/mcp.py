@@ -78,10 +78,11 @@ def get_entrypoint_for_tool(
 
             log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
             result: CallToolResult = await active_session.call_tool(tool_name, kwargs)  # type: ignore
+            result_meta = getattr(result, "meta", None)
 
             # Return an error if the tool call failed
             if result.isError:
-                return ToolResult(content=f"Error from MCP tool '{tool_name}': {result.content}")
+                return ToolResult(content=f"Error from MCP tool '{tool_name}': {result.content}", meta=result_meta)
 
             # Process the result content
             response_str = ""
@@ -161,6 +162,7 @@ def get_entrypoint_for_tool(
             return ToolResult(
                 content=response_str.strip(),
                 images=images if images else None,
+                meta=result_meta,
             )
         except Exception as e:
             log_exception(f"Failed to call MCP tool '{tool_name}': {e}")
