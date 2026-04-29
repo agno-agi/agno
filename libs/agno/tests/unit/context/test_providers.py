@@ -601,18 +601,22 @@ def test_slack_agent_mode_surface_is_query_only():
 # ---------------------------------------------------------------------------
 
 
-def test_gdrive_requires_service_account_path(monkeypatch):
+def test_gdrive_defaults_to_oauth_when_no_sa(monkeypatch):
+    """GDrive supports OAuth, so no ValueError when SA is missing."""
     monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
-    with pytest.raises(ValueError, match="GOOGLE_SERVICE_ACCOUNT_FILE"):
-        GDriveContextProvider()
+    p = GDriveContextProvider()
+    assert p.status().ok is True
+    assert "oauth" in p.status().detail
 
 
-def test_gdrive_status_reports_missing_sa_file(tmp_path):
-    missing = tmp_path / "no-such-sa.json"
-    p = GDriveContextProvider(service_account_path=str(missing))
+def test_gdrive_status_reports_service_account_mode(tmp_path):
+    """When SA path is provided, status reports service_account mode."""
+    sa = tmp_path / "sa.json"
+    sa.write_text("{}")
+    p = GDriveContextProvider(service_account_path=str(sa))
     status = p.status()
-    assert status.ok is False
-    assert "service account file not found" in status.detail
+    assert status.ok is True
+    assert "service_account" in status.detail
 
 
 def test_gdrive_status_ok_when_sa_file_exists(tmp_path):
