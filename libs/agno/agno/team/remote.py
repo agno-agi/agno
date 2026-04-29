@@ -445,3 +445,81 @@ class RemoteTeam(BaseRemote):
             return True
         except Exception:
             return False
+
+    @overload
+    async def acontinue_run(
+        self,
+        run_id: str,
+        requirements: List[Any],
+        stream: Literal[False] = False,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        auth_token: Optional[str] = None,
+        **kwargs: Any,
+    ) -> TeamRunOutput: ...
+
+    @overload
+    def acontinue_run(
+        self,
+        run_id: str,
+        requirements: List[Any],
+        stream: Literal[True] = True,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        auth_token: Optional[str] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[TeamRunOutputEvent]: ...
+
+    def acontinue_run(  # type: ignore
+        self,
+        run_id: str,
+        requirements: List[Any],
+        stream: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        auth_token: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Union[
+        TeamRunOutput,
+        AsyncIterator[TeamRunOutputEvent],
+    ]:
+        """Continue a paused team run with requirements (e.g., tool approval results).
+
+        Args:
+            run_id: The run_id to continue.
+            requirements: List of RunRequirement objects with tool execution results.
+            stream: Whether to stream the response.
+            user_id: Optional user ID.
+            session_id: Optional session ID.
+            auth_token: Optional JWT token for authentication.
+            **kwargs: Additional parameters.
+
+        Returns:
+            TeamRunOutput for non-streaming, AsyncIterator[TeamRunOutputEvent] for streaming.
+        """
+        headers = self._get_auth_headers(auth_token)
+
+        if self.agentos_client:
+            if stream:
+                # Handle streaming response
+                return self.agentos_client.continue_team_run_stream(  # type: ignore
+                    team_id=self.team_id,
+                    run_id=run_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    requirements=requirements,
+                    headers=headers,
+                    **kwargs,
+                )
+            else:
+                return self.agentos_client.continue_team_run(  # type: ignore
+                    team_id=self.team_id,
+                    run_id=run_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    requirements=requirements,
+                    headers=headers,
+                    **kwargs,
+                )
+        else:
+            raise ValueError("No client available for continue_run. A2A protocol does not support continue_run.")

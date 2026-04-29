@@ -163,6 +163,15 @@ class Parallel:
 
     def _aggregate_results(self, step_outputs: List[StepOutput]) -> StepOutput:
         """Aggregate multiple step outputs into a single StepOutput"""
+        # Check for executor HITL pauses - not supported in parallel steps
+        for output in step_outputs:
+            if getattr(output, "is_paused", False):
+                raise ValueError(
+                    f"Executor HITL inside Parallel steps is not supported. "
+                    f"Step '{output.step_name}' has a paused agent/team. "
+                    f"Move HITL tools to non-parallel steps or use step-level HITL."
+                )
+
         if not step_outputs:
             return StepOutput(
                 step_name=self.name or "Parallel",

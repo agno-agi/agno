@@ -13,7 +13,7 @@ def build_client(
     url: str, creds: dict[str, str], ns: str, db: str
 ) -> Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection]:
     client = Surreal(url=url)
-    client.signin(creds)
+    client.signin(creds)  # type: ignore[arg-type]
     client.use(namespace=ns, database=db)
     return client
 
@@ -22,7 +22,7 @@ def _query_aux(
     client: Union[BlockingWsSurrealConnection, BlockingHttpSurrealConnection],
     query: str,
     vars: dict[str, Any],
-) -> Union[list, dict, str, int]:
+) -> Any:
     try:
         response = client.query(query, vars)
     except Exception:

@@ -72,6 +72,12 @@ coverage_report
 # JSON files used as testing DB
 agno_json_data/
 
+# Wiki cookbook artifacts
+cookbook/12_context/demo-wiki/
+cookbook/12_context/demo-wiki-web/
+cookbook/12_context/demo-wiki-dual/
+cookbook/12_context/demo-wiki-git/
+
 # AI
 .claude/
 .cursor/

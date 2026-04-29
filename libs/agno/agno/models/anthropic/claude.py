@@ -2,7 +2,7 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import asdict, dataclass
 from os import getenv
-from typing import Any, Dict, List, NoReturn, Optional, Type, Union
+from typing import Any, Callable, Dict, List, Literal, NoReturn, Optional, Type, Union
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -17,6 +17,8 @@ from agno.tools.function import Function
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import (
     MCPServerConfiguration,
+    _validate_cache_ttl_order,
+    build_system_blocks,
     format_messages,
     format_tools_for_model,
     supports_prefill,
@@ -67,6 +69,26 @@ except ImportError as e:
     ) from e
 
 
+class SystemPromptBlock(BaseModel):
+    """A block of system prompt content with Anthropic cache control metadata.
+
+    Used with ``Claude.system_prompt_blocks`` to split the system prompt into
+    independently-cacheable segments. ``cache=True`` adds ``cache_control`` to
+    this block; ``cache=False`` leaves it uncached. This decision is made per
+    block and is independent of the model-level ``cache_system_prompt`` flag,
+    which only controls whether the agent-built system message gets cached.
+    That separation lets you leave the agent-built block uncached while still
+    caching selected custom blocks (or vice versa).
+
+    ``ttl`` overrides the model-level ``extended_cache_time`` flag for that
+    block only.
+    """
+
+    text: str
+    cache: bool = True
+    ttl: Optional[Literal["5m", "1h"]] = None
+
+
 @dataclass
 class Claude(Model):
     """
@@ -115,6 +137,14 @@ class Claude(Model):
     top_k: Optional[int] = None
     cache_system_prompt: Optional[bool] = False
     extended_cache_time: Optional[bool] = False
+    cache_tools: bool = False
+    # Optional multi-block system prompt with per-block cache control.
+    # Appended after the agent-built system message in the Anthropic ``system``
+    # array. See SystemPromptBlock for cache/ttl semantics. May be a list, or a
+    # zero-arg callable returning a list — the callable is evaluated on every
+    # request, which is how you inject dynamic per-request content into a
+    # cached system prompt without reinstantiating the model or agent.
+    system_prompt_blocks: Optional[Union[List[SystemPromptBlock], Callable[[], List[SystemPromptBlock]]]] = None
     request_params: Optional[Dict[str, Any]] = None
 
     # Anthropic beta and experimental features
@@ -124,6 +154,11 @@ class Claude(Model):
     skills: Optional[List[Dict[str, str]]] = (
         None  # e.g., [{"type": "anthropic", "skill_id": "pptx", "version": "latest"}]
     )
+
+    # Whether to attach citations to document blocks.
+    # Defaults to True. Automatically suppressed when structured output is active
+    # because Anthropic rejects citations + output_format together.
+    citations: bool = True
 
     # Claude 4.6+ does not support assistant message prefill.
     # Set to True to append a trailing user turn when the conversation ends with an assistant message.
@@ -326,6 +361,20 @@ class Claude(Model):
 
         return None
 
+    def _output_format_enabled(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> bool:
+        """Return True when this request will send Anthropic's ``output_format`` param.
+
+        Anthropic rejects ``citations`` + ``output_format`` with a 400, so document
+        citations must be suppressed whenever this returns True. Delegates to
+        ``_build_output_format`` so the two can never disagree — in particular,
+        ``response_format={"type": "json_object"}`` builds nothing and therefore
+        does not trigger the conflict.
+        """
+        return self._build_output_format(response_format) is not None
+
     def _validate_structured_outputs_usage(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -418,6 +467,7 @@ class Claude(Model):
                 "top_k": self.top_k,
                 "cache_system_prompt": self.cache_system_prompt,
                 "extended_cache_time": self.extended_cache_time,
+                "cache_tools": self.cache_tools,
                 "betas": self.betas,
             }
         )
@@ -435,6 +485,7 @@ class Claude(Model):
             compress_tool_results=True,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
+            enable_citations=self.citations and not self._output_format_enabled(response_format),
         )
         anthropic_tools = None
         if tools:
@@ -442,8 +493,9 @@ class Claude(Model):
             anthropic_tools = format_tools_for_model(formatted_tools)
 
         kwargs: Dict[str, Any] = {"messages": anthropic_messages, "model": self.id}
-        if system_prompt:
-            kwargs["system"] = system_prompt
+        system = self._build_system(system_prompt)
+        if system:
+            kwargs["system"] = system
         if anthropic_tools:
             kwargs["tools"] = anthropic_tools
 
@@ -461,6 +513,7 @@ class Claude(Model):
             compress_tool_results=True,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
+            enable_citations=self.citations and not self._output_format_enabled(response_format),
         )
         anthropic_tools = None
         if tools:
@@ -468,8 +521,9 @@ class Claude(Model):
             anthropic_tools = format_tools_for_model(formatted_tools)
 
         kwargs: Dict[str, Any] = {"messages": anthropic_messages, "model": self.id}
-        if system_prompt:
-            kwargs["system"] = system_prompt
+        system = self._build_system(system_prompt)
+        if system:
+            kwargs["system"] = system
         if anthropic_tools:
             kwargs["tools"] = anthropic_tools
 
@@ -543,6 +597,47 @@ class Claude(Model):
                 return container_id
         return None
 
+    def _apply_cache_tools(self, request_kwargs: Dict[str, Any]) -> None:
+        """Tag the last tool with cache_control when cache_tools is enabled."""
+        if self.cache_tools and "tools" in request_kwargs and request_kwargs["tools"]:
+            request_kwargs["tools"][-1]["cache_control"] = {"type": "ephemeral"}
+
+    def _build_system(self, system_message: str) -> List[Dict[str, Any]]:
+        """Assemble the Anthropic ``system`` array.
+
+        Agent-built ``system_message`` becomes the first block (cached per
+        ``cache_system_prompt``). Model-level ``system_prompt_blocks`` are
+        appended after, each with its own cache/ttl. This ordering matches
+        Anthropic's prefix-cache semantics: stable content first, dynamic
+        per-request content later.
+
+        Used by both ``_prepare_request_kwargs`` and ``count_tokens`` so the
+        two paths cannot diverge.
+
+        Raises ``ValueError`` if the assembled order would violate Anthropic's
+        mixed-TTL rule (a 1h cache_control block cannot appear after a 5m one).
+        """
+        blocks: List[Dict[str, Any]] = []
+        if system_message:
+            blocks.extend(
+                build_system_blocks(
+                    system_message,
+                    cache_system_prompt=bool(self.cache_system_prompt),
+                    extended_cache_time=bool(self.extended_cache_time),
+                )
+            )
+        user_blocks = self.system_prompt_blocks() if callable(self.system_prompt_blocks) else self.system_prompt_blocks
+        if user_blocks:
+            blocks.extend(
+                build_system_blocks(
+                    user_blocks,
+                    cache_system_prompt=bool(self.cache_system_prompt),
+                    extended_cache_time=bool(self.extended_cache_time),
+                )
+            )
+        _validate_cache_ttl_order(blocks)
+        return blocks
+
     def _prepare_request_kwargs(
         self,
         system_message: str,
@@ -575,16 +670,9 @@ class Claude(Model):
             container_id = self._extract_container_id_from_messages(messages)
             if container_id:
                 request_kwargs["container"] = {**request_kwargs["container"], "id": container_id}
-        if system_message:
-            if self.cache_system_prompt:
-                cache_control = (
-                    {"type": "ephemeral", "ttl": "1h"}
-                    if self.extended_cache_time is not None and self.extended_cache_time is True
-                    else {"type": "ephemeral"}
-                )
-                request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
-            else:
-                request_kwargs["system"] = [{"text": system_message, "type": "text"}]
+        system = self._build_system(system_message)
+        if system:
+            request_kwargs["system"] = system
 
         # Add code execution tool if skills are enabled
         if self.skills:
@@ -598,6 +686,8 @@ class Claude(Model):
         # Format tools (this will handle strict mode)
         if tools:
             request_kwargs["tools"] = format_tools_for_model(tools)
+
+        self._apply_cache_tools(request_kwargs)
 
         # Build output_format if response_format is provided
         output_format = self._build_output_format(response_format)
@@ -651,6 +741,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
+                enable_citations=self.citations and not self._output_format_enabled(response_format),
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
@@ -710,6 +801,7 @@ class Claude(Model):
             compress_tool_results=compress_tool_results,
             append_trailing_user_message=self.append_trailing_user_message,
             trailing_user_message_content=self.trailing_user_message_content,
+            enable_citations=self.citations and not self._output_format_enabled(response_format),
         )
         request_kwargs = self._prepare_request_kwargs(
             system_message, tools=tools, response_format=response_format, messages=messages
@@ -760,6 +852,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
+                enable_citations=self.citations and not self._output_format_enabled(response_format),
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
@@ -818,6 +911,7 @@ class Claude(Model):
                 compress_tool_results=compress_tool_results,
                 append_trailing_user_message=self.append_trailing_user_message,
                 trailing_user_message_content=self.trailing_user_message_content,
+                enable_citations=self.citations and not self._output_format_enabled(response_format),
             )
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
