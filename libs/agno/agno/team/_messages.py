@@ -63,6 +63,7 @@ def _get_tool_names(
     if isinstance(member.tools, list):
         tools_list = member.tools
     # Resolve callable-factory tools so the leader's system prompt reflects the member's real tool set.
+    # Side effect: populates member._callable_tools_cache; the subsequent run path reuses it.
     elif member.tools is not None and parent_run_context is not None and is_callable_factory(member.tools):
         from dataclasses import replace
 

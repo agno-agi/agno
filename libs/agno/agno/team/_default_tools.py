@@ -1182,11 +1182,15 @@ def add_to_knowledge(team: "Team", query: str, result: str) -> str:
     Returns:
         str: A string indicating the status of the addition.
     """
-    if team.knowledge is None:
+    # Direct (non-factory) path. The factory-aware path lives in get_add_to_knowledge_function.
+    from agno.utils.callables import get_resolved_knowledge
+
+    knowledge = get_resolved_knowledge(team, None)
+    if knowledge is None:
         log_warning("Knowledge is not set, cannot add to knowledge")
         return "Knowledge is not set, cannot add to knowledge"
 
-    insert_method = getattr(team.knowledge, "insert", None)
+    insert_method = getattr(knowledge, "insert", None)
     if not callable(insert_method):
         log_warning("Knowledge base does not support adding content")
         return "Knowledge base does not support adding content"
