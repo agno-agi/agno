@@ -268,6 +268,21 @@ class TestGeminiTimeout:
             _, kwargs = mock_client_cls.call_args
             assert kwargs["http_options"]["timeout"] == 1500
 
+    def test_timeout_does_not_override_client_params_http_options(self):
+        """Test that client_params http_options take precedence over timeout."""
+        model = Gemini(
+            api_key="test-key",
+            timeout=30.0,
+            client_params={"http_options": {"timeout": 60000}},
+        )
+
+        with patch("agno.models.google.gemini.genai.Client") as mock_client_cls:
+            model.get_client()
+
+            _, kwargs = mock_client_cls.call_args
+            # Caller's explicit timeout in client_params wins over self.timeout
+            assert kwargs["http_options"]["timeout"] == 60000
+
 
     def test_timeout_with_vertexai(self):
         """Test that timeout works correctly in Vertex AI mode."""
