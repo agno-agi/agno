@@ -267,7 +267,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
             return
 
         # Run is in buffer (still active or recently completed)
-        if buffer_status in [RunStatus.completed, RunStatus.error, RunStatus.cancelled]:
+        if buffer_status in [RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused]:
             # Run finished - send all events from buffer
             all_events = event_buffer.get_events(run_id, last_event_index=None)
 
