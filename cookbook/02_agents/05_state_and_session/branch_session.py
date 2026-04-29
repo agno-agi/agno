@@ -28,30 +28,30 @@ agent = Agent(
 # Run Demo
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    original_session = "branch-demo-original"
+    original_session_id = "branch-demo-original"
     user_id = "demo-user"
 
     # 1. Build up a conversation
     print("\n--- Building original conversation ---\n")
     agent.print_response(
         "I'm planning a trip to Japan. What are the top 3 cities to visit?",
-        session_id=original_session,
+        session_id=original_session_id,
         user_id=user_id,
         stream=True,
     )
     agent.print_response(
         "Tell me more about Kyoto. What should I see there?",
-        session_id=original_session,
+        session_id=original_session_id,
         user_id=user_id,
         stream=True,
     )
 
     # 2. Branch the session
     new_session_id = agent.branch_session(
-        source_session_id=original_session,
+        source_session_id=original_session_id,
         user_id=user_id,
     )
-    print(f"\nBranched session: {original_session} -> {new_session_id}\n")
+    print(f"\nBranched session: {original_session_id} -> {new_session_id}\n")
 
     # 3. Continue the branched session in a different direction
     print("\n--- Continuing branched session (different direction) ---\n")
@@ -66,7 +66,7 @@ if __name__ == "__main__":
     print("\n--- Continuing original session (unaffected) ---\n")
     agent.print_response(
         "What about the temples in Kyoto? Which ones are must-see?",
-        session_id=original_session,
+        session_id=original_session_id,
         user_id=user_id,
         stream=True,
     )

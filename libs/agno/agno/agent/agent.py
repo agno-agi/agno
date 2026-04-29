@@ -1743,7 +1743,7 @@ class Agent:
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-    ) -> RunOutput: ...
+    ) -> Coroutine[Any, Any, RunOutput]: ...
 
     @overload
     def aregenerate(

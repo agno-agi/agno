@@ -437,8 +437,9 @@ class TestRegenerateSessionPersistence:
         assert len(captured_sessions[0]) == 1
         assert captured_sessions[0][0][1] == RunStatus.regenerated
 
-    def test_async_regenerate_saves_session_before_continue(self, monkeypatch: pytest.MonkeyPatch):
-        """aregenerate_dispatch must persist session before _acontinue_run re-reads."""
+    def test_async_regenerate_passes_pre_session_with_old_run_removed(self, monkeypatch: pytest.MonkeyPatch):
+        """aregenerate_dispatch must NOT save before _acontinue_run; instead it hands the
+        mutated session in via pre_session so a model crash leaves the DB untouched."""
         agent = Agent(name="test")
         old_run = _make_run(
             messages=[
@@ -449,7 +450,6 @@ class TestRegenerateSessionPersistence:
         )
         session = _make_session(runs=[old_run])
 
-        # Patch deps for aregenerate_dispatch
         monkeypatch.setattr(_init, "set_default_model", lambda a: None)
         monkeypatch.setattr(_storage, "update_metadata", lambda a, session=None: None)
         monkeypatch.setattr(
@@ -480,39 +480,43 @@ class TestRegenerateSessionPersistence:
         mock_model.provider = "test"
         agent.model = mock_model
 
-        # Track the order of operations: save_session then _acontinue_run
-        call_order: list = []
-        saved_run_counts: list = []
+        # Track that asave_session is NOT called by the prep code path
+        save_call_count = 0
 
         async def tracking_save(agent_arg, session=None):
-            call_order.append("save_session")
-            saved_run_counts.append(len(session.runs) if session and session.runs else 0)
+            nonlocal save_call_count
+            save_call_count += 1
 
         monkeypatch.setattr(_session, "asave_session", tracking_save)
 
-        # Mock _acontinue_run as an async function
+        captured_kwargs: list = []
         result_run = RunOutput(run_id="new-run", session_id="sess-1")
         result_run.content = "regenerated"
         result_run.status = RunStatus.completed
 
         async def mock_acontinue_run(*args, **kwargs):
-            call_order.append("_acontinue_run")
+            captured_kwargs.append(kwargs)
             return result_run
 
         monkeypatch.setattr(_run, "_acontinue_run", mock_acontinue_run)
 
-        # Run the async dispatch
         result = _run.aregenerate_dispatch(agent, session_id="sess-1", preserve_original=False, stream=False)
-        # aregenerate_dispatch returns a coroutine for non-streaming
         asyncio.new_event_loop().run_until_complete(result)  # type: ignore[arg-type]
 
-        # save_session must come before _acontinue_run
-        assert call_order == ["save_session", "_acontinue_run"]
-        # At save time, old run should be gone
-        assert saved_run_counts[0] == 0
+        # Critical safety property: no save before model
+        assert save_call_count == 0
+        # _acontinue_run was handed the mutated in-memory session. Its presence is the
+        # single signal that the regenerate-mode contract applies (skip DB re-read,
+        # skip duplicate dep resolution, skip persist on error).
+        assert len(captured_kwargs) == 1
+        prepared = captured_kwargs[0].get("pre_session")
+        assert prepared is session
+        assert len(prepared.runs) == 0  # old run popped in-memory
 
-    def test_async_regenerate_stream_saves_session_before_continue(self, monkeypatch: pytest.MonkeyPatch):
-        """aregenerate_dispatch (stream=True) must persist session before _acontinue_run_stream re-reads."""
+    def test_async_regenerate_stream_passes_pre_session_with_old_run_removed(self, monkeypatch: pytest.MonkeyPatch):
+        """aregenerate_dispatch (stream=True) must hand the mutated session via
+        pre_session and skip the early DB save, so a crash mid-stream leaves
+        the original run intact in the DB."""
         agent = Agent(name="test")
         old_run = _make_run(
             messages=[
@@ -553,26 +557,24 @@ class TestRegenerateSessionPersistence:
         mock_model.provider = "test"
         agent.model = mock_model
 
-        call_order: list = []
-        saved_run_counts: list = []
+        save_call_count = 0
 
         async def tracking_save(agent_arg, session=None):
-            call_order.append("save_session")
-            saved_run_counts.append(len(session.runs) if session and session.runs else 0)
+            nonlocal save_call_count
+            save_call_count += 1
 
         monkeypatch.setattr(_session, "asave_session", tracking_save)
 
-        # Mock _acontinue_run_stream as an async generator
+        captured_kwargs: list = []
+
         async def mock_acontinue_run_stream(*args, **kwargs):
-            call_order.append("_acontinue_run_stream")
+            captured_kwargs.append(kwargs)
             yield RunOutput(run_id="new-run", session_id="sess-1")
 
         monkeypatch.setattr(_run, "_acontinue_run_stream", mock_acontinue_run_stream)
 
-        # aregenerate_dispatch with stream=True returns an async iterator directly
         async_iter = _run.aregenerate_dispatch(agent, session_id="sess-1", preserve_original=False, stream=True)
 
-        # Consume the async iterator
         async def consume():
             results = []
             async for item in async_iter:  # type: ignore[union-attr]
@@ -581,12 +583,15 @@ class TestRegenerateSessionPersistence:
 
         asyncio.new_event_loop().run_until_complete(consume())
 
-        # save_session must come before _acontinue_run_stream
-        assert call_order == ["save_session", "_acontinue_run_stream"]
-        assert saved_run_counts[0] == 0
+        assert save_call_count == 0
+        assert len(captured_kwargs) == 1
+        prepared = captured_kwargs[0].get("pre_session")
+        assert prepared is session
+        assert len(prepared.runs) == 0
 
-    def test_async_regenerate_preserve_original_saves_both_statuses(self, monkeypatch: pytest.MonkeyPatch):
-        """aregenerate_dispatch with preserve_original=True saves the old run as regenerated before continue."""
+    def test_async_regenerate_preserve_original_marks_status_in_pre_session(self, monkeypatch: pytest.MonkeyPatch):
+        """aregenerate_dispatch with preserve_original=True marks the old run as regenerated
+        in the in-memory session and hands it to _acontinue_run via pre_session."""
         agent = Agent(name="test")
         old_run = _make_run(
             messages=[
@@ -627,19 +632,21 @@ class TestRegenerateSessionPersistence:
         mock_model.provider = "test"
         agent.model = mock_model
 
-        saved_statuses: list = []
+        save_call_count = 0
 
         async def tracking_save(agent_arg, session=None):
-            if session and session.runs:
-                saved_statuses.append([(r.run_id, r.status) for r in session.runs])
+            nonlocal save_call_count
+            save_call_count += 1
 
         monkeypatch.setattr(_session, "asave_session", tracking_save)
 
+        captured_kwargs: list = []
         result_run = RunOutput(run_id="new-run", session_id="sess-1")
         result_run.content = "regenerated"
         result_run.status = RunStatus.completed
 
         async def mock_acontinue_run(*args, **kwargs):
+            captured_kwargs.append(kwargs)
             return result_run
 
         monkeypatch.setattr(_run, "_acontinue_run", mock_acontinue_run)
@@ -647,10 +654,14 @@ class TestRegenerateSessionPersistence:
         result = _run.aregenerate_dispatch(agent, session_id="sess-1", preserve_original=True, stream=False)
         asyncio.new_event_loop().run_until_complete(result)  # type: ignore[arg-type]
 
-        # First save should have the old run with regenerated status
-        assert len(saved_statuses) >= 1
-        assert len(saved_statuses[0]) == 1
-        assert saved_statuses[0][0][1] == RunStatus.regenerated
+        # No early save happens any more
+        assert save_call_count == 0
+        # The prepared session has the old run marked as regenerated
+        assert len(captured_kwargs) == 1
+        prepared = captured_kwargs[0].get("pre_session")
+        assert prepared is session
+        assert len(prepared.runs) == 1
+        assert prepared.runs[0].status == RunStatus.regenerated
 
 
 # ---------------------------------------------------------------------------
@@ -818,3 +829,268 @@ class TestBranchSessionDispatch:
 
         restored = RunOutput.from_dict(d)
         assert restored.branched_from == "source-sess"
+
+
+# ---------------------------------------------------------------------------
+# pre_session forwarding tests
+# ---------------------------------------------------------------------------
+
+
+class TestRegeneratePreSessionForwarding:
+    def test_sync_regenerate_forwards_pre_session_to_continue_run(self, monkeypatch: pytest.MonkeyPatch):
+        """Sync regenerate must pass pre_session=session to _continue_run."""
+        agent = Agent(name="test")
+        old_run = _make_run(
+            messages=[
+                Message(role="user", content="hi"),
+                Message(role="assistant", content="hello"),
+            ],
+            input="hi",
+        )
+        session = _make_session(runs=[old_run])
+        mock_continue = _patch_regenerate_deps(agent, monkeypatch, session)
+
+        _run.regenerate_dispatch(agent, session_id="sess-1", stream=False)
+
+        kwargs = mock_continue.call_args.kwargs
+        assert kwargs.get("pre_session") is session
+
+    def test_sync_regenerate_stream_forwards_pre_session_to_continue_run_stream(self, monkeypatch: pytest.MonkeyPatch):
+        """Sync streaming regenerate must pass pre_session=session to _continue_run_stream."""
+        agent = Agent(name="test")
+        old_run = _make_run(
+            messages=[
+                Message(role="user", content="hi"),
+                Message(role="assistant", content="hello"),
+            ],
+            input="hi",
+        )
+        session = _make_session(runs=[old_run])
+        _patch_regenerate_deps(agent, monkeypatch, session)
+
+        # Switch resolved options to streaming and capture the streaming continue call.
+        monkeypatch.setattr(
+            _run,
+            "resolve_run_options",
+            lambda a, **kw: MagicMock(
+                stream=True,
+                stream_events=False,
+                yield_run_output=False,
+                dependencies=None,
+                knowledge_filters=None,
+                metadata=None,
+                apply_to_context=MagicMock(),
+            ),
+        )
+        captured_kwargs: list = []
+
+        def mock_continue_stream(*args, **kwargs):
+            captured_kwargs.append(kwargs)
+            yield RunOutput(run_id="new-run", session_id="sess-1")
+
+        monkeypatch.setattr(_run, "_continue_run_stream", mock_continue_stream)
+
+        list(_run.regenerate_dispatch(agent, session_id="sess-1", stream=True))  # type: ignore[arg-type]
+
+        assert len(captured_kwargs) == 1
+        assert captured_kwargs[0].get("pre_session") is session
+
+    def test_async_regenerate_forwards_pre_session_to_acontinue_run(self, monkeypatch: pytest.MonkeyPatch):
+        """Async regenerate must pass pre_session=session to _acontinue_run."""
+        agent = Agent(name="test")
+        old_run = _make_run(
+            messages=[
+                Message(role="user", content="hi"),
+                Message(role="assistant", content="hello"),
+            ],
+            input="hi",
+        )
+        session = _make_session(runs=[old_run])
+
+        monkeypatch.setattr(_init, "set_default_model", lambda a: None)
+        monkeypatch.setattr(_storage, "update_metadata", lambda a, session=None: None)
+        monkeypatch.setattr(
+            _storage, "load_session_state", lambda a, session=None, session_state=None: session_state or {}
+        )
+
+        async def mock_aread(agent_arg, session_id=None, user_id=None):
+            return session
+
+        monkeypatch.setattr(_storage, "aread_or_create_session", mock_aread)
+        monkeypatch.setattr(_run, "aresolve_run_dependencies", lambda a, run_context: None)
+        monkeypatch.setattr(_response, "get_response_format", lambda a, run_context=None: None)
+        monkeypatch.setattr(
+            _run,
+            "resolve_run_options",
+            lambda a, **kw: MagicMock(
+                stream=False,
+                stream_events=False,
+                yield_run_output=False,
+                dependencies=None,
+                knowledge_filters=None,
+                metadata=None,
+                apply_to_context=MagicMock(),
+            ),
+        )
+
+        mock_model = MagicMock()
+        mock_model.id = "test-model"
+        mock_model.provider = "test"
+        agent.model = mock_model
+
+        captured_kwargs: list = []
+        result_run = RunOutput(run_id="new-run", session_id="sess-1")
+        result_run.content = "regenerated"
+        result_run.status = RunStatus.completed
+
+        async def mock_acontinue_run(*args, **kwargs):
+            captured_kwargs.append(kwargs)
+            return result_run
+
+        monkeypatch.setattr(_run, "_acontinue_run", mock_acontinue_run)
+
+        result = _run.aregenerate_dispatch(agent, session_id="sess-1", preserve_original=False, stream=False)
+        asyncio.new_event_loop().run_until_complete(result)  # type: ignore[arg-type]
+
+        assert len(captured_kwargs) == 1
+        prepared = captured_kwargs[0].get("pre_session")
+        assert prepared is session
+        assert len(prepared.runs) == 0  # popped in-memory
+
+    def test_async_regenerate_stream_forwards_pre_session_to_acontinue_run_stream(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Async streaming regenerate must pass pre_session=session to _acontinue_run_stream."""
+        agent = Agent(name="test")
+        old_run = _make_run(
+            messages=[
+                Message(role="user", content="hi"),
+                Message(role="assistant", content="hello"),
+            ],
+            input="hi",
+        )
+        session = _make_session(runs=[old_run])
+
+        monkeypatch.setattr(_init, "set_default_model", lambda a: None)
+        monkeypatch.setattr(_storage, "update_metadata", lambda a, session=None: None)
+        monkeypatch.setattr(
+            _storage, "load_session_state", lambda a, session=None, session_state=None: session_state or {}
+        )
+
+        async def mock_aread(agent_arg, session_id=None, user_id=None):
+            return session
+
+        monkeypatch.setattr(_storage, "aread_or_create_session", mock_aread)
+        monkeypatch.setattr(_run, "aresolve_run_dependencies", lambda a, run_context: None)
+        monkeypatch.setattr(_response, "get_response_format", lambda a, run_context=None: None)
+        monkeypatch.setattr(
+            _run,
+            "resolve_run_options",
+            lambda a, **kw: MagicMock(
+                stream=True,
+                stream_events=False,
+                yield_run_output=False,
+                dependencies=None,
+                knowledge_filters=None,
+                metadata=None,
+                apply_to_context=MagicMock(),
+            ),
+        )
+
+        mock_model = MagicMock()
+        mock_model.id = "test-model"
+        mock_model.provider = "test"
+        agent.model = mock_model
+
+        captured_kwargs: list = []
+
+        async def mock_acontinue_run_stream(*args, **kwargs):
+            captured_kwargs.append(kwargs)
+            yield RunOutput(run_id="new-run", session_id="sess-1")
+
+        monkeypatch.setattr(_run, "_acontinue_run_stream", mock_acontinue_run_stream)
+
+        async_iter = _run.aregenerate_dispatch(agent, session_id="sess-1", preserve_original=False, stream=True)
+
+        async def consume():
+            async for _ in async_iter:  # type: ignore[union-attr]
+                pass
+
+        asyncio.new_event_loop().run_until_complete(consume())
+
+        assert len(captured_kwargs) == 1
+        prepared = captured_kwargs[0].get("pre_session")
+        assert prepared is session
+        assert len(prepared.runs) == 0
+
+
+class TestAcontinueRunRetryReusesPreSession:
+    def test_acontinue_run_skips_db_reread_on_retry_when_pre_session_set(self, monkeypatch: pytest.MonkeyPatch):
+        """On retry, _acontinue_run must reuse pre_session instead of re-reading from DB."""
+        from agno.run import RunContext
+
+        agent = Agent(name="test")
+        agent.retries = 1
+        agent.delay_between_retries = 0
+        agent.exponential_backoff = False
+        mock_model = MagicMock()
+        mock_model.id = "test-model"
+        mock_model.provider = "test"
+        agent.model = mock_model
+
+        prepared = _make_session(runs=[])  # popped already by prep
+
+        aread_calls = {"n": 0}
+
+        async def mock_aread(agent_arg, session_id=None, user_id=None):
+            aread_calls["n"] += 1
+            return _make_session(runs=[_make_run(run_id="db-run")])
+
+        monkeypatch.setattr(_storage, "aread_or_create_session", mock_aread)
+        monkeypatch.setattr(_storage, "update_metadata", lambda a, session=None: None)
+        monkeypatch.setattr(
+            _storage, "load_session_state", lambda a, session=None, session_state=None: session_state or {}
+        )
+
+        # Stub everything past the read so the loop body throws on the first attempt
+        # and succeeds on the second. We only care that aread is never called.
+        attempts = {"n": 0}
+
+        async def fake_call_model(*a, **k):
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise RuntimeError("transient")
+            # On second attempt return early — model_response object isn't critical;
+            # we'll short-circuit further by patching downstream helpers to no-ops.
+            return MagicMock()
+
+        # Patch out internals so _acontinue_run progresses without doing real work.
+        monkeypatch.setattr(_run, "acall_model_with_fallback", fake_call_model, raising=False)
+        monkeypatch.setattr(_run, "araise_if_cancelled", lambda *a, **k: asyncio.sleep(0), raising=False)
+
+        # Run _acontinue_run with pre_session=prepared. The first attempt raises,
+        # the second succeeds — and aread_or_create_session must be called zero times.
+        run_response = RunOutput(run_id="new-run", session_id="sess-1")
+        run_context = RunContext(run_id="new-run", session_id="sess-1", user_id=None, session_state={})
+
+        # Drive the retry loop directly; we don't need the full success path,
+        # only that no DB read happens for either attempt.
+        try:
+            asyncio.new_event_loop().run_until_complete(
+                _run._acontinue_run(
+                    agent,
+                    run_response=run_response,
+                    run_context=run_context,
+                    session_id="sess-1",
+                    pre_session=prepared,
+                )
+            )
+        except Exception:
+            # The stubs are intentionally minimal — we let _acontinue_run bail out
+            # however it likes, as long as it never reads from DB.
+            pass
+
+        assert aread_calls["n"] == 0, (
+            f"_acontinue_run re-read DB {aread_calls['n']} times across retries; "
+            "pre_session must be sticky across all attempts."
+        )
