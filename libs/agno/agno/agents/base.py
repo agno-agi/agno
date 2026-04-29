@@ -17,6 +17,7 @@ from agno.run.agent import (
     RunInput,
     RunOutput,
     RunOutputEvent,
+    RunPausedEvent,
     RunStartedEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
@@ -640,6 +641,7 @@ class BaseExternalAgent:
         accumulated_content = ""
         accumulated_tools: List[ToolExecution] = []
         run_error: Optional[Exception] = None
+        run_paused = False
 
         try:
             # Map tool_call_id -> ToolExecution for merging started+completed
@@ -663,7 +665,29 @@ class BaseExternalAgent:
                         existing.result = event.tool.result
                     else:
                         accumulated_tools.append(event.tool)
+                elif isinstance(event, RunPausedEvent):
+                    run_paused = True
                 yield event
+                if run_paused:
+                    # Persist the paused run before stopping
+                    if session is not None:
+                        run_output = self._build_run_output(
+                            run_id=run_id,
+                            session_id=session_id,
+                            user_id=user_id,
+                            input_text=input,
+                            content=accumulated_content,
+                            status=RunStatus.paused,
+                            tools=accumulated_tools if accumulated_tools else None,
+                        )
+                        if session.runs is None:
+                            session.runs = []
+                        session.runs.append(run_output)
+                        try:
+                            await self.aupsert_session(session)
+                        except Exception:
+                            pass
+                    return  # Stop — don't emit RunCompletedEvent for paused runs
         except Exception as e:
             log_exception(f"Error in {self.framework} agent '{self.id}': {e}")
             run_error = e
