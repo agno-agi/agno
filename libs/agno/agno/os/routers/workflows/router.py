@@ -56,6 +56,52 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
+async def _resolve_workflow_for_websocket(
+    workflow_id: str,
+    os: "AgentOS",
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    factory_input: Optional[Any] = None,
+    ws_user_context: Optional[Dict[str, Any]] = None,
+) -> Optional[Union[Workflow, RemoteWorkflow]]:
+    """Resolve a workflow by ID, supporting both static and factory components.
+
+    Returns the resolved workflow, or None if not found. Raises on factory errors.
+    """
+    is_factory = os.workflows and any(
+        isinstance(w, WorkflowFactory) and w.id == workflow_id for w in (os.workflows or [])
+    )
+    if is_factory:
+        from agno.factory import RequestContext, TrustedContext
+
+        trusted = TrustedContext()
+        if ws_user_context:
+            claims = ws_user_context.get("payload", {})
+            scopes = ws_user_context.get("scopes", frozenset())
+            if isinstance(scopes, (list, set)):
+                scopes = frozenset(scopes)
+            trusted = TrustedContext(claims=claims, scopes=scopes)
+
+        ctx = RequestContext(
+            user_id=user_id,
+            session_id=session_id,
+            input=factory_input,
+            trusted=trusted,
+        )
+        return await get_workflow_by_id_async(
+            workflow_id=workflow_id,
+            workflows=os.workflows,
+            db=os.db,
+            registry=os.registry,
+            create_fresh=True,
+            ctx=ctx,
+        )
+    else:
+        return get_workflow_by_id(
+            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+        )
+
+
 async def handle_workflow_via_websocket(
     websocket: WebSocket, message: dict, os: "AgentOS", ws_user_context: Optional[Dict[str, Any]] = None
 ):
@@ -71,48 +117,18 @@ async def handle_workflow_via_websocket(
             await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
             return
 
-        # Get workflow from OS — supports both static and factory components
-        is_factory = os.workflows and any(
-            isinstance(w, WorkflowFactory) and w.id == workflow_id for w in (os.workflows or [])
-        )
-        if is_factory:
-            from agno.factory import RequestContext, TrustedContext
-
-            # Build trusted context from JWT claims if available (via websocket auth)
-            trusted = TrustedContext()
-            if ws_user_context:
-                claims = ws_user_context.get("payload", {})
-                scopes = ws_user_context.get("scopes", frozenset())
-                if isinstance(scopes, (list, set)):
-                    scopes = frozenset(scopes)
-                trusted = TrustedContext(claims=claims, scopes=scopes)
-
-            ctx = RequestContext(
+        try:
+            workflow = await _resolve_workflow_for_websocket(
+                workflow_id,
+                os,
                 user_id=user_id,
                 session_id=session_id,
-                input=factory_input,
-                trusted=trusted,
+                factory_input=factory_input,
+                ws_user_context=ws_user_context,
             )
-            try:
-                workflow = await get_workflow_by_id_async(
-                    workflow_id=workflow_id,
-                    workflows=os.workflows,
-                    db=os.db,
-                    registry=os.registry,
-                    create_fresh=True,
-                    ctx=ctx,
-                )
-            except Exception as e:
-                await websocket.send_text(json.dumps({"event": "error", "error": f"Factory error: {e}"}))
-                return
-        else:
-            try:
-                workflow = get_workflow_by_id(
-                    workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
-                )
-            except Exception as e:
-                await websocket.send_text(json.dumps({"event": "error", "error": f"Error resolving workflow: {e}"}))
-                return
+        except Exception as e:
+            await websocket.send_text(json.dumps({"event": "error", "error": f"Error resolving workflow: {e}"}))
+            return
         if not workflow:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
             return
@@ -341,13 +357,17 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
         )
 
 
-async def handle_workflow_continue_via_websocket(websocket: WebSocket, message: dict, os: "AgentOS"):
+async def handle_workflow_continue_via_websocket(
+    websocket: WebSocket, message: dict, os: "AgentOS", ws_user_context: Optional[Dict[str, Any]] = None
+):
     """Handle continuing a paused workflow run via WebSocket"""
     try:
         workflow_id = message.get("workflow_id")
         run_id = message.get("run_id")
         session_id = message.get("session_id")
+        user_id = message.get("user_id")
         step_requirements_data = message.get("step_requirements")
+        factory_input = message.get("factory_input")
 
         if not workflow_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
@@ -356,9 +376,18 @@ async def handle_workflow_continue_via_websocket(websocket: WebSocket, message: 
             await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required"}))
             return
 
-        workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
-        )
+        try:
+            workflow = await _resolve_workflow_for_websocket(
+                workflow_id,
+                os,
+                user_id=user_id,
+                session_id=session_id,
+                factory_input=factory_input,
+                ws_user_context=ws_user_context,
+            )
+        except Exception as e:
+            await websocket.send_text(json.dumps({"event": "error", "error": f"Error resolving workflow: {e}"}))
+            return
         if not workflow:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
             return
@@ -398,37 +427,18 @@ async def handle_workflow_continue_via_websocket(websocket: WebSocket, message: 
                 )
                 return
 
-        # TODO: acontinue_run() does not support background/websocket like arun() does.
-        # arun() delegates to _arun_background_stream() which threads a WebSocketHandler
-        # through _aexecute_stream() and all _handle_event() calls. acontinue_run() and
-        # _acontinue_execute_stream() were never built with this support. To fix properly:
-        #   1. Add background/websocket params to acontinue_run (+ overloads)
-        #   2. Add websocket_handler param to _acontinue_execute_stream
-        #   3. Thread websocket_handler through all _handle_event() calls in both
-        #      _continue_execute_stream and _acontinue_execute_stream
-        #   4. Add _acontinue_run_background_stream() mirroring _arun_background_stream()
-        # For now, iterate the stream in a background task and forward events over the
-        # WebSocket directly. This bypasses _handle_event's event buffering and websocket
-        # manager broadcasting, so reconnecting clients won't receive these events.
-        async def _drive_continue_stream():
-            try:
-                response_stream = await workflow.acontinue_run(  # type: ignore
-                    run_response=existing_run,
-                    session_id=session_id,
-                    stream=True,
-                    stream_events=True,
-                )
-                async for event in response_stream:
-                    event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
-                    await websocket.send_text(json.dumps(event_dict, default=json_serializer))
-            except Exception as e:
-                logger.error(f"Error in continue stream: {e}")
-                try:
-                    await websocket.send_text(json.dumps({"event": "error", "error": str(e)}))
-                except Exception:
-                    pass
-
-        asyncio.create_task(_drive_continue_stream())
+        # Continue workflow in background with WebSocket streaming.
+        # Events are broadcast via WebSocketHandler through _handle_event calls,
+        # which also handles event buffering and websocket manager broadcasting.
+        await workflow.acontinue_run(  # type: ignore
+            run_response=existing_run,
+            session_id=session_id,
+            stream=True,
+            stream_events=True,
+            background=True,
+            websocket=websocket,
+            enable_websocket=True,
+        )
 
     except (InputCheckError, OutputCheckError) as e:
         await websocket.send_text(
@@ -943,7 +953,9 @@ def get_websocket_router(
                         if "user_id" not in message and websocket_user_context.get("user_id"):
                             message["user_id"] = websocket_user_context["user_id"]
                     # Continue a paused workflow run
-                    await handle_workflow_continue_via_websocket(websocket, message, os)
+                    await handle_workflow_continue_via_websocket(
+                        websocket, message, os, ws_user_context=websocket_user_context
+                    )
 
                 else:
                     await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))

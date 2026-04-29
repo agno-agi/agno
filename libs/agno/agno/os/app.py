@@ -38,7 +38,7 @@ from agno.os.config import (
     TracesDomainConfig,
 )
 from agno.os.interfaces.base import BaseInterface
-from agno.os.router import get_base_router, get_info_router, get_websocket_router
+from agno.os.router import get_base_router, get_info_router
 from agno.os.routers.agents import get_agent_router
 from agno.os.routers.approvals import get_approval_router
 from agno.os.routers.components import get_components_router
@@ -54,7 +54,7 @@ from agno.os.routers.schedules import get_schedule_router
 from agno.os.routers.session import get_session_router
 from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
-from agno.os.routers.workflows import get_workflow_router
+from agno.os.routers.workflows import get_websocket_router, get_workflow_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     _generate_knowledge_id,
