@@ -101,3 +101,4 @@ pyrightconfig.json
 CLAUDE_PRIVATE.md
 gmail_token.json
 calendar_token.json
+gdrive_token.json
