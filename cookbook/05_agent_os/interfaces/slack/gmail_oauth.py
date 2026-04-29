@@ -59,7 +59,7 @@ agent = Agent(
 
 agent_os = AgentOS(
     agents=[agent],
-    interfaces=[Slack(agent=agent, reply_to_mentions_only=False)],
+    interfaces=[Slack(agent=agent, reply_to_mentions_only=True)],
 )
 app = agent_os.get_app()
 

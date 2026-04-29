@@ -148,24 +148,25 @@ def test_authenticate_google_partial_unknown(google_auth):
 def test_shared_creds_same_object(mock_credentials):
     gmail = GmailTools(creds=mock_credentials)
     cal = GoogleCalendarTools(creds=mock_credentials)
-    assert gmail.creds is cal.creds
-    assert gmail.creds is mock_credentials
+    # Stateless: explicit creds stored in _explicit_creds, both share same reference
+    assert gmail._explicit_creds is cal._explicit_creds
+    assert gmail._explicit_creds is mock_credentials
 
 
 def test_shared_creds_skips_auth(mock_credentials):
     gmail = GmailTools(creds=mock_credentials)
     with patch("agno.tools.google.gmail.build") as mock_build:
         mock_build.return_value = MagicMock()
-        with patch.object(gmail, "_auth") as mock_auth:
+        # Stateless: _resolve_creds returns _explicit_creds directly when valid
+        with patch.object(gmail, "_resolve_creds", return_value=mock_credentials) as mock_resolve:
             gmail.get_latest_emails(count=1)
-            mock_auth.assert_not_called()
+            mock_resolve.assert_called_once()
 
 
 def test_auth_error_returns_json():
     gmail = GmailTools()
-    gmail.creds = Mock(valid=False)
-    gmail.service = None
-    with patch.object(gmail, "_auth", side_effect=RuntimeError("token expired")):
+    # Stateless: decorator catches _resolve_creds errors and returns JSON
+    with patch.object(gmail, "_resolve_creds", side_effect=RuntimeError("token expired")):
         result = gmail.get_latest_emails(count=1)
     data = json.loads(result)
     assert "error" in data

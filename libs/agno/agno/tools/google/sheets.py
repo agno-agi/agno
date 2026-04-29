@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import get_token_db, google_authenticate, load_token, save_token
+from agno.tools.google.auth import get_current_creds, get_current_service, get_token_db, google_authenticate, save_token
 from agno.utils.log import log_debug
 
 try:
@@ -74,8 +74,6 @@ class GoogleSheetsTools(Toolkit):
         "read": "https://www.googleapis.com/auth/spreadsheets.readonly",
         "write": "https://www.googleapis.com/auth/spreadsheets",
     }
-
-    service: Optional[Resource]
 
     def __init__(
         self,
@@ -135,11 +133,10 @@ class GoogleSheetsTools(Toolkit):
         self._db: Optional[Any] = None
         self.spreadsheet_id = spreadsheet_id
         self.spreadsheet_range = spreadsheet_range
-        self.creds = creds
+        self._explicit_creds = creds
         self.credentials_path = creds_path
         self.token_path = token_path
         self.oauth_port = oauth_port
-        self.service: Optional[Resource] = None
         self.service_account_path = service_account_path
         # Determine required scopes based on operations if no custom scopes provided
         if scopes is None:
@@ -181,76 +178,121 @@ class GoogleSheetsTools(Toolkit):
         if self.google_auth:
             self.google_auth.register_service("sheets", self.scopes)
 
-    def _build_service(self):
-        return build("sheets", "v4", credentials=self.creds)
+    @property
+    def service(self):
+        """Per-call service from contextvar. Set by @google_authenticate decorator."""
+        return get_current_service()
 
-    def _auth(self, user_id=None, agent=None) -> None:
-        """
-        Authenticate with Google Sheets API
-        """
-        if self.creds and self.creds.valid:
-            return
+    def _build_service(self, creds):
+        return build("sheets", "v4", credentials=creds)
 
+    def _load_from_db(self, run_context=None, agent=None) -> Optional[Credentials]:
+        """Load credentials from DB if available."""
+        db = get_token_db(self, agent=agent)
+        if db is None:
+            return None
+
+        user_id = getattr(run_context, "user_id", None) if run_context else None
+        row = db.read(table_name="google_tokens", filters={"user_id": user_id or "default"}, limit=1)
+        if not row:
+            return None
+
+        token_data = row[0].get("token_data")
+        if not token_data:
+            return None
+
+        try:
+            creds = Credentials.from_authorized_user_info(json.loads(token_data), self.scopes)
+        except (ValueError, json.JSONDecodeError):
+            return None
+
+        if creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                save_token(self, creds, user_id=user_id, agent=agent)
+            except Exception:
+                return None
+
+        return creds if creds.valid else None
+
+    def _resolve_creds(self, run_context=None, agent=None):
+        """Resolve credentials without storing on self. Returns creds or None."""
+        # 1. Explicit creds passed to constructor
+        if self._explicit_creds and self._explicit_creds.valid:
+            return self._explicit_creds
+
+        # 2. Service account
         service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-
         if service_account_path:
-            self.creds = ServiceAccountCredentials.from_service_account_file(
+            creds = ServiceAccountCredentials.from_service_account_file(
                 service_account_path,
                 scopes=self.scopes,
             )
-            if self.creds and self.creds.expired:
-                self.creds.refresh(Request())
-            return
+            if creds.expired:
+                creds.refresh(Request())
+            return creds
 
-        if load_token(self, self.scopes, user_id=user_id, agent=agent):
-            return
+        # 3. Load from DB
+        creds = self._load_from_db(run_context=run_context, agent=agent)
+        if creds:
+            return creds
+
+        # Check if callback mode — require OAuth via authenticate_google
         if self.google_auth and self.google_auth._callback_configured and get_token_db(self, agent=agent):
             raise PermissionError("Sheets not authenticated — user must complete OAuth via authenticate_google")
 
+        user_id = getattr(run_context, "user_id", None) if run_context else None
+
+        # 4. Load from file
         token_file = Path(self.token_path or "token.json")
         creds_file = Path(self.credentials_path or "credentials.json")
 
         if token_file.exists():
             try:
-                self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
+                creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
             except ValueError:
-                self.creds = None
+                creds = None
 
-        if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore
-            try:
-                self.creds.refresh(Request())
-            except Exception:
-                self.creds = None
+            if creds and creds.expired and creds.refresh_token:
+                try:
+                    creds.refresh(Request())
+                except Exception:
+                    creds = None
 
-        if not self.creds or not self.creds.valid:
-            # Coordinator mode: request the union of all registered scopes in one consent flow
-            if self.google_auth is not None and self.google_auth._services:
-                consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
-            else:
-                consent_scopes = self.scopes
-            client_config = {
-                "installed": {
-                    "client_id": getenv("GOOGLE_CLIENT_ID"),
-                    "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
-                    "project_id": getenv("GOOGLE_PROJECT_ID"),
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                    "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
-                }
+            if creds and creds.valid:
+                return creds
+
+        # 5. Interactive OAuth
+        if self.google_auth is not None and self.google_auth._services:
+            consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
+        else:
+            consent_scopes = self.scopes
+
+        client_config = {
+            "installed": {
+                "client_id": getenv("GOOGLE_CLIENT_ID"),
+                "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
+                "project_id": getenv("GOOGLE_PROJECT_ID"),
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
             }
-            if creds_file.exists():
-                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), consent_scopes)
-            else:
-                flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
-            self.creds = flow.run_local_server(port=self.oauth_port, prompt="consent")
+        }
+        if creds_file.exists():
+            flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), consent_scopes)
+        else:
+            flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
+        creds = flow.run_local_server(port=self.oauth_port, prompt="consent")
 
-        if self.creds and self.creds.valid:
-            if save_token(self, self.creds, user_id=user_id, agent=agent):
+        if creds and creds.valid:
+            if save_token(self, creds, user_id=user_id, agent=agent):
                 log_debug("Sheets credentials saved to DB")
             else:
-                token_file.write_text(self.creds.to_json())  # type: ignore
+                token_file.write_text(creds.to_json())
                 log_debug("Sheets credentials saved to file")
+
+        return creds
 
     @authenticate
     def read_sheet(self, spreadsheet_id: Optional[str] = None, spreadsheet_range: Optional[str] = None) -> str:
@@ -264,7 +306,7 @@ class GoogleSheetsTools(Toolkit):
         Returns:
             JSON of list of rows, where each row is a list of values
         """
-        if not self.creds:
+        if not self.service:
             return "Not authenticated. Call auth() first."
 
         # Prioritize instance attributes
@@ -275,7 +317,7 @@ class GoogleSheetsTools(Toolkit):
             return "Spreadsheet ID and range must be provided either in constructor or method call"
 
         try:
-            result = self.service.spreadsheets().values().get(spreadsheetId=sheet_id, range=sheet_range).execute()  # type: ignore
+            result = self.service.spreadsheets().values().get(spreadsheetId=sheet_id, range=sheet_range).execute()
             return json.dumps(result.get("values", []))
 
         except Exception as e:
@@ -292,13 +334,13 @@ class GoogleSheetsTools(Toolkit):
         Returns:
             The ID of the created Google Sheet
         """
-        if not self.creds:
+        if not self.service:
             return "Not authenticated. Call auth() first."
 
         try:
             spreadsheet = {"properties": {"title": title}}
 
-            spreadsheet = self.service.spreadsheets().create(body=spreadsheet, fields="spreadsheetId").execute()  # type: ignore
+            spreadsheet = self.service.spreadsheets().create(body=spreadsheet, fields="spreadsheetId").execute()
             spreadsheet_id = spreadsheet.get("spreadsheetId")
 
             return f"Spreadsheet created: https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
@@ -323,15 +365,13 @@ class GoogleSheetsTools(Toolkit):
         Returns:
             A message indicating the success or failure of the operation
         """
-        if not self.creds:
+        if not self.service:
             return "Not authenticated. Call auth() first."
 
         try:
-            # Define the request body
             body = {"values": data}
 
-            # Update the sheet
-            self.service.spreadsheets().values().update(  # type: ignore
+            self.service.spreadsheets().values().update(
                 spreadsheetId=spreadsheet_id,
                 range=range_name,
                 valueInputOption="RAW",
@@ -360,19 +400,19 @@ class GoogleSheetsTools(Toolkit):
         Returns:
             A link to the duplicated spreadsheet.
         """
-        if not self.creds:
+        if not self.service:
             return "Not authenticated. Call auth() first."
 
-        if not self.service:
-            return "Service not initialized"
+        creds = get_current_creds()
+        if not creds:
+            return "Not authenticated. Call auth() first."
 
         try:
             # Ensure the drive scope is included
             if "https://www.googleapis.com/auth/drive" not in self.scopes:
-                self.scopes.append("https://www.googleapis.com/auth/drive")
-                self._auth()  # Re-authenticate with updated scopes
+                return "Drive scope required. Add 'https://www.googleapis.com/auth/drive' to scopes."
 
-            drive_service = build("drive", "v3", credentials=self.creds)
+            drive_service = build("drive", "v3", credentials=creds)
 
             # Use new_title if provided, otherwise fetch the title from the source spreadsheet
             if not new_title:
@@ -385,7 +425,6 @@ class GoogleSheetsTools(Toolkit):
 
             # Copy permissions if requested
             if copy_permissions:
-                # Get permissions from source file
                 source_permissions = (
                     drive_service.permissions()
                     .list(fileId=source_id, fields="permissions(emailAddress,role,type)")
@@ -393,9 +432,7 @@ class GoogleSheetsTools(Toolkit):
                     .get("permissions", [])
                 )
 
-                # Apply each permission to the new file
                 for permission in source_permissions:
-                    # Skip the owner permission as it can't be transferred
                     if permission.get("role") == "owner":
                         continue
 

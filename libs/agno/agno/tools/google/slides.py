@@ -60,7 +60,7 @@ except ImportError:
     )
 
 from agno.tools import Toolkit
-from agno.tools.google.auth import get_token_db, google_authenticate, load_token, save_token
+from agno.tools.google.auth import get_current_service, get_token_db, google_authenticate, save_token
 from agno.utils.log import log_debug
 
 SLIDES_INSTRUCTIONS = textwrap.dedent("""\
@@ -125,7 +125,7 @@ class GoogleSlidesTools(Toolkit):
         self.google_auth = google_auth
         self.store_token_in_db = store_token_in_db
         self._db: Optional[Any] = None
-        self.creds = creds
+        self._explicit_creds = creds
         self.credentials_path = credentials_path
         self.token_path = token_path
         self.service_account_path = service_account_path
@@ -133,10 +133,6 @@ class GoogleSlidesTools(Toolkit):
         self.oauth_port = oauth_port
         self.login_hint = login_hint
         self.scopes = scopes or self.DEFAULT_SCOPES
-
-        self.service: Any = None
-        self.slides_service: Any = None
-        self.drive_service: Any = None
 
         tools = []
         if all or create_presentation:
@@ -191,85 +187,138 @@ class GoogleSlidesTools(Toolkit):
         if self.google_auth:
             self.google_auth.register_service("slides", self.scopes)
 
-    def _build_service(self):
-        self.slides_service = build("slides", "v1", credentials=self.creds)
-        self.drive_service = build("drive", "v3", credentials=self.creds)
-        # Returned value stored as self.service by decorator (sentinel for "services built")
-        return self.slides_service
+    def _build_service(self, creds):
+        return {
+            "slides": build("slides", "v1", credentials=creds),
+            "drive": build("drive", "v3", credentials=creds),
+        }
 
-    def _auth(self, user_id=None, agent=None) -> None:
-        """Authenticate with Google Slides API"""
-        if self.creds and self.creds.valid:
-            return
+    @property
+    def service(self):
+        """Per-call service dict from contextvar."""
+        return get_current_service()
 
+    @property
+    def slides_service(self):
+        """Per-call Slides API service."""
+        svc = get_current_service()
+        return svc["slides"] if svc else None
+
+    @property
+    def drive_service(self):
+        """Per-call Drive API service."""
+        svc = get_current_service()
+        return svc["drive"] if svc else None
+
+    def _resolve_creds(self, run_context=None, agent=None):
+        """Stateless credential resolution. Returns credentials, does not cache on self."""
+        user_id = getattr(run_context, "user_id", None) if run_context else None
+
+        # 1. Explicit creds from constructor
+        if self._explicit_creds and self._explicit_creds.valid:
+            return self._explicit_creds
+
+        # 2. Service account (never stored in DB)
         service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
         if service_account_path:
             sa_creds = ServiceAccountCredentials.from_service_account_file(service_account_path, scopes=self.scopes)
             delegated_user = self.delegated_user or getenv("GOOGLE_DELEGATED_USER")
             if delegated_user:
                 sa_creds = sa_creds.with_subject(delegated_user)
-            # Eagerly fetch token so creds.valid=True and @authenticate won't re-enter _auth
             sa_creds.refresh(Request())
-            self.creds = sa_creds
-            return
+            return sa_creds
 
-        if load_token(self, self.scopes, user_id=user_id, agent=agent):
-            return
-        if self.google_auth and self.google_auth._callback_configured and get_token_db(self, agent=agent):
-            raise PermissionError("Slides not authenticated — user must complete OAuth via authenticate_google")
+        # 3. DB lookup
+        db = get_token_db(self, agent=agent)
+        if db:
+            creds = self._load_from_db(db, user_id)
+            if creds:
+                return creds
+            # Server mode: don't fall through to browser OAuth
+            if self.google_auth and self.google_auth._callback_configured:
+                raise PermissionError("Slides not authenticated — user must complete OAuth via authenticate_google")
 
+        # 4. File fallback (local mode)
         token_file = Path(self.token_path or "token.json")
         creds_file = Path(self.credentials_path or "credentials.json")
 
+        creds = None
         if token_file.exists():
             try:
-                self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
+                creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
             except ValueError:
-                # Token file missing refresh_token — fall through to re-auth
-                self.creds = None
+                creds = None
 
-        if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore
+        if creds and creds.expired and creds.refresh_token:
             try:
-                self.creds.refresh(Request())
+                creds.refresh(Request())
+                token_file.write_text(creds.to_json())
             except Exception:
-                # Refresh token revoked or expired — fall through to re-auth
-                self.creds = None
+                creds = None
 
-        if not self.creds or not self.creds.valid:
-            # Coordinator mode: request the union of all registered scopes in one consent flow
-            if self.google_auth is not None and self.google_auth._services:
-                consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
-            else:
-                consent_scopes = self.scopes
-            client_config = {
-                "installed": {
-                    "client_id": getenv("GOOGLE_CLIENT_ID"),
-                    "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
-                    "project_id": getenv("GOOGLE_PROJECT_ID"),
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                    "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
-                }
+        if creds and creds.valid:
+            return creds
+
+        # 5. Interactive OAuth (local only)
+        if self.google_auth is not None and self.google_auth._services:
+            consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
+        else:
+            consent_scopes = self.scopes
+
+        client_config = {
+            "installed": {
+                "client_id": getenv("GOOGLE_CLIENT_ID"),
+                "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
+                "project_id": getenv("GOOGLE_PROJECT_ID"),
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
             }
-            if creds_file.exists():
-                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), consent_scopes)
-            else:
-                flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
+        }
+        if creds_file.exists():
+            flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), consent_scopes)
+        else:
+            flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
 
-            # prompt=consent forces Google to return a refresh_token every time
-            oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
-            if self.login_hint:
-                oauth_kwargs["login_hint"] = self.login_hint
-            oauth_kwargs["port"] = self.oauth_port
-            self.creds = flow.run_local_server(**oauth_kwargs)
-        # Save the credentials for future use
-        if self.creds and self.creds.valid:
-            if save_token(self, self.creds, user_id=user_id, agent=agent):
+        oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
+        if self.login_hint:
+            oauth_kwargs["login_hint"] = self.login_hint
+        creds = flow.run_local_server(port=self.oauth_port, **oauth_kwargs)
+
+        # Save to DB or file
+        if creds and creds.valid:
+            if save_token(self, creds, user_id=user_id, agent=agent):
                 log_debug("Slides credentials saved to DB")
             else:
-                token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
+                token_file.write_text(creds.to_json())
                 log_debug("Slides credentials saved to file")
+
+        return creds
+
+    def _load_from_db(self, db, user_id):
+        """Load and refresh credentials from DB."""
+        try:
+            row = db.get_auth_token("google", user_id, "google")
+        except (NotImplementedError, Exception):
+            return None
+        if not row:
+            return None
+
+        try:
+            effective_scopes = row.get("granted_scopes") or self.scopes
+            creds = Credentials.from_authorized_user_info(row["token_data"], effective_scopes)
+        except (ValueError, KeyError):
+            return None
+
+        if creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                save_token(self, creds, user_id=user_id, agent=None)
+            except Exception:
+                return None
+
+        return creds if creds.valid else None
 
     def _batch_update(self, presentation_id: str, requests: List[Dict[str, Any]]) -> dict:
         return (

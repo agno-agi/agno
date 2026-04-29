@@ -360,9 +360,11 @@ class Toolkit:
         clone = copy(self)
         # Reset auth state — forces the decorator to call _auth(user_id)
         # and _build_service() which rebuilds all service handles.
-        if hasattr(clone, "creds"):
+        # Use vars() to only reset instance attributes, not properties
+        # (stateless toolkits use @property + contextvars, not instance attrs)
+        if "creds" in vars(clone):
             clone.creds = None
-        if hasattr(clone, "service"):
+        if "service" in vars(clone):
             clone.service = None
         # Defense-in-depth: reset secondary service handles (e.g. Slides)
         # so they can't leak from a previous user even if _build_service

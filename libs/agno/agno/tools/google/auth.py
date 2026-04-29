@@ -1,6 +1,7 @@
 import inspect
 import json
 import os
+from contextvars import ContextVar
 from functools import wraps
 from time import monotonic
 from typing import Any, Dict, List, Literal, Optional, Set, Tuple
@@ -10,6 +11,10 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.oauth_state import sign_state, verify_state
 
+# Per-call service and creds storage for stateless toolkit access
+_google_service: ContextVar[Any] = ContextVar("google_service", default=None)
+_google_creds: ContextVar[Any] = ContextVar("google_creds", default=None)
+
 
 def google_authenticate(service_name: str):
     """Shared auth decorator for all Google toolkits.
@@ -18,10 +23,11 @@ def google_authenticate(service_name: str):
         authenticate = google_authenticate("gmail")
 
     Expects the toolkit class to define:
-        - self.creds: Google OAuth credentials
-        - self.service: Built API client (set by _build_service)
-        - self._auth(user_id=None): Loads or refreshes credentials
-        - self._build_service(): Returns build(api_name, api_version, credentials=self.creds)
+        - _resolve_creds(run_context, agent): Returns credentials (stateless)
+        - _build_service(creds): Returns build(api_name, api_version, credentials=creds)
+
+    The decorator resolves credentials and builds a fresh service per-call,
+    passing both run_context and agent to the wrapped method for stateless access.
     """
 
     def decorator(func):
@@ -38,26 +44,50 @@ def google_authenticate(service_name: str):
 
         @wraps(func)
         def wrapper(self, *args, run_context=None, agent=None, **kwargs):
-            user_id = getattr(run_context, "user_id", None) if run_context else None
+            try:
+                creds = self._resolve_creds(run_context, agent)
+            except Exception as e:
+                log_error(f"{service_name.title()} authentication failed: {str(e)}")
+                return json.dumps({"error": f"{service_name.title()} authentication failed: {e}"})
 
-            if not self.creds or not self.creds.valid:
-                try:
-                    self._auth(user_id=user_id, agent=agent)
-                except Exception as e:
-                    log_error(f"{service_name.title()} authentication failed: {str(e)}")
-                    return json.dumps({"error": f"{service_name.title()} authentication failed: {e}"})
-            if not self.service:
-                try:
-                    self.service = self._build_service()
-                except Exception as e:
-                    log_error(f"{service_name.title()} service initialization failed: {str(e)}")
-                    return json.dumps({"error": f"{service_name.title()} service initialization failed: {e}"})
-            return func(self, *args, **kwargs)
+            try:
+                service = self._build_service(creds)
+            except Exception as e:
+                log_error(f"{service_name.title()} service initialization failed: {str(e)}")
+                return json.dumps({"error": f"{service_name.title()} service initialization failed: {e}"})
+
+            # Store service and creds in contextvars for this call — async/thread safe
+            service_token = _google_service.set(service)
+            creds_token = _google_creds.set(creds)
+            try:
+                return func(self, *args, **kwargs)
+            finally:
+                _google_service.reset(service_token)
+                _google_creds.reset(creds_token)
 
         wrapper.__signature__ = exposed_sig  # type: ignore[attr-defined]
         return wrapper
 
     return decorator
+
+
+def get_current_service() -> Any:
+    """Get the Google API service for the current call.
+
+    Used by toolkit methods to access the per-call service built by @google_authenticate.
+    Returns None if called outside a decorated method.
+    """
+    return _google_service.get()
+
+
+def get_current_creds() -> Any:
+    """Get the Google credentials for the current call.
+
+    Used by toolkit methods that need to build additional services (e.g., Drive API
+    for sheets duplication) with the same credentials resolved by @google_authenticate.
+    Returns None if called outside a decorated method.
+    """
+    return _google_creds.get()
 
 
 def _persist_google_token(

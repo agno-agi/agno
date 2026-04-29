@@ -53,7 +53,7 @@ import pytest
 from google.oauth2.credentials import Credentials
 
 from agno.db.sqlite import SqliteDb
-from agno.tools.google.auth import google_authenticate, load_token
+from agno.tools.google.auth import get_current_creds, get_token_db, google_authenticate
 from agno.tools.toolkit import Toolkit
 from agno.utils.callables import ainvoke_callable_factory
 
@@ -77,32 +77,42 @@ class _MockGmailToolkit(Toolkit):
     actual HTTP. What we assert — ``creds.apply(headers)['authorization']`` —
     is literally what google-api-python-client computes internally before
     sending the request, so a correct value here proves outbound isolation.
+
+    Updated for stateless pattern: credentials resolved per-call via
+    _resolve_creds() and accessed via get_current_creds() contextvar.
     """
 
     def __init__(self):
         super().__init__(name="mock_gmail")
         self.scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
-        self.creds: Optional[Credentials] = None
-        self.service: Optional[Any] = None
         # Opt into DB-backed tokens so get_token_db resolves agent.db at call time.
         self.store_token_in_db = True
         self._db: Optional[Any] = None
 
-    def _auth(self, user_id: Optional[str] = None, agent: Optional[Any] = None) -> None:
-        ok = load_token(self, scopes=self.scopes, user_id=user_id, agent=agent)
-        if not ok:
-            raise RuntimeError(f"load_token failed for user {user_id!r}")
+    def _resolve_creds(self, run_context: Optional[Any] = None, agent: Optional[Any] = None) -> Credentials:
+        user_id = getattr(run_context, "user_id", None) if run_context else None
+        db = get_token_db(self, agent=agent)
+        if db is None:
+            raise RuntimeError(f"No DB available for user {user_id!r}")
+        row = db.get_auth_token("google", user_id, "google")
+        if not row:
+            raise RuntimeError(f"No token found for user {user_id!r}")
+        effective_scopes = row.get("granted_scopes") or self.scopes
+        creds = Credentials.from_authorized_user_info(row["token_data"], effective_scopes)
+        return creds
 
-    def _build_service(self) -> Any:
+    def _build_service(self, creds: Credentials) -> Any:
         return MagicMock()
 
     @google_authenticate("gmail")
     def bearer_header(self) -> str:
         # Materialize the Authorization header exactly the way
         # google-api-python-client does before issuing a request.
+        # Stateless: access creds via contextvar, not self.creds
         headers: dict = {}
-        assert self.creds is not None
-        self.creds.apply(headers)
+        creds = get_current_creds()
+        assert creds is not None
+        creds.apply(headers)
         return headers["authorization"]
 
     @google_authenticate("gmail")
@@ -111,8 +121,9 @@ class _MockGmailToolkit(Toolkit):
         # interleaving on thread-pool executors. Amplifies any race window.
         time.sleep(0.01)
         headers: dict = {}
-        assert self.creds is not None
-        self.creds.apply(headers)
+        creds = get_current_creds()
+        assert creds is not None
+        creds.apply(headers)
         return headers["authorization"]
 
 
@@ -178,8 +189,8 @@ async def test_factory_pattern_bearer_matches_user(temp_db):
     )
 
 
-def test_shared_toolkit_leaks_bearer_token(temp_db):
-    """Shared toolkit: Bob's outbound bearer is Alice's token. Deterministic leak."""
+def test_shared_toolkit_isolates_bearer_token(temp_db):
+    """Shared toolkit with contextvars: each call gets correct user's token."""
     for uid in USERS:
         _seed_user(temp_db, uid)
     agent = _MockAgent(db=temp_db)
@@ -189,11 +200,10 @@ def test_shared_toolkit_leaks_bearer_token(temp_db):
     second = shared.bearer_header(run_context=_FakeRunContext(user_id="bob"), agent=agent)
 
     assert first == _expected_bearer("alice")
-    # Canary: flips to Bearer TOKEN::bob if per-call isolation lands (e.g. PR #7404).
-    assert second == _expected_bearer("alice"), (
-        "Shared-toolkit bearer leak is expected on this branch. "
-        f"Got {second!r} — if this is {_expected_bearer('bob')!r}, isolation is "
-        "now automatic and the factory-pattern requirement should be revisited."
+    # With contextvars, each call resolves creds per-call — no leak
+    assert second == _expected_bearer("bob"), (
+        "Per-call isolation via contextvars should give Bob his own token. "
+        f"Got {second!r} — expected {_expected_bearer('bob')!r}."
     )
 
 
@@ -246,14 +256,12 @@ def test_real_thread_concurrency_factory_isolates(temp_db):
     )
 
 
-def test_real_thread_concurrency_shared_leaks(temp_db):
-    """Real threads on a shared toolkit leak under forced interleaving.
+def test_real_thread_concurrency_shared_isolates(temp_db):
+    """Real threads on a shared toolkit with contextvars: isolation holds.
 
     16 threads × 48 calls share one toolkit instance. With the 10ms sleep
-    between auth and apply, threads will see each other's creds. We don't
-    assert an exact count (timing-dependent), but we do assert at least one
-    mismatch occurred — proving the shared-instance anti-pattern is unsafe
-    under real concurrency, not just in theory.
+    between auth and apply, threads interleave — but contextvars ensure
+    each thread sees its own credentials. No mismatches should occur.
     """
     for uid in USERS:
         _seed_user(temp_db, uid)
@@ -270,9 +278,7 @@ def test_real_thread_concurrency_shared_leaks(temp_db):
         results = [(futures[f], f.result()) for f in as_completed(futures)]
 
     mismatches = [(u, bearer) for u, bearer in results if bearer != _expected_bearer(u)]
-    assert mismatches, (
-        "Expected at least one bearer mismatch on shared-toolkit under forced "
-        "thread interleaving. None observed — this may mean the scheduler happened "
-        "to run every call serially, or isolation is now automatic. Re-run; if "
-        "still clean, investigate whether per-call isolation has silently landed."
+    assert not mismatches, (
+        "Per-call isolation via contextvars should prevent credential leaks. "
+        f"Got {len(mismatches)} mismatches: {mismatches[:5]}"
     )
