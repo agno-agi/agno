@@ -61,7 +61,7 @@ audio_generations
 *.db
 
 # Google OAuth token
-token.json
+*token.json
 
 .composio.lock
 
@@ -99,6 +99,3 @@ CLAUDE_PRIVATE.md
 pyrightconfig.json
 .python-version
 CLAUDE_PRIVATE.md
-gmail_token.json
-calendar_token.json
-gdrive_token.json
