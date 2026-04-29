@@ -1,9 +1,11 @@
+import asyncio
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from agno.exceptions import ModelProviderError
 from agno.media import File
 from agno.models.google.gemini import Gemini
 from agno.models.message import Message
@@ -52,6 +54,63 @@ def test_gemini_get_client_ai_studio_mode():
         assert "credentials" not in kwargs
         assert "api_key" in kwargs
         assert kwargs.get("vertexai") is not True
+
+
+def _gemini_with_timeout_client():
+    model = Gemini(api_key="test-key")
+    model._format_messages = MagicMock(return_value=([], None))  # type: ignore[method-assign]
+    model.get_request_params = MagicMock(return_value={})  # type: ignore[method-assign]
+
+    client = MagicMock()
+    model.client = client
+    return model, client
+
+
+def test_invoke_preserves_empty_exception_type_in_provider_error():
+    model, client = _gemini_with_timeout_client()
+    client.models.generate_content.side_effect = asyncio.TimeoutError()
+
+    with pytest.raises(ModelProviderError) as exc_info:
+        model.invoke(messages=[], assistant_message=Message(role="assistant"))
+
+    assert exc_info.value.message == "TimeoutError"
+    assert isinstance(exc_info.value.__cause__, asyncio.TimeoutError)
+
+
+def test_invoke_stream_preserves_empty_exception_type_in_provider_error():
+    model, client = _gemini_with_timeout_client()
+    client.models.generate_content_stream.side_effect = asyncio.TimeoutError()
+
+    with pytest.raises(ModelProviderError) as exc_info:
+        list(model.invoke_stream(messages=[], assistant_message=Message(role="assistant")))
+
+    assert exc_info.value.message == "TimeoutError"
+    assert isinstance(exc_info.value.__cause__, asyncio.TimeoutError)
+
+
+@pytest.mark.asyncio
+async def test_ainvoke_preserves_empty_exception_type_in_provider_error():
+    model, client = _gemini_with_timeout_client()
+    client.aio.models.generate_content = AsyncMock(side_effect=asyncio.TimeoutError())
+
+    with pytest.raises(ModelProviderError) as exc_info:
+        await model.ainvoke(messages=[], assistant_message=Message(role="assistant"))
+
+    assert exc_info.value.message == "TimeoutError"
+    assert isinstance(exc_info.value.__cause__, asyncio.TimeoutError)
+
+
+@pytest.mark.asyncio
+async def test_ainvoke_stream_preserves_empty_exception_type_in_provider_error():
+    model, client = _gemini_with_timeout_client()
+    client.aio.models.generate_content_stream = AsyncMock(side_effect=asyncio.TimeoutError())
+
+    with pytest.raises(ModelProviderError) as exc_info:
+        async for _ in model.ainvoke_stream(messages=[], assistant_message=Message(role="assistant")):
+            pass
+
+    assert exc_info.value.message == "TimeoutError"
+    assert isinstance(exc_info.value.__cause__, asyncio.TimeoutError)
 
 
 class TestFormatFileForMessage:
