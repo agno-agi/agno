@@ -31,6 +31,7 @@ on-demand `learn_context(id)` meta-tool.
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 from abc import ABC, abstractmethod
@@ -222,11 +223,18 @@ class ContextProvider(ABC):
 
     def _query_tool(self):
         provider = self
+        # Subclasses written before the run_context kwarg landed won't
+        # accept it. Inspect the override and only forward run_context
+        # when the subclass declares it.
+        aquery_accepts_rc = _accepts_run_context(provider.aquery)
 
         @tool(name=self.query_tool_name)
         async def _query(question: str, run_context: RunContext | None = None) -> str:
             try:
-                answer = await provider.aquery(question, run_context=run_context)
+                if aquery_accepts_rc:
+                    answer = await provider.aquery(question, run_context=run_context)
+                else:
+                    answer = await provider.aquery(question)
             except Exception as exc:
                 return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
             return json.dumps(_serialize_answer(answer))
@@ -235,11 +243,15 @@ class ContextProvider(ABC):
 
     def _update_tool(self):
         provider = self
+        aupdate_accepts_rc = _accepts_run_context(provider.aupdate)
 
         @tool(name=self.update_tool_name)
         async def _update(instruction: str, run_context: RunContext | None = None) -> str:
             try:
-                answer = await provider.aupdate(instruction, run_context=run_context)
+                if aupdate_accepts_rc:
+                    answer = await provider.aupdate(instruction, run_context=run_context)
+                else:
+                    answer = await provider.aupdate(instruction)
             except NotImplementedError:
                 return json.dumps({"error": f"{provider.name} is read-only"})
             except Exception as exc:
@@ -274,3 +286,13 @@ def _serialize_answer(answer: Answer) -> dict:
     if answer.text is not None:
         payload["text"] = answer.text
     return payload
+
+
+def _accepts_run_context(fn) -> bool:
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return True
+    if "run_context" in params:
+        return True
+    return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
