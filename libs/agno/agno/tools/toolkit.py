@@ -363,9 +363,9 @@ class Toolkit:
         # Use vars() to only reset instance attributes, not properties
         # (stateless toolkits use @property + contextvars, not instance attrs)
         if "creds" in vars(clone):
-            clone.creds = None
+            setattr(clone, "creds", None)
         if "service" in vars(clone):
-            clone.service = None
+            setattr(clone, "service", None)
         # Defense-in-depth: reset secondary service handles (e.g. Slides)
         # so they can't leak from a previous user even if _build_service
         # is skipped by a future code change.
