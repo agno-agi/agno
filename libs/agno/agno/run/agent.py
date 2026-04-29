@@ -209,6 +209,8 @@ class BaseAgentRunEvent(BaseRunOutputEvent):
     step_id: Optional[str] = None
     step_name: Optional[str] = None
     step_index: Optional[int] = None
+    # Nesting depth: 0 = top-level workflow, 1 = first nested, 2 = nested-in-nested, etc.
+    nested_depth: int = 0
     tools: Optional[List[ToolExecution]] = None
 
     # For backwards compatibility
