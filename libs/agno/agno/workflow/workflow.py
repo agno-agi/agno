@@ -3902,6 +3902,20 @@ class Workflow:
 
                 log_debug(f"Background streaming execution completed with status: {workflow_run_response.status}")
 
+                # If the workflow paused, send the full WorkflowRunOutput over the WebSocket
+                # so the client has step_requirements for the continue request.
+                # Yield to the event loop first so any pending _handle_event tasks
+                # (e.g. StepPaused) are delivered before WorkflowRunOutput.
+                if workflow_run_response.is_paused and websocket_handler and websocket_handler.websocket:
+                    import json
+
+                    from agno.utils.serialize import json_serializer
+
+                    await asyncio.sleep(0)
+                    run_dict = workflow_run_response.to_dict()
+                    run_dict["event"] = "WorkflowRunOutput"
+                    await websocket_handler.websocket.send_text(json.dumps(run_dict, default=json_serializer))
+
             except Exception as e:
                 logger.exception("Background streaming workflow execution failed")
                 workflow_run_response.status = RunStatus.error
@@ -8586,6 +8600,20 @@ class Workflow:
                     pass
 
                 log_debug(f"Background continue streaming completed with status: {workflow_run_response.status}")
+
+                # If the workflow re-paused, send the full WorkflowRunOutput over the WebSocket
+                # so the client has step_requirements for the next continue request.
+                # Yield to the event loop first so any pending _handle_event tasks
+                # (e.g. StepPaused) are delivered before WorkflowRunOutput.
+                if workflow_run_response.is_paused and websocket_handler and websocket_handler.websocket:
+                    import json
+
+                    from agno.utils.serialize import json_serializer
+
+                    await asyncio.sleep(0)
+                    run_dict = workflow_run_response.to_dict()
+                    run_dict["event"] = "WorkflowRunOutput"
+                    await websocket_handler.websocket.send_text(json.dumps(run_dict, default=json_serializer))
 
             except Exception as e:
                 logger.exception("Background continue streaming workflow execution failed")
