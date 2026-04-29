@@ -73,6 +73,7 @@ class ClaudeAgent(BaseExternalAgent):
     max_budget_usd: Optional[float] = None
     cwd: Optional[str] = None
     mcp_servers: Optional[Dict[str, Any]] = None
+    sandbox: Optional[Dict[str, Any]] = None
     options_kwargs: Dict[str, Any] = field(default_factory=dict)
     framework: str = "claude-agent-sdk"
 
@@ -103,6 +104,8 @@ class ClaudeAgent(BaseExternalAgent):
             opts["cwd"] = self.cwd
         if self.mcp_servers:
             opts["mcp_servers"] = self.mcp_servers
+        if self.sandbox:
+            opts["sandbox"] = self.sandbox
 
         # Enable token-level streaming when streaming is requested
         if streaming:
