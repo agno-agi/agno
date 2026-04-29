@@ -2,29 +2,42 @@
 Gmail Context Provider
 ======================
 
-GmailContextProvider wraps GmailTools for read/write email access.
-The calling agent gets `query_<id>` and optionally `update_<id>` tools
-that route through sub-agents specialized for searching/reading vs
-composing/sending.
+GmailContextProvider gives agents read/write access to Gmail through
+specialized sub-agents. The calling agent receives:
+
+- ``query_gmail`` — search emails, read threads, list labels
+- ``update_gmail`` — draft emails, send replies, manage labels (when write=True)
+
+This example demonstrates:
+1. Read-only mode: searching and summarizing emails
+2. Read-write mode: drafting a follow-up based on email content
+
+Compare with: 19_calendar.py for calendar operations
+See also: 20_google_workspace.py for multi-provider workflows
 
 Setup (OAuth - recommended for personal Gmail):
     1. Create OAuth credentials in Google Cloud Console
-    2. Set env vars:
-           export GOOGLE_CLIENT_ID=...
-           export GOOGLE_CLIENT_SECRET=...
-           export GOOGLE_PROJECT_ID=...
-    3. On first run, a browser opens for consent. Token cached to gmail_token.json
+       - APIs & Services > Credentials > Create OAuth Client ID
+       - Application type: Desktop app
+       - Download the JSON or note the client ID and secret
+    2. Enable the Gmail API in your project
+    3. Set environment variables::
 
-Setup (Service Account - for workspace bots):
-    1. Create service account with domain-wide delegation enabled
-    2. Grant Gmail API scopes in Google Admin console
-    3. Set env vars:
-           export GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/sa.json
-           export GOOGLE_DELEGATED_USER=user@domain.com
+           export GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+           export GOOGLE_CLIENT_SECRET=GOCSPX-...
+           export GOOGLE_PROJECT_ID=your-project-id
 
-Requires:
-    OPENAI_API_KEY
-    + one of the auth methods above
+    4. First run opens browser for consent, token cached to gmail_token.json
+
+Setup (Service Account - for Google Workspace):
+    1. Create service account with domain-wide delegation
+    2. Grant Gmail scopes in Google Admin > Security > API Controls
+    3. Set environment variables::
+
+           export GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/service-account.json
+           export GOOGLE_DELEGATED_USER=user@yourdomain.com
+
+Requires: OPENAI_API_KEY + one of the auth methods above
 """
 
 from __future__ import annotations
@@ -36,33 +49,84 @@ from agno.context.gmail import GmailContextProvider
 from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
-# Create the provider (auth method resolved from env)
+# Example 1: Read-Only Gmail Access
 # ---------------------------------------------------------------------------
-gmail = GmailContextProvider(
-    model=OpenAIResponses(id="gpt-5.4-mini"),
-    read=True,
-    write=False,
-)
-
-# ---------------------------------------------------------------------------
-# Create the Agent
-# ---------------------------------------------------------------------------
-agent = Agent(
-    model=OpenAIResponses(id="gpt-5.4"),
-    tools=gmail.get_tools(),
-    instructions=gmail.instructions(),
-    markdown=True,
-)
+# Use read=True, write=False when you only need to search and read emails.
+# The agent gets query_gmail but NOT update_gmail.
 
 
-# ---------------------------------------------------------------------------
-# Run the Agent
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    print(f"\ngmail.status() = {gmail.status()}\n")
-    prompt = (
-        "What are my 5 most recent emails? Summarize each in one sentence, "
-        "including sender and subject."
+async def demo_read_only():
+    print("\n" + "=" * 60)
+    print("DEMO 1: Read-Only Gmail Access")
+    print("=" * 60)
+
+    gmail = GmailContextProvider(
+        model=OpenAIResponses(id="gpt-5.4-mini"),
+        read=True,
+        write=False,
     )
-    print(f"> {prompt}\n")
-    asyncio.run(agent.aprint_response(prompt))
+
+    agent = Agent(
+        model=OpenAIResponses(id="gpt-5.4"),
+        tools=gmail.get_tools(),
+        instructions=gmail.instructions(),
+        markdown=True,
+    )
+
+    print(f"\nProvider status: {gmail.status()}")
+    print("\n--- Query: Find unread emails from the last 3 days ---\n")
+
+    await agent.aprint_response(
+        "Find my unread emails from the last 3 days. "
+        "Group them by sender and summarize what each person is asking about.",
+        stream=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Example 2: Read-Write Gmail Access
+# ---------------------------------------------------------------------------
+# Use write=True when the agent needs to draft or send emails.
+# The agent gets both query_gmail and update_gmail tools.
+
+
+async def demo_read_write():
+    print("\n" + "=" * 60)
+    print("DEMO 2: Read-Write Gmail Access")
+    print("=" * 60)
+
+    gmail = GmailContextProvider(
+        model=OpenAIResponses(id="gpt-5.4-mini"),
+        read=True,
+        write=True,
+    )
+
+    agent = Agent(
+        model=OpenAIResponses(id="gpt-5.4"),
+        tools=gmail.get_tools(),
+        instructions=gmail.instructions(),
+        markdown=True,
+    )
+
+    print(f"\nProvider status: {gmail.status()}")
+    print("\n--- Query: Draft a follow-up email ---\n")
+
+    await agent.aprint_response(
+        "Find the most recent email thread where I haven't replied yet. "
+        "Draft a brief follow-up response and save it as a draft.",
+        stream=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Run Demos
+# ---------------------------------------------------------------------------
+
+
+async def main():
+    await demo_read_only()
+    await demo_read_write()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

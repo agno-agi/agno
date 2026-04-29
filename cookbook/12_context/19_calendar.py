@@ -2,30 +2,42 @@
 Google Calendar Context Provider
 ================================
 
-CalendarContextProvider wraps GoogleCalendarTools for read/write
-calendar access. The calling agent gets `query_<id>` and optionally
-`update_<id>` tools that route through sub-agents specialized for
-searching/reading vs creating/updating events.
+CalendarContextProvider gives agents read/write access to Google Calendar
+through specialized sub-agents. The calling agent receives:
+
+- ``query_calendar`` — list events, check availability, find free slots
+- ``update_calendar`` — create, update, delete events (when write=True)
+
+This example demonstrates:
+1. Read-only mode: checking schedule and availability
+2. Read-write mode: scheduling a new meeting
+
+Compare with: 18_gmail.py for email operations
+See also: 20_google_workspace.py for multi-provider workflows
 
 Setup (OAuth - recommended for personal calendar):
     1. Create OAuth credentials in Google Cloud Console
-    2. Set env vars:
-           export GOOGLE_CLIENT_ID=...
-           export GOOGLE_CLIENT_SECRET=...
-           export GOOGLE_PROJECT_ID=...
-    3. On first run, a browser opens for consent. Token cached to calendar_token.json
+       - APIs & Services > Credentials > Create OAuth Client ID
+       - Application type: Desktop app
+    2. Enable the Google Calendar API in your project
+    3. Set environment variables::
 
-Setup (Service Account - for workspace bots):
+           export GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+           export GOOGLE_CLIENT_SECRET=GOCSPX-...
+           export GOOGLE_PROJECT_ID=your-project-id
+
+    4. First run opens browser for consent, token cached to calendar_token.json
+
+Setup (Service Account - for Google Workspace):
     1. Create service account (domain-wide delegation optional)
-    2. Without delegation: operates on the SA's own calendar
-    3. With delegation: impersonates a user's calendar
-    4. Set env vars:
-           export GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/sa.json
-           export GOOGLE_DELEGATED_USER=user@domain.com  # optional
+    2. Without delegation: operates on the service account's own calendar
+    3. With delegation: can access user calendars
+    4. Set environment variables::
 
-Requires:
-    OPENAI_API_KEY
-    + one of the auth methods above
+           export GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/service-account.json
+           export GOOGLE_DELEGATED_USER=user@yourdomain.com  # optional
+
+Requires: OPENAI_API_KEY + one of the auth methods above
 """
 
 from __future__ import annotations
@@ -37,33 +49,85 @@ from agno.context.calendar import CalendarContextProvider
 from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
-# Create the provider (auth method resolved from env)
+# Example 1: Read-Only Calendar Access
 # ---------------------------------------------------------------------------
-calendar = CalendarContextProvider(
-    model=OpenAIResponses(id="gpt-5.4-mini"),
-    read=True,
-    write=False,
-)
-
-# ---------------------------------------------------------------------------
-# Create the Agent
-# ---------------------------------------------------------------------------
-agent = Agent(
-    model=OpenAIResponses(id="gpt-5.4"),
-    tools=calendar.get_tools(),
-    instructions=calendar.instructions(),
-    markdown=True,
-)
+# Use read=True, write=False when you only need to check schedules.
+# The agent gets query_calendar but NOT update_calendar.
 
 
-# ---------------------------------------------------------------------------
-# Run the Agent
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    print(f"\ncalendar.status() = {calendar.status()}\n")
-    prompt = (
-        "What meetings do I have in the next 7 days? List each with date, "
-        "time, title, and attendees."
+async def demo_read_only():
+    print("\n" + "=" * 60)
+    print("DEMO 1: Read-Only Calendar Access")
+    print("=" * 60)
+
+    calendar = CalendarContextProvider(
+        model=OpenAIResponses(id="gpt-5.4-mini"),
+        read=True,
+        write=False,
     )
-    print(f"> {prompt}\n")
-    asyncio.run(agent.aprint_response(prompt))
+
+    agent = Agent(
+        model=OpenAIResponses(id="gpt-5.4"),
+        tools=calendar.get_tools(),
+        instructions=calendar.instructions(),
+        markdown=True,
+    )
+
+    print(f"\nProvider status: {calendar.status()}")
+    print("\n--- Query: What's on my calendar this week? ---\n")
+
+    await agent.aprint_response(
+        "What meetings do I have this week? "
+        "For each meeting, tell me the day, time, title, and who's attending. "
+        "Highlight any conflicts or back-to-back meetings.",
+        stream=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Example 2: Read-Write Calendar Access
+# ---------------------------------------------------------------------------
+# Use write=True when the agent needs to create or modify events.
+# The agent gets both query_calendar and update_calendar tools.
+
+
+async def demo_read_write():
+    print("\n" + "=" * 60)
+    print("DEMO 2: Read-Write Calendar Access")
+    print("=" * 60)
+
+    calendar = CalendarContextProvider(
+        model=OpenAIResponses(id="gpt-5.4-mini"),
+        read=True,
+        write=True,
+    )
+
+    agent = Agent(
+        model=OpenAIResponses(id="gpt-5.4"),
+        tools=calendar.get_tools(),
+        instructions=calendar.instructions(),
+        markdown=True,
+    )
+
+    print(f"\nProvider status: {calendar.status()}")
+    print("\n--- Query: Find a slot and schedule a meeting ---\n")
+
+    await agent.aprint_response(
+        "Find a 30-minute slot tomorrow afternoon when I'm free, "
+        "and create a meeting called 'Weekly Planning' at that time.",
+        stream=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Run Demos
+# ---------------------------------------------------------------------------
+
+
+async def main():
+    await demo_read_only()
+    await demo_read_write()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
