@@ -2,15 +2,25 @@
 Google Calendar Context Provider
 ================================
 
-Read/write Calendar access for agents. Supports two auth methods:
+Read/write Calendar access via two tools:
 
-1. Service Account + domain-wide delegation (headless, for bots):
-   - Set GOOGLE_SERVICE_ACCOUNT_FILE and optionally GOOGLE_DELEGATED_USER
-   - Without delegated_user, operates on the service account's own calendar
+- ``query_<id>`` — natural-language calendar reads (list events,
+  check availability, find free slots).
+- ``update_<id>`` — natural-language writes (create, update, delete
+  events).
+
+Separate sub-agents keep each scope narrow. Reads get list/search
+tools; writes get CRUD plus lookup tools.
+
+**Auth methods:**
+
+1. Service Account + domain-wide delegation (headless):
+   - Set ``GOOGLE_SERVICE_ACCOUNT_FILE`` and optionally ``GOOGLE_DELEGATED_USER``
+   - Without ``delegated_user``, operates on the service account's own calendar
 
 2. OAuth (interactive, for personal Calendar):
-   - Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_PROJECT_ID
-   - Opens browser on first use, caches token to calendar_token.json
+   - Set ``GOOGLE_CLIENT_ID``, ``GOOGLE_CLIENT_SECRET``, ``GOOGLE_PROJECT_ID``
+   - Opens browser on first use, caches token to ``calendar_token.json``
 """
 
 from __future__ import annotations

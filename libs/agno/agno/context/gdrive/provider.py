@@ -2,22 +2,27 @@
 Google Drive Context Provider
 =============================
 
-Read-only Google Drive access for the calling agent — list, search,
-read files. Supports two auth methods:
+Read-only Google Drive access via a single tool:
 
-1. Service Account (headless, for bots):
-   - Set GOOGLE_SERVICE_ACCOUNT_FILE or pass service_account_path
+- ``query_<id>`` — natural-language file reads (list, search, read
+  file contents).
+
+A sub-agent handles Drive query syntax and file navigation. Read-only
+by default; uploads/downloads are disabled.
+
+**Auth methods:**
+
+1. Service Account (headless):
+   - Set ``GOOGLE_SERVICE_ACCOUNT_FILE`` or pass ``service_account_path``
    - Share folders with the service account email
 
 2. OAuth (interactive, for personal Drive):
-   - Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_PROJECT_ID
-   - Or pass credentials_path/token_path directly
-   - Opens browser on first use, caches token
+   - Set ``GOOGLE_CLIENT_ID``, ``GOOGLE_CLIENT_SECRET``, ``GOOGLE_PROJECT_ID``
+   - Or pass ``credentials_path`` / ``token_path`` directly
+   - Opens browser on first use, caches token to ``gdrive_token.json``
 
-The provider uses an ``AllDrivesGoogleDriveTools`` subclass so service
-accounts can see files inside folders shared with them and files in
-Shared Drives — see ``agno.context.gdrive.tools`` for why the upstream
-``GoogleDriveTools`` returns zero hits without it.
+Uses ``AllDrivesGoogleDriveTools`` so service accounts can see files
+inside shared folders and Shared Drives — see ``agno.context.gdrive.tools``.
 """
 
 from __future__ import annotations

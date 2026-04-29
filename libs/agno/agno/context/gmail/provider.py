@@ -2,15 +2,25 @@
 Gmail Context Provider
 ======================
 
-Read/write Gmail access for agents. Supports two auth methods:
+Read/write Gmail access via two tools:
 
-1. Service Account + domain-wide delegation (headless, for bots):
-   - Set GOOGLE_SERVICE_ACCOUNT_FILE and GOOGLE_DELEGATED_USER
-   - Gmail requires delegated_user because service accounts have no inbox
+- ``query_<id>`` — natural-language email reads (search, threads,
+  message details, labels).
+- ``update_<id>`` — natural-language writes (drafts, send, reply,
+  label management).
+
+Separate sub-agents keep each scope narrow. Reads get search and
+message tools; writes get compose plus lookup tools.
+
+**Auth methods:**
+
+1. Service Account + domain-wide delegation (headless):
+   - Set ``GOOGLE_SERVICE_ACCOUNT_FILE`` and ``GOOGLE_DELEGATED_USER``
+   - Gmail requires ``delegated_user`` because service accounts have no inbox
 
 2. OAuth (interactive, for personal Gmail):
-   - Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_PROJECT_ID
-   - Opens browser on first use, caches token to gmail_token.json
+   - Set ``GOOGLE_CLIENT_ID``, ``GOOGLE_CLIENT_SECRET``, ``GOOGLE_PROJECT_ID``
+   - Opens browser on first use, caches token to ``gmail_token.json``
 """
 
 from __future__ import annotations
