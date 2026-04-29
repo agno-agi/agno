@@ -166,9 +166,9 @@ class MCPContextProvider(ContextProvider):
                 "mode=tools only works in isolation — tool names vary by server."
             )
         return (
-            f"`{self.name}` (MCP): call `{self.query_tool_name}(question)` to query "
-            f"this MCP server. Routes through a sub-agent that picks among the "
-            f"server's exposed tools."
+            f"`{self.name}` (MCP) via `{self.query_tool_name}(question)` — custom server integration.\n"
+            "Navigation: if the server returns partial results, refine your query. "
+            "If results reference other sources or IDs, cross-check with relevant providers."
         )
 
     # ------------------------------------------------------------------

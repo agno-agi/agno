@@ -163,17 +163,24 @@ class WikiContextProvider(ContextProvider):
                 f"at {self.backend.path}. Writes require mode=default (two-tool surface)."
             )
         if self.mode == ContextMode.agent:
-            return f"`{self.name}`: call `{self.query_tool_name}(question)` to read the wiki."
+            return (
+                f"`{self.name}` via `{self.query_tool_name}(question)` — internal wiki, runbooks, documentation.\n"
+                "Navigation: search by topic, list pages to discover structure. "
+                "If pages reference Slack discussions or external URLs, follow those leads."
+            )
         # default mode — describe the actual surface based on flags + web
-        parts: list[str] = [f"`{self.name}`:"]
+        parts: list[str] = [f"`{self.name}` — internal wiki, runbooks, documentation."]
         if self.read:
-            parts.append(f"call `{self.query_tool_name}(question)` to read the wiki.")
+            parts.append(f"Call `{self.query_tool_name}(question)` to read.")
         if self.write:
             update_hint = f"Use `{self.update_tool_name}(instruction)` to add or edit pages"
             if self.web is not None:
                 update_hint += " — pass a URL or 'find sources on X' and it will fetch the web before writing"
             update_hint += "."
             parts.append(update_hint)
+        parts.append(
+            "Navigation: if search returns nothing, try synonyms. If pages reference other sources, follow those leads."
+        )
         return " ".join(parts)
 
     # ------------------------------------------------------------------

@@ -70,8 +70,9 @@ class WebContextProvider(ContextProvider):
                 "Cite every URL you use."
             )
         return (
-            f"`{self.name}`: call `{self.query_tool_name}(question)` for web research. "
-            "Returns a synthesized answer with cited URLs."
+            f"`{self.name}` via `{self.query_tool_name}(question)` — external public information, news, documentation.\n"
+            "Use for facts outside the company: vendor docs, public APIs, industry news. "
+            "If internal sources (Slack, Drive) reference an external URL, fetch it here."
         )
 
     # ------------------------------------------------------------------

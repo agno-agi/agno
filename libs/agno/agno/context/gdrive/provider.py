@@ -88,8 +88,10 @@ class GDriveContextProvider(ContextProvider):
                 "with other providers — mode=tools only works in isolation."
             )
         return (
-            f"`{self.name}`: call `{self.query_tool_name}(question)` to query Google Drive — "
-            "searches by name, mimeType, modifiedTime, etc., and returns matches with webViewLinks."
+            f"`{self.name}` via `{self.query_tool_name}(question)` — company documents, policies, specs, spreadsheets.\n"
+            "Navigation: if first search returns nothing, try synonyms (engineering levels → career ladder → leveling). "
+            "If results mention a Slack channel or discussion, check Slack for context. "
+            "If a doc references another doc by name, search for that doc too."
         )
 
     # ------------------------------------------------------------------

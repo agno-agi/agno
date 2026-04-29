@@ -75,9 +75,10 @@ class WorkspaceContextProvider(ContextProvider):
                 "are excluded."
             )
         return (
-            f"`{self.name}`: call `{self.query_tool_name}(question)` to inspect project "
-            f"files under {self.root}. Common dependency, build, and agent scratch folders "
-            "are excluded."
+            f"`{self.name}` via `{self.query_tool_name}(question)` — codebase files under {self.root}.\n"
+            "Navigation: list directories to understand structure, search for patterns, read specific files. "
+            "If code references configs or docs, check those files. "
+            "If comments mention Slack channels or external docs, follow those leads."
         )
 
     # ------------------------------------------------------------------
