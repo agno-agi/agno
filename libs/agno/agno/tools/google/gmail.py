@@ -135,7 +135,7 @@ class GmailTools(Toolkit):
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
         scopes: Optional[List[str]] = None,
-        port: Optional[int] = None,
+        port: int = 0,
         login_hint: Optional[str] = None,
         include_html: bool = False,
         max_body_length: Optional[int] = None,
@@ -192,7 +192,7 @@ class GmailTools(Toolkit):
             service_account_path (Optional[str]): Path to a service account JSON key file. When provided (or GOOGLE_SERVICE_ACCOUNT_FILE env var is set), service account auth is used instead of OAuth. Requires delegated_user for Gmail.
             delegated_user (Optional[str]): Email of the user to impersonate via domain-wide delegation. Required when using service account auth. Can also be set via GOOGLE_DELEGATED_USER env var.
             scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
-            port (Optional[int]): Port to use for OAuth authentication. Defaults to None.
+            port (int): Port for OAuth local server. 0 = auto-select available port. Defaults to 0.
             login_hint (Optional[str]): Email to pre-select in the OAuth consent screen. Defaults to None.
             include_html (bool): If True, return raw HTML body instead of stripping tags. Defaults to False.
             max_body_length (Optional[int]): Truncate message bodies to this length. Defaults to None (no truncation).
@@ -416,10 +416,10 @@ class GmailTools(Toolkit):
             else:
                 flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
             # prompt=consent forces Google to return a refresh_token every time
-            oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
+            oauth_kwargs: Dict[str, Any] = {"prompt": "consent", "port": self.port}
             if self.login_hint:
                 oauth_kwargs["login_hint"] = self.login_hint
-            self.creds = flow.run_local_server(port=self.port, **oauth_kwargs)
+            self.creds = flow.run_local_server(**oauth_kwargs)
 
         # Save the credentials for future use
         if self.creds and self.creds.valid:
