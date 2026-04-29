@@ -58,7 +58,7 @@ try:
     from google.oauth2.credentials import Credentials
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
     from google_auth_oauthlib.flow import InstalledAppFlow
-    from googleapiclient.discovery import Resource, build
+    from googleapiclient.discovery import build
 except ImportError:
     raise ImportError(
         "`google-api-python-client` `google-auth-httplib2` `google-auth-oauthlib` not installed. Please install using `pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`"
