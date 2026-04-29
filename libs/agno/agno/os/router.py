@@ -1,4 +1,3 @@
-import json
 from typing import TYPE_CHECKING, List, cast
 
 from fastapi import (
@@ -11,9 +10,7 @@ from agno import __version__ as agno_version
 from agno.agent.factory import AgentFactory
 from agno.agent.protocol import AgentProtocol
 from agno.exceptions import RemoteServerUnavailableError
-from agno.os.auth import get_authentication_dependency, validate_websocket_token
-from agno.os.managers import websocket_manager
-from agno.os.routers.workflows.router import handle_workflow_subscription, handle_workflow_via_websocket
+from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     AgentSummaryResponse,
     BadRequestResponse,
@@ -30,7 +27,6 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.team.factory import TeamFactory
-from agno.utils.log import logger
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
