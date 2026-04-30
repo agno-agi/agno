@@ -374,7 +374,7 @@ def attach_routes(
             log_error(f"[HITL] aget_run_output failed for run={run_id}: {exc}")
             run_output = None
 
-        requirements = list(getattr(run_output, "requirements", None) or []) if run_output else []
+        requirements = list(getattr(run_output, "active_requirements", None) or []) if run_output else []
         if not requirements:
             await _post_ephemeral(
                 client,
