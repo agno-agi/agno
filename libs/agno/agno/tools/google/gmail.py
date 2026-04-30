@@ -1425,10 +1425,10 @@ class GmailTools(Toolkit):
                         )
             return json.dumps(result)
         except HttpError as e:
-            log_error(f"Failed to get message {message_id}: {e}")
+            log_error(f"Failed to get message {message_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1453,10 +1453,10 @@ class GmailTools(Toolkit):
                 }
             )
         except HttpError as e:
-            log_error(f"Failed to get thread {thread_id}: {e}")
+            log_error(f"Failed to get thread {thread_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1482,10 +1482,10 @@ class GmailTools(Toolkit):
                 }
             )
         except HttpError as e:
-            log_error(f"Thread search failed: {e}")
+            log_error(f"Thread search failed: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1521,10 +1521,10 @@ class GmailTools(Toolkit):
             result = service.users().threads().modify(userId="me", id=thread_id, body=body).execute()  # type: ignore
             return json.dumps({"threadId": result["id"], "labelIds": result.get("labelIds", [])})
         except HttpError as e:
-            log_error(f"Failed to modify labels on thread {thread_id}: {e}")
+            log_error(f"Failed to modify labels on thread {thread_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1542,10 +1542,10 @@ class GmailTools(Toolkit):
             service.users().threads().trash(userId="me", id=thread_id).execute()  # type: ignore
             return json.dumps({"threadId": thread_id, "action": "trashed"})
         except HttpError as e:
-            log_error(f"Failed to trash thread {thread_id}: {e}")
+            log_error(f"Failed to trash thread {thread_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1569,10 +1569,10 @@ class GmailTools(Toolkit):
                 }
             )
         except HttpError as e:
-            log_error(f"Failed to get draft {draft_id}: {e}")
+            log_error(f"Failed to get draft {draft_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1592,10 +1592,10 @@ class GmailTools(Toolkit):
             drafts = results.get("drafts", [])
             return json.dumps({"drafts": drafts, "resultSizeEstimate": results.get("resultSizeEstimate", len(drafts))})
         except HttpError as e:
-            log_error(f"Failed to list drafts: {e}")
+            log_error(f"Failed to list drafts: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1619,10 +1619,10 @@ class GmailTools(Toolkit):
                 }
             )
         except HttpError as e:
-            log_error(f"Failed to send draft {draft_id}: {e}")
+            log_error(f"Failed to send draft {draft_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1686,10 +1686,10 @@ class GmailTools(Toolkit):
             result = service.users().drafts().update(userId="me", id=draft_id, body={"message": mime}).execute()  # type: ignore
             return json.dumps({"draftId": result["id"]})
         except HttpError as e:
-            log_error(f"Failed to update draft {draft_id}: {e}")
+            log_error(f"Failed to update draft {draft_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Failed to update draft {draft_id}: {e}")
+            log_error(f"Failed to update draft {draft_id}: {str(e)}")
             return json.dumps({"error": f"{type(e).__name__}: {e}"})
 
     @authenticate
@@ -1723,10 +1723,10 @@ class GmailTools(Toolkit):
                 )
             return json.dumps({"labels": formatted, "count": len(formatted)})
         except HttpError as e:
-            log_error(f"Failed to list labels: {e}")
+            log_error(f"Failed to list labels: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1763,10 +1763,10 @@ class GmailTools(Toolkit):
             result = service.users().messages().modify(userId="me", id=message_id, body=body).execute()  # type: ignore
             return json.dumps({"id": result["id"], "labelIds": result.get("labelIds", [])})
         except HttpError as e:
-            log_error(f"Failed to modify labels on message {message_id}: {e}")
+            log_error(f"Failed to modify labels on message {message_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1790,10 +1790,10 @@ class GmailTools(Toolkit):
                 return json.dumps({"id": message_id, "action": "trashed"})
         except HttpError as e:
             action_name = "untrash" if undo else "trash"
-            log_error(f"Failed to {action_name} message {message_id}: {e}")
+            log_error(f"Failed to {action_name} message {message_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
@@ -1812,8 +1812,8 @@ class GmailTools(Toolkit):
             local_path = self._download_attachment_file(message_id, attachment_id, filename)
             return json.dumps({"localPath": local_path, "filename": filename, "messageId": message_id})
         except HttpError as e:
-            log_error(f"Failed to download attachment from {message_id}: {e}")
+            log_error(f"Failed to download attachment from {message_id}: {str(e)}")
             return json.dumps({"error": f"Gmail API error: {e}"})
         except Exception as e:
-            log_error(f"Unexpected error: {e}")
+            log_error(f"Unexpected error: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})

@@ -1,14 +1,24 @@
+import asyncio
+import threading
+import time
+from typing import Any, AsyncIterator, Iterator
+
 import pytest
 
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.agent import RunContentEvent
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowCancelledEvent
 from agno.workflow import Step, Workflow
-from agno.workflow.types import StepOutput
+from agno.workflow.types import StepInput, StepOutput
 
 
-# Test fixtures
+# ============================================================================
+# FIXTURES
+# ============================================================================
+
+
 @pytest.fixture
 def streaming_workflow_with_agents(shared_db):
     """Create a workflow with agent steps for cancellation testing."""
@@ -39,6 +49,33 @@ def streaming_workflow_with_agents(shared_db):
             Step(name="agent_step_3", agent=agent3),
         ],
     )
+
+
+# ============================================================================
+# FUNCTION EXECUTOR HELPERS (no LLM needed)
+# ============================================================================
+
+
+def sync_streaming_executor(step_input: StepInput) -> Iterator[Any]:
+    """Sync generator that yields numbered content events."""
+    for i in range(10):
+        time.sleep(0.05)
+        yield RunContentEvent(content=str(i))
+
+
+async def async_streaming_executor(step_input: StepInput) -> AsyncIterator[Any]:
+    """Async generator that yields numbered content events."""
+    for i in range(10):
+        await asyncio.sleep(0.05)
+        yield RunContentEvent(content=str(i))
+
+
+def sync_passthrough_executor(step_input: StepInput) -> StepOutput:
+    return StepOutput(content="passthrough")
+
+
+async def async_passthrough_executor(step_input: StepInput) -> StepOutput:
+    return StepOutput(content="passthrough")
 
 
 # ============================================================================
@@ -269,3 +306,424 @@ async def test_cancel_non_existent_run():
     # Try to cancel a run that doesn't exist
     result = workflow.cancel_run("non_existent_run_id")
     assert result is False, "Cancelling non-existent run should return False"
+
+
+# ============================================================================
+# SINGLE-STEP CANCELLATION TESTS (regression for #7718)
+#
+# When cancelling a single-step workflow mid-stream, partial content was lost
+# because RunCancelledException was caught by the inner `except Exception` block
+# and swallowed by the default on_error="skip" policy.
+# ============================================================================
+
+
+class TestSingleStepCancellationStreaming:
+    """Single-step streaming workflow cancellation must preserve partial content."""
+
+    def test_sync_single_step_cancel_preserves_partial_content(self, shared_db):
+        """Cancelling a single-step streaming workflow should save partial content."""
+        workflow = Workflow(
+            name="Single Step Cancel Test",
+            db=shared_db,
+            steps=[Step(name="streaming_step", executor=sync_streaming_executor)],
+            telemetry=False,
+        )
+
+        session_id = "sync_single_step_cancel"
+        events_collected = []
+        run_id = None
+
+        event_stream = workflow.run(
+            input="test",
+            session_id=session_id,
+            stream=True,
+            stream_events=True,
+        )
+
+        for event in event_stream:
+            events_collected.append(event)
+
+            if run_id is None and hasattr(event, "run_id"):
+                run_id = event.run_id
+
+            # Cancel after receiving content "3"
+            if isinstance(event, RunContentEvent) and event.content == "3" and run_id:
+                workflow.cancel_run(run_id)
+                for remaining in event_stream:
+                    events_collected.append(remaining)
+                break
+
+        # Should have a WorkflowCancelledEvent
+        cancelled_events = [e for e in events_collected if isinstance(e, WorkflowCancelledEvent)]
+        assert len(cancelled_events) == 1, "Should emit exactly one WorkflowCancelledEvent"
+
+        # Verify database state
+        workflow_session = workflow.get_session(session_id=session_id)
+        assert workflow_session is not None
+        assert workflow_session.runs is not None and len(workflow_session.runs) > 0
+
+        last_run = workflow_session.runs[-1]
+        assert last_run.status == RunStatus.cancelled
+
+        # The key assertion: partial content must be saved
+        assert last_run.step_results is not None
+        assert len(last_run.step_results) >= 1, "Should have at least one step result with partial content"
+
+        # Find the step result with actual partial content (not just the error message)
+        partial_results = [
+            sr for sr in last_run.step_results if sr.content and "cancelled" not in (sr.content or "").lower()
+        ]
+        assert len(partial_results) >= 1, (
+            f"Should have partial content saved, got step_results: {last_run.step_results}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_async_single_step_cancel_preserves_partial_content(self, shared_db):
+        """Cancelling a single-step async streaming workflow should save partial content."""
+        workflow = Workflow(
+            name="Async Single Step Cancel Test",
+            db=shared_db,
+            steps=[Step(name="streaming_step", executor=async_streaming_executor)],
+            telemetry=False,
+        )
+
+        session_id = "async_single_step_cancel"
+        events_collected = []
+        run_id = None
+
+        event_stream = workflow.arun(
+            input="test",
+            session_id=session_id,
+            stream=True,
+            stream_events=True,
+        )
+
+        async for event in event_stream:
+            events_collected.append(event)
+
+            if run_id is None and hasattr(event, "run_id"):
+                run_id = event.run_id
+
+            # Cancel after receiving content "3"
+            if isinstance(event, RunContentEvent) and event.content == "3" and run_id:
+                await workflow.acancel_run(run_id)
+                async for remaining in event_stream:
+                    events_collected.append(remaining)
+                break
+
+        # Should have a WorkflowCancelledEvent
+        cancelled_events = [e for e in events_collected if isinstance(e, WorkflowCancelledEvent)]
+        assert len(cancelled_events) == 1, "Should emit exactly one WorkflowCancelledEvent"
+
+        # Verify database state
+        workflow_session = workflow.get_session(session_id=session_id)
+        assert workflow_session is not None
+        assert workflow_session.runs is not None and len(workflow_session.runs) > 0
+
+        last_run = workflow_session.runs[-1]
+        assert last_run.status == RunStatus.cancelled
+
+        # The key assertion: partial content must be saved
+        assert last_run.step_results is not None
+        assert len(last_run.step_results) >= 1, "Should have at least one step result with partial content"
+
+        partial_results = [
+            sr for sr in last_run.step_results if sr.content and "cancelled" not in (sr.content or "").lower()
+        ]
+        assert len(partial_results) >= 1, (
+            f"Should have partial content saved, got step_results: {last_run.step_results}"
+        )
+
+
+class TestMultiStepFunctionCancellationStreaming:
+    """Multi-step streaming workflow cancellation with function executors (no LLM)."""
+
+    def test_sync_multi_step_cancel_preserves_partial_content(self, shared_db):
+        """Cancelling a multi-step workflow at the first step should save partial content."""
+        workflow = Workflow(
+            name="Multi Step Cancel Test",
+            db=shared_db,
+            steps=[
+                Step(name="streaming_step", executor=sync_streaming_executor),
+                Step(name="passthrough_step", executor=sync_passthrough_executor),
+            ],
+            telemetry=False,
+        )
+
+        session_id = "sync_multi_step_cancel"
+        events_collected = []
+        run_id = None
+
+        event_stream = workflow.run(
+            input="test",
+            session_id=session_id,
+            stream=True,
+            stream_events=True,
+        )
+
+        for event in event_stream:
+            events_collected.append(event)
+
+            if run_id is None and hasattr(event, "run_id"):
+                run_id = event.run_id
+
+            if isinstance(event, RunContentEvent) and event.content == "3" and run_id:
+                workflow.cancel_run(run_id)
+                for remaining in event_stream:
+                    events_collected.append(remaining)
+                break
+
+        cancelled_events = [e for e in events_collected if isinstance(e, WorkflowCancelledEvent)]
+        assert len(cancelled_events) == 1
+
+        workflow_session = workflow.get_session(session_id=session_id)
+        last_run = workflow_session.runs[-1]
+        assert last_run.status == RunStatus.cancelled
+
+        assert last_run.step_results is not None
+        assert len(last_run.step_results) >= 1
+
+        partial_results = [
+            sr for sr in last_run.step_results if sr.content and "cancelled" not in (sr.content or "").lower()
+        ]
+        assert len(partial_results) >= 1, (
+            f"Should have partial content saved, got step_results: {last_run.step_results}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_async_multi_step_cancel_preserves_partial_content(self, shared_db):
+        """Cancelling a multi-step async workflow at the first step should save partial content."""
+        workflow = Workflow(
+            name="Async Multi Step Cancel Test",
+            db=shared_db,
+            steps=[
+                Step(name="streaming_step", executor=async_streaming_executor),
+                Step(name="passthrough_step", executor=async_passthrough_executor),
+            ],
+            telemetry=False,
+        )
+
+        session_id = "async_multi_step_cancel"
+        events_collected = []
+        run_id = None
+
+        event_stream = workflow.arun(
+            input="test",
+            session_id=session_id,
+            stream=True,
+            stream_events=True,
+        )
+
+        async for event in event_stream:
+            events_collected.append(event)
+
+            if run_id is None and hasattr(event, "run_id"):
+                run_id = event.run_id
+
+            if isinstance(event, RunContentEvent) and event.content == "3" and run_id:
+                await workflow.acancel_run(run_id)
+                async for remaining in event_stream:
+                    events_collected.append(remaining)
+                break
+
+        cancelled_events = [e for e in events_collected if isinstance(e, WorkflowCancelledEvent)]
+        assert len(cancelled_events) == 1
+
+        workflow_session = workflow.get_session(session_id=session_id)
+        last_run = workflow_session.runs[-1]
+        assert last_run.status == RunStatus.cancelled
+
+        assert last_run.step_results is not None
+        assert len(last_run.step_results) >= 1
+
+        partial_results = [
+            sr for sr in last_run.step_results if sr.content and "cancelled" not in (sr.content or "").lower()
+        ]
+        assert len(partial_results) >= 1, (
+            f"Should have partial content saved, got step_results: {last_run.step_results}"
+        )
+
+
+# ============================================================================
+# NON-STREAMING CANCELLATION TESTS
+# ============================================================================
+
+
+class TestSingleStepCancellationNonStreaming:
+    """Single-step non-streaming workflow cancellation."""
+
+    def test_sync_single_step_non_streaming_cancel_sets_cancelled_status(self, shared_db):
+        """Cancelling a single-step non-streaming workflow should set CANCELLED status."""
+        cancel_event = threading.Event()
+
+        def slow_executor(step_input: StepInput) -> StepOutput:
+            # Signal that we've started, then wait
+            cancel_event.set()
+            for _ in range(50):
+                time.sleep(0.05)
+            return StepOutput(content="done")
+
+        run_id = "sync_non_stream_cancel_run"
+        workflow = Workflow(
+            name="Non-Stream Single Step Cancel",
+            db=shared_db,
+            steps=[Step(name="slow_step", executor=slow_executor)],
+            telemetry=False,
+        )
+
+        session_id = "sync_non_stream_single_cancel"
+        result_holder = {}
+
+        def run_workflow():
+            result = workflow.run(
+                input="test",
+                session_id=session_id,
+                run_id=run_id,
+                stream=False,
+            )
+            result_holder["result"] = result
+
+        t = threading.Thread(target=run_workflow)
+        t.start()
+
+        # Wait for the executor to actually start
+        cancel_event.wait(timeout=5)
+        time.sleep(0.1)
+
+        workflow.cancel_run(run_id)
+        t.join(timeout=10)
+
+        assert "result" in result_holder, "Workflow should have returned a result"
+        result = result_holder["result"]
+        assert result.status == RunStatus.cancelled
+
+        workflow_session = workflow.get_session(session_id=session_id)
+        last_run = workflow_session.runs[-1]
+        assert last_run.status == RunStatus.cancelled
+
+    @pytest.mark.asyncio
+    async def test_async_single_step_non_streaming_cancel_sets_cancelled_status(self, shared_db):
+        """Cancelling a single-step async non-streaming workflow should set CANCELLED status."""
+        started = asyncio.Event()
+
+        async def slow_async_executor(step_input: StepInput) -> StepOutput:
+            started.set()
+            for _ in range(50):
+                await asyncio.sleep(0.05)
+            return StepOutput(content="done")
+
+        run_id = "async_non_stream_cancel_run"
+        workflow = Workflow(
+            name="Async Non-Stream Single Step Cancel",
+            db=shared_db,
+            steps=[Step(name="slow_step", executor=slow_async_executor)],
+            telemetry=False,
+        )
+
+        session_id = "async_non_stream_single_cancel"
+
+        async def run_workflow():
+            return await workflow.arun(
+                input="test",
+                session_id=session_id,
+                run_id=run_id,
+                stream=False,
+            )
+
+        task = asyncio.create_task(run_workflow())
+
+        # Wait for the executor to actually start
+        await asyncio.wait_for(started.wait(), timeout=5)
+        await asyncio.sleep(0.1)
+
+        await workflow.acancel_run(run_id)
+
+        result = await asyncio.wait_for(task, timeout=10)
+
+        assert result.status == RunStatus.cancelled
+
+        workflow_session = workflow.get_session(session_id=session_id)
+        last_run = workflow_session.runs[-1]
+        assert last_run.status == RunStatus.cancelled
+
+
+# ============================================================================
+# ON_ERROR REGRESSION TESTS
+# ============================================================================
+
+
+class TestCancellationDoesNotAffectOnErrorSkip:
+    """Verify that on_error='skip' still works for real errors (not cancellation)."""
+
+    def test_on_error_skip_still_works_for_real_errors(self, shared_db):
+        """A step that raises a real exception with on_error='skip' should be skipped normally."""
+
+        def failing_executor(step_input: StepInput) -> StepOutput:
+            raise ValueError("Intentional test error")
+
+        def success_executor(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="success")
+
+        workflow = Workflow(
+            name="On Error Skip Test",
+            db=shared_db,
+            steps=[
+                Step(name="failing_step", executor=failing_executor, on_error="skip"),
+                Step(name="success_step", executor=success_executor),
+            ],
+            telemetry=False,
+        )
+
+        session_id = "on_error_skip_test"
+        result = workflow.run(input="test", session_id=session_id, stream=False)
+
+        # Workflow should complete (not cancel) since the error is a real error, not cancellation
+        assert result.status == RunStatus.completed
+
+        # Should have step results for both steps
+        assert result.step_results is not None
+        assert len(result.step_results) == 2
+
+        # First step should be skipped
+        assert result.step_results[0].step_name == "failing_step"
+        assert result.step_results[0].success is False
+        assert "Intentional test error" in (result.step_results[0].error or "")
+
+        # Second step should succeed
+        assert result.step_results[1].step_name == "success_step"
+        assert result.step_results[1].content == "success"
+
+    @pytest.mark.asyncio
+    async def test_async_on_error_skip_still_works_for_real_errors(self, shared_db):
+        """Async: a step that raises a real exception with on_error='skip' should be skipped normally."""
+
+        async def failing_executor(step_input: StepInput) -> StepOutput:
+            raise ValueError("Intentional test error")
+
+        async def success_executor(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="success")
+
+        workflow = Workflow(
+            name="Async On Error Skip Test",
+            db=shared_db,
+            steps=[
+                Step(name="failing_step", executor=failing_executor, on_error="skip"),
+                Step(name="success_step", executor=success_executor),
+            ],
+            telemetry=False,
+        )
+
+        session_id = "async_on_error_skip_test"
+        result = await workflow.arun(input="test", session_id=session_id, stream=False)
+
+        assert result.status == RunStatus.completed
+
+        assert result.step_results is not None
+        assert len(result.step_results) == 2
+
+        assert result.step_results[0].step_name == "failing_step"
+        assert result.step_results[0].success is False
+        assert "Intentional test error" in (result.step_results[0].error or "")
+
+        assert result.step_results[1].step_name == "success_step"
+        assert result.step_results[1].content == "success"

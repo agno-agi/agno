@@ -3,7 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import logger
+from agno.utils.log import log_error, logger
 
 try:
     import pytz
@@ -44,9 +44,9 @@ class CalComTools(Toolkit):
             self.event_type_id = int(event_type_str) if event_type_str is not None else 0
 
         if not self.api_key:
-            logger.error("CALCOM_API_KEY not set. Please set the CALCOM_API_KEY environment variable.")
+            log_error("CALCOM_API_KEY not set. Please set the CALCOM_API_KEY environment variable.")
         if not self.event_type_id:
-            logger.error("CALCOM_EVENT_TYPE_ID not set. Please set the CALCOM_EVENT_TYPE_ID environment variable.")
+            log_error("CALCOM_EVENT_TYPE_ID not set. Please set the CALCOM_EVENT_TYPE_ID environment variable.")
 
         self.user_timezone = user_timezone or "America/New_York"
 
@@ -129,7 +129,7 @@ class CalComTools(Toolkit):
                 return f"Available slots: {', '.join(available_slots)}"
             return f"Failed to fetch slots: {response.text}"
         except Exception as e:
-            logger.error(f"Error fetching available slots: {e}")
+            logger.exception("Error fetching available slots")
             return f"Error: {str(e)}"
 
     def create_booking(
@@ -164,7 +164,7 @@ class CalComTools(Toolkit):
                 return f"Booking created successfully for {user_time}. Booking uid: {booking_data['uid']}"
             return f"Failed to create booking: {response.text}"
         except Exception as e:
-            logger.error(f"Error creating booking: {e}")
+            logger.exception("Error creating booking")
             return f"Error: {str(e)}"
 
     def get_upcoming_bookings(self, email: Optional[str] = None) -> str:
@@ -197,7 +197,7 @@ class CalComTools(Toolkit):
                 return "Upcoming bookings:\n" + "\n".join(booking_info)
             return f"Failed to fetch bookings: {response.text}"
         except Exception as e:
-            logger.error(f"Error fetching upcoming bookings: {e}")
+            logger.exception("Error fetching upcoming bookings")
             return f"Error: {str(e)}"
 
     def reschedule_booking(
@@ -229,7 +229,7 @@ class CalComTools(Toolkit):
                 return f"Booking rescheduled to {user_time}. New booking uid: {booking_data['uid']}"
             return f"Failed to reschedule booking: {response.text}"
         except Exception as e:
-            logger.error(f"Error rescheduling booking: {e}")
+            logger.exception("Error rescheduling booking")
             return f"Error: {str(e)}"
 
     def cancel_booking(self, booking_uid: str, reason: str) -> str:
@@ -251,5 +251,5 @@ class CalComTools(Toolkit):
                 return "Booking cancelled successfully."
             return f"Failed to cancel booking: {response.text}"
         except Exception as e:
-            logger.error(f"Error cancelling booking: {e}")
+            logger.exception("Error cancelling booking")
             return f"Error: {str(e)}"
