@@ -4799,6 +4799,33 @@ def _has_team_level_requirements(requirements: List[Any]) -> bool:
     return any(getattr(req, "member_agent_id", None) is None for req in requirements)
 
 
+def _resolve_member_run_output(
+    reqs: Sequence[Any],
+    run_response: TeamRunOutput,
+    session: TeamSession,
+) -> Optional[Union[RunOutput, TeamRunOutput]]:
+    """Find a member run needed to resume a delegated HITL requirement."""
+    if not reqs:
+        return None
+
+    member_run_output = getattr(reqs[0], "_member_run_response", None)
+    if member_run_output is not None:
+        return member_run_output
+
+    member_run_id = getattr(reqs[0], "member_run_id", None)
+    if member_run_id is None:
+        return None
+
+    for member_response in run_response.member_responses or []:
+        if getattr(member_response, "run_id", None) == member_run_id:
+            return member_response
+
+    if session.runs:
+        return session.get_run(member_run_id)
+
+    return None
+
+
 def _route_requirements_to_members(
     team: "Team",
     run_response: TeamRunOutput,
@@ -4834,22 +4861,7 @@ def _route_requirements_to_members(
 
         _, member = route_result
 
-        # Get the member's paused RunOutput from the requirement.
-        # This is stored by _propagate_member_pause and avoids needing a
-        # session/DB lookup (which fails without a database since
-        # initialize_team clears the cached session).
-        member_run_output = getattr(reqs[0], "_member_run_response", None)
-
-        # If _member_run_response is not available (e.g., API flow where it's lost during
-        # JSON serialization), try to find the member's run from run_response.member_responses.
-        # This requires store_member_responses=True on the team.
-        if member_run_output is None:
-            member_run_id = reqs[0].member_run_id if reqs else None
-            if member_run_id and run_response.member_responses:
-                for mr in run_response.member_responses:
-                    if getattr(mr, "run_id", None) == member_run_id:
-                        member_run_output = mr
-                        break
+        member_run_output = _resolve_member_run_output(reqs, run_response, session)
 
         if member_run_output is not None:
             # Update requirements and tool executions on the member's run output
@@ -4933,15 +4945,7 @@ def _route_requirements_to_members_stream(
 
         _, member = route_result
 
-        member_run_output = getattr(reqs[0], "_member_run_response", None)
-
-        if member_run_output is None:
-            member_run_id = reqs[0].member_run_id if reqs else None
-            if member_run_id and run_response.member_responses:
-                for mr in run_response.member_responses:
-                    if getattr(mr, "run_id", None) == member_run_id:
-                        member_run_output = mr
-                        break
+        member_run_output = _resolve_member_run_output(reqs, run_response, session)
 
         if member_run_output is not None:
             member_run_output.requirements = reqs
@@ -5037,19 +5041,7 @@ async def _aroute_requirements_to_members(
             return f"[{member_id}]: Could not route requirement — member not found"
 
         _, member = route_result
-        # Get the member's paused RunOutput from the requirement
-        member_run_output = getattr(reqs[0], "_member_run_response", None)
-
-        # If _member_run_response is not available (e.g., API flow where it's lost during
-        # JSON serialization), try to find the member's run from run_response.member_responses.
-        # This requires store_member_responses=True on the team.
-        if member_run_output is None:
-            member_run_id = reqs[0].member_run_id if reqs else None
-            if member_run_id and run_response.member_responses:
-                for mr in run_response.member_responses:
-                    if getattr(mr, "run_id", None) == member_run_id:
-                        member_run_output = mr
-                        break
+        member_run_output = _resolve_member_run_output(reqs, run_response, session)
 
         if member_run_output is not None:
             member_run_output.requirements = reqs
@@ -5143,15 +5135,7 @@ async def _aroute_requirements_to_members_stream(
 
         _, member = route_result
 
-        member_run_output = getattr(reqs[0], "_member_run_response", None)
-
-        if member_run_output is None:
-            member_run_id = reqs[0].member_run_id if reqs else None
-            if member_run_id and run_response.member_responses:
-                for mr in run_response.member_responses:
-                    if getattr(mr, "run_id", None) == member_run_id:
-                        member_run_output = mr
-                        break
+        member_run_output = _resolve_member_run_output(reqs, run_response, session)
 
         if member_run_output is not None:
             member_run_output.requirements = reqs
