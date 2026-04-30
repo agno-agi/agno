@@ -76,7 +76,7 @@ def test_authenticate_google_combined_url(google_auth):
         ],
     )
 
-    result = json.loads(google_auth.authenticate_google(services=["gmail", "calendar"]))
+    result = json.loads(google_auth.authenticate_google())
 
     assert "url" in result
     parsed = urlparse(result["url"])
@@ -91,7 +91,7 @@ def test_authenticate_google_combined_url(google_auth):
 def test_authenticate_google_includes_oauth_params(google_auth):
     google_auth.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
 
-    result = json.loads(google_auth.authenticate_google(services=["gmail"]))
+    result = json.loads(google_auth.authenticate_google())
     parsed = urlparse(result["url"])
     params = parse_qs(parsed.query)
 
@@ -113,7 +113,7 @@ def test_include_granted_scopes_opt_in(tmp_path):
         include_granted_scopes=True,
     )
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
-    result = json.loads(ga.authenticate_google(services=["gmail"]))
+    result = json.loads(ga.authenticate_google())
     params = parse_qs(urlparse(result["url"]).query)
     assert params["include_granted_scopes"] == ["true"]
 
@@ -121,28 +121,18 @@ def test_include_granted_scopes_opt_in(tmp_path):
 def test_authenticate_google_single_service(google_auth):
     google_auth.register_service("calendar", ["https://www.googleapis.com/auth/calendar"])
 
-    result = json.loads(google_auth.authenticate_google(services=["calendar"]))
+    result = json.loads(google_auth.authenticate_google())
 
     assert "url" in result
     assert "calendar" in result["url"]
     assert result["message"] == "Connect calendar"
 
 
-def test_authenticate_google_unknown_service(google_auth):
-    google_auth.register_service("gmail", ["scope1"])
-
-    result = json.loads(google_auth.authenticate_google(services=["sheets"]))
-
+def test_authenticate_google_no_services_registered(google_auth):
+    # New API: error when no services registered
+    result = json.loads(google_auth.authenticate_google())
     assert "error" in result
-    assert "gmail" in result["error"]
-
-
-def test_authenticate_google_partial_unknown(google_auth):
-    google_auth.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
-
-    result = json.loads(google_auth.authenticate_google(services=["gmail", "drive"]))
-    assert "url" in result
-    assert "gmail.readonly" in result["url"]
+    assert "No Google services registered" in result["error"]
 
 
 def test_shared_creds_same_object(mock_credentials):
@@ -223,20 +213,14 @@ def test_get_token_db_with_coordinator_uses_agent_db_without_mutation(tmp_path):
     assert gmail._db is None
 
 
-def test_oauth_state_registry_bridges_agent_db_to_callback(tmp_path):
-    # authenticate_google(agent=...) stores agent.db under the signed state so the
-    # callback (outside agent.run) can persist tokens without toolkit mutation.
+def test_authenticate_google_with_agent_db(tmp_path):
+    # authenticate_google now uses the db passed to constructor or from agent
     from agno.db.sqlite.sqlite import SqliteDb
-    from agno.tools.google.auth import _OAUTH_STATE_DBS, _get_oauth_state_db
 
     db = SqliteDb(db_file=str(tmp_path / "t.db"))
-    agent = Mock(db=db)
-    ga = GoogleAuth(client_id="id", state_secret="s")
+    ga = GoogleAuth(client_id="id", state_secret="s", db=db)
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
 
-    _OAUTH_STATE_DBS.clear()
-    result = json.loads(ga.authenticate_google(services=["gmail"], agent=agent))
-    state = parse_qs(urlparse(result["url"]).query)["state"][0]
-
-    assert _get_oauth_state_db(state) is db
-    assert ga._db is None
+    result = json.loads(ga.authenticate_google())
+    assert "url" in result
+    assert ga._db is db
