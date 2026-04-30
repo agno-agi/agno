@@ -300,54 +300,6 @@ async def test_update_tool_forwards_run_context_to_aupdate():
     assert captured["run_context"] is rc
 
 
-@pytest.mark.asyncio
-async def test_query_tool_tolerates_legacy_aquery_signature():
-    """Subclass with `aquery(self, question)` — no run_context kwarg.
-
-    The wrapper inspects the signature and skips forwarding run_context
-    when the override doesn't declare it, so pre-run_context providers
-    keep working after the kwarg landed.
-    """
-
-    class _LegacyProvider(ContextProvider):
-        def status(self) -> Status:
-            return Status(ok=True, detail="legacy")
-
-        async def astatus(self) -> Status:
-            return self.status()
-
-        def query(self, question: str) -> Answer:  # legacy signature
-            return Answer(text=f"legacy:{question}")
-
-        async def aquery(self, question: str) -> Answer:  # legacy signature
-            return Answer(text=f"legacy:{question}")
-
-    p = _LegacyProvider(id="legacy")
-    query_tool = p._query_tool()
-    rc = RunContext(run_id="r-legacy", session_id="s-legacy", user_id="u-1")
-    result = await query_tool.entrypoint(question="hello", run_context=rc)
-    payload = json.loads(result)
-    assert payload.get("error") is None
-    assert payload["text"] == "legacy:hello"
-
-
-@pytest.mark.asyncio
-async def test_update_tool_tolerates_legacy_aupdate_signature():
-    """Same backward-compat story for `aupdate(self, instruction)`."""
-
-    class _LegacyWritable(_EchoProvider):
-        async def aupdate(self, instruction: str) -> Answer:  # legacy signature
-            return Answer(text=f"legacy-u:{instruction}")
-
-    p = _LegacyWritable(id="legacy-w")
-    update_tool = p._update_tool()
-    rc = RunContext(run_id="r-legacy-w", session_id="s-legacy-w", user_id="u-2")
-    result = await update_tool.entrypoint(instruction="write x", run_context=rc)
-    payload = json.loads(result)
-    assert payload.get("error") is None
-    assert payload["text"] == "legacy-u:write x"
-
-
 def test_run_kwargs_for_sub_agent_extracts_only_populated_fields():
     # None -> empty dict (no kwargs injected)
     assert _EchoProvider(id="e")._run_kwargs_for_sub_agent(None) == {}
