@@ -12,6 +12,7 @@ from agno.os.interfaces.slack.helpers import (
     build_run_metadata,
     download_event_files_async,
     extract_event_context,
+    BotNameResolver,
     resolve_channel_name,
     resolve_slack_user,
     send_slack_message_async,
@@ -87,6 +88,7 @@ def attach_routes(
     entity_id = getattr(entity, "id", None) or entity_name
 
     slack_tools = SlackTools(token=token, ssl=ssl, max_file_size=max_file_size)
+    bot_name_resolver = BotNameResolver()
 
     @router.post(
         "/events",
@@ -156,14 +158,16 @@ def attach_routes(
         from slack_sdk.web.async_client import AsyncWebClient
 
         ctx = extract_event_context(event)
+        async_client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
 
-        # Strip the bot's own @mention from the message text
+        # Replace the bot's @mention with its Slack display name so the agent sees
+        # "hi Scout" instead of "hi " when the user types "hi @Scout"
         bot_user_id = (data.get("authorizations") or [{}])[0].get("user_id")
-        ctx["message_text"] = strip_bot_mention(ctx["message_text"], bot_user_id)
+        bot_name = await bot_name_resolver.resolve(async_client, bot_user_id) if bot_user_id else None
+        ctx["message_text"] = strip_bot_mention(ctx["message_text"], bot_user_id, bot_name)
 
         # Namespace with entity_id so threads don't collide across mounted interfaces
         session_id = f"{entity_id}:{ctx['thread_id']}"
-        async_client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
 
         try:
             await async_client.assistant_threads_setStatus(
@@ -265,9 +269,13 @@ def attach_routes(
 
         ctx = extract_event_context(event)
 
-        # Strip the bot's own @mention from the message text
+        async_client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
+
+        # Replace the bot's @mention with its Slack display name so the agent sees
+        # "hi Scout" instead of "hi " when the user types "hi @Scout"
         bot_user_id = (data.get("authorizations") or [{}])[0].get("user_id")
-        ctx["message_text"] = strip_bot_mention(ctx["message_text"], bot_user_id)
+        bot_name = await bot_name_resolver.resolve(async_client, bot_user_id) if bot_user_id else None
+        ctx["message_text"] = strip_bot_mention(ctx["message_text"], bot_user_id, bot_name)
 
         session_id = f"{entity_id}:{ctx['thread_id']}"
 
@@ -278,8 +286,6 @@ def attach_routes(
         # = the bot's own user ID. Using the bot ID causes Slack to stream content
         # to an invisible recipient, resulting in a blank bubble until stopStream.
         user_id = ctx["user"]
-
-        async_client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
         state = StreamState(entity_type=entity_type, entity_name=entity_name)
         stream = None
 
