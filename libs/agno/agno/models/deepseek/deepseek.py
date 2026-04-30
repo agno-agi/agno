@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from os import getenv
-from typing import Any, Dict, Optional
+from typing import Any, ClassVar, Dict, Optional
 
 from agno.exceptions import ModelAuthenticationError
 from agno.models.message import Message
@@ -14,15 +14,24 @@ class DeepSeek(OpenAILike):
     """
     A class for interacting with DeepSeek models.
 
+    DeepSeek V4 models have thinking mode enabled by default. In thinking mode,
+    the following parameters have no effect when set (they are ignored by the API):
+    - temperature
+    - top_p
+    - presence_penalty
+    - frequency_penalty
+
+    For more information, see: https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
+
     Attributes:
-        id (str): The model id. Defaults to "deepseek-chat".
+        id (str): The model id. Defaults to "deepseek-v4-pro".
         name (str): The model name. Defaults to "DeepSeek".
         provider (str): The provider name. Defaults to "DeepSeek".
         api_key (Optional[str]): The API key.
         base_url (str): The base URL. Defaults to "https://api.deepseek.com".
     """
 
-    id: str = "deepseek-chat"
+    id: str = "deepseek-v4-pro"
     name: str = "DeepSeek"
     provider: str = "DeepSeek"
 
@@ -31,6 +40,33 @@ class DeepSeek(OpenAILike):
 
     # Their support for structured outputs is currently broken
     supports_native_structured_outputs: bool = False
+
+    # Agent scenarios default to max reasoning effort.
+    # For non-agent use cases, set to "high" or None to disable.
+    # Note: In thinking mode, temperature/top_p/presence_penalty/frequency_penalty are ignored.
+    reasoning_effort: Optional[str] = "max"
+
+    # Deprecated model IDs: these still work but will be removed in a future API version.
+    # deepseek-chat -> non-thinking mode of deepseek-v4-flash
+    # deepseek-reasoner -> thinking mode of deepseek-v4-flash
+    _deprecated_model_ids: ClassVar[Dict[str, str]] = {
+        "deepseek-chat": "deepseek-v4-flash",
+        "deepseek-reasoner": "deepseek-v4-flash",
+    }
+
+    # Models that should NOT have thinking enabled by default.
+    # deepseek-chat maps to non-thinking mode for backward compatibility.
+    _non_thinking_model_ids: ClassVar[set] = {
+        "deepseek-chat",
+    }
+
+    def __post_init__(self):
+        if self.id in self._deprecated_model_ids:
+            suggested = self._deprecated_model_ids[self.id]
+            log_warning(
+                f"Model '{self.id}' is deprecated and will be removed in a future API version. "
+                f"Use '{suggested}' instead."
+            )
 
     def _get_client_params(self) -> Dict[str, Any]:
         # Fetch API key from env if not already set
@@ -61,6 +97,35 @@ class DeepSeek(OpenAILike):
         if self.client_params:
             client_params.update(self.client_params)
         return client_params
+
+    def get_request_params(
+        self,
+        response_format=None,
+        tools=None,
+        tool_choice=None,
+        run_response=None,
+    ) -> Dict[str, Any]:
+        request_params = super().get_request_params(
+            response_format=response_format,
+            tools=tools,
+            tool_choice=tool_choice,
+            run_response=run_response,
+        )
+
+        # Enable thinking mode by default for all models except the legacy
+        # deepseek-chat (which maps to non-thinking mode for backward compat).
+        # Required for multi-turn reasoning_content concatenation with tool calls.
+        if self.id not in self._non_thinking_model_ids:
+            if "extra_body" not in request_params:
+                request_params["extra_body"] = {"thinking": {"type": "enabled"}}
+            elif "thinking" not in request_params["extra_body"]:
+                request_params["extra_body"]["thinking"] = {"type": "enabled"}
+        else:
+            # For non-thinking models, strip reasoning_effort as it has no effect
+            # and may cause unexpected streaming behavior.
+            request_params.pop("reasoning_effort", None)
+
+        return request_params
 
     def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
