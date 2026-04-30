@@ -88,9 +88,8 @@ class GDriveContextProvider(ContextProvider):
                 "with other providers — mode=tools only works in isolation."
             )
         return (
-            f"`{self.name}` via `{self.query_tool_name}(question)` — company documents, policies, specs, spreadsheets.\n"
-            "Navigation: try alternate names if first search is empty. Check shared folders. "
-            "Follow references to other docs or Slack discussions."
+            f"`{self.name}`: call `{self.query_tool_name}(question)` to search Google Drive — "
+            "company documents, policies, specs, spreadsheets."
         )
 
     # ------------------------------------------------------------------

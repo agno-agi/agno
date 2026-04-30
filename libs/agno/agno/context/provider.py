@@ -168,10 +168,7 @@ class ContextProvider(ABC):
         """
         if self.mode == ContextMode.tools:
             return f"`{self.name}`: use the underlying tools to explore this source."
-        return (
-            f"`{self.name}` via `{self.query_tool_name}(question)` to query this source.\n"
-            "Navigation: try synonyms if first query is empty. Follow references to other sources."
-        )
+        return f"`{self.name}`: call `{self.query_tool_name}(question)` to query this source."
 
     def get_tools(self) -> list:
         if self.mode == ContextMode.default:

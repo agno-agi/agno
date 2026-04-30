@@ -75,9 +75,7 @@ class WorkspaceContextProvider(ContextProvider):
                 "are excluded."
             )
         return (
-            f"`{self.name}` via `{self.query_tool_name}(question)` — codebase files under {self.root}.\n"
-            "Navigation: list directories, search for patterns, read files. "
-            "Follow references to configs, docs, or external sources."
+            f"`{self.name}`: call `{self.query_tool_name}(question)` to search the codebase under {self.root}."
         )
 
     # ------------------------------------------------------------------

@@ -109,9 +109,8 @@ class DatabaseContextProvider(ContextProvider):
         if self.mode == ContextMode.tools:
             return f"`{self.name}`: read-only `run_sql_query`{scope}. Writes require mode=default (two-tool surface)."
         return (
-            f"`{self.name}` via `{self.query_tool_name}(question)` — structured data{scope}. "
-            f"Use `{self.update_tool_name}(instruction)` to modify.\n"
-            "Navigation: introspect schema first. Cross-check external references with other sources."
+            f"`{self.name}`: call `{self.query_tool_name}(question)` to query data{scope}, "
+            f"`{self.update_tool_name}(instruction)` to modify."
         )
 
     # ------------------------------------------------------------------

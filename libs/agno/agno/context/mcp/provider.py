@@ -166,8 +166,7 @@ class MCPContextProvider(ContextProvider):
                 "mode=tools only works in isolation — tool names vary by server."
             )
         return (
-            f"`{self.name}` (MCP) via `{self.query_tool_name}(question)` — custom server integration.\n"
-            "Navigation: refine queries on partial results. Cross-check references with other providers."
+            f"`{self.name}` (MCP): call `{self.query_tool_name}(question)` to query this server."
         )
 
     # ------------------------------------------------------------------
