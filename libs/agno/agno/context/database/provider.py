@@ -111,8 +111,7 @@ class DatabaseContextProvider(ContextProvider):
         return (
             f"`{self.name}` via `{self.query_tool_name}(question)` — structured data{scope}. "
             f"Use `{self.update_tool_name}(instruction)` to modify.\n"
-            "Navigation: introspect schema first for unfamiliar requests. "
-            "If data references external IDs or names, cross-check with relevant sources."
+            "Navigation: introspect schema first. Cross-check external references with other sources."
         )
 
     # ------------------------------------------------------------------

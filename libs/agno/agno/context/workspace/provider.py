@@ -76,9 +76,8 @@ class WorkspaceContextProvider(ContextProvider):
             )
         return (
             f"`{self.name}` via `{self.query_tool_name}(question)` — codebase files under {self.root}.\n"
-            "Navigation: list directories to understand structure, search for patterns, read specific files. "
-            "If code references configs or docs, check those files. "
-            "If comments mention Slack channels or external docs, follow those leads."
+            "Navigation: list directories, search for patterns, read files. "
+            "Follow references to configs, docs, or external sources."
         )
 
     # ------------------------------------------------------------------

@@ -167,8 +167,7 @@ class MCPContextProvider(ContextProvider):
             )
         return (
             f"`{self.name}` (MCP) via `{self.query_tool_name}(question)` — custom server integration.\n"
-            "Navigation: if the server returns partial results, refine your query. "
-            "If results reference other sources or IDs, cross-check with relevant providers."
+            "Navigation: refine queries on partial results. Cross-check references with other providers."
         )
 
     # ------------------------------------------------------------------

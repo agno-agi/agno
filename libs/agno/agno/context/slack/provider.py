@@ -112,15 +112,13 @@ class SlackContextProvider(ContextProvider):
         if self.mode == ContextMode.agent:
             return (
                 f"`{self.name}` via `{self.query_tool_name}(question)` — team discussions, decisions, recent activity.\n"
-                "Navigation: if search returns nothing, try synonyms or check specific channels. "
-                "If messages say 'see the doc' or mention a doc name, search Drive/Knowledge for that doc. "
-                "Expand threads for full context."
+                "Navigation: try synonyms or specific channels if search is empty. "
+                "Follow references to docs. Expand threads for full context."
             )
         return (
             f"`{self.name}` via `{self.query_tool_name}(question)` — team discussions, decisions, recent activity. "
             f"Use `{self.update_tool_name}(instruction)` to post.\n"
-            "Navigation: if search returns nothing, try synonyms or check specific channels. "
-            "If messages say 'see the doc' or mention a doc name, search Drive/Knowledge for that doc."
+            "Navigation: try synonyms or specific channels if search is empty. Follow references to docs."
         )
 
     # ------------------------------------------------------------------

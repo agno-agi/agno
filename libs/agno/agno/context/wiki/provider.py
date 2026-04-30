@@ -166,7 +166,7 @@ class WikiContextProvider(ContextProvider):
             return (
                 f"`{self.name}` via `{self.query_tool_name}(question)` — internal wiki, runbooks, documentation.\n"
                 "Navigation: search by topic, list pages to discover structure. "
-                "If pages reference Slack discussions or external URLs, follow those leads."
+                "Follow references to other sources."
             )
         # default mode — describe the actual surface based on flags + web
         parts: list[str] = [f"`{self.name}` — internal wiki, runbooks, documentation."]
@@ -179,7 +179,7 @@ class WikiContextProvider(ContextProvider):
             update_hint += "."
             parts.append(update_hint)
         parts.append(
-            "Navigation: if search returns nothing, try synonyms. If pages reference other sources, follow those leads."
+            "Navigation: try synonyms if search is empty. Follow references to other sources."
         )
         return " ".join(parts)
 
