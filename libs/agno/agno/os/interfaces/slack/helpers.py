@@ -110,33 +110,37 @@ async def resolve_slack_user(async_client: Any, slack_user_id: str) -> Tuple[str
         return (slack_user_id, None)
 
 
-_bot_name_cache: Dict[str, Optional[str]] = {}
+class BotNameResolver:
+    """Resolves a Slack bot user ID to its display name with per-instance caching.
 
-
-async def resolve_bot_name(async_client: Any, bot_user_id: str) -> Optional[str]:
-    """Resolve a Slack bot user ID to its display name.
-
-    Results are cached since bot names don't change during a session.
-    Returns None if the lookup fails.
+    Instantiated once per mounted Slack interface inside ``attach_routes`` so
+    each interface keeps its own cache without polluting module-level state.
+    Only successful lookups are cached — transient API failures are retried on
+    the next message.
     """
-    if bot_user_id in _bot_name_cache:
-        return _bot_name_cache[bot_user_id]
 
-    try:
-        resp = await async_client.users_info(user=bot_user_id)
-        user = resp.get("user", {}) if resp else {}
-        profile = user.get("profile", {})
+    def __init__(self) -> None:
+        self._cache: Dict[str, str] = {}
 
-        name = profile.get("display_name") or profile.get("real_name") or user.get("name") or None
-        if name is not None and not name.strip():
-            name = None
+    async def resolve(self, async_client: Any, bot_user_id: str) -> Optional[str]:
+        if bot_user_id in self._cache:
+            return self._cache[bot_user_id]
 
-        _bot_name_cache[bot_user_id] = name
-        return name
-    except Exception as e:
-        log_warning(f"Failed to resolve bot name for {bot_user_id}: {str(e)}")
-        _bot_name_cache[bot_user_id] = None
-        return None
+        try:
+            resp = await async_client.users_info(user=bot_user_id)
+            user = resp.get("user", {}) if resp else {}
+            profile = user.get("profile", {})
+
+            name = profile.get("display_name") or profile.get("real_name") or user.get("name") or None
+            if name is not None and not name.strip():
+                name = None
+
+            if name is not None:
+                self._cache[bot_user_id] = name
+            return name
+        except Exception as e:
+            log_warning(f"Failed to resolve bot name for {bot_user_id}: {str(e)}")
+            return None
 
 
 async def resolve_channel_name(async_client: Any, channel_id: str) -> Optional[str]:

@@ -3,11 +3,10 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from agno.os.interfaces.slack.helpers import (
-    _bot_name_cache,
+    BotNameResolver,
     download_event_files_async,
     extract_event_context,
     member_name,
-    resolve_bot_name,
     resolve_slack_user,
     send_slack_message_async,
     should_respond,
@@ -281,49 +280,62 @@ class TestResolveSlackUser:
 # -- resolve_bot_name --
 
 
-class TestResolveBotName:
-    def setup_method(self):
-        _bot_name_cache.clear()
-
+class TestBotNameResolver:
     @pytest.mark.asyncio
     async def test_resolves_bot_display_name(self):
+        resolver = BotNameResolver()
         client = AsyncMock()
         client.users_info = AsyncMock(
             return_value={"user": {"name": "scout_bot", "profile": {"display_name": "Scout", "real_name": "Scout Bot"}}}
         )
-        name = await resolve_bot_name(client, "UBOT123")
+        name = await resolver.resolve(client, "UBOT123")
         assert name == "Scout"
 
     @pytest.mark.asyncio
     async def test_falls_back_to_real_name(self):
+        resolver = BotNameResolver()
         client = AsyncMock()
         client.users_info = AsyncMock(
             return_value={"user": {"name": "scout_bot", "profile": {"display_name": "", "real_name": "Scout Bot"}}}
         )
-        name = await resolve_bot_name(client, "UBOT456")
+        name = await resolver.resolve(client, "UBOT456")
         assert name == "Scout Bot"
 
     @pytest.mark.asyncio
     async def test_falls_back_to_username(self):
+        resolver = BotNameResolver()
         client = AsyncMock()
         client.users_info = AsyncMock(return_value={"user": {"name": "scout_bot", "profile": {}}})
-        name = await resolve_bot_name(client, "UBOT789")
+        name = await resolver.resolve(client, "UBOT789")
         assert name == "scout_bot"
 
     @pytest.mark.asyncio
     async def test_caches_result(self):
+        resolver = BotNameResolver()
         client = AsyncMock()
         client.users_info = AsyncMock(return_value={"user": {"profile": {"display_name": "Scout"}}})
-        await resolve_bot_name(client, "UCACHED")
-        await resolve_bot_name(client, "UCACHED")
+        await resolver.resolve(client, "UCACHED")
+        await resolver.resolve(client, "UCACHED")
         assert client.users_info.call_count == 1
 
     @pytest.mark.asyncio
     async def test_api_error_returns_none(self):
+        resolver = BotNameResolver()
         client = AsyncMock()
         client.users_info = AsyncMock(side_effect=RuntimeError("API error"))
-        name = await resolve_bot_name(client, "UFAIL")
+        name = await resolver.resolve(client, "UFAIL")
         assert name is None
+
+    @pytest.mark.asyncio
+    async def test_api_error_not_cached(self):
+        resolver = BotNameResolver()
+        client = AsyncMock()
+        client.users_info = AsyncMock(side_effect=RuntimeError("API error"))
+        await resolver.resolve(client, "UFAIL")
+        # Fix the client for the retry
+        client.users_info = AsyncMock(return_value={"user": {"profile": {"display_name": "Scout"}}})
+        name = await resolver.resolve(client, "UFAIL")
+        assert name == "Scout"
 
 
 # -- strip_bot_mention --
