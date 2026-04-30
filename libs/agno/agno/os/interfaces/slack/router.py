@@ -10,10 +10,10 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import (
+    BotNameResolver,
     build_run_metadata,
     download_event_files_async,
     extract_event_context,
-    BotNameResolver,
     resolve_channel_name,
     resolve_slack_user,
     send_slack_message_async,
@@ -362,11 +362,13 @@ def attach_routes(
         client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
 
         # Delete the standalone "⏸ Awaiting …" indicator posted at pause time.
+        # Silently ignore message_not_found — retries hit this after first success.
         if awaiting_ts:
             try:
                 await client.chat_delete(channel=channel, ts=awaiting_ts)
             except Exception as exc:
-                log_error(f"[HITL] chat_delete (awaiting indicator) failed for ts={awaiting_ts}: {exc}")
+                if "message_not_found" not in str(exc):
+                    log_error(f"[HITL] chat_delete (awaiting indicator) failed for ts={awaiting_ts}: {exc}")
 
         try:
             run_output = await entity.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
