@@ -566,6 +566,7 @@ def _get_delegate_task_function(
                 user_id=user_id,
                 # All members have the same session_id
                 session_id=session.session_id,
+                parent_run_id=run_response.run_id,
                 session_state=member_session_state_copy,  # Send a copy to the agent
                 images=images,
                 videos=videos,
@@ -604,6 +605,7 @@ def _get_delegate_task_function(
                 user_id=user_id,
                 # All members have the same session_id
                 session_id=session.session_id,
+                parent_run_id=run_response.run_id,
                 session_state=member_session_state_copy,  # Send a copy to the agent
                 images=images,
                 videos=videos,
@@ -706,6 +708,7 @@ def _get_delegate_task_function(
                 user_id=user_id,
                 # All members have the same session_id
                 session_id=session.session_id,
+                parent_run_id=run_response.run_id,
                 session_state=member_session_state_copy,  # Send a copy to the agent
                 images=images,
                 videos=videos,
@@ -744,6 +747,7 @@ def _get_delegate_task_function(
                 user_id=user_id,
                 # All members have the same session_id
                 session_id=session.session_id,
+                parent_run_id=run_response.run_id,
                 session_state=member_session_state_copy,  # Send a copy to the agent
                 images=images,
                 videos=videos,
@@ -835,6 +839,7 @@ def _get_delegate_task_function(
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session.session_id,
+                    parent_run_id=run_response.run_id,
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -874,6 +879,7 @@ def _get_delegate_task_function(
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session.session_id,
+                    parent_run_id=run_response.run_id,
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -964,6 +970,7 @@ def _get_delegate_task_function(
                     input=member_agent_task if not history else history,
                     user_id=user_id,
                     session_id=session.session_id,
+                    parent_run_id=run_response.run_id,
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
                     videos=videos,
@@ -1062,6 +1069,7 @@ def _get_delegate_task_function(
                         user_id=user_id,
                         # All members have the same session_id
                         session_id=session.session_id,
+                        parent_run_id=run_response.run_id,
                         session_state=member_session_state_copy,  # Send a copy to the agent
                         images=images,
                         videos=videos,

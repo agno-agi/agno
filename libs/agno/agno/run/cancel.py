@@ -44,6 +44,16 @@ async def aregister_run(run_id: str) -> None:
     await _cancellation_manager.aregister_run(run_id)
 
 
+def register_child_run(parent_run_id: str, child_run_id: str) -> None:
+    """Register a child run so parent cancellation cascades to it."""
+    _cancellation_manager.register_child_run(parent_run_id=parent_run_id, child_run_id=child_run_id)
+
+
+async def aregister_child_run(parent_run_id: str, child_run_id: str) -> None:
+    """Register a child run so parent cancellation cascades to it (async version)."""
+    await _cancellation_manager.aregister_child_run(parent_run_id=parent_run_id, child_run_id=child_run_id)
+
+
 def cancel_run(run_id: str) -> bool:
     """Cancel a run."""
     return _cancellation_manager.cancel_run(run_id)

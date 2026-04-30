@@ -19,6 +19,18 @@ class BaseRunCancellationManager(ABC):
         """Register a new run as not cancelled (async version)."""
         pass
 
+    def register_child_run(self, parent_run_id: str, child_run_id: str) -> None:
+        """Track a child run for cascading cancellation.
+
+        Custom cancellation managers can override this to support parent-child
+        cancellation. The default keeps existing custom managers compatible.
+        """
+        pass
+
+    async def aregister_child_run(self, parent_run_id: str, child_run_id: str) -> None:
+        """Track a child run for cascading cancellation (async version)."""
+        pass
+
     @abstractmethod
     def cancel_run(self, run_id: str) -> bool:
         """Cancel a run by marking it as cancelled.

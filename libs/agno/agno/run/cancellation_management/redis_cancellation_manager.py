@@ -69,6 +69,42 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         """Get the Redis key for a run ID."""
         return f"{self.key_prefix}{run_id}"
 
+    def _get_children_key(self, parent_run_id: str) -> str:
+        """Get the Redis key for a parent's child run set."""
+        return f"{self.key_prefix}children:{parent_run_id}"
+
+    def _get_parent_key(self, child_run_id: str) -> str:
+        """Get the Redis key for a child's parent run."""
+        return f"{self.key_prefix}parent:{child_run_id}"
+
+    def _is_relationship_key(self, key: str) -> bool:
+        """Check whether a Redis key stores cancellation relationship metadata."""
+        return key.startswith(f"{self.key_prefix}children:") or key.startswith(f"{self.key_prefix}parent:")
+
+    def _set_cancelled(self, client: Union[Redis, RedisCluster], run_id: str) -> None:
+        key = self._get_key(run_id)
+        if self.ttl_seconds and self.ttl_seconds > 0:
+            client.set(key, "1", ex=self.ttl_seconds)
+        else:
+            client.set(key, "1")
+
+    async def _aset_cancelled(self, client: Union[AsyncRedis, AsyncRedisCluster], run_id: str) -> None:
+        key = self._get_key(run_id)
+        if self.ttl_seconds and self.ttl_seconds > 0:
+            await client.set(key, "1", ex=self.ttl_seconds)
+        else:
+            await client.set(key, "1")
+
+    def _expire_relationship_keys(self, client: Union[Redis, RedisCluster], *keys: str) -> None:
+        if self.ttl_seconds and self.ttl_seconds > 0:
+            for key in keys:
+                client.expire(key, self.ttl_seconds)
+
+    async def _aexpire_relationship_keys(self, client: Union[AsyncRedis, AsyncRedisCluster], *keys: str) -> None:
+        if self.ttl_seconds and self.ttl_seconds > 0:
+            for key in keys:
+                await client.expire(key, self.ttl_seconds)
+
     def _ensure_sync_client(self) -> Union[Redis, RedisCluster]:
         """Ensure sync client is available."""
         if self.redis_client is None:
@@ -103,6 +139,32 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         # NX: only set if key does not exist, preserving cancel-before-start intent
         await client.set(key, "0", ex=self.ttl_seconds, nx=True)
 
+    def register_child_run(self, parent_run_id: str, child_run_id: str) -> None:
+        """Track a child run and preserve already-stored parent cancellation intent."""
+        client = self._ensure_sync_client()
+        children_key = self._get_children_key(parent_run_id)
+        parent_key = self._get_parent_key(child_run_id)
+
+        client.sadd(children_key, child_run_id)
+        client.set(parent_key, parent_run_id, ex=self.ttl_seconds)
+        self._expire_relationship_keys(client, children_key, parent_key)
+        if self.is_cancelled(parent_run_id):
+            self._set_cancelled(client, child_run_id)
+            self._cancel_children(client, child_run_id)
+
+    async def aregister_child_run(self, parent_run_id: str, child_run_id: str) -> None:
+        """Track a child run and preserve already-stored parent cancellation intent (async version)."""
+        client = self._ensure_async_client()
+        children_key = self._get_children_key(parent_run_id)
+        parent_key = self._get_parent_key(child_run_id)
+
+        await client.sadd(children_key, child_run_id)
+        await client.set(parent_key, parent_run_id, ex=self.ttl_seconds)
+        await self._aexpire_relationship_keys(client, children_key, parent_key)
+        if await self.ais_cancelled(parent_run_id):
+            await self._aset_cancelled(client, child_run_id)
+            await self._acancel_children(client, child_run_id)
+
     def _cancel_via_pipeline(self, client: Union[Redis, RedisCluster], key: str) -> bool:
         """Cancel a run atomically using a pipeline: EXISTS + SET (+ EXPIRE).
 
@@ -131,6 +193,36 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         results = await pipe.execute()
         return bool(results[0])
 
+    def _cancel_children(self, client: Union[Redis, RedisCluster], run_id: str, visited: Optional[set] = None) -> None:
+        """Mark all currently-known descendants as cancelled."""
+        if visited is None:
+            visited = set()
+        if run_id in visited:
+            return
+        visited.add(run_id)
+        child_run_ids = client.smembers(self._get_children_key(run_id))
+        for child_run_id in child_run_ids:
+            if isinstance(child_run_id, bytes):
+                child_run_id = child_run_id.decode("utf-8")
+            self._set_cancelled(client, child_run_id)
+            self._cancel_children(client, child_run_id, visited)
+
+    async def _acancel_children(
+        self, client: Union[AsyncRedis, AsyncRedisCluster], run_id: str, visited: Optional[set] = None
+    ) -> None:
+        """Mark all currently-known descendants as cancelled (async version)."""
+        if visited is None:
+            visited = set()
+        if run_id in visited:
+            return
+        visited.add(run_id)
+        child_run_ids = await client.smembers(self._get_children_key(run_id))
+        for child_run_id in child_run_ids:
+            if isinstance(child_run_id, bytes):
+                child_run_id = child_run_id.decode("utf-8")
+            await self._aset_cancelled(client, child_run_id)
+            await self._acancel_children(client, child_run_id, visited)
+
     def cancel_run(self, run_id: str) -> bool:
         """Cancel a run by marking it as cancelled.
 
@@ -145,6 +237,7 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         key = self._get_key(run_id)
 
         was_registered = self._cancel_via_pipeline(client, key)
+        self._cancel_children(client, run_id)
 
         if was_registered:
             logger.info(f"Run {run_id} marked for cancellation")
@@ -166,6 +259,7 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         key = self._get_key(run_id)
 
         was_registered = await self._acancel_via_pipeline(client, key)
+        await self._acancel_children(client, run_id)
 
         if was_registered:
             logger.info(f"Run {run_id} marked for cancellation")
@@ -201,13 +295,39 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         """Remove a run from tracking (called when run completes)."""
         client = self._ensure_sync_client()
         key = self._get_key(run_id)
+        parent_key = self._get_parent_key(run_id)
+        parent_run_id = client.get(parent_key)
+        if isinstance(parent_run_id, bytes):
+            parent_run_id = parent_run_id.decode("utf-8")
+        if parent_run_id:
+            client.srem(self._get_children_key(parent_run_id), run_id)
+        child_run_ids = client.smembers(self._get_children_key(run_id))
+        for child_run_id in child_run_ids:
+            if isinstance(child_run_id, bytes):
+                child_run_id = child_run_id.decode("utf-8")
+            client.delete(self._get_parent_key(child_run_id))
         client.delete(key)
+        client.delete(parent_key)
+        client.delete(self._get_children_key(run_id))
 
     async def acleanup_run(self, run_id: str) -> None:
         """Remove a run from tracking (called when run completes) (async version)."""
         client = self._ensure_async_client()
         key = self._get_key(run_id)
+        parent_key = self._get_parent_key(run_id)
+        parent_run_id = await client.get(parent_key)
+        if isinstance(parent_run_id, bytes):
+            parent_run_id = parent_run_id.decode("utf-8")
+        if parent_run_id:
+            await client.srem(self._get_children_key(parent_run_id), run_id)
+        child_run_ids = await client.smembers(self._get_children_key(run_id))
+        for child_run_id in child_run_ids:
+            if isinstance(child_run_id, bytes):
+                child_run_id = child_run_id.decode("utf-8")
+            await client.delete(self._get_parent_key(child_run_id))
         await client.delete(key)
+        await client.delete(parent_key)
+        await client.delete(self._get_children_key(run_id))
 
     def raise_if_cancelled(self, run_id: str) -> None:
         """Check if a run should be cancelled and raise exception if so."""
@@ -236,6 +356,8 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
             # Extract run_id from key
             if isinstance(key, bytes):
                 key = key.decode("utf-8")
+            if self._is_relationship_key(key):
+                continue
             run_id = key[len(self.key_prefix) :]
 
             # Get value
@@ -264,6 +386,8 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
             # Extract run_id from key
             if isinstance(key, bytes):
                 key = key.decode("utf-8")
+            if self._is_relationship_key(key):
+                continue
             run_id = key[len(self.key_prefix) :]
 
             # Get value

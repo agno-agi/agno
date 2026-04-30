@@ -10,11 +10,16 @@ from agno.run import RunContext
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.base import RunStatus
 from agno.run.cancel import (
+    acancel_run,
+    aregister_child_run,
+    aregister_run,
+    ais_cancelled,
     cancel_run,
     cleanup_run,
     get_active_runs,
     get_cancellation_manager,
     is_cancelled,
+    register_child_run,
     register_run,
     set_cancellation_manager,
 )
@@ -105,6 +110,48 @@ def test_run_dispatch_does_not_reset_cancellation_before_impl(monkeypatch: pytes
 
     assert observed["cancelled_before_model"] is True
     assert run_id not in get_active_runs()
+
+
+def test_parent_cancellation_cascades_to_child_runs():
+    parent_run_id = "parent-run"
+    child_run_id = "child-run"
+    grandchild_run_id = "grandchild-run"
+
+    register_run(parent_run_id)
+    register_run(child_run_id)
+    register_run(grandchild_run_id)
+    register_child_run(parent_run_id, child_run_id)
+    register_child_run(child_run_id, grandchild_run_id)
+
+    assert cancel_run(parent_run_id) is True
+
+    assert is_cancelled(parent_run_id) is True
+    assert is_cancelled(child_run_id) is True
+    assert is_cancelled(grandchild_run_id) is True
+
+
+def test_parent_cancel_before_child_registration_cancels_child_immediately():
+    parent_run_id = "cancelled-parent-before-child"
+    child_run_id = "child-started-later"
+
+    assert cancel_run(parent_run_id) is False
+    register_run(child_run_id)
+    register_child_run(parent_run_id, child_run_id)
+
+    assert is_cancelled(child_run_id) is True
+
+
+@pytest.mark.asyncio
+async def test_async_parent_cancellation_cascades_to_child_runs():
+    parent_run_id = "async-parent-run"
+    child_run_id = "async-child-run"
+
+    await aregister_run(parent_run_id)
+    await aregister_run(child_run_id)
+    await aregister_child_run(parent_run_id, child_run_id)
+
+    assert await acancel_run(parent_run_id) is True
+    assert await ais_cancelled(child_run_id) is True
 
 
 def test_continue_run_dispatch_handles_none_session_runs(monkeypatch: pytest.MonkeyPatch):

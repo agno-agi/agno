@@ -37,6 +37,7 @@ class RunContext:
     tools: Optional[List[Any]] = None
     knowledge: Optional[Any] = None
     members: Optional[List[Any]] = None
+    parent_run_id: Optional[str] = None
 
 
 @dataclass

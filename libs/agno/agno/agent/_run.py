@@ -57,9 +57,11 @@ from agno.run.cancel import (
 from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
+    aregister_child_run,
     aregister_run,
     cleanup_run,
     raise_if_cancelled,
+    register_child_run,
     register_run,
 )
 from agno.run.cancel import (
@@ -106,6 +108,23 @@ from agno.utils.log import (
     log_warning,
 )
 from agno.utils.response import get_paused_content
+
+
+def _register_run_for_cancellation(run_id: str, parent_run_id: Optional[str] = None) -> None:
+    register_run(run_id)
+    if parent_run_id is not None:
+        register_child_run(parent_run_id=parent_run_id, child_run_id=run_id)
+
+
+async def _aregister_run_for_cancellation(run_id: str, parent_run_id: Optional[str] = None) -> None:
+    await aregister_run(run_id)
+    if parent_run_id is not None:
+        await aregister_child_run(parent_run_id=parent_run_id, child_run_id=run_id)
+
+
+def _get_parent_run_id(run_context: Optional[RunContext] = None, run_response: Optional[Any] = None) -> Optional[str]:
+    return getattr(run_context, "parent_run_id", None) or getattr(run_response, "parent_run_id", None)
+
 
 # Strong references to background tasks so they aren't garbage-collected mid-execution.
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
@@ -371,7 +390,7 @@ def _run(
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import determine_tools_for_model
 
-    register_run(run_context.run_id)
+    _register_run_for_cancellation(run_context.run_id, run_context.parent_run_id)
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
     memory_future = None
@@ -760,7 +779,7 @@ def _run_stream(
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import determine_tools_for_model
 
-    register_run(run_context.run_id)
+    _register_run_for_cancellation(run_context.run_id, run_context.parent_run_id)
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
     memory_future = None
@@ -1264,6 +1283,7 @@ def run_dispatch(
         from fastapi import BackgroundTasks
 
         background_tasks: BackgroundTasks = background_tasks  # type: ignore
+    parent_run_id = kwargs.pop("parent_run_id", None)
 
     # Validate input against input_schema if provided
     validated_input = validate_input(input, agent.input_schema)
@@ -1329,7 +1349,10 @@ def run_dispatch(
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
         output_schema=opts.output_schema,
+        parent_run_id=parent_run_id,
     )
+    if parent_run_id is not None and run_context.parent_run_id is None:
+        run_context.parent_run_id = parent_run_id
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     opts.apply_to_context(
         run_context,
@@ -1351,6 +1374,7 @@ def run_dispatch(
         metadata=run_context.metadata,
         session_state=run_context.session_state,
         input=run_input,
+        parent_run_id=run_context.parent_run_id,
     )
 
     run_response.model = agent.model.id if agent.model is not None else None
@@ -1448,7 +1472,7 @@ async def _arun(
     from agno.agent._telemetry import alog_agent_telemetry
     from agno.agent._tools import determine_tools_for_model
 
-    await aregister_run(run_context.run_id)
+    await _aregister_run_for_cancellation(run_context.run_id, run_context.parent_run_id)
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
     memory_task = None
@@ -1847,7 +1871,7 @@ async def _arun_background(
     from agno.agent._storage import aread_or_create_session, update_metadata
 
     # 1. Register the run for cancellation tracking (before spawning the task)
-    await aregister_run(run_context.run_id)
+    await _aregister_run_for_cancellation(run_context.run_id, run_context.parent_run_id)
 
     # 2. Set status to PENDING
     run_response.status = RunStatus.pending
@@ -2091,7 +2115,7 @@ async def _arun_stream(
     from agno.agent._telemetry import alog_agent_telemetry
     from agno.agent._tools import determine_tools_for_model
 
-    await aregister_run(run_context.run_id)
+    await _aregister_run_for_cancellation(run_context.run_id, run_context.parent_run_id)
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
     memory_task = None
@@ -2637,6 +2661,7 @@ def arun_dispatch(  # type: ignore
         from fastapi import BackgroundTasks
 
         background_tasks: BackgroundTasks = background_tasks  # type: ignore
+    parent_run_id = kwargs.pop("parent_run_id", None)
 
     # 2. Validate input against input_schema if provided
     validated_input = validate_input(input, agent.input_schema)
@@ -2709,7 +2734,10 @@ def arun_dispatch(  # type: ignore
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
         output_schema=opts.output_schema,
+        parent_run_id=parent_run_id,
     )
+    if parent_run_id is not None and run_context.parent_run_id is None:
+        run_context.parent_run_id = parent_run_id
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     opts.apply_to_context(
         run_context,
@@ -2731,6 +2759,7 @@ def arun_dispatch(  # type: ignore
         metadata=run_context.metadata,
         session_state=run_context.session_state,
         input=run_input,
+        parent_run_id=run_context.parent_run_id,
     )
 
     run_response.model = agent.model.id if agent.model is not None else None
@@ -3096,7 +3125,7 @@ def _continue_run(
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates
 
-    register_run(run_response.run_id)  # type: ignore
+    _register_run_for_cancellation(run_response.run_id, _get_parent_run_id(run_context, run_response))  # type: ignore[arg-type]
 
     agent.model = cast(Model, agent.model)
 
@@ -3306,7 +3335,7 @@ def _continue_run_stream(
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import handle_tool_call_updates_stream
 
-    register_run(run_response.run_id)  # type: ignore
+    _register_run_for_cancellation(run_response.run_id, _get_parent_run_id(run_context, run_response))  # type: ignore[arg-type]
 
     # Set up retry logic
     num_attempts = agent.retries + 1
@@ -4037,7 +4066,10 @@ async def _acontinue_run(
                 run_response.status = RunStatus.running
 
                 # Register run for cancellation tracking
-                await aregister_run(run_response.run_id)  # type: ignore
+                await _aregister_run_for_cancellation(
+                    run_response.run_id,
+                    _get_parent_run_id(run_context, run_response),  # type: ignore[arg-type]
+                )
 
                 # 7. Handle the updated tools
                 await ahandle_tool_call_updates(
@@ -4411,7 +4443,10 @@ async def _acontinue_run_stream(
                 run_response.status = RunStatus.running
 
                 # Register run for cancellation tracking
-                await aregister_run(run_response.run_id)  # type: ignore
+                await _aregister_run_for_cancellation(
+                    run_response.run_id,
+                    _get_parent_run_id(run_context, run_response),  # type: ignore[arg-type]
+                )
 
                 # Start the Run by yielding a RunContinued event
                 if stream_events:

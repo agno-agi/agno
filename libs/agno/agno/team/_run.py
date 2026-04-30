@@ -42,9 +42,11 @@ from agno.run.cancel import (
 from agno.run.cancel import (
     acleanup_run,
     araise_if_cancelled,
+    aregister_child_run,
     aregister_run,
     cleanup_run,
     raise_if_cancelled,
+    register_child_run,
     register_run,
 )
 from agno.run.cancel import (
@@ -98,6 +100,22 @@ _background_tasks: set[asyncio.Task[None]] = set()
 if TYPE_CHECKING:
     from agno.team._run_options import ResolvedRunOptions
     from agno.team.team import Team
+
+
+def _register_run_for_cancellation(run_id: str, parent_run_id: Optional[str] = None) -> None:
+    register_run(run_id)
+    if parent_run_id is not None:
+        register_child_run(parent_run_id=parent_run_id, child_run_id=run_id)
+
+
+async def _aregister_run_for_cancellation(run_id: str, parent_run_id: Optional[str] = None) -> None:
+    await aregister_run(run_id)
+    if parent_run_id is not None:
+        await aregister_child_run(parent_run_id=parent_run_id, child_run_id=run_id)
+
+
+def _get_parent_run_id(run_context: Optional[RunContext] = None, run_response: Optional[Any] = None) -> Optional[str]:
+    return getattr(run_context, "parent_run_id", None) or getattr(run_response, "parent_run_id", None)
 
 
 def cancel_run(run_id: str) -> bool:
@@ -1809,13 +1827,16 @@ def run_dispatch(
         from fastapi import BackgroundTasks
 
         background_tasks: BackgroundTasks = background_tasks  # type: ignore
+    parent_run_id = kwargs.pop("parent_run_id", None)
+    if parent_run_id is None and run_context is not None:
+        parent_run_id = run_context.parent_run_id
 
     # Validate input against input_schema if provided
     validated_input = validate_input(input, team.input_schema)
 
     try:
         # Register run for cancellation tracking (after validation succeeds)
-        register_run(run_id)  # type: ignore
+        _register_run_for_cancellation(run_id, parent_run_id)  # type: ignore[arg-type]
 
         # Normalise hook & guardails
         if not team._hooks_normalised:
@@ -1887,7 +1908,10 @@ def run_dispatch(
             knowledge_filters=opts.knowledge_filters,
             metadata=opts.metadata,
             output_schema=opts.output_schema,
+            parent_run_id=parent_run_id,
         )
+        if parent_run_id is not None and run_context.parent_run_id is None:
+            run_context.parent_run_id = parent_run_id
         # Apply options with precedence: explicit args > existing run_context > resolved defaults.
         opts.apply_to_context(
             run_context,
@@ -1915,6 +1939,7 @@ def run_dispatch(
             metadata=run_context.metadata,
             session_state=run_context.session_state,
             input=run_input,
+            parent_run_id=run_context.parent_run_id,
         )
 
         run_response.model = team.model.id if team.model is not None else None
@@ -2001,7 +2026,7 @@ async def _arun_tasks(
 
     try:
         # Register run for cancellation tracking
-        await aregister_run(run_context.run_id)
+        await _aregister_run_for_cancellation(run_context.run_id, run_context.parent_run_id)
 
         # Setup session
         team_session = await _asetup_session(
@@ -2337,7 +2362,7 @@ async def _arun_tasks_stream(
 
     try:
         # Register run for cancellation tracking
-        await aregister_run(run_context.run_id)
+        await _aregister_run_for_cancellation(run_context.run_id, run_context.parent_run_id)
 
         # Setup session
         team_session = await _asetup_session(
@@ -2868,7 +2893,7 @@ async def _arun(
 
     try:
         # Register run for cancellation tracking
-        await aregister_run(run_context.run_id)
+        await _aregister_run_for_cancellation(run_context.run_id, run_context.parent_run_id)
 
         # Setup session: read/create, load state, resolve dependencies
         team_session = await _asetup_session(
@@ -3207,7 +3232,7 @@ async def _arun_background(
     from agno.team._storage import _aread_or_create_session, _update_metadata
 
     # 1. Register the run for cancellation tracking (before spawning the task)
-    await aregister_run(run_context.run_id)
+    await _aregister_run_for_cancellation(run_context.run_id, run_context.parent_run_id)
 
     # 2. Set status to PENDING
     run_response.status = RunStatus.pending
@@ -3476,7 +3501,7 @@ async def _arun_stream(
 
     try:
         # Register run for cancellation tracking
-        await aregister_run(run_context.run_id)
+        await _aregister_run_for_cancellation(run_context.run_id, run_context.parent_run_id)
 
         # Setup session: read/create, load state, resolve dependencies
         team_session = await _asetup_session(
@@ -3950,6 +3975,9 @@ def arun_dispatch(  # type: ignore
         from fastapi import BackgroundTasks
 
         background_tasks: BackgroundTasks = background_tasks  # type: ignore
+    parent_run_id = kwargs.pop("parent_run_id", None)
+    if parent_run_id is None and run_context is not None:
+        parent_run_id = run_context.parent_run_id
 
     # Validate input against input_schema if provided
     validated_input = validate_input(input, team.input_schema)
@@ -3994,7 +4022,10 @@ def arun_dispatch(  # type: ignore
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
         output_schema=opts.output_schema,
+        parent_run_id=parent_run_id,
     )
+    if parent_run_id is not None and run_context.parent_run_id is None:
+        run_context.parent_run_id = parent_run_id
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     opts.apply_to_context(
         run_context,
@@ -4018,6 +4049,7 @@ def arun_dispatch(  # type: ignore
         metadata=run_context.metadata,
         session_state=run_context.session_state,
         input=run_input,
+        parent_run_id=run_context.parent_run_id,
     )
 
     run_response.model = team.model.id if team.model is not None else None
@@ -5906,7 +5938,7 @@ def _continue_run(
     from agno.team._telemetry import log_team_telemetry
     from agno.utils.events import create_team_run_continued_event
 
-    register_run(run_response.run_id)  # type: ignore
+    _register_run_for_cancellation(run_response.run_id, _get_parent_run_id(run_context, run_response))  # type: ignore[arg-type]
 
     # Emit RunContinued event (matching streaming variant behaviour)
     handle_event(
@@ -6083,7 +6115,7 @@ def _continue_run_stream(
     from agno.team._telemetry import log_team_telemetry
     from agno.utils.events import create_team_run_continued_event
 
-    register_run(run_response.run_id)  # type: ignore
+    _register_run_for_cancellation(run_response.run_id, _get_parent_run_id(run_context, run_response))  # type: ignore[arg-type]
 
     try:
         num_attempts = team.retries + 1
@@ -6386,6 +6418,7 @@ def acontinue_run_dispatch(  # type: ignore
         dependencies=opts.dependencies,
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
+        parent_run_id=getattr(run_response, "parent_run_id", None),
     )
     if dependencies is not None:
         run_context.dependencies = opts.dependencies
@@ -6524,7 +6557,10 @@ async def _acontinue_run(
                         "To continue a run from a given run_id, the requirements parameter must be provided."
                     )
 
-                await aregister_run(run_response.run_id)  # type: ignore
+                await _aregister_run_for_cancellation(
+                    run_response.run_id,
+                    _get_parent_run_id(run_context, run_response),  # type: ignore[arg-type]
+                )
 
                 # Emit RunContinued event (matching streaming variant behaviour)
                 from agno.utils.events import create_team_run_continued_event
@@ -6861,7 +6897,10 @@ async def _acontinue_run_stream(
                         "To continue a run from a given run_id, the requirements parameter must be provided."
                     )
 
-                await aregister_run(run_response.run_id)  # type: ignore
+                await _aregister_run_for_cancellation(
+                    run_response.run_id,
+                    _get_parent_run_id(run_context, run_response),  # type: ignore[arg-type]
+                )
 
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
