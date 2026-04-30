@@ -1171,7 +1171,7 @@ class StepRequirement:
                 raw = raw[:-1] + "+00:00"
             timeout_at = datetime.fromisoformat(raw)
 
-        return cls(
+        requirement = cls(
             step_id=data["step_id"],
             step_name=data.get("step_name"),
             step_index=data.get("step_index"),
@@ -1212,6 +1212,10 @@ class StepRequirement:
             timeout_at=timeout_at,
             on_timeout=data.get("on_timeout", "cancel"),
         )
+        # Sync user_input values into user_input_schema fields 
+        if requirement.user_input:
+            requirement.set_user_input(validate=False, **requirement.user_input)
+        return requirement
 
 
 @dataclass
