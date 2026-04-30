@@ -1,5 +1,6 @@
 import json
 import time
+from unittest.mock import Mock
 
 import jwt
 import pytest
