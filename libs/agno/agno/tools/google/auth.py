@@ -3,8 +3,7 @@ import json
 import os
 from contextvars import ContextVar
 from functools import wraps
-from time import monotonic
-from typing import Any, Dict, List, Literal, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlencode
 
 from agno.tools import Toolkit
@@ -181,37 +180,6 @@ def get_token_db(toolkit: Any, agent: Optional[Any] = None) -> Any:
     return None
 
 
-# Registry that bridges the OAuth signed-state to a DB handle for the callback.
-# authenticate_google() writes state -> agent.db here; handle_oauth_callback reads
-# it back. Process-local — multi-worker deployments must set GoogleAuth(db=...).
-# No lock: dict item ops (get/setitem/pop) and dict.copy() are atomic under the
-# GIL; iterating over a copy is safe from concurrent mutation on the original.
-_OAUTH_STATE_DBS: Dict[str, Tuple[float, Any]] = {}
-
-
-def _remember_oauth_state_db(state: str, db: Any, ttl_seconds: int) -> None:
-    db = _valid_auth_token_db(db)
-    if db is None:
-        return
-    now = monotonic()
-    # Opportunistic sweep via atomic dict.copy() snapshot.
-    for key, (expiry, _) in _OAUTH_STATE_DBS.copy().items():
-        if expiry <= now:
-            _OAUTH_STATE_DBS.pop(key, None)
-    _OAUTH_STATE_DBS[state] = (now + ttl_seconds, db)
-
-
-def _get_oauth_state_db(state: str) -> Any:
-    entry = _OAUTH_STATE_DBS.get(state)
-    if entry is None:
-        return None
-    expires_at, db = entry
-    if expires_at <= monotonic():
-        _OAUTH_STATE_DBS.pop(state, None)
-        return None
-    return db
-
-
 def load_token(
     toolkit: Any,
     scopes: list,
@@ -332,25 +300,27 @@ class GoogleAuth(Toolkit):
 
     def authenticate_google(
         self,
-        services: List[Literal["gmail", "calendar", "drive", "sheets", "slides"]],
         run_context: Optional[Any] = None,
         agent: Optional[Any] = None,
     ) -> str:
         """
         Get the Google OAuth URL for the user to authenticate their Google account.
 
-        Args:
-            services (List[str]): Google services to authenticate.
+        Automatically requests scopes for ALL registered Google toolkits (Gmail, Calendar,
+        Drive, etc.) so the user only needs to authenticate once.
 
         Returns:
             str: JSON string containing the OAuth URL or error message
         """
+        if not self._services:
+            return json.dumps(
+                {"error": "No Google services registered. Add GmailTools, GoogleCalendarTools, etc. to your agent."}
+            )
+
+        services = list(self._services.keys())
         scopes: Set[str] = set()
-        for service in services:
-            if service in self._services:
-                scopes.update(self._services[service])
-        if not scopes:
-            return json.dumps({"error": f"Unknown services. Available: {', '.join(self._services)}"})
+        for service_scopes in self._services.values():
+            scopes.update(service_scopes)
 
         if not self._state_secret:
             return json.dumps(
@@ -376,10 +346,6 @@ class GoogleAuth(Toolkit):
                 }
             )
 
-        # Bridge agent.db to the callback (which runs outside agent.run()) via the
-        # signed state. Expires with the state JWT; no-op if agent.db is absent.
-        _remember_oauth_state_db(state, getattr(agent, "db", None), self._state_ttl_seconds)
-
         params = {
             "client_id": self.client_id,
             "redirect_uri": self.redirect_uri,
@@ -393,14 +359,17 @@ class GoogleAuth(Toolkit):
         url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
         return json.dumps({"message": f"Connect {', '.join(services)}", "url": url})
 
-    def handle_oauth_callback(self, code: str, state: str) -> Dict[str, Any]:
+    def handle_oauth_callback(self, code: str, state: str, db: Any) -> Dict[str, Any]:
         """Exchange an OAuth authorization code for credentials and store in DB.
 
         Called by the /google/oauth/callback endpoint after Google redirects.
+        The db is captured by the router closure at mount time — no process-local
+        registry needed, works across workers and restarts.
 
         Args:
             code: Authorization code from Google's redirect.
             state: HMAC-signed JWT carrying user_id and services (see authenticate_google).
+            db: Database handle for token persistence (captured by router closure).
 
         Returns:
             Dict with status, user_id, and services that were authorized.
@@ -467,11 +436,8 @@ class GoogleAuth(Toolkit):
             log_error(f"OAuth token exchange failed: {e}")
             return {"error": f"Token exchange failed: {e}"}
 
-        # Store one consolidated token row — all Google services share it.
-        # Prefer explicit GoogleAuth(db=) then fall back to the registry entry keyed
-        # by signed state (populated by authenticate_google from agent.db).
         stored = _persist_google_token(
-            db=_valid_auth_token_db(self._db) or _get_oauth_state_db(state),
+            db=db,
             creds=creds,
             user_id=user_id,
             services_registry=self._services,
@@ -483,29 +449,37 @@ class GoogleAuth(Toolkit):
         log_info(f"OAuth complete for user={user_id}, services={services}")
         return {"status": "ok", "user_id": user_id, "services": services}
 
-    def get_oauth_router(self) -> Any:
+    def get_oauth_router(self, db: Any = None) -> Any:
         """Create a FastAPI APIRouter with the /google/oauth/callback endpoint.
 
         Calling this marks GoogleAuth as "interface mode" — toolkits will raise
         PermissionError on token miss so the LLM can surface an OAuth URL, rather
         than falling through to a local browser flow.
 
-        The router closes over this GoogleAuth instance. _db must be wired
-        (via AgentOS init-time binding or explicit db= param) before the
-        callback fires, otherwise token storage silently skips.
+        The db is captured in the router closure at mount time — no process-local
+        registry needed, works across workers and container restarts.
+
+        Args:
+            db: Database for token persistence. Falls back to GoogleAuth(db=...).
 
         Usage:
             google_auth = GoogleAuth(client_id="...")
-            app.include_router(google_auth.get_oauth_router())
+            app.include_router(google_auth.get_oauth_router(db=agent.db))
         """
-        # Fail-closed at mount on config the agent can't recover. The db for token
-        # persistence is resolved per-flow via the signed-state registry (populated
-        # when authenticate_google is called with agent injected) or explicit db=.
         if not self._state_secret:
             raise RuntimeError(
                 "GoogleAuth.get_oauth_router() requires a state signing secret. "
                 "Set state_secret= or the GOOGLE_OAUTH_STATE_SECRET env var."
             )
+
+        # Resolve db: explicit param > GoogleAuth(db=...) > fail
+        resolved_db = _valid_auth_token_db(db) or _valid_auth_token_db(self._db)
+        if resolved_db is None:
+            raise RuntimeError(
+                "GoogleAuth.get_oauth_router() requires a DB with auth token support. "
+                "Pass db= or set GoogleAuth(db=...)."
+            )
+
         self._callback_configured = True
         from html import escape
 
@@ -514,10 +488,11 @@ class GoogleAuth(Toolkit):
 
         router = APIRouter(tags=["Google OAuth"])
         google_auth = self
+        # Captured in closure — survives restarts, works across workers
+        callback_db = resolved_db
 
         @router.get("/google/oauth/callback")
         async def oauth_callback(request: Request) -> HTMLResponse:
-            # Google sends error/error_description on denial or failure
             error = request.query_params.get("error")
             if error:
                 desc = escape(request.query_params.get("error_description", error))
@@ -528,12 +503,11 @@ class GoogleAuth(Toolkit):
             if not code:
                 return HTMLResponse("<h1>Error</h1><p>Missing authorization code.</p>", status_code=400)
 
-            result = google_auth.handle_oauth_callback(code, state)
+            result = google_auth.handle_oauth_callback(code, state, db=callback_db)
             if "error" in result:
                 safe_error = escape(str(result["error"]))
                 return HTMLResponse(f"<h1>Error</h1><p>{safe_error}</p>", status_code=400)
 
-            # Validate services against the registered allow-list before rendering
             known = set(google_auth._services)
             safe_services = [s for s in result.get("services", []) if s in known]
             services_str = escape(", ".join(safe_services)) if safe_services else "services"

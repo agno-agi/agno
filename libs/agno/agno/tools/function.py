@@ -581,10 +581,10 @@ class Function(BaseModel):
             return func
 
         # Don't wrap functions with framework-injected parameters
-        # These parameters (agent, team) are
+        # These parameters (agent, team, run_context) are
         # injected by the framework at runtime and shouldn't be validated by Pydantic
         sig = signature(func)
-        framework_params = {"agent", "team"}
+        framework_params = {"agent", "team", "run_context"}
         if framework_params & set(sig.parameters.keys()):
             return func
 

@@ -381,7 +381,9 @@ class GoogleDriveTools(Toolkit):
             _, done = downloader.next_chunk()
         return buffer.getvalue()
 
-    # No @authenticate — delegates to search_files which handles auth
+    # TODO(deprecate): Duplicates search_files logic. Separate impl required so @authenticate
+    # receives run_context directly. Consolidate into search_files once decorator supports passthrough.
+    @authenticate
     def list_files(self, query: Optional[str] = None, page_size: int = 10, page_token: Optional[str] = None) -> str:
         """
         List recent files and folders from Google Drive.
@@ -394,7 +396,40 @@ class GoogleDriveTools(Toolkit):
         Returns:
             str: JSON string containing file metadata or error message
         """
-        return self.search_files(query=query, max_results=page_size, page_token=page_token)
+        if page_size < 1:
+            return json.dumps({"error": "page_size must be greater than 0"})
+
+        try:
+            service = cast(Resource, self.service)
+            if self.include_trashed:
+                effective_query = query or ""
+            elif query:
+                effective_query = f"({query}) and trashed=false"
+            else:
+                effective_query = "trashed=false"
+            list_kwargs: dict = {
+                "q": effective_query,
+                "pageSize": page_size,
+                "orderBy": "modifiedTime desc",
+                "fields": self.SEARCH_FIELDS,
+            }
+            if page_token:
+                list_kwargs["pageToken"] = page_token
+            results = service.files().list(**list_kwargs).execute()
+            files = results.get("files", [])
+            return json.dumps(
+                {
+                    "query": effective_query,
+                    "files": files,
+                    "count": len(files),
+                    "nextPageToken": results.get("nextPageToken"),
+                }
+            )
+        except HttpError as e:
+            return json.dumps({"error": f"Google Drive API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not list Google Drive files: {str(e)}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     async def alist_files(
         self, query: Optional[str] = None, page_size: int = 10, page_token: Optional[str] = None
