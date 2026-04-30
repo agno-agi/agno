@@ -1518,11 +1518,14 @@ def test_label_cache_invalidated_on_create(gmail_tools, mock_gmail_service):
     mock_gmail_service.users().labels().create().execute.return_value = {"id": "new_label"}
     mock_gmail_service.users().messages().modify().execute.return_value = {}
 
-    gmail_tools._label_cache = {"old": "old_id"}
+    # Cache is now user-keyed: {cache_key: {label_name: label_id}}
+    # In test mode (no contextvar), cache_key is None
+    gmail_tools._label_cache = {None: {"old": "old_id"}}
 
     gmail_tools.apply_label("test query", "NewLabel", count=1)
 
-    assert gmail_tools._label_cache is None
+    # Cache invalidation removes the user's entry, not the whole dict
+    assert None not in gmail_tools._label_cache
 
 
 def test_label_cache_invalidated_on_delete(gmail_tools, mock_gmail_service):
@@ -1531,12 +1534,14 @@ def test_label_cache_invalidated_on_delete(gmail_tools, mock_gmail_service):
     }
     mock_gmail_service.users().labels().delete().execute.return_value = None
 
-    gmail_tools._label_cache = {"mylabel": "lbl_1"}
+    # Cache is now user-keyed: {cache_key: {label_name: label_id}}
+    gmail_tools._label_cache = {None: {"mylabel": "lbl_1"}}
 
     result = gmail_tools.delete_custom_label("MyLabel", confirm=True)
 
     assert "Successfully deleted" in result
-    assert gmail_tools._label_cache is None
+    # Cache invalidation removes the user's entry
+    assert None not in gmail_tools._label_cache
 
 
 def test_label_cache_reused_across_calls(gmail_tools, mock_gmail_service):
