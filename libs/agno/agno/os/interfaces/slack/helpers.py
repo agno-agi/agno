@@ -66,22 +66,24 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
     }
 
 
-def strip_bot_mention(text: str, bot_user_id: Optional[str]) -> str:
-    """Remove the bot's own @mention from message text.
+def strip_bot_mention(text: str, bot_user_id: Optional[str], bot_name: Optional[str] = None) -> str:
+    """Replace the bot's own @mention with its display name (or remove if no name).
 
     Slack encodes mentions as ``<@U123>``. When a user @-mentions the bot,
     the agent shouldn't see its own ID in the text — it just adds noise and
     causes the model to echo back the raw mention tag.
 
-    Only strips the *bot's* mention; other users' mentions are preserved.
+    If bot_name is provided, the mention is replaced with that name so the
+    agent sees "hi Scout" instead of "hi " when the user types "hi @Scout".
+
+    Only processes the *bot's* mention; other users' mentions are preserved.
     """
     if not bot_user_id or not text:
         return text
     import re
 
-    # Replace the mention and any surrounding whitespace with a single space,
-    # then strip leading/trailing whitespace left at the edges.
-    return re.sub(rf"\s*<@{re.escape(bot_user_id)}>\s*", " ", text).strip()
+    replacement = f" {bot_name} " if bot_name else " "
+    return re.sub(rf"\s*<@{re.escape(bot_user_id)}>\s*", replacement, text).strip()
 
 
 async def resolve_slack_user(async_client: Any, slack_user_id: str) -> Tuple[str, Optional[str]]:
@@ -106,6 +108,39 @@ async def resolve_slack_user(async_client: Any, slack_user_id: str) -> Tuple[str
     except Exception as e:
         log_warning(f"Failed to resolve Slack user {slack_user_id}: {str(e)}")
         return (slack_user_id, None)
+
+
+class BotNameResolver:
+    """Resolves a Slack bot user ID to its display name with per-instance caching.
+
+    Instantiated once per mounted Slack interface inside ``attach_routes`` so
+    each interface keeps its own cache without polluting module-level state.
+    Only successful lookups are cached — transient API failures are retried on
+    the next message.
+    """
+
+    def __init__(self) -> None:
+        self._cache: Dict[str, str] = {}
+
+    async def resolve(self, async_client: Any, bot_user_id: str) -> Optional[str]:
+        if bot_user_id in self._cache:
+            return self._cache[bot_user_id]
+
+        try:
+            resp = await async_client.users_info(user=bot_user_id)
+            user = resp.get("user", {}) if resp else {}
+            profile = user.get("profile", {})
+
+            name = profile.get("display_name") or profile.get("real_name") or user.get("name") or None
+            if name is not None and not name.strip():
+                name = None
+
+            if name is not None:
+                self._cache[bot_user_id] = name
+            return name
+        except Exception as e:
+            log_warning(f"Failed to resolve bot name for {bot_user_id}: {str(e)}")
+            return None
 
 
 async def resolve_channel_name(async_client: Any, channel_id: str) -> Optional[str]:
