@@ -1,9 +1,12 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from mcp.types import TextContent
 
+from agno.tools.function import ToolResult
 from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
+from agno.utils.mcp import get_entrypoint_for_tool
 
 
 class _AsyncContextManager:
@@ -20,6 +23,10 @@ class _AsyncContextManager:
 class _AsyncExitStackStub:
     async def enter_async_context(self, context):
         return await context.__aenter__()
+
+
+class _MCPToolStub:
+    name = "get_data"
 
 
 @pytest.mark.asyncio
@@ -111,6 +118,43 @@ async def test_mcp_include_exclude_tools_bad_values(kwargs):
     with pytest.raises(ValueError, match="not present in the toolkit"):
         tools.session = session_mock
         await tools.build_tools()
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_result_preserves_meta():
+    session_mock = MagicMock()
+    session_mock.send_ping = AsyncMock()
+    session_mock.call_tool = AsyncMock()
+    session_mock.call_tool.return_value.isError = False
+    session_mock.call_tool.return_value.meta = {"trace_id": "abc-123"}
+    session_mock.call_tool.return_value.content = [TextContent(type="text", text="hello")]
+
+    entrypoint = get_entrypoint_for_tool(tool=_MCPToolStub(), session=session_mock)
+
+    result = await entrypoint(x="y")
+
+    assert result.content == "hello"
+    assert result.meta == {"trace_id": "abc-123"}
+    dumped_result = result.model_dump()
+    assert dumped_result["meta"] == {"trace_id": "abc-123"}
+    assert ToolResult.model_validate(dumped_result).meta == {"trace_id": "abc-123"}
+
+
+@pytest.mark.asyncio
+async def test_mcp_error_tool_result_preserves_meta():
+    session_mock = MagicMock()
+    session_mock.send_ping = AsyncMock()
+    session_mock.call_tool = AsyncMock()
+    session_mock.call_tool.return_value.isError = True
+    session_mock.call_tool.return_value.meta = {"trace_id": "error-123"}
+    session_mock.call_tool.return_value.content = [TextContent(type="text", text="bad")]
+
+    entrypoint = get_entrypoint_for_tool(tool=_MCPToolStub(), session=session_mock)
+
+    result = await entrypoint(x="y")
+
+    assert result.content.startswith("Error from MCP tool 'get_data'")
+    assert result.meta == {"trace_id": "error-123"}
 
 
 # =============================================================================

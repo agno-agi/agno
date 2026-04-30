@@ -1335,3 +1335,4 @@ class ToolResult(BaseModel):
     videos: Optional[List[Video]] = None
     audios: Optional[List[Audio]] = None
     files: Optional[List[File]] = None
+    meta: Optional[Dict[str, Any]] = None
