@@ -11,6 +11,7 @@ from agno.os.schema import (
     DbMetadata,
     FunctionMetadata,
     InternalServerErrorResponse,
+    KnowledgeMetadata,
     ModelMetadata,
     NotFoundResponse,
     PaginatedResponse,
@@ -469,6 +470,29 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                             "id": team_id,
                             "class_path": _class_path(team),
                         },
+                    )
+                )
+
+        # Knowledge instances
+        if resource_type is None or resource_type == RegistryResourceType.KNOWLEDGE:
+            for kb in getattr(registry, "knowledge", []) or []:
+                kb_name = _safe_str(getattr(kb, "name", None)) or kb.__class__.__name__
+                vector_db = getattr(kb, "vector_db", None)
+                contents_db = getattr(kb, "contents_db", None)
+                readers = getattr(kb, "readers", None)
+                kb_metadata = KnowledgeMetadata(
+                    class_path=_class_path(kb),
+                    vector_db_class=_class_path(vector_db) if vector_db else None,
+                    contents_db_class=_class_path(contents_db) if contents_db else None,
+                    max_results=getattr(kb, "max_results", None),
+                    num_readers=len(readers) if isinstance(readers, dict) else None,
+                )
+                resources.append(
+                    RegistryContentResponse(
+                        name=kb_name,
+                        type=RegistryResourceType.KNOWLEDGE,
+                        description=_safe_str(getattr(kb, "description", None)),
+                        metadata=kb_metadata.model_dump(exclude_none=True),
                     )
                 )
 

@@ -729,6 +729,7 @@ class RegistryResourceType(str, Enum):
     FUNCTION = "function"
     AGENT = "agent"
     TEAM = "team"
+    KNOWLEDGE = "knowledge"
 
 
 class CallableMetadata(BaseModel):
@@ -805,6 +806,16 @@ class FunctionMetadata(CallableMetadata):
     pass
 
 
+class KnowledgeMetadata(BaseModel):
+    """Metadata for knowledge registry components."""
+
+    class_path: str = Field(..., description="Full module path to the knowledge class")
+    vector_db_class: Optional[str] = Field(None, description="Class of the vector database used")
+    contents_db_class: Optional[str] = Field(None, description="Class of the contents database used")
+    max_results: Optional[int] = Field(None, description="Maximum search results")
+    num_readers: Optional[int] = Field(None, description="Number of configured readers")
+
+
 # Union of all metadata types for type hints
 RegistryMetadata = Union[
     ToolMetadata,
@@ -813,6 +824,7 @@ RegistryMetadata = Union[
     VectorDbMetadata,
     SchemaMetadata,
     FunctionMetadata,
+    KnowledgeMetadata,
 ]
 
 

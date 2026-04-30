@@ -382,6 +382,7 @@ class AgentOS:
         self._raise_if_duplicate_ids()
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
+        self._populate_registry_knowledge()
 
         if self.enable_mcp_server:
             from agno.os.mcp import get_mcp_server
@@ -639,6 +640,19 @@ class AgentOS:
                     self.registry.teams.append(team)
                     existing_team_ids.add(team_id)
 
+    def _populate_registry_knowledge(self) -> None:
+        """Add discovered knowledge instances to the registry."""
+        if self.registry is None:
+            self.registry = Registry()
+
+        if self.knowledge_instances:
+            existing_names = {getattr(k, "name", None) for k in self.registry.knowledge}
+            for kb in self.knowledge_instances:
+                kb_name = getattr(kb, "name", None)
+                if kb_name is not None and kb_name not in existing_names:
+                    self.registry.knowledge.append(kb)
+                    existing_names.add(kb_name)
+
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.
 
@@ -759,6 +773,7 @@ class AgentOS:
 
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
+        self._populate_registry_knowledge()
 
         routers = [
             get_session_router(dbs=self.dbs),

@@ -15,6 +15,7 @@ from agno.vectordb.base import VectorDb
 
 if TYPE_CHECKING:
     from agno.agent import Agent
+    from agno.knowledge.knowledge import Knowledge
     from agno.team import Team
 
 
@@ -37,6 +38,7 @@ class Registry:
     # Code-defined agents and teams (for workflow rehydration)
     agents: List[Agent] = field(default_factory=list)
     teams: List[Team] = field(default_factory=list)
+    knowledge: List[Any] = field(default_factory=list)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[str, Callable]:
@@ -81,6 +83,12 @@ class Registry:
     def get_function(self, name: str) -> Optional[Callable]:
         return next((f for f in self.functions if f.__name__ == name), None)
 
+    def get_knowledge(self, name: str) -> Optional[Any]:
+        """Get a knowledge instance by name from the registry."""
+        if self.knowledge:
+            return next((k for k in self.knowledge if getattr(k, "name", None) == name), None)
+        return None
+
     def get_agent(self, agent_id: str) -> Optional[Agent]:
         """Get an agent by id from the registry."""
         if self.agents:
@@ -103,6 +111,12 @@ class Registry:
         """Get the set of all team IDs in this registry."""
         if self.teams:
             return {tid for t in self.teams if (tid := getattr(t, "id", None)) is not None}
+        return set()
+
+    def get_knowledge_names(self) -> Set[str]:
+        """Get the set of all knowledge names in this registry."""
+        if self.knowledge:
+            return {kn for k in self.knowledge if (kn := getattr(k, "name", None)) is not None}
         return set()
 
     def get_all_component_ids(self) -> Set[str]:
