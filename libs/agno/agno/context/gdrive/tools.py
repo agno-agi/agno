@@ -39,6 +39,27 @@ except ImportError:
     )
 
 
+BINARY_MIME_PREFIXES = (
+    "application/vnd.openxmlformats-officedocument",  # .docx, .xlsx, .pptx
+    "application/vnd.ms-",  # .doc, .xls, .ppt (legacy Office)
+    "application/msword",  # .doc (alternative)
+    "application/pdf",
+    "application/zip",
+    "application/x-zip",
+    "application/gzip",
+    "application/x-tar",
+    "application/octet-stream",
+    "image/",
+    "video/",
+    "audio/",
+)
+
+
+def _is_binary_mime(mime_type: str) -> bool:
+    """Return True if the MIME type indicates a binary format that cannot be decoded as text."""
+    return any(mime_type.startswith(prefix) for prefix in BINARY_MIME_PREFIXES)
+
+
 class AllDrivesGoogleDriveTools(GoogleDriveTools):
     """Drive toolkit that searches personal + shared + Shared Drive corpora."""
 
@@ -97,6 +118,21 @@ class AllDrivesGoogleDriveTools(GoogleDriveTools):
             elif mime_type.startswith(WorkspaceType.WORKSPACE_PREFIX):
                 return json.dumps(
                     {"error": f"Cannot read {mime_type} as text. Use download_file instead.", "file": metadata}
+                )
+            elif _is_binary_mime(mime_type):
+                file_ext = metadata.get("name", "").rsplit(".", 1)[-1].lower()
+                hint = ""
+                if file_ext in ("docx", "doc"):
+                    hint = " To read as text, open in Google Drive and convert to Google Docs format."
+                elif file_ext in ("xlsx", "xls"):
+                    hint = " To read as text, open in Google Drive and convert to Google Sheets format."
+                elif file_ext in ("pptx", "ppt"):
+                    hint = " To read as text, open in Google Drive and convert to Google Slides format."
+                return json.dumps(
+                    {
+                        "error": f"Cannot read binary file ({mime_type}) as text.{hint}",
+                        "file": metadata,
+                    }
                 )
             else:
                 export_mime = None
