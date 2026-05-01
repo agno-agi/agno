@@ -791,10 +791,10 @@ def test_instructions_default_mode_advertises_web_when_wired(tmp_path: Path):
             return []
 
     p_no_web = WikiContextProvider(backend=FileSystemBackend(path=tmp_path))
-    assert "fetch the web" not in p_no_web.instructions()
+    assert "fetch URLs" not in p_no_web.instructions()
 
     p_web = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), web=_StubWeb())
-    assert "fetch the web" in p_web.instructions()
+    assert "fetch URLs" in p_web.instructions()
 
 
 @pytest.mark.asyncio
