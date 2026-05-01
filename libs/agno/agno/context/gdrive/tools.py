@@ -124,7 +124,7 @@ def _extract_xlsx_text(content_bytes: bytes) -> str:
 
 def _extract_pptx_text(content_bytes: bytes) -> str:
     """Extract text content from a .pptx file. Raises ImportError if python-pptx not installed."""
-    from pptx import Presentation
+    from pptx import Presentation  # type: ignore[import-not-found]
 
     buffer = io.BytesIO(content_bytes)
     prs = Presentation(buffer)
