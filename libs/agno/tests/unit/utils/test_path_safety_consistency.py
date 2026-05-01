@@ -152,9 +152,9 @@ def test_subpath_callers_reject_reserved_segment(evil):
 def test_safe_join_callers_sanitize_traversal(evil):
     """FileGen + Slack sanitize traversal via Path(filename).name; file lands inside output_dir."""
     with tempfile.TemporaryDirectory() as tmp:
-        result = _filegen(tmp)._save_file_to_disk("payload", evil)
-        if result is not None:
-            assert Path(result).resolve().is_relative_to(Path(tmp).resolve())
+        filegen_path, _ = _filegen(tmp)._save_file_to_disk("payload", evil)
+        if filegen_path is not None:
+            assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
         slack_result = _slack(tmp)._save_file_to_disk(b"payload", evil)
         if slack_result is not None:
             assert Path(slack_result).resolve().is_relative_to(Path(tmp).resolve())
@@ -170,10 +170,11 @@ class TestAdversarialAttacks:
 
     def test_read_etc_passwd_via_filegen(self):
         with tempfile.TemporaryDirectory() as tmp:
-            result = _filegen(tmp)._save_file_to_disk("evil", "/etc/passwd")
+            filegen_path, safe_name = _filegen(tmp)._save_file_to_disk("evil", "/etc/passwd")
             # safe_join strips path components → file lands inside tmp as "passwd", NOT in /etc.
-            assert result is not None
-            assert Path(result).resolve().is_relative_to(Path(tmp).resolve())
+            assert filegen_path is not None
+            assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
+            assert safe_name == "passwd"
 
     def test_write_outside_via_slack(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -205,16 +206,16 @@ class TestAdversarialAttacks:
     def test_unicode_normalization_attack(self):
         """U+FF0F FULLWIDTH SOLIDUS NFKC-normalizes; must not escape directory."""
         with tempfile.TemporaryDirectory() as tmp:
-            result = _filegen(tmp)._save_file_to_disk("payload", "．．／escape")
-            if result is not None:
-                assert Path(result).resolve().is_relative_to(Path(tmp).resolve())
+            filegen_path, _ = _filegen(tmp)._save_file_to_disk("payload", "．．／escape")
+            if filegen_path is not None:
+                assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
 
     def test_url_encoded_attack(self):
         """%2e%2e%2f is NOT decoded; treated as literal characters in filename."""
         with tempfile.TemporaryDirectory() as tmp:
-            result = _filegen(tmp)._save_file_to_disk("payload", "%2e%2e%2fescape")
-            if result is not None:
-                assert Path(result).resolve().is_relative_to(Path(tmp).resolve())
+            filegen_path, _ = _filegen(tmp)._save_file_to_disk("payload", "%2e%2e%2fescape")
+            if filegen_path is not None:
+                assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
 
     def test_null_byte_truncation_attack(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -231,8 +232,8 @@ class TestAdversarialAttacks:
         with tempfile.TemporaryDirectory() as tmp:
             long_name = "a" * 4096 + ".json"
             try:
-                result = _filegen(tmp)._save_file_to_disk("payload", long_name)
-                if result is not None:
-                    assert Path(result).resolve().is_relative_to(Path(tmp).resolve())
+                filegen_path, _ = _filegen(tmp)._save_file_to_disk("payload", long_name)
+                if filegen_path is not None:
+                    assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
             except (PathSecurityError, OSError):
                 pass  # Either rejection path is acceptable

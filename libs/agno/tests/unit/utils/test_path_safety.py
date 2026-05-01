@@ -236,3 +236,20 @@ def test_security_violation_logs_error():
                 safe_join(tmp, "..")
         mock_log_error.assert_called_once()
         assert "Security violation" in str(mock_log_error.call_args)
+
+
+def test_safe_join_logs_warning_on_strip():
+    """safe_join emits log_warning when path components are stripped (H5)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch("agno.utils.path_safety.log_warning") as mock_log_warning:
+            safe_join(tmp, "subdir/report.json")
+        mock_log_warning.assert_called_once()
+        assert "discarded path components" in str(mock_log_warning.call_args)
+
+
+def test_safe_join_no_warning_for_clean_basename():
+    """safe_join does NOT warn for clean basenames (no separator)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        with patch("agno.utils.path_safety.log_warning") as mock_log_warning:
+            safe_join(tmp, "report.json")
+        mock_log_warning.assert_not_called()

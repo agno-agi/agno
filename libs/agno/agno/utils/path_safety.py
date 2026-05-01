@@ -12,7 +12,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Union
 
 from agno.exceptions import PathSecurityError
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
 
 __all__ = ["safe_join", "safe_join_subpath"]
 
@@ -64,6 +64,13 @@ def _validate_segment(segment: str) -> str:
 def safe_join(directory: Union[str, Path], filename: str) -> Path:
     """Filename-only safe join.
 
+    .. warning::
+       This helper **discards all path components** from ``filename``;
+       only the basename is kept. Use :func:`safe_join_subpath` if you need
+       to preserve sub-directories (e.g. ``"reports/2024/q1.pdf"``). When
+       this helper strips components, a warning is emitted via
+       ``agno.utils.log.log_warning``.
+
     Strips any path components from ``filename`` (uses ``Path(filename).name``).
     Use this for filenames received from LLM output (FileGenerationTools, Slack uploads).
 
@@ -89,6 +96,12 @@ def safe_join(directory: Union[str, Path], filename: str) -> Path:
     if _has_drive_or_unc(filename):
         log_error(f"Security violation: Windows drive/UNC in {filename!r}")
         raise PathSecurityError(f"Filename {filename!r} contains drive letter or UNC prefix")
+    if "/" in filename or "\\" in filename:
+        log_warning(
+            f"safe_join discarded path components from {filename!r}; "
+            f"using basename only. Use safe_join_subpath if you need to "
+            f"preserve sub-directories."
+        )
     safe = Path(filename).name.rstrip(". ")
     if not safe or safe.strip(".") == "":
         log_error(f"Security violation: empty/dot-only filename {filename!r}")

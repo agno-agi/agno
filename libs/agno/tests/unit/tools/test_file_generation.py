@@ -178,3 +178,38 @@ def test_url_encoded_traversal_rejected():
         tool._save_file_to_disk("payload", "%2e%2e/escape")
         assert (Path(tmp_dir) / "escape").exists()
         assert not (Path(tmp_dir).parent / "escape").exists()
+
+
+def test_filename_sanitized_in_artifact_traversal():
+    """File.filename reflects the sanitized basename, not the LLM's original input (H2)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tool = FileGenerationTools(output_directory=tmp_dir)
+        result = tool.generate_json_file({"x": 1}, filename="../../../escape")
+        assert result.files is not None
+        artifact = result.files[0]
+        # Single source of truth: filename matches the basename of filepath.
+        assert artifact.filename == "escape.json"
+        assert artifact.filepath is not None
+        assert Path(artifact.filepath).name == artifact.filename
+
+
+def test_filename_sanitized_no_output_directory():
+    """File.filename is sanitized even when no disk write happens (H2)."""
+    tool = FileGenerationTools()
+    result = tool.generate_json_file({"x": 1}, filename="subdir/report.json")
+    assert result.files is not None
+    artifact = result.files[0]
+    assert artifact.filename == "report.json"
+    assert artifact.filepath is None
+
+
+def test_filename_sanitized_subdir_collapsed():
+    """File.filename matches the on-disk basename when subdir is stripped."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tool = FileGenerationTools(output_directory=tmp_dir)
+        result = tool.generate_json_file({"x": 1}, filename="subdir/report.json")
+        assert result.files is not None
+        artifact = result.files[0]
+        assert artifact.filename == "report.json"
+        assert artifact.filepath is not None
+        assert Path(artifact.filepath).name == "report.json"

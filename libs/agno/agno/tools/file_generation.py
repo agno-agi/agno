@@ -2,7 +2,7 @@ import csv
 import io
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.media import File
@@ -63,18 +63,24 @@ class FileGenerationTools(Toolkit):
 
         super().__init__(name="file_generation", tools=tools, **kwargs)
 
-    def _save_file_to_disk(self, content: Union[str, bytes], filename: str) -> Optional[str]:
-        """Save file to disk if output_directory is set. Return file path or None.
+    def _save_file_to_disk(self, content: Union[str, bytes], filename: str) -> Tuple[Optional[str], str]:
+        """Save file to disk if output_directory is set.
 
-        Path-safety is delegated to ``agno.utils.path_safety.safe_join``, which
-        strips path components, NFKC-normalizes input, rejects control characters,
-        Windows-reserved names, drive letters, and UNC prefixes, trims trailing
-        dots/spaces (Windows MagicDot), and verifies the resolved write path
-        stays inside ``output_directory`` (catches symlink escapes). On rejection
-        ``PathSecurityError`` propagates to the caller.
+        Returns a tuple ``(saved_path, sanitized_basename)``:
+            - ``saved_path`` is the absolute path string when written, else ``None``.
+            - ``sanitized_basename`` is the basename that hit (or would have hit)
+              disk after ``safe_join`` sanitization. Used by the caller to keep
+              ``File.filename`` and ``File.filepath`` in sync (CWE-179 at the
+              artifact layer — single source of truth).
+
+        Path-safety is delegated to ``agno.utils.path_safety.safe_join``. On
+        rejection ``PathSecurityError`` propagates to the caller.
         """
         if not self.output_directory:
-            return None
+            # No write happens, but still return the sanitized basename so the
+            # File artifact's filename matches what would have been saved.
+            sanitized = Path(filename).name.rstrip(". ") or filename
+            return None, sanitized
 
         file_path = safe_join(self.output_directory, filename)
 
@@ -84,7 +90,7 @@ class FileGenerationTools(Toolkit):
             file_path.write_bytes(content)
 
         log_debug(f"File saved to: {file_path}")
-        return str(file_path)
+        return str(file_path), file_path.name
 
     def _finalize_generation(
         self,
@@ -108,7 +114,7 @@ class FileGenerationTools(Toolkit):
         elif not filename.endswith(f".{file_type}"):
             filename += f".{file_type}"
 
-        file_path = self._save_file_to_disk(content, filename)
+        file_path, safe_filename = self._save_file_to_disk(content, filename)
 
         if isinstance(content, str):
             content_bytes = content.encode("utf-8")
@@ -122,14 +128,14 @@ class FileGenerationTools(Toolkit):
             content=content_bytes,
             mime_type=mime_type,
             file_type=file_type,
-            filename=filename,
+            filename=safe_filename,
             size=len(content_bytes),
             filepath=file_path if file_path else None,
         )
 
         log_debug(f"{display_name} file generated successfully")
         success_msg = (
-            f"{display_name} file '{filename}' has been generated successfully with {len(content)} {count_unit}."
+            f"{display_name} file '{safe_filename}' has been generated successfully with {len(content)} {count_unit}."
         )
         if file_path:
             success_msg += f" File saved to: {file_path}"
