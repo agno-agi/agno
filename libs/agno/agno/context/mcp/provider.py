@@ -165,9 +165,7 @@ class MCPContextProvider(ContextProvider):
                 f"`{self.name}` (MCP): call the server's tools directly. "
                 "mode=tools only works in isolation — tool names vary by server."
             )
-        return (
-            f"`{self.name}` (MCP): call `{self.query_tool_name}(question)` to query this server."
-        )
+        return f"`{self.name}`: call `{self.query_tool_name}(question)` — custom integration via MCP."
 
     # ------------------------------------------------------------------
     # Mode resolution

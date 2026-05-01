@@ -164,17 +164,17 @@ class WikiContextProvider(ContextProvider):
             )
         if self.mode == ContextMode.agent:
             return (
-                f"`{self.name}`: call `{self.query_tool_name}(question)` to search the wiki — "
-                "internal documentation, runbooks, policies."
+                f"`{self.name}`: call `{self.query_tool_name}(question)` — internal wiki. "
+                "Search for runbooks, policies, how-tos, or team documentation."
             )
         # default mode — describe the actual surface based on flags + web
-        parts: list[str] = [f"`{self.name}` — internal wiki, runbooks, documentation."]
+        parts: list[str] = [f"`{self.name}` — internal wiki."]
         if self.read:
-            parts.append(f"Call `{self.query_tool_name}(question)` to read.")
+            parts.append(f"`{self.query_tool_name}(question)` to search.")
         if self.write:
-            update_hint = f"Use `{self.update_tool_name}(instruction)` to add or edit pages"
+            update_hint = f"`{self.update_tool_name}(instruction)` to add or edit pages"
             if self.web is not None:
-                update_hint += " — pass a URL or 'find sources on X' and it will fetch the web before writing"
+                update_hint += " (can fetch URLs before writing)"
             update_hint += "."
             parts.append(update_hint)
         return " ".join(parts)

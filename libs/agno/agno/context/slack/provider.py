@@ -111,11 +111,11 @@ class SlackContextProvider(ContextProvider):
             )
         if self.mode == ContextMode.agent:
             return (
-                f"`{self.name}`: call `{self.query_tool_name}(question)` to search Slack — "
-                "team discussions, decisions, recent activity."
+                f"`{self.name}`: call `{self.query_tool_name}(question)` — team discussions, decisions, context. "
+                "Ask about topics, channels, or recent activity."
             )
         return (
-            f"`{self.name}`: call `{self.query_tool_name}(question)` to search Slack, "
+            f"`{self.name}`: call `{self.query_tool_name}(question)` — team discussions, decisions, context. "
             f"`{self.update_tool_name}(instruction)` to post messages."
         )
 

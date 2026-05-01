@@ -75,7 +75,8 @@ class WorkspaceContextProvider(ContextProvider):
                 "are excluded."
             )
         return (
-            f"`{self.name}`: call `{self.query_tool_name}(question)` to search the codebase under {self.root}."
+            f"`{self.name}`: call `{self.query_tool_name}(question)` — code, configs, and docs under {self.root}. "
+            "Search by filename, symbol, or content pattern."
         )
 
     # ------------------------------------------------------------------

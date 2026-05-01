@@ -109,7 +109,8 @@ class DatabaseContextProvider(ContextProvider):
         if self.mode == ContextMode.tools:
             return f"`{self.name}`: read-only `run_sql_query`{scope}. Writes require mode=default (two-tool surface)."
         return (
-            f"`{self.name}`: call `{self.query_tool_name}(question)` to query data{scope}, "
+            f"`{self.name}`: call `{self.query_tool_name}(question)` — structured data{scope}. "
+            f"Ask about metrics, aggregates, or specific records. "
             f"`{self.update_tool_name}(instruction)` to modify."
         )
 
