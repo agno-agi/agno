@@ -78,6 +78,31 @@ def test_url_encoded_traversal_landing_inside():
         assert result.parent == Path(tmp).resolve()
 
 
+def test_drive_letter_rejected_pre_strip():
+    """Windows drive letter rejected via PureWindowsPath even on POSIX CI.
+
+    Validates the raw-input check fires before Path(filename).name strips
+    the drive on Windows (CWE-179: validate before canonicalize).
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        with pytest.raises(PathSecurityError, match="drive letter or UNC"):
+            safe_join(tmp, "C:\\evil.txt")
+
+
+def test_unc_path_rejected_pre_strip():
+    """UNC prefix rejected on raw input via PureWindowsPath."""
+    with tempfile.TemporaryDirectory() as tmp:
+        with pytest.raises(PathSecurityError, match="drive letter or UNC"):
+            safe_join(tmp, "\\\\server\\share\\evil")
+
+
+def test_control_char_in_path_component_rejected():
+    """Control char in path component (would be hidden by Path.name) is caught."""
+    with tempfile.TemporaryDirectory() as tmp:
+        with pytest.raises(PathSecurityError, match="control chars"):
+            safe_join(tmp, "\x00/safe.txt")
+
+
 # ---------- TestSafeJoinSubpath (multi-segment) ----------
 
 
@@ -96,9 +121,14 @@ def test_multi_segment_subpath_preserved():
 
 
 def test_traversal_subpath_rejected():
-    """Subpath that escapes the base directory is rejected."""
+    """Subpath that escapes the base directory is rejected.
+
+    With per-segment validation, ``..`` strips to empty via MagicDot rstrip
+    and raises before the containment check runs — either rejection path is
+    acceptable.
+    """
     with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(PathSecurityError, match="resolves outside|symlink escape"):
+        with pytest.raises(PathSecurityError, match="resolves outside|symlink escape|Empty segment"):
             safe_join_subpath(tmp, "../../escape")
 
 
@@ -121,6 +151,41 @@ def test_empty_subpath_rejected():
     with tempfile.TemporaryDirectory() as tmp:
         with pytest.raises(PathSecurityError, match="Empty subpath"):
             safe_join_subpath(tmp, "")
+
+
+def test_subpath_reserved_segment_rejected():
+    """Per-segment validation rejects Windows-reserved names anywhere in the subpath."""
+    with tempfile.TemporaryDirectory() as tmp:
+        with pytest.raises(PathSecurityError, match="Windows reserved"):
+            safe_join_subpath(tmp, "docs/CON.txt")
+
+
+def test_subpath_reserved_segment_with_backslash_rejected():
+    """Backslash-separated segments are validated (POSIX must treat \\ as separator)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        with pytest.raises(PathSecurityError, match="Windows reserved"):
+            safe_join_subpath(tmp, "docs\\CON")
+
+
+def test_subpath_drive_in_segment_rejected():
+    """Drive-prefixed subpath rejected via PureWindowsPath check."""
+    with tempfile.TemporaryDirectory() as tmp:
+        with pytest.raises(PathSecurityError, match="must be relative|drive letter"):
+            safe_join_subpath(tmp, "C:/evil.txt")
+
+
+def test_subpath_unc_rejected():
+    """UNC subpath rejected via PureWindowsPath check."""
+    with tempfile.TemporaryDirectory() as tmp:
+        with pytest.raises(PathSecurityError, match="must be relative|drive letter"):
+            safe_join_subpath(tmp, "\\\\server\\share\\evil")
+
+
+def test_subpath_magicdot_segment_rejected():
+    """Trailing-dot/space segment that strips to a reserved name is rejected."""
+    with tempfile.TemporaryDirectory() as tmp:
+        with pytest.raises(PathSecurityError, match="Windows reserved|Empty segment"):
+            safe_join_subpath(tmp, "docs/CON.")
 
 
 # ---------- TestSymlinkContainment (POSIX-only) ----------

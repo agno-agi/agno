@@ -124,6 +124,28 @@ def test_subpath_callers_reject_traversal(evil):
         assert ok is False
 
 
+# Subpath reserved segments / drive prefixes — rejected by per-segment validation
+# (Commit 1: Windows hardening). Applies to all subpath-callers.
+SUBPATH_RESERVED_REJECT = [
+    "docs/CON.txt",
+    "docs\\CON",
+    "C:/evil.txt",
+    "\\\\server\\share\\evil",
+]
+
+
+@pytest.mark.parametrize("evil", SUBPATH_RESERVED_REJECT)
+def test_subpath_callers_reject_reserved_segment(evil):
+    """Toolkit + is_safe_path + FileTools reject reserved segments / drive prefixes."""
+    with tempfile.TemporaryDirectory() as tmp:
+        ok, path = _toolkit()._check_path(evil, Path(tmp))
+        assert ok is False
+        assert path == Path(tmp)
+        assert is_safe_path(Path(tmp), evil) is False
+        ok, path = _filetools(tmp).check_escape(evil)
+        assert ok is False
+
+
 @pytest.mark.parametrize("evil", SUBPATH_ONLY_REJECT)
 def test_safe_join_callers_sanitize_traversal(evil):
     """FileGen + Slack sanitize traversal via Path(filename).name; file lands inside output_dir."""
