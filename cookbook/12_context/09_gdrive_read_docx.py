@@ -14,15 +14,17 @@ Setup:
 
 import json
 
-from agno.context.gdrive.tools import AllDrivesGoogleDriveTools, HAS_DOCX
+from agno.context.gdrive.tools import AllDrivesGoogleDriveTools
 
 print("=" * 60)
 print("Google Drive .docx Text Extraction Demo")
 print("=" * 60)
 
-if HAS_DOCX:
+try:
+    import docx  # noqa: F401
+
     print("python-docx is installed - .docx text extraction enabled")
-else:
+except ImportError:
     print("WARNING: python-docx not installed")
     print("Install with: pip install python-docx")
     print("Without it, .docx files will show an error.\n")
@@ -70,7 +72,9 @@ print("\n--- Step 3: Test other file types ---")
 
 # Search for Google Docs (should export to text)
 print("\nGoogle Docs (exportable):")
-result = tools.search_files("mimeType='application/vnd.google-apps.document'", max_results=2)
+result = tools.search_files(
+    "mimeType='application/vnd.google-apps.document'", max_results=2
+)
 data = json.loads(result)
 if data.get("files"):
     for f in data["files"][:2]:

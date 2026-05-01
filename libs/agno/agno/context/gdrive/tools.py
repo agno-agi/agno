@@ -38,13 +38,6 @@ except ImportError:
         "`pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`"
     )
 
-try:
-    import docx
-
-    HAS_DOCX = True
-except ImportError:
-    HAS_DOCX = False
-
 
 BINARY_MIME_PREFIXES = (
     # Microsoft Office
@@ -97,16 +90,54 @@ TEXT_EXCEPTIONS = {
     "image/svg+xml",  # SVG is XML text
 }
 
-# Office formats we can extract text from with python-docx
+# Office formats we can extract text from with optional dependencies
 DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+PPTX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
 
 def _extract_docx_text(content_bytes: bytes) -> str:
-    """Extract text content from a .docx file using python-docx."""
+    """Extract text content from a .docx file. Raises ImportError if python-docx not installed."""
+    import docx
+
     buffer = io.BytesIO(content_bytes)
     document = docx.Document(buffer)
     paragraphs = [p.text for p in document.paragraphs]
     return "\n".join(paragraphs)
+
+
+def _extract_xlsx_text(content_bytes: bytes) -> str:
+    """Extract text content from a .xlsx file. Raises ImportError if openpyxl not installed."""
+    import openpyxl
+
+    buffer = io.BytesIO(content_bytes)
+    workbook = openpyxl.load_workbook(buffer, read_only=True, data_only=True)
+    lines = []
+    for sheet in workbook.worksheets:
+        lines.append(f"=== Sheet: {sheet.title} ===")
+        for row in sheet.iter_rows(values_only=True):
+            cells = [str(c) if c is not None else "" for c in row]
+            if any(cells):
+                lines.append("\t".join(cells))
+    return "\n".join(lines)
+
+
+def _extract_pptx_text(content_bytes: bytes) -> str:
+    """Extract text content from a .pptx file. Raises ImportError if python-pptx not installed."""
+    from pptx import Presentation
+
+    buffer = io.BytesIO(content_bytes)
+    prs = Presentation(buffer)
+    lines = []
+    for i, slide in enumerate(prs.slides, 1):
+        lines.append(f"=== Slide {i} ===")
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                for paragraph in shape.text_frame.paragraphs:
+                    text = "".join(run.text for run in paragraph.runs)
+                    if text.strip():
+                        lines.append(text)
+    return "\n".join(lines)
 
 
 def _is_binary_mime(mime_type: str) -> bool:
@@ -175,37 +206,44 @@ class AllDrivesGoogleDriveTools(GoogleDriveTools):
                 return json.dumps(
                     {"error": f"Cannot read {mime_type} as text. Use download_file instead.", "file": metadata}
                 )
-            elif mime_type == DOCX_MIME_TYPE:
-                if HAS_DOCX:
-                    file_size = int(metadata.get("size", 0))
-                    if file_size > self.max_read_size:
-                        return json.dumps(
-                            {
-                                "error": (
-                                    f"File is {file_size} bytes, exceeds max_read_size "
-                                    f"({self.max_read_size}). Use download_file instead."
-                                ),
-                                "file": metadata,
-                            }
-                        )
-                    request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
-                    content_bytes = _download_bytes(request)
-                    content = _extract_docx_text(content_bytes)
+            elif mime_type in (DOCX_MIME_TYPE, XLSX_MIME_TYPE, PPTX_MIME_TYPE):
+                file_size = int(metadata.get("size", 0))
+                if file_size > self.max_read_size:
+                    return json.dumps(
+                        {
+                            "error": (
+                                f"File is {file_size} bytes, exceeds max_read_size "
+                                f"({self.max_read_size}). Use download_file instead."
+                            ),
+                            "file": metadata,
+                        }
+                    )
+                request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
+                content_bytes = _download_bytes(request)
+                fmt, pkg = {
+                    DOCX_MIME_TYPE: ("docx", "python-docx"),
+                    XLSX_MIME_TYPE: ("xlsx", "openpyxl"),
+                    PPTX_MIME_TYPE: ("pptx", "python-pptx"),
+                }[mime_type]
+                try:
+                    if mime_type == DOCX_MIME_TYPE:
+                        content = _extract_docx_text(content_bytes)
+                    elif mime_type == XLSX_MIME_TYPE:
+                        content = _extract_xlsx_text(content_bytes)
+                    else:
+                        content = _extract_pptx_text(content_bytes)
                     return json.dumps(
                         {
                             "file": metadata,
                             "content": content,
                             "contentLength": len(content),
-                            "extractedFrom": "docx",
+                            "extractedFrom": fmt,
                         }
                     )
-                else:
+                except ImportError:
                     return json.dumps(
                         {
-                            "error": (
-                                "Cannot read .docx file: python-docx not installed. "
-                                "Install with: pip install python-docx"
-                            ),
+                            "error": f"Cannot read .{fmt} file: {pkg} not installed. Install with: pip install {pkg}",
                             "file": metadata,
                         }
                     )

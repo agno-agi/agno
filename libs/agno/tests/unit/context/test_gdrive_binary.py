@@ -11,11 +11,17 @@ import pytest
 
 from agno.context.gdrive.tools import (
     DOCX_MIME_TYPE,
-    HAS_DOCX,
     TEXT_EXCEPTIONS,
     _extract_docx_text,
     _is_binary_mime,
 )
+
+try:
+    import docx  # noqa: F401
+
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
 
 
 class TestBinaryMimeDetection:
@@ -122,13 +128,11 @@ class TestDocxExtraction:
     def test_docx_mime_type_constant(self):
         assert DOCX_MIME_TYPE == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
-    def test_has_docx_flag_is_bool(self):
-        assert isinstance(HAS_DOCX, bool)
-
     @pytest.mark.skipif(not HAS_DOCX, reason="python-docx not installed")
     def test_extract_docx_text_with_valid_docx(self):
-        import docx
         from io import BytesIO
+
+        import docx
 
         doc = docx.Document()
         doc.add_paragraph("Hello World")
@@ -143,8 +147,9 @@ class TestDocxExtraction:
 
     @pytest.mark.skipif(not HAS_DOCX, reason="python-docx not installed")
     def test_extract_docx_text_empty_document(self):
-        import docx
         from io import BytesIO
+
+        import docx
 
         doc = docx.Document()
         buffer = BytesIO()

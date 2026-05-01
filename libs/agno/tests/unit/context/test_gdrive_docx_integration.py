@@ -12,7 +12,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agno.context.gdrive.tools import DOCX_MIME_TYPE, HAS_DOCX, AllDrivesGoogleDriveTools
+from agno.context.gdrive.tools import DOCX_MIME_TYPE, AllDrivesGoogleDriveTools
+
+try:
+    import docx  # noqa: F401
+
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
+
 
 # Bypass the @authenticate decorator for testing
 def mock_authenticate(func):
@@ -132,9 +140,14 @@ class TestDocxNotInstalled:
         tools = AllDrivesGoogleDriveTools()
         tools.service = service
 
-        # Temporarily pretend docx is not installed
-        with patch("agno.context.gdrive.tools.HAS_DOCX", False):
-            # Call the underlying method directly to bypass decorator
+        # Mock _download_bytes and make _extract_docx_text raise ImportError
+        def raise_import_error(content_bytes):
+            raise ImportError("No module named 'docx'")
+
+        with (
+            patch("agno.context.gdrive.tools._download_bytes", return_value=b"fake"),
+            patch("agno.context.gdrive.tools._extract_docx_text", side_effect=raise_import_error),
+        ):
             result = AllDrivesGoogleDriveTools.read_file.__wrapped__(tools, "test-file-id")
 
         data = json.loads(result)
