@@ -29,7 +29,7 @@ from os import getenv
 from typing import TYPE_CHECKING
 
 from agno.agent import Agent
-from agno.context._utils import answer_from_run
+from agno.context._utils import _google_provider_status, answer_from_run
 from agno.context.mode import ContextMode
 from agno.context.provider import Answer, ContextProvider, Status
 from agno.run import RunContext
@@ -162,9 +162,12 @@ class GmailContextProvider(ContextProvider):
         self._write_agent: Agent | None = None
 
     def status(self) -> Status:
-        # Toolkit handles actual auth validation
-        mode = "service_account" if self._sa_path else "oauth"
-        return Status(ok=True, detail=f"{self.id} ({mode})")
+        return _google_provider_status(
+            provider_id=self.id,
+            sa_path=self._sa_path,
+            token_path=self._token_path,
+            delegated_user=self._delegated_user,
+        )
 
     async def astatus(self) -> Status:
         return self.status()
