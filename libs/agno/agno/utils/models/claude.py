@@ -93,6 +93,23 @@ ROLE_MAP = {
 }
 
 
+def _anthropic_coerce_content_block(item: Any) -> Optional[Any]:
+    """Normalize a stored message content item into an Anthropic Messages API block dict."""
+    if item is None:
+        return None
+    if isinstance(item, dict):
+        return item if item.get("type") else None
+    model_dump = getattr(item, "model_dump", None)
+    if callable(model_dump):
+        try:
+            dumped = model_dump(exclude_none=True)
+            if isinstance(dumped, dict) and dumped.get("type"):
+                return dumped
+        except Exception:
+            pass
+    return None
+
+
 def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
     """
     Add an image to a message by converting it to base64 encoded format.
@@ -420,7 +437,20 @@ def format_messages(
                 for block_dict in message.provider_data["server_tool_blocks"]:
                     content.append(block_dict)
 
-            if isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
+            structured_from_list: List[Any] = []
+            if isinstance(message.content, list):
+                for item in message.content:
+                    blk = _anthropic_coerce_content_block(item)
+                    if blk is None:
+                        continue
+                    block_type = blk.get("type") if isinstance(blk, dict) else None
+                    if block_type == "tool_use" and message.tool_calls:
+                        continue
+                    structured_from_list.append(blk)
+
+            if structured_from_list:
+                content.extend(structured_from_list)
+            elif isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
                 content.append(TextBlock(text=message.content, type="text"))
 
             if message.tool_calls:
@@ -440,11 +470,19 @@ def format_messages(
 
             # Use compressed content for tool messages if compression is active
             tool_result = message.get_content(use_compressed_content=compress_tool_results)
+            if isinstance(tool_result, list):
+                normalized_blocks: List[Any] = []
+                for item in tool_result:
+                    coerced = _anthropic_coerce_content_block(item)
+                    normalized_blocks.append(coerced if coerced is not None else item)
+                tool_payload: Union[str, List[Any]] = normalized_blocks
+            else:
+                tool_payload = str(tool_result)
             content.append(
                 {
                     "type": "tool_result",
                     "tool_use_id": message.tool_call_id,
-                    "content": str(tool_result),
+                    "content": tool_payload,
                 }
             )
 
