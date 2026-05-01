@@ -640,6 +640,29 @@ async def test_function_call_async_with_tool_hooks():
     assert hook_calls[1][2] == "processed-value1"
 
 
+@pytest.mark.asyncio
+async def test_function_call_async_with_empty_tool_hooks():
+    """Test async function call execution with empty tool_hooks list.
+
+    Regression test: when tool_hooks is an empty list (not None), the async
+    execution chain should still use the async entrypoint, not fall back
+    to the sync entrypoint.
+    """
+
+    async def async_func(param1: str) -> str:
+        return f"async-{param1}"
+
+    func = Function(name="async_func", entrypoint=async_func, tool_hooks=[])
+    func.process_entrypoint()
+
+    call = FunctionCall(function=func, arguments={"param1": "value1"})
+
+    result = await call.aexecute()
+    assert result.status == "success"
+    assert result.result == "async-value1"
+    assert result.error is None
+
+
 def test_tool_decorator_basic():
     """Test basic @tool decorator usage."""
 
