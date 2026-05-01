@@ -33,6 +33,9 @@ PAUSE_BLOCK_PREFIX = "pause"
 ACTION_SUBMIT = "submit_pause"
 ACTION_ROW_APPROVE = "row_approve"
 ACTION_ROW_REJECT = "row_reject"
+ACTION_REJECT_CONFIRM = "reject_confirm"
+ACTION_REJECT_CANCEL = "reject_cancel"
+ACTION_REJECT_REASON = "reject_reason"
 ACTION_FEEDBACK_SELECT = "feedback_select"
 ACTION_EXTERNAL_RESULT = "external_result"
 ACTION_INPUT_FIELD_PREFIX = "input_field:"
@@ -112,3 +115,29 @@ def decode_submit_button_value(value: str) -> Tuple[str, Optional[str]]:
     if len(parts) == 1:
         return parts[0], None
     return parts[0], parts[1] or None
+
+
+def encode_reject_card_value(
+    req_id: str, run_id: str, awaiting_ts: Optional[str], original_title: str, original_subtitle: str
+) -> str:
+    # Base64-encode title/subtitle to avoid delimiter collisions
+    import base64
+
+    title_b64 = base64.b64encode(original_title.encode()).decode()
+    subtitle_b64 = base64.b64encode(original_subtitle.encode()).decode()
+    return f"{req_id}|{run_id}|{awaiting_ts or ''}|{title_b64}|{subtitle_b64}"
+
+
+def decode_reject_card_value(value: str) -> Tuple[str, str, Optional[str], str, str]:
+    import base64
+
+    parts = value.split("|", 4)
+    if len(parts) < 5:
+        return "", "", None, "", ""
+    req_id, run_id, awaiting_ts, title_b64, subtitle_b64 = parts
+    try:
+        original_title = base64.b64decode(title_b64).decode()
+        original_subtitle = base64.b64decode(subtitle_b64).decode()
+    except Exception:
+        original_title, original_subtitle = "", ""
+    return req_id, run_id, awaiting_ts or None, original_title, original_subtitle

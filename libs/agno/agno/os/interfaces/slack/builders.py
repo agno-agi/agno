@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from enum import Enum
+from typing import Any, Callable, Dict, List, Optional, get_args
 
 from slack_sdk.models.blocks import (
     ActionsBlock as Actions,
@@ -44,11 +45,15 @@ from agno.os.interfaces.slack.types import (
     ACTION_EXTERNAL_RESULT,
     ACTION_FEEDBACK_SELECT,
     ACTION_INPUT_FIELD_PREFIX,
+    ACTION_REJECT_CANCEL,
+    ACTION_REJECT_CONFIRM,
+    ACTION_REJECT_REASON,
     ACTION_ROW_APPROVE,
     ACTION_ROW_REJECT,
     ACTION_SUBMIT,
     _tool_args,
     _tool_name,
+    encode_reject_card_value,
     encode_row_button_value,
     encode_submit_button_value,
     pause_block_id,
@@ -113,7 +118,7 @@ def _build_confirm_dialogs(name: str, args: Dict[str, Any]) -> tuple[ConfirmDial
         running += len(line)
     args_block = "\n".join(bullets) if bullets else "_(no arguments)_"
     approve_text = (f"{args_block}\n\n_Approving will resume the agent run._")[:299]
-    deny_text = (f"{args_block}\n\n_The agent will continue without running this tool._")[:299]
+    deny_text = args_block[:299]
     approve = ConfirmDialog(
         title=PlainText(text=f"Approve {name}?"[:100]),
         text=Markdown(text=approve_text),
@@ -145,14 +150,35 @@ def _build_input_field(req_id: str, ui_field: Any) -> InputBlock:
     initial_raw = getattr(ui_field, "value", None)
 
     type_name = field_type.__name__ if isinstance(field_type, type) else str(field_type)
+    element: Any = None
 
-    if type_name == "bool":
-        element: Any = StaticSelect(
+    # Check for typing.Literal — renders as dropdown with literal values as options
+    literal_args = get_args(field_type) if str(field_type).startswith("typing.Literal") else None
+    if literal_args:
+        options = [Option(text=PlainText(text=str(arg)), value=str(arg)) for arg in literal_args]
+        element = StaticSelect(
+            action_id=f"{ACTION_INPUT_FIELD_PREFIX}{name}",
+            placeholder=PlainText(text="Select"),
+            options=options,
+        )
+
+    # Check for Enum subclass — renders as dropdown with enum members as options
+    elif isinstance(field_type, type) and issubclass(field_type, Enum):
+        options = [Option(text=PlainText(text=member.name), value=member.name) for member in field_type]
+        element = StaticSelect(
+            action_id=f"{ACTION_INPUT_FIELD_PREFIX}{name}",
+            placeholder=PlainText(text="Select"),
+            options=options,
+        )
+
+    elif type_name == "bool":
+        element = StaticSelect(
             action_id=f"{ACTION_INPUT_FIELD_PREFIX}{name}",
             placeholder=PlainText(text="Select"),
             options=_BOOL_OPTIONS,
         )
-    else:
+
+    if element is None:
         multiline = type_name in ("list", "dict")
         initial_value: Optional[str] = None
         if initial_raw is not None:
@@ -215,7 +241,6 @@ def _build_confirmation_row(
     req_id = requirement.id or ""
     name = _tool_name(requirement)
     args = _tool_args(requirement)
-    approve_confirm, deny_confirm = _build_confirm_dialogs(name, args)
     button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
     # Format args as "key: `value` · key2: `value2`" for card subtitle
     subtitle_parts = [f"{k}: `{render_arg_value(v)}`" for k, v in (args or {}).items()]
@@ -223,7 +248,7 @@ def _build_confirmation_row(
     return [
         Card(
             block_id=f"rowact:{req_id}:confirmation",
-            title=Markdown(text=f"*Approve: {name}*"),
+            title=Markdown(text=f"*{name}*"),
             subtitle=Markdown(text=subtitle),
             actions=[
                 Button(
@@ -231,14 +256,86 @@ def _build_confirmation_row(
                     text=PlainText(text="Approve", emoji=True),
                     style="primary",
                     value=button_value,
-                    confirm=approve_confirm,
                 ),
                 Button(
                     action_id=ACTION_ROW_REJECT,
                     text=PlainText(text="Deny", emoji=True),
                     style="danger",
                     value=button_value,
-                    confirm=deny_confirm,
+                ),
+            ],
+        ),
+    ]
+
+
+def build_rejection_input_card(
+    req_id: str,
+    run_id: str,
+    awaiting_ts: Optional[str],
+    tool_name: str,
+    original_title: str,
+    original_subtitle: str,
+) -> List[Any]:
+    # Embed original card data in button values so Cancel can restore the Approve/Deny card
+    button_value = encode_reject_card_value(req_id, run_id, awaiting_ts, original_title, original_subtitle)
+    return [
+        Card(
+            block_id=f"rowact:{req_id}:rejection_input",
+            title=Markdown(text=f"*Deny: {tool_name}*"),
+            subtitle=Markdown(text="_Provide an optional reason for rejection_"),
+            actions=[
+                Button(
+                    action_id=ACTION_REJECT_CONFIRM,
+                    text=PlainText(text="Confirm Rejection", emoji=True),
+                    style="danger",
+                    value=button_value,
+                ),
+                Button(
+                    action_id=ACTION_REJECT_CANCEL,
+                    text=PlainText(text="Cancel", emoji=True),
+                    value=button_value,
+                ),
+            ],
+        ),
+        InputBlock(
+            block_id=f"reject_reason:{req_id}",
+            label=PlainText(text="Reason"),
+            element=PlainTextInput(
+                action_id=ACTION_REJECT_REASON,
+                placeholder=PlainText(text="Why are you rejecting this action?"),
+                multiline=True,
+            ),
+            optional=True,
+        ),
+    ]
+
+
+def build_original_confirmation_card(
+    req_id: str,
+    run_id: str,
+    awaiting_ts: Optional[str],
+    original_title: str,
+    original_subtitle: str,
+) -> List[Any]:
+    # Rebuild the Approve/Deny card from stored title/subtitle (used by Cancel button)
+    button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
+    return [
+        Card(
+            block_id=f"rowact:{req_id}:confirmation",
+            title=Markdown(text=original_title),
+            subtitle=Markdown(text=original_subtitle),
+            actions=[
+                Button(
+                    action_id=ACTION_ROW_APPROVE,
+                    text=PlainText(text="Approve", emoji=True),
+                    style="primary",
+                    value=button_value,
+                ),
+                Button(
+                    action_id=ACTION_ROW_REJECT,
+                    text=PlainText(text="Deny", emoji=True),
+                    style="danger",
+                    value=button_value,
                 ),
             ],
         ),

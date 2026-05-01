@@ -109,6 +109,7 @@ def make_async_client_mock(stream_mock=None):
     client.assistant_threads_setTitle = AsyncMock()
     client.assistant_threads_setSuggestedPrompts = AsyncMock()
     client.chat_stream = AsyncMock(return_value=stream_mock or make_stream_mock())
+    client.chat_postMessage = AsyncMock()
     client.users_info = AsyncMock(
         return_value={
             "ok": True,
@@ -123,6 +124,10 @@ def make_async_client_mock(stream_mock=None):
             },
         }
     )
+    # For resolve_channel_name
+    client.conversations_info = AsyncMock(return_value={"ok": True, "channel": {"name": "general"}})
+    # For bot_name_resolver.resolve
+    client.bots_info = AsyncMock(return_value={"ok": True, "bot": {"name": "TestBot"}})
     return client
 
 

@@ -205,4 +205,4 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    agent_os.serve(app="hitl_incident_commander:app", reload=True, port=7778)
+    agent_os.serve(app="hitl_incident_commander:app", reload=True)

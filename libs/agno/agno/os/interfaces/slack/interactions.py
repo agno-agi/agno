@@ -62,12 +62,23 @@ def _parse_confirmation(requirement: RunRequirement, blocks: SlackBlocks) -> Par
     req_id = requirement.id or ""
     # Confirmation state lives in block_id, not view state — button clicks update the block itself
     decision = None
+    rejected_note: Optional[str] = None
+
     for block in blocks:
         parsed = parse_row_block_id(block.get("block_id", ""))
         if parsed and parsed.get("req_id") == req_id and parsed.get("kind") == "confirmation":
             if parsed.get("status") == "decided":
                 decision = parsed.get("decided")
-                break
+
+        # Extract rejection note from embedded context block
+        block_id = block.get("block_id", "")
+        if block_id == f"reject_note:{req_id}":
+            elements = block.get("elements") or []
+            if elements:
+                note_text = elements[0].get("text", "").strip()
+                if note_text:
+                    rejected_note = note_text
+
     if decision is None:
         return ParsedDecision(
             requirement_id=req_id,
@@ -79,6 +90,7 @@ def _parse_confirmation(requirement: RunRequirement, blocks: SlackBlocks) -> Par
         requirement_id=req_id,
         pause_type="confirmation",
         approved=(decision == "approve"),
+        rejected_note=rejected_note,
     )
 
 
