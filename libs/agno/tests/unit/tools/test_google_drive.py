@@ -156,8 +156,8 @@ def test_read_file_max_read_size_rejected(drive_tools):
     drive_tools.max_read_size = 100
     drive_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "big1",
-        "name": "huge.bin",
-        "mimeType": "application/octet-stream",
+        "name": "huge.txt",
+        "mimeType": "text/plain",
         "size": "50000",
     }
     result = json.loads(drive_tools.read_file("big1"))
