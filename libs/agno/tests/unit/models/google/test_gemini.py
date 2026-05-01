@@ -4,9 +4,37 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agno.exceptions import ModelProviderError
 from agno.media import File
-from agno.models.google.gemini import Gemini
+from agno.models.google.gemini import Gemini, _format_unknown_gemini_error
 from agno.models.message import Message
+
+
+@pytest.mark.parametrize(
+    "error, expected",
+    [
+        (TimeoutError(), "TimeoutError"),
+        (ValueError("bad request"), "ValueError: bad request"),
+    ],
+)
+def test_format_unknown_gemini_error_includes_type(error, expected):
+    assert _format_unknown_gemini_error(error) == expected
+
+
+def test_gemini_invoke_unknown_error_includes_type_and_preserves_cause():
+    model = Gemini(api_key="test-key")
+    original_error = TimeoutError()
+    mock_client = MagicMock()
+    mock_client.models.generate_content.side_effect = original_error
+
+    with patch.object(model, "get_client", return_value=mock_client):
+        with patch("agno.models.google.gemini.log_error") as mock_log_error:
+            with pytest.raises(ModelProviderError) as exc_info:
+                model.invoke([Message(role="user", content="Hello")], Message(role="assistant"))
+
+    assert exc_info.value.message == "TimeoutError"
+    assert exc_info.value.__cause__ is original_error
+    mock_log_error.assert_called_once_with("Unknown error from Gemini API: TimeoutError")
 
 
 def test_gemini_get_client_with_credentials_vertexai():
