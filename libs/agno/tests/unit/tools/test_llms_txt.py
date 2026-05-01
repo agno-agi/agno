@@ -540,3 +540,175 @@ def test_knowledge_error_handling(tools_with_knowledge):
 
     assert "Error" in result
     assert "RuntimeError" in result
+
+
+# ============================================================================
+# READER: ALLOWED HOSTS
+# ============================================================================
+
+
+def test_reader_allowed_hosts_default_none():
+    reader = LLMsTxtReader()
+    assert reader.allowed_hosts is None
+    assert reader.is_host_allowed("http://anything.example/path") is True
+
+
+def test_reader_allowed_hosts_normalizes_case():
+    reader = LLMsTxtReader(allowed_hosts=["Docs.Agno.COM"])
+    assert reader.is_host_allowed("https://docs.agno.com/x") is True
+    assert reader.is_host_allowed("https://DOCS.AGNO.COM/x") is True
+    assert reader.is_host_allowed("https://other.example/x") is False
+
+
+def test_reader_allowed_hosts_ignores_port_and_userinfo():
+    reader = LLMsTxtReader(allowed_hosts=["docs.agno.com"])
+    assert reader.is_host_allowed("https://docs.agno.com:8443/x") is True
+    assert reader.is_host_allowed("https://user:pass@docs.agno.com/x") is True
+    assert reader.is_host_allowed("http://docs.agno.com@evil.example/x") is False
+
+
+def test_reader_allowed_hosts_blocks_localhost_and_metadata():
+    reader = LLMsTxtReader(allowed_hosts=["docs.agno.com"])
+    assert reader.is_host_allowed("http://127.0.0.1:8000/admin") is False
+    assert reader.is_host_allowed("http://localhost:8000/admin") is False
+    assert reader.is_host_allowed("http://169.254.169.254/latest/meta-data") is False
+
+
+def test_reader_fetch_url_blocks_disallowed():
+    reader = LLMsTxtReader(allowed_hosts=["docs.agno.com"])
+
+    with patch("agno.knowledge.reader.llms_txt_reader.fetch_with_retry") as mock_fetch:
+        result = reader.fetch_url("http://127.0.0.1:8000/admin")
+
+    assert result is None
+    mock_fetch.assert_not_called()
+
+
+def test_reader_fetch_url_passes_follow_redirects_false_when_allowlisted():
+    reader = LLMsTxtReader(allowed_hosts=["docs.agno.com"])
+    response = _mock_httpx_response("Doc content", "text/plain")
+
+    with patch("agno.knowledge.reader.llms_txt_reader.fetch_with_retry", return_value=response) as mock_fetch:
+        result = reader.fetch_url("https://docs.agno.com/page")
+
+    assert result == "Doc content"
+    assert mock_fetch.call_args.kwargs.get("follow_redirects") is False
+
+
+def test_reader_fetch_url_follows_redirects_when_no_allowlist():
+    reader = LLMsTxtReader()
+    response = _mock_httpx_response("Doc content", "text/plain")
+
+    with patch("agno.knowledge.reader.llms_txt_reader.fetch_with_retry", return_value=response) as mock_fetch:
+        reader.fetch_url("https://example.com/page")
+
+    assert mock_fetch.call_args.kwargs.get("follow_redirects") is True
+
+
+def test_reader_fetch_url_returns_none_on_redirect_when_allowlisted():
+    reader = LLMsTxtReader(allowed_hosts=["docs.agno.com"])
+    error = httpx.HTTPStatusError("redirect", request=MagicMock(), response=MagicMock(status_code=302))
+
+    with patch("agno.knowledge.reader.llms_txt_reader.fetch_with_retry", side_effect=error):
+        result = reader.fetch_url("https://docs.agno.com/old")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_reader_async_fetch_url_blocks_disallowed():
+    reader = LLMsTxtReader(allowed_hosts=["docs.agno.com"])
+    client = AsyncMock()
+
+    with patch("agno.knowledge.reader.llms_txt_reader.async_fetch_with_retry") as mock_fetch:
+        result = await reader.async_fetch_url(client, "http://localhost:8000/admin")
+
+    assert result is None
+    mock_fetch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reader_async_fetch_url_passes_follow_redirects_false_when_allowlisted():
+    reader = LLMsTxtReader(allowed_hosts=["docs.agno.com"])
+    response = _mock_httpx_response("Doc content", "text/plain")
+    client = AsyncMock()
+
+    with patch(
+        "agno.knowledge.reader.llms_txt_reader.async_fetch_with_retry",
+        new=AsyncMock(return_value=response),
+    ) as mock_fetch:
+        await reader.async_fetch_url(client, "https://docs.agno.com/page")
+
+    assert mock_fetch.call_args.kwargs.get("follow_redirects") is False
+
+
+# ============================================================================
+# TOOLKIT: ALLOWED HOSTS
+# ============================================================================
+
+
+def test_tools_allowed_hosts_propagates_to_reader():
+    t = LLMsTxtTools(allowed_hosts=["Docs.Agno.com", "cdn.agno.com"])
+    assert t.allowed_hosts == ["docs.agno.com", "cdn.agno.com"]
+    assert t.allowed_hosts is t.reader.allowed_hosts
+
+
+def test_tools_get_index_rejects_disallowed_host():
+    t = LLMsTxtTools(allowed_hosts=["docs.agno.com"])
+
+    with patch("agno.knowledge.reader.llms_txt_reader.fetch_with_retry") as mock_fetch:
+        result = t.get_llms_txt_index("http://127.0.0.1:8000/llms.txt")
+
+    assert "not in allowed_hosts" in result
+    mock_fetch.assert_not_called()
+
+
+def test_tools_read_url_rejects_disallowed_host():
+    t = LLMsTxtTools(allowed_hosts=["docs.agno.com"])
+
+    with patch("agno.knowledge.reader.llms_txt_reader.fetch_with_retry") as mock_fetch:
+        result = t.read_llms_txt_url("http://169.254.169.254/latest/meta-data")
+
+    assert "not in allowed_hosts" in result
+    mock_fetch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_tools_aread_url_rejects_disallowed_host():
+    t = LLMsTxtTools(allowed_hosts=["docs.agno.com"])
+
+    with patch("agno.knowledge.reader.llms_txt_reader.async_fetch_with_retry") as mock_fetch:
+        result = await t.aread_llms_txt_url("http://localhost:8000/admin")
+
+    assert "not in allowed_hosts" in result
+    mock_fetch.assert_not_called()
+
+
+def test_tools_load_knowledge_rejects_disallowed_host():
+    mock_knowledge = MagicMock()
+    t = LLMsTxtTools(knowledge=mock_knowledge, allowed_hosts=["docs.agno.com"])
+
+    result = t.read_llms_txt_and_load_knowledge("http://internal.svc/llms.txt")
+
+    assert "not in allowed_hosts" in result
+    mock_knowledge.insert.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_tools_aload_knowledge_rejects_disallowed_host():
+    mock_knowledge = MagicMock()
+    mock_knowledge.ainsert = AsyncMock()
+    t = LLMsTxtTools(knowledge=mock_knowledge, allowed_hosts=["docs.agno.com"])
+
+    result = await t.aread_llms_txt_and_load_knowledge("http://internal.svc/llms.txt")
+
+    assert "not in allowed_hosts" in result
+    mock_knowledge.ainsert.assert_not_called()
+
+
+def test_tools_default_no_allowed_hosts_is_unchanged():
+    """Default behavior (no allowed_hosts) must remain unchanged."""
+    t = LLMsTxtTools()
+    assert t.allowed_hosts is None
+    assert t.reader.allowed_hosts is None
+    assert t.reader.is_host_allowed("http://anything.example/x") is True
