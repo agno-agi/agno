@@ -15,6 +15,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    Tuple,
     Type,
     Union,
     cast,
@@ -3069,6 +3070,7 @@ def _continue_run(
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    pre_session: Optional[AgentSession] = None,
     **kwargs,
 ) -> RunOutput:
     """Continue a previous run.
@@ -3208,10 +3210,12 @@ def _continue_run(
                 run_response.status = RunStatus.cancelled
                 run_response.content = str(e)
 
-                # Cleanup and store the run response and session
-                cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-                )
+                # Cleanup and store. Skip when caller pre-mutated the session (regenerate path):
+                # persisting a cancelled stub onto the popped session would destroy the original.
+                if pre_session is None:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
 
                 return run_response
             except (InputCheckError, OutputCheckError) as e:
@@ -3224,9 +3228,12 @@ def _continue_run(
 
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
-                cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-                )
+                # Cleanup and store. Skip when caller pre-mutated the session (regenerate path):
+                # persisting a validation-error stub onto the popped session would destroy the original.
+                if pre_session is None:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
 
                 return run_response
             except KeyboardInterrupt:
@@ -3256,10 +3263,12 @@ def _continue_run(
 
                 log_error(f"Error in Agent run: {str(e)}")
 
-                # Cleanup and store the run response and session
-                cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-                )
+                # Cleanup and store. Skip when caller pre-mutated the session (regenerate path):
+                # persisting an error stub onto the popped session would destroy the original.
+                if pre_session is None:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
 
                 return run_response
     finally:
@@ -3283,6 +3292,7 @@ def _continue_run_stream(
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
     background_tasks: Optional[Any] = None,
+    pre_session: Optional[AgentSession] = None,
     **kwargs,
 ) -> Iterator[Union[RunOutputEvent, RunOutput]]:
     """Continue a previous run.
@@ -3313,8 +3323,8 @@ def _continue_run_stream(
     try:
         for attempt in range(num_attempts):
             try:
-                # 1. Resolve dependencies
-                if run_context.dependencies is not None:
+                # 1. Resolve dependencies. Skip when caller pre-resolved (regenerate path).
+                if run_context.dependencies is not None and pre_session is None:
                     resolve_run_dependencies(agent, run_context=run_context)
 
                 # Start the Run by yielding a RunContinued event
@@ -3481,10 +3491,12 @@ def _continue_run_stream(
                     store_events=agent.store_events,
                 )
 
-                # Cleanup and store the run response and session
-                cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-                )
+                # Cleanup and store. Skip when caller pre-mutated the session (regenerate path):
+                # persisting a cancelled stub onto the popped session would destroy the original.
+                if pre_session is None:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
                 break
             except (InputCheckError, OutputCheckError) as e:
                 run_response = cast(RunOutput, run_response)
@@ -3506,9 +3518,12 @@ def _continue_run_stream(
 
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
-                cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-                )
+                # Cleanup and store. Skip when caller pre-mutated the session (regenerate path):
+                # persisting a validation-error stub onto the popped session would destroy the original.
+                if pre_session is None:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
                 yield run_error
                 break
             except KeyboardInterrupt:
@@ -3545,10 +3560,12 @@ def _continue_run_stream(
 
                 log_error(f"Error in Agent run: {str(e)}")
 
-                # Cleanup and store the run response and session
-                cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-                )
+                # Cleanup and store. Skip when caller pre-mutated the session (regenerate path):
+                # persisting an error stub onto the popped session would destroy the original.
+                if pre_session is None:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
 
                 yield run_error
     finally:
@@ -3885,6 +3902,7 @@ async def _acontinue_run(
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    pre_session: Optional[AgentSession] = None,
     **kwargs,
 ) -> RunOutput:
     """Continue a previous run.
@@ -3930,11 +3948,16 @@ async def _acontinue_run(
                 if attempt > 0:
                     log_debug(f"Retrying Agent acontinue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
-                # 1. Read existing session from db
-                agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                # 1. Read or create session. When the caller pre-mutated a session
+                # (regenerate path), keep using it across retries — re-reading from DB
+                # would lose the pop/mark and produce duplicate runs on success.
+                if pre_session is not None:
+                    agent_session = pre_session
+                else:
+                    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
 
-                # 2. Resolve dependencies
-                if run_context.dependencies is not None:
+                # 2. Resolve dependencies. Skip when caller pre-resolved (regenerate path).
+                if run_context.dependencies is not None and pre_session is None:
                     await aresolve_run_dependencies(agent, run_context=run_context)
 
                 # 3. Update metadata and session state
@@ -4162,8 +4185,9 @@ async def _acontinue_run(
                 run_response.status = RunStatus.cancelled
                 run_response.content = str(e)
 
-                # Cleanup and store the run response and session
-                if agent_session is not None:
+                # Cleanup and store. Skip when caller pre-mutated the session (regenerate path):
+                # persisting a cancelled stub onto the popped session would destroy the original.
+                if agent_session is not None and pre_session is None:
                     await acleanup_and_store(
                         agent,
                         run_response=run_response,
@@ -4183,7 +4207,9 @@ async def _acontinue_run(
 
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
-                if agent_session is not None:
+                # Cleanup and store. Skip when caller pre-mutated the session (regenerate path):
+                # persisting a validation-error stub onto the popped session would destroy the original.
+                if agent_session is not None and pre_session is None:
                     await acleanup_and_store(
                         agent,
                         run_response=run_response,
@@ -4227,8 +4253,9 @@ async def _acontinue_run(
 
                 log_error(f"Error in Agent run: {str(e)}")
 
-                # Cleanup and store the run response and session
-                if agent_session is not None:
+                # Cleanup and store. Skip when caller pre-mutated the session (regenerate path):
+                # persisting an error stub onto the popped session would destroy the original.
+                if agent_session is not None and pre_session is None:
                     await acleanup_and_store(
                         agent,
                         run_response=run_response,  # type: ignore
@@ -4264,6 +4291,7 @@ async def _acontinue_run_stream(
     yield_run_output: bool = False,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    pre_session: Optional[AgentSession] = None,
     **kwargs,
 ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
     """Continue a previous run.
@@ -4303,8 +4331,13 @@ async def _acontinue_run_stream(
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
             try:
-                # 1. Read existing session from db
-                agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                # 1. Read or create session. When the caller pre-mutated a session
+                # (regenerate path), keep using it across retries — re-reading from DB
+                # would lose the pop/mark and produce duplicate runs on success.
+                if pre_session is not None:
+                    agent_session = pre_session
+                else:
+                    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
 
                 # 2. Update session state and metadata
                 update_metadata(agent, session=agent_session)
@@ -4322,8 +4355,8 @@ async def _acontinue_run_stream(
                     run_id=run_context.run_id,
                 )
 
-                # 3. Resolve dependencies
-                if run_context.dependencies is not None:
+                # 3. Resolve dependencies (skipped when caller already resolved them in regenerate prep)
+                if run_context.dependencies is not None and pre_session is None:
                     await aresolve_run_dependencies(agent, run_context=run_context)
 
                 # 4. Prepare run response
@@ -4627,8 +4660,9 @@ async def _acontinue_run_stream(
                     store_events=agent.store_events,
                 )
 
-                # Cleanup and store the run response and session
-                if agent_session is not None:
+                # Cleanup and store. Skip when caller pre-mutated the session (regenerate path):
+                # persisting a cancelled stub onto the popped session would destroy the original.
+                if agent_session is not None and pre_session is None:
                     await acleanup_and_store(
                         agent,
                         run_response=run_response,
@@ -4660,8 +4694,9 @@ async def _acontinue_run_stream(
 
                 log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
 
-                # Cleanup and store the run response and session
-                if agent_session is not None:
+                # Cleanup and store. Skip when caller pre-mutated the session (regenerate path):
+                # persisting a validation-error stub onto the popped session would destroy the original.
+                if agent_session is not None and pre_session is None:
                     await acleanup_and_store(
                         agent,
                         run_response=run_response,
@@ -4713,8 +4748,9 @@ async def _acontinue_run_stream(
 
                 log_error(f"Error in Agent run: {str(e)}")
 
-                # Cleanup and store the run response and session
-                if agent_session is not None:
+                # Cleanup and store. Skip when caller pre-mutated the session (regenerate path):
+                # persisting an error stub onto the popped session would destroy the original.
+                if agent_session is not None and pre_session is None:
                     await acleanup_and_store(
                         agent,
                         run_response=run_response,
@@ -4993,6 +5029,10 @@ def regenerate_dispatch(
 
     # Read existing session from storage
     agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    # Detach from cache: regenerate mutates this session in-memory before delegating, so a
+    # failure would leak the popped state into the cache and destroy the original on next save.
+    if agent.cache_session and agent._cached_session is agent_session:
+        agent._cached_session = None
     update_metadata(agent, session=agent_session)
 
     # Find the last run
@@ -5008,6 +5048,10 @@ def regenerate_dispatch(
 
     # Build message context: everything except the final assistant response
     trimmed_messages = _strip_final_assistant_messages(last_run.messages)
+    # If the surviving tail is an unresolved tool_call, drop it too so we don't
+    # append a user message after a tool_call (providers reject that ordering).
+    while trimmed_messages and trimmed_messages[-1].role == "assistant" and trimmed_messages[-1].tool_calls:
+        trimmed_messages.pop()
     if not trimmed_messages:
         raise ValueError("Cannot regenerate: no user messages found in the last run.")
 
@@ -5115,6 +5159,9 @@ def regenerate_dispatch(
     run_response.status = RunStatus.running
 
     if opts.stream:
+        # Pass pre_session so _continue_run_stream skips duplicate dep resolution and
+        # gates cleanup_and_store on error — without it, a mid-stream failure persists
+        # the popped session and destroys the original.
         response_iterator = _continue_run_stream(
             agent,
             run_response=run_response,
@@ -5128,10 +5175,13 @@ def regenerate_dispatch(
             yield_run_output=opts.yield_run_output,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
+            pre_session=agent_session,
             **kwargs,
         )
         return response_iterator
     else:
+        # Pass pre_session so _continue_run gates cleanup_and_store on error branches —
+        # without it, a model failure persists the popped session and destroys the original.
         response = _continue_run(
             agent,
             run_response=run_response,
@@ -5143,6 +5193,7 @@ def regenerate_dispatch(
             response_format=response_format,
             debug_mode=debug_mode,
             background_tasks=background_tasks,
+            pre_session=agent_session,
             **kwargs,
         )
         return response
@@ -5279,20 +5330,29 @@ async def _aregenerate_prepare(
     user_id: Optional[str],
     additional_instructions: Optional[str],
     preserve_original: bool,
-) -> RunOutput:
-    """Shared prep for async regeneration.
-
-    Reads the session, strips the trailing assistant response, marks or pops the
-    old run, persists the mutation, resolves dependencies against the refreshed
-    session_state, and returns a fully-initialized new RunOutput ready to hand off
-    to _acontinue_run / _acontinue_run_stream. Works against both sync and async
-    DBs because aread_or_create_session / asave_session dispatch internally.
-    """
-    from agno.agent._session import asave_session
+) -> Tuple[RunOutput, AgentSession]:
+    """Shared prep for async regeneration. Returns the new RunOutput and the in-memory
+    session for the caller to hand to _acontinue_run via pre_session."""
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
+    from agno.utils.merge_dict import merge_dictionaries
 
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+    # Detach from cache: regenerate mutates this session in-memory before delegating, so a
+    # failure would leak the popped state into the cache and destroy the original on next save.
+    if agent.cache_session and agent._cached_session is agent_session:
+        agent._cached_session = None
     update_metadata(agent, session=agent_session)
+
+    # Re-merge agent.metadata into run_context.metadata now that update_metadata has run.
+    # Sync regenerate orders read → update_metadata → resolve_run_options; async resolves options
+    # before the awaitable read, so we mirror the merge here for parity with the sync path.
+    if agent.metadata is not None:
+        if run_context.metadata is None:
+            run_context.metadata = agent.metadata.copy()
+        else:
+            merged = dict(run_context.metadata)
+            merge_dictionaries(merged, agent.metadata)
+            run_context.metadata = merged
 
     if not agent_session.runs:
         raise ValueError("No runs found in session to regenerate.")
@@ -5304,6 +5364,10 @@ async def _aregenerate_prepare(
     predecessor_run_id = last_run.run_id
 
     trimmed_messages = _strip_final_assistant_messages(last_run.messages)
+    # If the surviving tail is an unresolved tool_call, drop it too so we don't
+    # append a user message after a tool_call (providers reject that ordering).
+    while trimmed_messages and trimmed_messages[-1].role == "assistant" and trimmed_messages[-1].tool_calls:
+        trimmed_messages.pop()
     if not trimmed_messages:
         raise ValueError("Cannot regenerate: no user messages found in the last run.")
 
@@ -5312,14 +5376,12 @@ async def _aregenerate_prepare(
     else:
         agent_session.runs.pop()  # type: ignore[union-attr]
 
-    # Persist mutation before delegating to _acontinue_run, which re-reads from DB.
-    await asave_session(agent, session=agent_session)
-
     if additional_instructions is not None:
         trimmed_messages.append(Message(role=agent.user_message_role, content=additional_instructions))
 
     # Populate session_state from the refreshed session, then resolve dependencies
-    # so callables see the real state (this fixes a prior sync/async divergence).
+    # so callables see the real state. _acontinue_run is told to skip its own
+    # dependency resolution to avoid double-firing side-effecting callables.
     run_context.session_state = load_session_state(
         agent,
         session=agent_session,
@@ -5345,7 +5407,7 @@ async def _aregenerate_prepare(
     new_run_response.metrics.start_timer()
     new_run_response.messages = trimmed_messages
 
-    return new_run_response
+    return new_run_response, agent_session
 
 
 async def _aregenerate_run(
@@ -5361,7 +5423,7 @@ async def _aregenerate_run(
     **kwargs: Any,
 ) -> RunOutput:
     """Async non-streaming regeneration: prep then delegate to _acontinue_run."""
-    new_run_response = await _aregenerate_prepare(
+    new_run_response, agent_session = await _aregenerate_prepare(
         agent,
         run_context=run_context,
         session_id=session_id,
@@ -5381,6 +5443,7 @@ async def _aregenerate_run(
         response_format=response_format,
         debug_mode=debug_mode,
         background_tasks=background_tasks,
+        pre_session=agent_session,
         **kwargs,
     )
 
@@ -5400,7 +5463,7 @@ async def _aregenerate_run_stream(
     **kwargs: Any,
 ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
     """Async streaming regeneration: prep then delegate to _acontinue_run_stream."""
-    new_run_response = await _aregenerate_prepare(
+    new_run_response, agent_session = await _aregenerate_prepare(
         agent,
         run_context=run_context,
         session_id=session_id,
@@ -5422,6 +5485,7 @@ async def _aregenerate_run_stream(
         yield_run_output=yield_run_output,
         debug_mode=debug_mode,
         background_tasks=background_tasks,
+        pre_session=agent_session,
         **kwargs,
     ):
         yield event
@@ -5494,8 +5558,9 @@ def branch_session_dispatch(
         if not run.branched_from:
             run.branched_from = source_session_id
 
-    # Carry over session_data and record the source session at the session level
-    # for accountability (even if all runs are later deleted/regenerated).
+    # session.branched_from records the **immediate** parent (overwritten on each branch),
+    # while run.branched_from records each run's **original** session (set only-if-empty).
+    # For root → mid → leaf: leaf.session.branched_from == mid; leaf.runs[*].branched_from == root.
     new_session_data = copy.deepcopy(source_session.session_data) or {}
     new_session_data["branched_from"] = source_session_id
 
@@ -5581,8 +5646,9 @@ async def abranch_session_dispatch(
         if not run.branched_from:
             run.branched_from = source_session_id
 
-    # Carry over session_data and record the source session at the session level
-    # for accountability (even if all runs are later deleted/regenerated).
+    # session.branched_from records the **immediate** parent (overwritten on each branch),
+    # while run.branched_from records each run's **original** session (set only-if-empty).
+    # For root → mid → leaf: leaf.session.branched_from == mid; leaf.runs[*].branched_from == root.
     new_session_data = copy.deepcopy(source_session.session_data) or {}
     new_session_data["branched_from"] = source_session_id
 
