@@ -14,7 +14,7 @@ This pattern demonstrates real-world workflows that span multiple services:
 2. Follow-up workflow: email + calendar + draft
 
 Compare with: 18_gmail.py, 19_calendar.py for single-provider examples
-See also: GDriveContextProvider in context/gdrive/ for Drive-only access
+See also: GoogleDriveContextProvider in context/gdrive/ for Drive-only access
 
 Setup:
     All providers share the same OAuth or service account credentials.
@@ -40,8 +40,8 @@ from __future__ import annotations
 import asyncio
 
 from agno.agent import Agent
-from agno.context.calendar import CalendarContextProvider
-from agno.context.gdrive import GDriveContextProvider
+from agno.context.calendar import GoogleCalendarContextProvider
+from agno.context.gdrive import GoogleDriveContextProvider
 from agno.context.gmail import GmailContextProvider
 from agno.models.openai import OpenAIResponses
 
@@ -54,9 +54,9 @@ from agno.models.openai import OpenAIResponses
 
 sub_model = OpenAIResponses(id="gpt-5.4-mini")
 
-gdrive = GDriveContextProvider(model=sub_model)
+gdrive = GoogleDriveContextProvider(model=sub_model)
 gmail = GmailContextProvider(model=sub_model, read=True, write=True)
-calendar = CalendarContextProvider(model=sub_model, read=True, write=True)
+calendar = GoogleCalendarContextProvider(model=sub_model, read=True, write=True)
 
 # ---------------------------------------------------------------------------
 # Create Multi-Provider Agent

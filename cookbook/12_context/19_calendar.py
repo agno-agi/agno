@@ -2,7 +2,7 @@
 Google Calendar Context Provider
 ================================
 
-CalendarContextProvider gives agents read/write access to Google Calendar
+GoogleCalendarContextProvider gives agents read/write access to Google Calendar
 through specialized sub-agents. The calling agent receives:
 
 - ``query_calendar`` — list events, check availability, find free slots
@@ -45,7 +45,7 @@ from __future__ import annotations
 import asyncio
 
 from agno.agent import Agent
-from agno.context.calendar import CalendarContextProvider
+from agno.context.calendar import GoogleCalendarContextProvider
 from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ async def demo_read_only():
     print("DEMO 1: Read-Only Calendar Access")
     print("=" * 60)
 
-    calendar = CalendarContextProvider(
+    calendar = GoogleCalendarContextProvider(
         model=OpenAIResponses(id="gpt-5.4-mini"),
         read=True,
         write=False,
@@ -96,7 +96,7 @@ async def demo_read_write():
     print("DEMO 2: Read-Write Calendar Access")
     print("=" * 60)
 
-    calendar = CalendarContextProvider(
+    calendar = GoogleCalendarContextProvider(
         model=OpenAIResponses(id="gpt-5.4-mini"),
         read=True,
         write=True,
