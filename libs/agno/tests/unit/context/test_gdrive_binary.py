@@ -7,10 +7,15 @@ instead of returning garbage UTF-8 decoded bytes.
 
 from __future__ import annotations
 
-
 import pytest
 
-from agno.context.gdrive.tools import TEXT_EXCEPTIONS, _is_binary_mime
+from agno.context.gdrive.tools import (
+    DOCX_MIME_TYPE,
+    HAS_DOCX,
+    TEXT_EXCEPTIONS,
+    _extract_docx_text,
+    _is_binary_mime,
+)
 
 
 class TestBinaryMimeDetection:
@@ -109,3 +114,42 @@ class TestBinaryMimePrefixes:
         # SVG is XML text, should NOT be detected as binary
         assert not _is_binary_mime("image/svg+xml")
         assert "image/svg+xml" in TEXT_EXCEPTIONS
+
+
+class TestDocxExtraction:
+    """Tests for optional python-docx extraction."""
+
+    def test_docx_mime_type_constant(self):
+        assert DOCX_MIME_TYPE == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+    def test_has_docx_flag_is_bool(self):
+        assert isinstance(HAS_DOCX, bool)
+
+    @pytest.mark.skipif(not HAS_DOCX, reason="python-docx not installed")
+    def test_extract_docx_text_with_valid_docx(self):
+        import docx
+        from io import BytesIO
+
+        doc = docx.Document()
+        doc.add_paragraph("Hello World")
+        doc.add_paragraph("Second paragraph")
+        buffer = BytesIO()
+        doc.save(buffer)
+        docx_bytes = buffer.getvalue()
+
+        result = _extract_docx_text(docx_bytes)
+        assert "Hello World" in result
+        assert "Second paragraph" in result
+
+    @pytest.mark.skipif(not HAS_DOCX, reason="python-docx not installed")
+    def test_extract_docx_text_empty_document(self):
+        import docx
+        from io import BytesIO
+
+        doc = docx.Document()
+        buffer = BytesIO()
+        doc.save(buffer)
+        docx_bytes = buffer.getvalue()
+
+        result = _extract_docx_text(docx_bytes)
+        assert result == ""

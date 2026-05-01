@@ -38,6 +38,13 @@ except ImportError:
         "`pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`"
     )
 
+try:
+    import docx
+
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
+
 
 BINARY_MIME_PREFIXES = (
     # Microsoft Office
@@ -89,6 +96,17 @@ BINARY_MIME_PREFIXES = (
 TEXT_EXCEPTIONS = {
     "image/svg+xml",  # SVG is XML text
 }
+
+# Office formats we can extract text from with python-docx
+DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _extract_docx_text(content_bytes: bytes) -> str:
+    """Extract text content from a .docx file using python-docx."""
+    buffer = io.BytesIO(content_bytes)
+    document = docx.Document(buffer)
+    paragraphs = [p.text for p in document.paragraphs]
+    return "\n".join(paragraphs)
 
 
 def _is_binary_mime(mime_type: str) -> bool:
@@ -157,6 +175,40 @@ class AllDrivesGoogleDriveTools(GoogleDriveTools):
                 return json.dumps(
                     {"error": f"Cannot read {mime_type} as text. Use download_file instead.", "file": metadata}
                 )
+            elif mime_type == DOCX_MIME_TYPE:
+                if HAS_DOCX:
+                    file_size = int(metadata.get("size", 0))
+                    if file_size > self.max_read_size:
+                        return json.dumps(
+                            {
+                                "error": (
+                                    f"File is {file_size} bytes, exceeds max_read_size "
+                                    f"({self.max_read_size}). Use download_file instead."
+                                ),
+                                "file": metadata,
+                            }
+                        )
+                    request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
+                    content_bytes = _download_bytes(request)
+                    content = _extract_docx_text(content_bytes)
+                    return json.dumps(
+                        {
+                            "file": metadata,
+                            "content": content,
+                            "contentLength": len(content),
+                            "extractedFrom": "docx",
+                        }
+                    )
+                else:
+                    return json.dumps(
+                        {
+                            "error": (
+                                "Cannot read .docx file: python-docx not installed. "
+                                "Install with: pip install python-docx"
+                            ),
+                            "file": metadata,
+                        }
+                    )
             elif _is_binary_mime(mime_type):
                 file_ext = metadata.get("name", "").rsplit(".", 1)[-1].lower()
                 hint = ""
