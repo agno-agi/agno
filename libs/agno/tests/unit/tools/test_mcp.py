@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from mcp.types import CallToolResult, TextContent
 
+from agno.tools.function import ToolResult
 from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
 from agno.utils.mcp import get_entrypoint_for_tool
@@ -793,3 +794,32 @@ async def test_mcp_tool_result_preserves_meta():
 
     assert result.content == "hello"
     assert result.meta == {"trace_id": "abc-123"}
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_error_result_preserves_meta():
+    mock_tool = MagicMock()
+    mock_tool.name = "get_data"
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            content=[TextContent(type="text", text="upstream error")],
+            isError=True,
+            _meta={"trace_id": "err-456"},
+        )
+    )
+
+    entrypoint = get_entrypoint_for_tool(mock_tool, session)
+    result = await entrypoint()
+
+    assert "Error from MCP tool 'get_data'" in result.content
+    assert result.meta == {"trace_id": "err-456"}
+
+
+def test_tool_result_model_dump_roundtrip_preserves_meta():
+    tool_result = ToolResult(content="hello", meta={"trace_id": "abc-123"})
+    payload = tool_result.model_dump()
+    restored = ToolResult.model_validate(payload)
+    assert restored.meta == {"trace_id": "abc-123"}
