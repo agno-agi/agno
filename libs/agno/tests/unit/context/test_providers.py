@@ -13,12 +13,12 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine
 
-from agno.context._utils import _google_provider_status
 from agno.context.calendar import CalendarContextProvider
 from agno.context.database import DatabaseContextProvider
 from agno.context.fs import FilesystemContextProvider
 from agno.context.gdrive import GDriveContextProvider
 from agno.context.gmail import GmailContextProvider
+from agno.context.google import validate_google_credentials
 from agno.context.mcp import MCPContextProvider
 from agno.context.mode import ContextMode
 from agno.context.slack import SlackContextProvider
@@ -772,12 +772,12 @@ def test_calendar_write_toolkit_includes_find_available_slots(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# _google_provider_status helper
+# validate_google_credentials helper
 # ---------------------------------------------------------------------------
 
 
-def test_google_provider_status_sa_file_not_found():
-    status = _google_provider_status(
+def test_validate_google_credentials_sa_file_not_found():
+    status = validate_google_credentials(
         provider_id="test",
         sa_path="/nonexistent/sa.json",
         token_path=None,
@@ -786,10 +786,10 @@ def test_google_provider_status_sa_file_not_found():
     assert "not found" in status.detail
 
 
-def test_google_provider_status_sa_invalid_json(tmp_path):
+def test_validate_google_credentials_sa_invalid_json(tmp_path):
     bad = tmp_path / "bad.json"
     bad.write_text("not json")
-    status = _google_provider_status(
+    status = validate_google_credentials(
         provider_id="test",
         sa_path=str(bad),
         token_path=None,
@@ -798,8 +798,8 @@ def test_google_provider_status_sa_invalid_json(tmp_path):
     assert "invalid" in status.detail
 
 
-def test_google_provider_status_oauth_not_authenticated():
-    status = _google_provider_status(
+def test_validate_google_credentials_oauth_not_authenticated():
+    status = validate_google_credentials(
         provider_id="test",
         sa_path=None,
         token_path="/nonexistent/token.json",
@@ -808,7 +808,7 @@ def test_google_provider_status_oauth_not_authenticated():
     assert "not yet authenticated" in status.detail
 
 
-def test_google_provider_status_oauth_valid_token(tmp_path):
+def test_validate_google_credentials_oauth_valid_token(tmp_path):
     token = tmp_path / "token.json"
     token.write_text(
         json.dumps(
@@ -822,7 +822,7 @@ def test_google_provider_status_oauth_valid_token(tmp_path):
             }
         )
     )
-    status = _google_provider_status(
+    status = validate_google_credentials(
         provider_id="test",
         sa_path=None,
         token_path=str(token),

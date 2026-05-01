@@ -31,8 +31,9 @@ from os import getenv
 from typing import TYPE_CHECKING
 
 from agno.agent import Agent
-from agno.context._utils import _google_provider_status, answer_from_run
+from agno.context._utils import answer_from_run
 from agno.context.gdrive.tools import AllDrivesGoogleDriveTools
+from agno.context.google import validate_google_credentials
 from agno.context.mode import ContextMode
 from agno.context.provider import Answer, ContextProvider, Status
 from agno.run import RunContext
@@ -68,7 +69,7 @@ class GDriveContextProvider(ContextProvider):
         self._agent: Agent | None = None
 
     def status(self) -> Status:
-        return _google_provider_status(
+        return validate_google_credentials(
             provider_id=self.id,
             sa_path=self._sa_path,
             token_path=self._token_path,
