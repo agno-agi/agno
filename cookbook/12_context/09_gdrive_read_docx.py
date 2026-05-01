@@ -56,7 +56,7 @@ elif data.get("files"):
         text = content_data.get("content", "")
         print(f"Extraction method: {content_data.get('extractedFrom', 'utf-8 decode')}")
         print(f"Content length: {content_data.get('contentLength', 0)} characters")
-        print(f"\nExtracted text (first 1000 chars):")
+        print("\nExtracted text (first 1000 chars):")
         print("-" * 40)
         print(text[:1000])
         if len(text) > 1000:
