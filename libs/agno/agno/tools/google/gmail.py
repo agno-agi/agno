@@ -116,7 +116,13 @@ GMAIL_QUERY_INSTRUCTIONS = textwrap.dedent("""\
     - `after:2024/01/01` / `before:2024/12/31` — absolute date range
     - `label:work` — filter by label
     - `from:me` — emails sent by the user
-    - Combine with spaces (AND): `from:me newer_than:7d has:attachment`""")
+    - Combine with spaces (AND): `from:me newer_than:7d has:attachment`
+
+    ## Composing Emails
+    - **New email:** `send_email(to, subject, body)` or `create_draft_email(to, subject, body)`
+    - **Reply (send now):** `send_email_reply(message_id, body)` keeps the message in the thread
+    - **Reply (draft):** `create_draft_email(to, subject, body, thread_id=..., message_id=...)` \
+creates a draft reply in the thread. Get thread_id and message_id from the original message first.""")
 
 
 class GmailTools(Toolkit):
