@@ -171,8 +171,15 @@ def test_pure_dot_filename_rejected():
             tool._save_file_to_disk("payload", "...")
 
 
-def test_url_encoded_traversal_rejected():
-    """URL-encoded traversal ('%2e%2e/...') must land inside output_directory."""
+def test_url_encoded_traversal_sanitized_inside_output_directory():
+    """URL-encoded traversal ('%2e%2e/...') is sanitized inside output_directory.
+
+    Note: ``%2e%2e`` is NOT decoded by pathlib — it's a literal segment.
+    ``Path(filename).name`` therefore takes ``escape``, and the file lands
+    inside ``output_directory`` instead of escaping it. The original test
+    name (``..._rejected``) was misleading because the input is sanitized,
+    not rejected (no PathSecurityError raised).
+    """
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
         tool._save_file_to_disk("payload", "%2e%2e/escape")
