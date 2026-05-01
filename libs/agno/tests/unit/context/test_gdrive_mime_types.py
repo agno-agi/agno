@@ -86,11 +86,29 @@ class TestBinaryFileTypes:
         "application/msword": ".doc",
     }
 
+    # OpenDocument formats (LibreOffice/OpenOffice)
+    OPENDOCUMENT_TYPES = {
+        "application/vnd.oasis.opendocument.text": ".odt",
+        "application/vnd.oasis.opendocument.spreadsheet": ".ods",
+        "application/vnd.oasis.opendocument.presentation": ".odp",
+    }
+
+    # Apple iWork formats
+    APPLE_IWORK_TYPES = {
+        "application/vnd.apple.pages": ".pages",
+        "application/vnd.apple.numbers": ".numbers",
+        "application/vnd.apple.keynote": ".key",
+    }
+
     # Document formats
     DOCUMENT_TYPES = {
         "application/pdf": ".pdf",
-        "application/rtf": ".rtf",  # Note: RTF is text-based but often treated as binary
+        "application/x-pdf": ".pdf",
+        "application/rtf": ".rtf",
+        "application/x-rtf": ".rtf",
         "application/epub+zip": ".epub",
+        "application/x-mobipocket-ebook": ".mobi",
+        "application/vnd.amazon.ebook": ".azw",
     }
 
     # Archive formats
@@ -98,20 +116,38 @@ class TestBinaryFileTypes:
         "application/zip": ".zip",
         "application/x-zip-compressed": ".zip",
         "application/x-rar-compressed": ".rar",
+        "application/vnd.rar": ".rar",  # modern RAR
         "application/x-7z-compressed": ".7z",
         "application/gzip": ".gz",
         "application/x-gzip": ".gz",
         "application/x-tar": ".tar",
+        "application/tar": ".tar",
         "application/x-bzip2": ".bz2",
+        "application/x-xz": ".xz",
+        "application/x-lzma": ".lzma",
+        "application/zstd": ".zst",
+        "application/x-zstd": ".zst",
+        "application/java-archive": ".jar",
+        "application/vnd.android.package-archive": ".apk",
+        "application/x-iso9660-image": ".iso",
+        "application/x-apple-diskimage": ".dmg",
     }
 
-    # Image formats
+    # Font formats
+    FONT_TYPES = {
+        "font/woff": ".woff",
+        "font/woff2": ".woff2",
+        "font/ttf": ".ttf",
+        "font/otf": ".otf",
+    }
+
+    # Image formats (binary)
     IMAGE_TYPES = {
         "image/png": ".png",
         "image/jpeg": ".jpg",
         "image/gif": ".gif",
         "image/webp": ".webp",
-        "image/svg+xml": ".svg",  # SVG is XML text but often grouped with images
+        # Note: image/svg+xml is TEXT, tested separately
         "image/bmp": ".bmp",
         "image/tiff": ".tiff",
         "image/x-icon": ".ico",
@@ -148,12 +184,24 @@ class TestBinaryFileTypes:
     def test_office_types_detected_as_binary(self, mime_type: str):
         assert _is_binary_mime(mime_type), f"{mime_type} should be detected as binary"
 
+    @pytest.mark.parametrize("mime_type", list(OPENDOCUMENT_TYPES.keys()))
+    def test_opendocument_types_detected_as_binary(self, mime_type: str):
+        assert _is_binary_mime(mime_type), f"{mime_type} should be detected as binary"
+
+    @pytest.mark.parametrize("mime_type", list(APPLE_IWORK_TYPES.keys()))
+    def test_apple_iwork_types_detected_as_binary(self, mime_type: str):
+        assert _is_binary_mime(mime_type), f"{mime_type} should be detected as binary"
+
     @pytest.mark.parametrize("mime_type", list(DOCUMENT_TYPES.keys()))
     def test_document_types_detected_as_binary(self, mime_type: str):
         assert _is_binary_mime(mime_type), f"{mime_type} should be detected as binary"
 
     @pytest.mark.parametrize("mime_type", list(ARCHIVE_TYPES.keys()))
     def test_archive_types_detected_as_binary(self, mime_type: str):
+        assert _is_binary_mime(mime_type), f"{mime_type} should be detected as binary"
+
+    @pytest.mark.parametrize("mime_type", list(FONT_TYPES.keys()))
+    def test_font_types_detected_as_binary(self, mime_type: str):
         assert _is_binary_mime(mime_type), f"{mime_type} should be detected as binary"
 
     @pytest.mark.parametrize("mime_type", list(IMAGE_TYPES.keys()))
@@ -209,6 +257,8 @@ class TestTextFileTypes:
         "application/toml": ".toml",
         "text/x-ini": ".ini",
         "application/x-httpd-php": ".php",
+        # Special: SVG is under image/* but is XML text
+        "image/svg+xml": ".svg",
     }
 
     @pytest.mark.parametrize("mime_type", list(TEXT_TYPES.keys()))

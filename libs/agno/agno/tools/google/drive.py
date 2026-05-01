@@ -87,34 +87,61 @@ DRIVE_QUERY_INSTRUCTIONS = textwrap.dedent(f"""\
 authenticate = google_authenticate("drive")
 
 BINARY_MIME_PREFIXES = (
-    # Office formats
+    # Microsoft Office
     "application/vnd.openxmlformats-officedocument",  # .docx, .xlsx, .pptx
     "application/vnd.ms-",  # .doc, .xls, .ppt (legacy Office)
     "application/msword",  # .doc (alternative)
+    # OpenDocument (LibreOffice/OpenOffice)
+    "application/vnd.oasis.opendocument",  # .odt, .ods, .odp
+    "application/vnd.sun.xml",  # older OpenOffice
+    # Apple iWork
+    "application/vnd.apple.",  # .pages, .numbers, .key
     # Documents
     "application/pdf",
+    "application/x-pdf",
     "application/rtf",
+    "application/x-rtf",
     "application/epub",
+    "application/x-mobipocket-ebook",  # .mobi
+    "application/vnd.amazon.ebook",  # .azw
     # Archives
     "application/zip",
     "application/x-zip",
     "application/gzip",
     "application/x-gzip",
     "application/x-tar",
+    "application/tar",
     "application/x-rar",
+    "application/vnd.rar",  # modern RAR
     "application/x-7z",
     "application/x-bzip",
+    "application/x-xz",
+    "application/x-lzma",
+    "application/zstd",
+    "application/x-zstd",
+    "application/java-archive",  # .jar
+    "application/vnd.android.package-archive",  # .apk
+    "application/x-iso9660-image",  # .iso
+    "application/x-apple-diskimage",  # .dmg
     # Generic binary
     "application/octet-stream",
-    # Media
+    # Media (excluding SVG which is text)
     "image/",
     "video/",
     "audio/",
+    "font/",
 )
+
+# Text formats that start with binary prefixes but should be readable
+TEXT_EXCEPTIONS = {
+    "image/svg+xml",  # SVG is XML text
+}
 
 
 def _is_binary_mime(mime_type: str) -> bool:
     """Return True if the MIME type indicates a binary format that cannot be decoded as text."""
+    if mime_type in TEXT_EXCEPTIONS:
+        return False
     return any(mime_type.startswith(prefix) for prefix in BINARY_MIME_PREFIXES)
 
 

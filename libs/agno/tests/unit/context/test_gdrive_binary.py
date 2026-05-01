@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from agno.context.gdrive.tools import _is_binary_mime
+from agno.context.gdrive.tools import TEXT_EXCEPTIONS, _is_binary_mime
 
 
 class TestBinaryMimeDetection:
@@ -70,11 +70,26 @@ class TestBinaryMimePrefixes:
         assert _is_binary_mime("application/vnd.ms-powerpoint")
         assert _is_binary_mime("application/msword")
 
+    def test_opendocument_formats_covered(self):
+        # LibreOffice / OpenOffice
+        assert _is_binary_mime("application/vnd.oasis.opendocument.text")
+        assert _is_binary_mime("application/vnd.oasis.opendocument.spreadsheet")
+        assert _is_binary_mime("application/vnd.oasis.opendocument.presentation")
+
+    def test_apple_iwork_formats_covered(self):
+        assert _is_binary_mime("application/vnd.apple.pages")
+        assert _is_binary_mime("application/vnd.apple.numbers")
+        assert _is_binary_mime("application/vnd.apple.keynote")
+
     def test_archive_formats_covered(self):
         assert _is_binary_mime("application/zip")
         assert _is_binary_mime("application/x-zip-compressed")
         assert _is_binary_mime("application/gzip")
         assert _is_binary_mime("application/x-tar")
+        assert _is_binary_mime("application/vnd.rar")  # modern RAR
+        assert _is_binary_mime("application/x-xz")
+        assert _is_binary_mime("application/java-archive")  # .jar
+        assert _is_binary_mime("application/vnd.android.package-archive")  # .apk
 
     def test_media_formats_covered(self):
         assert _is_binary_mime("image/png")
@@ -84,7 +99,13 @@ class TestBinaryMimePrefixes:
         assert _is_binary_mime("video/quicktime")
         assert _is_binary_mime("audio/mpeg")
         assert _is_binary_mime("audio/wav")
+        assert _is_binary_mime("font/woff2")
 
     def test_generic_binary_covered(self):
         assert _is_binary_mime("application/octet-stream")
         assert _is_binary_mime("application/pdf")
+
+    def test_svg_is_text_exception(self):
+        # SVG is XML text, should NOT be detected as binary
+        assert not _is_binary_mime("image/svg+xml")
+        assert "image/svg+xml" in TEXT_EXCEPTIONS
