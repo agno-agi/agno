@@ -58,8 +58,8 @@ class LLMsTxtReader(Reader):
         self.timeout = timeout
         self.proxy = proxy
         self.skip_optional = skip_optional
-        self.allowed_hosts: Optional[set] = (
-            {host.lower() for host in allowed_hosts} if allowed_hosts is not None else None
+        self.allowed_hosts: Optional[List[str]] = (
+            [host.lower() for host in allowed_hosts] if allowed_hosts is not None else None
         )
 
     @classmethod
@@ -78,7 +78,7 @@ class LLMsTxtReader(Reader):
 
     # Helpers
 
-    def _is_host_allowed(self, url: str) -> bool:
+    def is_host_allowed(self, url: str) -> bool:
         if self.allowed_hosts is None:
             return True
         host = urlparse(url).hostname
@@ -186,8 +186,8 @@ class LLMsTxtReader(Reader):
         return overview, entries
 
     def fetch_url(self, url: str) -> Optional[str]:
-        if not self._is_host_allowed(url):
-            log_warning(f"Host not in allowed_hosts: {url}")
+        if not self.is_host_allowed(url):
+            log_debug(f"Host not in allowed_hosts: {url}")
             return None
         try:
             response = fetch_with_retry(
@@ -203,8 +203,8 @@ class LLMsTxtReader(Reader):
             return None
 
     async def async_fetch_url(self, client: httpx.AsyncClient, url: str) -> Optional[str]:
-        if not self._is_host_allowed(url):
-            log_warning(f"Host not in allowed_hosts: {url}")
+        if not self.is_host_allowed(url):
+            log_debug(f"Host not in allowed_hosts: {url}")
             return None
         try:
             response = await async_fetch_with_retry(

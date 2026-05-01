@@ -550,28 +550,28 @@ def test_knowledge_error_handling(tools_with_knowledge):
 def test_reader_allowed_hosts_default_none():
     reader = LLMsTxtReader()
     assert reader.allowed_hosts is None
-    assert reader._is_host_allowed("http://anything.example/path") is True
+    assert reader.is_host_allowed("http://anything.example/path") is True
 
 
 def test_reader_allowed_hosts_normalizes_case():
     reader = LLMsTxtReader(allowed_hosts=["Docs.Agno.COM"])
-    assert reader._is_host_allowed("https://docs.agno.com/x") is True
-    assert reader._is_host_allowed("https://DOCS.AGNO.COM/x") is True
-    assert reader._is_host_allowed("https://other.example/x") is False
+    assert reader.is_host_allowed("https://docs.agno.com/x") is True
+    assert reader.is_host_allowed("https://DOCS.AGNO.COM/x") is True
+    assert reader.is_host_allowed("https://other.example/x") is False
 
 
 def test_reader_allowed_hosts_ignores_port_and_userinfo():
     reader = LLMsTxtReader(allowed_hosts=["docs.agno.com"])
-    assert reader._is_host_allowed("https://docs.agno.com:8443/x") is True
-    assert reader._is_host_allowed("https://user:pass@docs.agno.com/x") is True
-    assert reader._is_host_allowed("http://docs.agno.com@evil.example/x") is False
+    assert reader.is_host_allowed("https://docs.agno.com:8443/x") is True
+    assert reader.is_host_allowed("https://user:pass@docs.agno.com/x") is True
+    assert reader.is_host_allowed("http://docs.agno.com@evil.example/x") is False
 
 
 def test_reader_allowed_hosts_blocks_localhost_and_metadata():
     reader = LLMsTxtReader(allowed_hosts=["docs.agno.com"])
-    assert reader._is_host_allowed("http://127.0.0.1:8000/admin") is False
-    assert reader._is_host_allowed("http://localhost:8000/admin") is False
-    assert reader._is_host_allowed("http://169.254.169.254/latest/meta-data") is False
+    assert reader.is_host_allowed("http://127.0.0.1:8000/admin") is False
+    assert reader.is_host_allowed("http://localhost:8000/admin") is False
+    assert reader.is_host_allowed("http://169.254.169.254/latest/meta-data") is False
 
 
 def test_reader_fetch_url_blocks_disallowed():
@@ -649,8 +649,8 @@ async def test_reader_async_fetch_url_passes_follow_redirects_false_when_allowli
 
 def test_tools_allowed_hosts_propagates_to_reader():
     t = LLMsTxtTools(allowed_hosts=["Docs.Agno.com", "cdn.agno.com"])
-    assert t.allowed_hosts == ["Docs.Agno.com", "cdn.agno.com"]
-    assert t.reader.allowed_hosts == {"docs.agno.com", "cdn.agno.com"}
+    assert t.allowed_hosts == ["docs.agno.com", "cdn.agno.com"]
+    assert t.allowed_hosts is t.reader.allowed_hosts
 
 
 def test_tools_get_index_rejects_disallowed_host():
@@ -711,4 +711,4 @@ def test_tools_default_no_allowed_hosts_is_unchanged():
     t = LLMsTxtTools()
     assert t.allowed_hosts is None
     assert t.reader.allowed_hosts is None
-    assert t.reader._is_host_allowed("http://anything.example/x") is True
+    assert t.reader.is_host_allowed("http://anything.example/x") is True

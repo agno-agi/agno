@@ -23,13 +23,13 @@ class LLMsTxtTools(Toolkit):
         self.max_urls = max_urls
         self.timeout = timeout
         self.skip_optional = skip_optional
-        self.allowed_hosts: Optional[List[str]] = allowed_hosts
         self.reader = LLMsTxtReader(
             max_urls=max_urls,
             timeout=timeout,
             skip_optional=skip_optional,
             allowed_hosts=allowed_hosts,
         )
+        self.allowed_hosts: Optional[List[str]] = self.reader.allowed_hosts
 
         tools: List[Callable] = []
         async_tools_list: List[tuple] = []
@@ -76,7 +76,7 @@ class LLMsTxtTools(Toolkit):
         Returns:
             str: JSON with the overview and list of available documentation pages
         """
-        if not self.reader._is_host_allowed(url):
+        if not self.reader.is_host_allowed(url):
             return f"Host is not in allowed_hosts; refusing to fetch {url}"
         try:
             log_info(f"Reading llms.txt index from {url}")
@@ -100,7 +100,7 @@ class LLMsTxtTools(Toolkit):
         Returns:
             str: JSON with the overview and list of available documentation pages
         """
-        if not self.reader._is_host_allowed(url):
+        if not self.reader.is_host_allowed(url):
             return f"Host is not in allowed_hosts; refusing to fetch {url}"
         try:
             log_info(f"Reading llms.txt index from {url}")
@@ -126,7 +126,7 @@ class LLMsTxtTools(Toolkit):
         Returns:
             str: The text content of the page
         """
-        if not self.reader._is_host_allowed(url):
+        if not self.reader.is_host_allowed(url):
             return f"Host is not in allowed_hosts; refusing to fetch {url}"
         try:
             log_debug(f"Fetching URL: {url}")
@@ -148,7 +148,7 @@ class LLMsTxtTools(Toolkit):
         Returns:
             str: The text content of the page
         """
-        if not self.reader._is_host_allowed(url):
+        if not self.reader.is_host_allowed(url):
             return f"Host is not in allowed_hosts; refusing to fetch {url}"
         try:
             log_debug(f"Fetching URL: {url}")
@@ -174,7 +174,7 @@ class LLMsTxtTools(Toolkit):
         if self.knowledge is None:
             return "Knowledge base not provided"
 
-        if not self.reader._is_host_allowed(url):
+        if not self.reader.is_host_allowed(url):
             return f"Host is not in allowed_hosts; refusing to fetch {url}"
         try:
             log_info(f"Reading llms.txt from {url}")
@@ -196,7 +196,7 @@ class LLMsTxtTools(Toolkit):
         if self.knowledge is None:
             return "Knowledge base not provided"
 
-        if not self.reader._is_host_allowed(url):
+        if not self.reader.is_host_allowed(url):
             return f"Host is not in allowed_hosts; refusing to fetch {url}"
         try:
             log_info(f"Reading llms.txt from {url}")
