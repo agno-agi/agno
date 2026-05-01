@@ -115,7 +115,7 @@ You manage Google Calendar — searching, reading, and modifying events.
 """
 
 
-class CalendarContextProvider(ContextProvider):
+class GoogleCalendarContextProvider(ContextProvider):
     """Google Calendar context for agents via service account or OAuth."""
 
     def __init__(
@@ -128,7 +128,8 @@ class CalendarContextProvider(ContextProvider):
         calendar_id: str = "primary",
         id: str = "calendar",
         name: str = "Calendar",
-        instructions: str | None = None,
+        read_instructions: str | None = None,
+        write_instructions: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
         read: bool = True,
@@ -143,8 +144,8 @@ class CalendarContextProvider(ContextProvider):
         # Calendar does NOT require delegated_user — SA can use its own calendar
         self._delegated_user = delegated_user or getenv("GOOGLE_DELEGATED_USER") if self._sa_path else None
 
-        self._read_instructions = instructions or DEFAULT_READ_INSTRUCTIONS
-        self._write_instructions = instructions or DEFAULT_WRITE_INSTRUCTIONS
+        self._read_instructions = read_instructions if read_instructions is not None else DEFAULT_READ_INSTRUCTIONS
+        self._write_instructions = write_instructions if write_instructions is not None else DEFAULT_WRITE_INSTRUCTIONS
         self._read_agent: Agent | None = None
         self._write_agent: Agent | None = None
 

@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from agno.models.base import Model
 
 
-class GDriveContextProvider(ContextProvider):
+class GoogleDriveContextProvider(ContextProvider):
     """Read-only Google Drive access via service account or OAuth."""
 
     def __init__(

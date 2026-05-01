@@ -13,10 +13,10 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine
 
-from agno.context.calendar import CalendarContextProvider
+from agno.context.calendar import GoogleCalendarContextProvider
 from agno.context.database import DatabaseContextProvider
 from agno.context.fs import FilesystemContextProvider
-from agno.context.gdrive import GDriveContextProvider
+from agno.context.gdrive import GoogleDriveContextProvider
 from agno.context.gmail import GmailContextProvider
 from agno.context.google import validate_google_credentials
 from agno.context.mcp import MCPContextProvider
@@ -607,7 +607,7 @@ def test_slack_agent_mode_surface_is_query_only():
 def test_gdrive_defaults_to_oauth_when_no_sa(monkeypatch):
     """GDrive supports OAuth, so no ValueError when SA is missing."""
     monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
-    p = GDriveContextProvider()
+    p = GoogleDriveContextProvider()
     assert p.status().ok is True
     assert "oauth" in p.status().detail
 
@@ -615,7 +615,7 @@ def test_gdrive_defaults_to_oauth_when_no_sa(monkeypatch):
 def test_gdrive_status_fails_for_missing_sa_file(tmp_path):
     """When SA path points to nonexistent file, status reports failure."""
     missing = tmp_path / "missing.json"
-    p = GDriveContextProvider(service_account_path=str(missing))
+    p = GoogleDriveContextProvider(service_account_path=str(missing))
     status = p.status()
     assert status.ok is False
     assert "not found" in status.detail
@@ -625,7 +625,7 @@ def test_gdrive_status_fails_for_invalid_sa_json(tmp_path):
     """When SA file is not valid JSON, status reports failure."""
     bad_sa = tmp_path / "bad.json"
     bad_sa.write_text("not valid json")
-    p = GDriveContextProvider(service_account_path=str(bad_sa))
+    p = GoogleDriveContextProvider(service_account_path=str(bad_sa))
     status = p.status()
     assert status.ok is False
     assert "invalid" in status.detail
@@ -648,7 +648,7 @@ def test_gdrive_status_reports_service_account_email(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sa_module.Credentials, "from_service_account_file", mock_from_sa_file)
 
-    p = GDriveContextProvider(service_account_path=str(sa))
+    p = GoogleDriveContextProvider(service_account_path=str(sa))
     status = p.status()
     assert status.ok is True
     assert "service_account" in status.detail
@@ -657,7 +657,7 @@ def test_gdrive_status_reports_service_account_email(tmp_path, monkeypatch):
 
 def test_gdrive_default_surface_is_single_query_tool(monkeypatch):
     monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
-    p = GDriveContextProvider()
+    p = GoogleDriveContextProvider()
     tools = p.get_tools()
     assert [t.name for t in tools] == ["query_gdrive"]
 
@@ -728,14 +728,14 @@ def test_calendar_does_not_require_delegated_user(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sa_module.Credentials, "from_service_account_file", mock_from_sa_file)
 
-    p = CalendarContextProvider(service_account_path=str(sa))
+    p = GoogleCalendarContextProvider(service_account_path=str(sa))
     status = p.status()
     assert status.ok is True
 
 
 def test_calendar_status_fails_for_missing_sa_file(tmp_path):
     missing = tmp_path / "missing.json"
-    p = CalendarContextProvider(service_account_path=str(missing))
+    p = GoogleCalendarContextProvider(service_account_path=str(missing))
     status = p.status()
     assert status.ok is False
     assert "not found" in status.detail
@@ -743,7 +743,7 @@ def test_calendar_status_fails_for_missing_sa_file(tmp_path):
 
 def test_calendar_status_reports_oauth_not_authenticated(monkeypatch):
     monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
-    p = CalendarContextProvider(token_path="/nonexistent/token.json")
+    p = GoogleCalendarContextProvider(token_path="/nonexistent/token.json")
     status = p.status()
     assert status.ok is True
     assert "not yet authenticated" in status.detail
@@ -751,14 +751,14 @@ def test_calendar_status_reports_oauth_not_authenticated(monkeypatch):
 
 def test_calendar_default_surface_is_single_query_tool(monkeypatch):
     monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
-    p = CalendarContextProvider()
+    p = GoogleCalendarContextProvider()
     tools = p.get_tools()
     assert [t.name for t in tools] == ["query_calendar"]
 
 
 def test_calendar_write_enabled_adds_update_tool(monkeypatch):
     monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
-    p = CalendarContextProvider(write=True)
+    p = GoogleCalendarContextProvider(write=True)
     tools = p.get_tools()
     assert [t.name for t in tools] == ["query_calendar", "update_calendar"]
 
@@ -766,7 +766,7 @@ def test_calendar_write_enabled_adds_update_tool(monkeypatch):
 def test_calendar_write_toolkit_includes_find_available_slots(monkeypatch):
     """Write agent needs find_available_slots to schedule meetings."""
     monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
-    p = CalendarContextProvider(write=True)
+    p = GoogleCalendarContextProvider(write=True)
     write_toolkit = p._build_write_toolkit()
     assert "find_available_slots" in write_toolkit.functions
 

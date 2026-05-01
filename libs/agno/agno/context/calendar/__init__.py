@@ -1,3 +1,5 @@
-from agno.context.calendar.provider import CalendarContextProvider
+from agno.context.calendar.provider import GoogleCalendarContextProvider
 
-__all__ = ["CalendarContextProvider"]
+CalendarContextProvider = GoogleCalendarContextProvider
+
+__all__ = ["GoogleCalendarContextProvider", "CalendarContextProvider"]

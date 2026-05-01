@@ -140,7 +140,8 @@ class GmailContextProvider(ContextProvider):
         token_path: str | None = None,
         id: str = "gmail",
         name: str = "Gmail",
-        instructions: str | None = None,
+        read_instructions: str | None = None,
+        write_instructions: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
         read: bool = True,
@@ -163,8 +164,8 @@ class GmailContextProvider(ContextProvider):
                     "Set GOOGLE_DELEGATED_USER or pass delegated_user parameter."
                 )
 
-        self._read_instructions = instructions or DEFAULT_READ_INSTRUCTIONS
-        self._write_instructions = instructions or DEFAULT_WRITE_INSTRUCTIONS
+        self._read_instructions = read_instructions if read_instructions is not None else DEFAULT_READ_INSTRUCTIONS
+        self._write_instructions = write_instructions if write_instructions is not None else DEFAULT_WRITE_INSTRUCTIONS
         self._read_agent: Agent | None = None
         self._write_agent: Agent | None = None
 

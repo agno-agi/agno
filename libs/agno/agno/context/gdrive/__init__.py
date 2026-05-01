@@ -1,3 +1,5 @@
-from agno.context.gdrive.provider import DEFAULT_GDRIVE_INSTRUCTIONS, GDriveContextProvider
+from agno.context.gdrive.provider import DEFAULT_GDRIVE_INSTRUCTIONS, GoogleDriveContextProvider
 
-__all__ = ["DEFAULT_GDRIVE_INSTRUCTIONS", "GDriveContextProvider"]
+GDriveContextProvider = GoogleDriveContextProvider
+
+__all__ = ["DEFAULT_GDRIVE_INSTRUCTIONS", "GoogleDriveContextProvider", "GDriveContextProvider"]
