@@ -7,12 +7,10 @@ instead of returning garbage UTF-8 decoded bytes.
 
 from __future__ import annotations
 
-import json
-from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agno.context.gdrive.tools import BINARY_MIME_PREFIXES, _is_binary_mime
+from agno.context.gdrive.tools import _is_binary_mime
 
 
 class TestBinaryMimeDetection:

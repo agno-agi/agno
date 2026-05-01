@@ -87,15 +87,26 @@ DRIVE_QUERY_INSTRUCTIONS = textwrap.dedent(f"""\
 authenticate = google_authenticate("drive")
 
 BINARY_MIME_PREFIXES = (
+    # Office formats
     "application/vnd.openxmlformats-officedocument",  # .docx, .xlsx, .pptx
     "application/vnd.ms-",  # .doc, .xls, .ppt (legacy Office)
     "application/msword",  # .doc (alternative)
+    # Documents
     "application/pdf",
+    "application/rtf",
+    "application/epub",
+    # Archives
     "application/zip",
     "application/x-zip",
     "application/gzip",
+    "application/x-gzip",
     "application/x-tar",
+    "application/x-rar",
+    "application/x-7z",
+    "application/x-bzip",
+    # Generic binary
     "application/octet-stream",
+    # Media
     "image/",
     "video/",
     "audio/",
