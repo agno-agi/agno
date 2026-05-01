@@ -116,8 +116,9 @@ GMAIL_QUERY_INSTRUCTIONS = textwrap.dedent("""\
     - `after:2024/01/01` / `before:2024/12/31` — absolute date range
     - `label:work` — filter by label
     - `from:me` — emails sent by the user
-    - Combine with spaces (AND): `from:me newer_than:7d has:attachment`
+    - Combine with spaces (AND): `from:me newer_than:7d has:attachment`""")
 
+GMAIL_COMPOSE_INSTRUCTIONS = textwrap.dedent("""
     ## Composing Emails
     - **New email:** `send_email(to, subject, body)` or `create_draft_email(to, subject, body)`
     - **Reply (send now):** `send_email_reply(message_id, body)` keeps the message in the thread
@@ -207,8 +208,12 @@ class GmailTools(Toolkit):
             instructions (Optional[str]): Custom instructions for the toolkit. If None, uses DEFAULT_INSTRUCTIONS.
             add_instructions (bool): Whether to inject toolkit instructions into the agent system prompt. Defaults to True.
         """
+        # Build instructions dynamically based on enabled tools
+        has_compose = create_draft_email or send_email or send_email_reply or send_draft or update_draft
         if instructions is None:
             self.instructions = GMAIL_QUERY_INSTRUCTIONS
+            if has_compose:
+                self.instructions += GMAIL_COMPOSE_INSTRUCTIONS
         else:
             self.instructions = instructions
 
