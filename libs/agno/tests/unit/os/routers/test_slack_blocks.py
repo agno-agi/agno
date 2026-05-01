@@ -112,7 +112,7 @@ class TestConfirmationRow:
 
     def test_card_title_contains_tool_name(self):
         card = build_pause_message("A1", [_make_requirement(tool_name="delete_file")])[0]
-        assert card.title.text == "*Approve: delete_file*"
+        assert card.title.text == "*delete_file*"
 
     def test_card_subtitle_renders_args(self):
         card = build_pause_message("A1", [_make_requirement(tool_name="delete_file", tool_args={"path": "/tmp/x"})])[0]
@@ -129,10 +129,11 @@ class TestConfirmationRow:
         assert card.actions[0].value == "r1|A1|"
         assert card.actions[1].value == "r1|A1|"
 
-    def test_buttons_carry_confirm_dialogs(self):
+    def test_buttons_no_confirm_dialogs(self):
+        # Direct action without confirmation popup for faster UX
         card = build_pause_message("A1", [_make_requirement()])[0]
-        assert card.actions[0].confirm is not None
-        assert card.actions[1].confirm is not None
+        assert card.actions[0].confirm is None
+        assert card.actions[1].confirm is None
 
 
 # -- User-input row --
