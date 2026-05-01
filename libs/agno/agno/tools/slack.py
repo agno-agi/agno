@@ -13,7 +13,7 @@ from agno.exceptions import PathSecurityError
 from agno.run.base import RunContext
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning, logger
-from agno.utils.path_safety import safe_join
+from agno.utils.path_safety import safe_join, safe_join_subpath
 
 try:
     from slack_sdk import WebClient
@@ -267,26 +267,28 @@ class SlackTools(Toolkit):
         return entry
 
     def _save_file_to_disk(self, content: bytes, filename: str) -> Optional[str]:
-        """Save file to disk if output_directory is set. Return file path or None.
+        """Save file to disk if output_directory is set.
 
-        Path-safety is delegated to ``agno.utils.path_safety.safe_join``. Returns
-        ``None`` on rejection (``PathSecurityError``) or filesystem failure
-        (``OSError``).
+        Returns the saved path string, or ``None`` if no ``output_directory``
+        is configured, or ``None`` on filesystem failure (``OSError``).
+
+        Raises:
+            PathSecurityError: When ``filename`` is rejected by ``safe_join``.
+                The caller (``upload_file``, ``download_file``) is responsible
+                for surfacing this to the agent rather than swallowing it.
         """
         if not self.output_directory:
             return None
 
+        # PathSecurityError propagates — see docstring.
+        file_path = safe_join(self.output_directory, filename)
         try:
-            file_path = safe_join(self.output_directory, filename)
             file_path.write_bytes(content)
-            log_debug(f"File saved to: {file_path}")
-            return str(file_path)
-        except PathSecurityError as e:
-            log_error(f"Failed to save file: security violation: {e}")
-            return None
         except OSError as e:
             log_warning(f"Failed to save file locally: {str(e)}")
             return None
+        log_debug(f"File saved to: {file_path}")
+        return str(file_path)
 
     @staticmethod
     def _channel_cache_key(channel: str) -> str:
@@ -632,7 +634,16 @@ class SlackTools(Toolkit):
                     {"error": f"File {filename} ({actual_mb:.1f}MB) exceeds {limit_mb:.0f}MB upload limit"}
                 )
 
-            file_path = self._save_file_to_disk(content_bytes, filename)
+            local_path: Optional[str] = None
+            local_path_error: Optional[str] = None
+            try:
+                local_path = self._save_file_to_disk(content_bytes, filename)
+            except PathSecurityError as e:
+                # Slack delivery is the primary action; local persistence is a
+                # side-effect. Surface the rejection to the agent via
+                # local_path_error but do NOT abort the upload.
+                local_path_error = f"local copy rejected: {e}"
+                log_error(f"upload_file: {local_path_error}")
 
             response = self.client.files_upload_v2(
                 channel=channel,
@@ -645,8 +656,10 @@ class SlackTools(Toolkit):
 
             # Copy to avoid mutating the SDK's response object
             result: Dict[str, Any] = dict(cast(Dict[str, Any], response.data))
-            if file_path:
-                result["local_path"] = file_path
+            if local_path:
+                result["local_path"] = local_path
+            if local_path_error:
+                result["local_path_error"] = local_path_error
 
             return json.dumps(result)
         except SlackApiError as e:
@@ -686,13 +699,23 @@ class SlackTools(Toolkit):
             download_response.raise_for_status()
             content = download_response.content
 
+            # Reject dest_path when there's no base to anchor it to.
+            if dest_path and not self.output_directory:
+                return json.dumps({"error": "dest_path requires output_directory to be configured on SlackTools"})
+
             save_path: Optional[Path] = None
-            if dest_path:
-                save_path = Path(dest_path).resolve()
-                if self.output_directory and not save_path.is_relative_to(self.output_directory.resolve()):
-                    return json.dumps({"error": "dest_path must be within the configured output_directory"})
-            elif self.output_directory:
-                save_path = self.output_directory / Path(filename).name
+            if self.output_directory:
+                try:
+                    if dest_path:
+                        # Treat dest_path as a sub-path of output_directory:
+                        # multi-segment allowed, drive/UNC/traversal rejected.
+                        save_path = safe_join_subpath(self.output_directory, dest_path)
+                    else:
+                        # filename comes from Slack's files.info — basename-only.
+                        save_path = safe_join(self.output_directory, filename)
+                except PathSecurityError as e:
+                    log_error(f"download_file rejected destination: {e}")
+                    return json.dumps({"error": f"Invalid destination path: {e}"})
 
             result: Dict[str, Any] = {
                 "file_id": file_id,

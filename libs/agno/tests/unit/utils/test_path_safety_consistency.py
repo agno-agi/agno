@@ -84,7 +84,8 @@ def test_all_callers_reject_universally(evil):
     with tempfile.TemporaryDirectory() as tmp:
         with pytest.raises(PathSecurityError):
             _filegen(tmp)._save_file_to_disk("payload", evil)
-        assert _slack(tmp)._save_file_to_disk(b"payload", evil) is None
+        with pytest.raises(PathSecurityError):
+            _slack(tmp)._save_file_to_disk(b"payload", evil)
         ok, path = _toolkit()._check_path(evil, Path(tmp))
         assert ok is False
         assert path == Path(tmp)
@@ -104,7 +105,8 @@ def test_safe_join_callers_reject_filename_evil(evil):
     with tempfile.TemporaryDirectory() as tmp:
         with pytest.raises(PathSecurityError):
             _filegen(tmp)._save_file_to_disk("payload", evil)
-        assert _slack(tmp)._save_file_to_disk(b"payload", evil) is None
+        with pytest.raises(PathSecurityError):
+            _slack(tmp)._save_file_to_disk(b"payload", evil)
 
 
 # ---------------------------------------------------------------------------

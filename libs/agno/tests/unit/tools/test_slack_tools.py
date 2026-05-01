@@ -175,6 +175,65 @@ def test_download_file_base64(slack_tools):
         assert "content_base64" in json.loads(result)
 
 
+def test_upload_file_local_path_error_on_rejection(slack_tools, tmp_path):
+    """Slack upload still proceeds; local_path_error surfaces the rejection (H4)."""
+    slack_tools.output_directory = tmp_path
+    slack_tools.client.files_upload_v2.return_value = Mock(data={"ok": True})
+    # Control char in filename → PathSecurityError from safe_join.
+    result = slack_tools.upload_file("C1", b"data", "evil\x00name.bin")
+    parsed = json.loads(result)
+    assert parsed["ok"] is True
+    assert "local_path_error" in parsed
+    assert "control chars" in parsed["local_path_error"]
+    assert "local_path" not in parsed
+
+
+def test_download_file_dest_path_traversal_rejected(slack_tools, tmp_path):
+    """download_file rejects traversal in dest_path with structured JSON error (H1)."""
+    slack_tools.output_directory = tmp_path
+    slack_tools.client.files_info.return_value = {
+        "file": {"id": "F1", "name": "f.txt", "size": 4, "url_private": "https://files.slack.com/f.txt"}
+    }
+    with patch("agno.tools.slack.httpx.get") as mock_get:
+        mock_get.return_value.content = b"data"
+        mock_get.return_value.raise_for_status = Mock()
+        result = slack_tools.download_file("F1", dest_path="../../escape.bin")
+        parsed = json.loads(result)
+        assert "error" in parsed
+        assert "Invalid destination path" in parsed["error"]
+
+
+def test_download_file_dest_path_without_output_directory_rejected(slack_tools):
+    """download_file requires output_directory when dest_path is supplied (H1)."""
+    slack_tools.output_directory = None
+    slack_tools.client.files_info.return_value = {
+        "file": {"id": "F1", "name": "f.txt", "size": 4, "url_private": "https://files.slack.com/f.txt"}
+    }
+    with patch("agno.tools.slack.httpx.get") as mock_get:
+        mock_get.return_value.content = b"data"
+        mock_get.return_value.raise_for_status = Mock()
+        result = slack_tools.download_file("F1", dest_path="ok.bin")
+        parsed = json.loads(result)
+        assert "error" in parsed
+        assert "output_directory" in parsed["error"]
+
+
+def test_download_file_dest_path_subdir_lands_inside_output_directory(slack_tools, tmp_path):
+    """download_file accepts legitimate subdir in dest_path (H1 happy path)."""
+    slack_tools.output_directory = tmp_path
+    slack_tools.client.files_info.return_value = {
+        "file": {"id": "F1", "name": "f.txt", "size": 4, "url_private": "https://files.slack.com/f.txt"}
+    }
+    (tmp_path / "subdir").mkdir()
+    with patch("agno.tools.slack.httpx.get") as mock_get:
+        mock_get.return_value.content = b"data"
+        mock_get.return_value.raise_for_status = Mock()
+        result = slack_tools.download_file("F1", dest_path="subdir/foo.bin")
+        parsed = json.loads(result)
+        assert "path" in parsed
+        assert (tmp_path / "subdir" / "foo.bin").read_bytes() == b"data"
+
+
 # === Extended Tools ===
 
 

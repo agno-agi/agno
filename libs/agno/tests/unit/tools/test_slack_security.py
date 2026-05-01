@@ -35,8 +35,10 @@ def test_absolute_path_lands_inside_output_dir():
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")
-def test_symlink_escape_returns_none():
-    """Symlink within output_dir pointing outside is rejected; returns None."""
+def test_symlink_escape_raises_path_security_error():
+    """Symlink within output_dir pointing outside raises PathSecurityError (H3)."""
+    from agno.exceptions import PathSecurityError
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         outside = Path(tmp_dir) / "outside"
         outside.mkdir()
@@ -47,16 +49,18 @@ def test_symlink_escape_returns_none():
         except OSError:
             pytest.skip("Symlink creation not permitted on this platform")
         tool = _make_slack_tools(str(inside))
-        result = tool._save_file_to_disk(b"payload", "escape")
-        assert result is None
+        with pytest.raises(PathSecurityError, match="resolves outside|symlink escape"):
+            tool._save_file_to_disk(b"payload", "escape")
 
 
-def test_control_char_filename_returns_none():
-    """Control character in filename is rejected by safe_join; SlackTools returns None."""
+def test_control_char_filename_raises_path_security_error():
+    """Control character in filename is rejected by safe_join; SlackTools raises (H3)."""
+    from agno.exceptions import PathSecurityError
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = _make_slack_tools(tmp_dir)
-        result = tool._save_file_to_disk(b"payload", "report\x00hacked.bin")
-        assert result is None
+        with pytest.raises(PathSecurityError, match="control chars"):
+            tool._save_file_to_disk(b"payload", "report\x00hacked.bin")
 
 
 def test_normal_filename_saves_correctly():
@@ -66,3 +70,16 @@ def test_normal_filename_saves_correctly():
         result = tool._save_file_to_disk(b"payload-bytes", "report.bin")
         assert result == str((Path(tmp_dir) / "report.bin").resolve())
         assert (Path(tmp_dir) / "report.bin").read_bytes() == b"payload-bytes"
+
+
+def test_save_file_oserror_returns_none(monkeypatch):
+    """OSError is still swallowed (disk-full is advisory, not security)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tool = _make_slack_tools(tmp_dir)
+
+        def _raise_oserror(self, _data):
+            raise OSError("simulated disk full")
+
+        monkeypatch.setattr(Path, "write_bytes", _raise_oserror)
+        result = tool._save_file_to_disk(b"payload", "ok.bin")
+        assert result is None
