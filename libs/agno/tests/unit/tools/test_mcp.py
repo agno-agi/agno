@@ -769,3 +769,70 @@ async def test_parallel_calls_no_deadlock_with_timeout():
 
             assert len(results) == 3
             assert all(s is results[0] for s in results)
+
+
+@pytest.mark.asyncio
+async def test_structured_content_preserved_on_success():
+    """Test that structuredContent from CallToolResult is passed through to ToolResult."""
+    from agno.utils.mcp import get_entrypoint_for_tool
+    from agno.tools.function import ToolResult
+
+    # Mock the MCP tool
+    mock_tool = MagicMock()
+    mock_tool.name = "test_tool"
+
+    # Mock session with structuredContent in result
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.isError = False
+    mock_result.content = []  # no text/image content
+    mock_result.structuredContent = {"key": "value", "nested": {"a": 1}}
+    mock_session.call_tool = AsyncMock(return_value=mock_result)
+    mock_session.send_ping = AsyncMock()
+
+    # Create the tool function
+    tool_func = get_entrypoint_for_tool(mock_tool, mock_session)
+    result = await tool_func()
+
+    assert isinstance(result, ToolResult)
+    assert result.structured_content == {"key": "value", "nested": {"a": 1}}
+
+
+@pytest.mark.asyncio
+async def test_structured_content_preserved_on_error():
+    """Test that structuredContent is also preserved when isError=True."""
+    from agno.utils.mcp import get_entrypoint_for_tool
+    from agno.tools.function import ToolResult
+
+    mock_tool = MagicMock()
+    mock_tool.name = "test_tool"
+
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.isError = True
+    mock_result.content = "something went wrong"
+    mock_result.structuredContent = {"error_details": {"code": 42}}
+    mock_session.call_tool = AsyncMock(return_value=mock_result)
+    mock_session.send_ping = AsyncMock()
+
+    tool_func = get_entrypoint_for_tool(mock_tool, mock_session)
+    result = await tool_func()
+
+    assert isinstance(result, ToolResult)
+    assert "Error" in result.content
+    assert result.structured_content == {"error_details": {"code": 42}}
+
+
+def test_tool_result_serialization_round_trip():
+    """Test that ToolResult with structured_content survives model_dump/model_validate."""
+    from agno.tools.function import ToolResult
+
+    original = ToolResult(
+        content="hello",
+        structured_content={"key": "value", "list": [1, 2, 3]},
+    )
+    dumped = original.model_dump()
+    restored = ToolResult.model_validate(dumped)
+
+    assert restored.content == "hello"
+    assert restored.structured_content == {"key": "value", "list": [1, 2, 3]}
