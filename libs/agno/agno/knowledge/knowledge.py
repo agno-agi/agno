@@ -2525,31 +2525,30 @@ class Knowledge(RemoteKnowledge):
                 log_warning("Content id is required to update Knowledge content")
                 return None
 
-            # TODO: we shouldn't check for content here, we should trust the upsert method to handle conflicts
             content_row = self.contents_db.get_knowledge_content(content.id)
             if content_row is None:
-                log_warning(f"Content row not found for id: {content.id}, cannot update status")
-                return None
-
-            # Apply safe string handling for updates as well
-            if content.name is not None:
-                content_row.name = self._ensure_string_field(content.name, "content.name", default="")
-            if content.description is not None:
-                content_row.description = self._ensure_string_field(
-                    content.description, "content.description", default=""
-                )
-            if content.metadata is not None:
-                content_row.metadata = merge_user_metadata(content_row.metadata, content.metadata)
-            if content.status is not None:
-                content_row.status = content.status
-            if content.status_message is not None:
-                content_row.status_message = self._ensure_string_field(
-                    content.status_message, "content.status_message", default=""
-                )
-            if content.external_id is not None:
-                content_row.external_id = self._ensure_string_field(
-                    content.external_id, "content.external_id", default=""
-                )
+                log_warning(f"Content row not found for id: {content.id}, inserting new row via upsert")
+                content_row = self._build_knowledge_row(content)
+            else:
+                # Apply safe string handling for updates as well
+                if content.name is not None:
+                    content_row.name = self._ensure_string_field(content.name, "content.name", default="")
+                if content.description is not None:
+                    content_row.description = self._ensure_string_field(
+                        content.description, "content.description", default=""
+                    )
+                if content.metadata is not None:
+                    content_row.metadata = merge_user_metadata(content_row.metadata, content.metadata)
+                if content.status is not None:
+                    content_row.status = content.status
+                if content.status_message is not None:
+                    content_row.status_message = self._ensure_string_field(
+                        content.status_message, "content.status_message", default=""
+                    )
+                if content.external_id is not None:
+                    content_row.external_id = self._ensure_string_field(
+                        content.external_id, "content.external_id", default=""
+                    )
             content_row.updated_at = int(time.time())
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
@@ -2569,34 +2568,33 @@ class Knowledge(RemoteKnowledge):
                 log_warning("Content id is required to update Knowledge content")
                 return None
 
-            # TODO: we shouldn't check for content here, we should trust the upsert method to handle conflicts
             if isinstance(self.contents_db, AsyncBaseDb):
                 content_row = await self.contents_db.get_knowledge_content(content.id)
             else:
                 content_row = self.contents_db.get_knowledge_content(content.id)
             if content_row is None:
-                log_warning(f"Content row not found for id: {content.id}, cannot update status")
-                return None
-
-            # Apply safe string handling for updates
-            if content.name is not None:
-                content_row.name = self._ensure_string_field(content.name, "content.name", default="")
-            if content.description is not None:
-                content_row.description = self._ensure_string_field(
-                    content.description, "content.description", default=""
-                )
-            if content.metadata is not None:
-                content_row.metadata = merge_user_metadata(content_row.metadata, content.metadata)
-            if content.status is not None:
-                content_row.status = content.status
-            if content.status_message is not None:
-                content_row.status_message = self._ensure_string_field(
-                    content.status_message, "content.status_message", default=""
-                )
-            if content.external_id is not None:
-                content_row.external_id = self._ensure_string_field(
-                    content.external_id, "content.external_id", default=""
-                )
+                log_warning(f"Content row not found for id: {content.id}, inserting new row via upsert")
+                content_row = self._build_knowledge_row(content)
+            else:
+                # Apply safe string handling for updates
+                if content.name is not None:
+                    content_row.name = self._ensure_string_field(content.name, "content.name", default="")
+                if content.description is not None:
+                    content_row.description = self._ensure_string_field(
+                        content.description, "content.description", default=""
+                    )
+                if content.metadata is not None:
+                    content_row.metadata = merge_user_metadata(content_row.metadata, content.metadata)
+                if content.status is not None:
+                    content_row.status = content.status
+                if content.status_message is not None:
+                    content_row.status_message = self._ensure_string_field(
+                        content.status_message, "content.status_message", default=""
+                    )
+                if content.external_id is not None:
+                    content_row.external_id = self._ensure_string_field(
+                        content.external_id, "content.external_id", default=""
+                    )
 
             content_row.updated_at = int(time.time())
             if isinstance(self.contents_db, AsyncBaseDb):
