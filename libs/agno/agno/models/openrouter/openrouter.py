@@ -18,7 +18,7 @@ class OpenRouter(OpenAILike):
     A class for using models hosted on OpenRouter.
 
     Attributes:
-        id (str): The model id. Defaults to "gpt-4o".
+        id (str): The model id. Defaults to "gpt-5.4-mini".
         name (str): The model name. Defaults to "OpenRouter".
         provider (str): The provider name. Defaults to "OpenRouter".
         api_key (Optional[str]): The API key.
@@ -29,7 +29,7 @@ class OpenRouter(OpenAILike):
             these models in order. Example: ["anthropic/claude-sonnet-4", "deepseek/deepseek-r1"]
     """
 
-    id: str = "gpt-4o"
+    id: str = "gpt-5.4-mini"
     name: str = "OpenRouter"
     provider: str = "OpenRouter"
 
