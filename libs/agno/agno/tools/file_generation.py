@@ -23,6 +23,16 @@ except ImportError as e:
         f"reportlab not installed. PDF generation will not be available. Install with: pip install reportlab: {str(e)}"
     )
 
+try:
+    from docx import Document
+
+    DOCX_AVAILABLE = True
+except ImportError as e:
+    DOCX_AVAILABLE = False
+    log_warning(
+        f"python-docx not installed. DOCX generation will not be available. Install with: pip install python-docx: {str(e)}"
+    )
+
 
 class FileGenerationTools(Toolkit):
     def __init__(
@@ -30,6 +40,7 @@ class FileGenerationTools(Toolkit):
         enable_json_generation: bool = True,
         enable_csv_generation: bool = True,
         enable_pdf_generation: bool = True,
+        enable_docx_generation: bool = True,
         enable_txt_generation: bool = True,
         output_directory: Optional[str] = None,
         all: bool = False,
@@ -38,6 +49,7 @@ class FileGenerationTools(Toolkit):
         self.enable_json_generation = enable_json_generation
         self.enable_csv_generation = enable_csv_generation
         self.enable_pdf_generation = enable_pdf_generation and PDF_AVAILABLE
+        self.enable_docx_generation = enable_docx_generation and DOCX_AVAILABLE
         self.enable_txt_generation = enable_txt_generation
         self.output_directory = Path(output_directory) if output_directory else None
 
@@ -50,6 +62,10 @@ class FileGenerationTools(Toolkit):
             logger.warning("PDF generation requested but reportlab is not installed. Disabling PDF generation.")
             self.enable_pdf_generation = False
 
+        if enable_docx_generation and not DOCX_AVAILABLE:
+            logger.warning("DOCX generation requested but python-docx is not installed. Disabling DOCX generation.")
+            self.enable_docx_generation = False
+
         tools: List[Any] = []
         if all or enable_json_generation:
             tools.append(self.generate_json_file)
@@ -57,6 +73,8 @@ class FileGenerationTools(Toolkit):
             tools.append(self.generate_csv_file)
         if all or (enable_pdf_generation and PDF_AVAILABLE):
             tools.append(self.generate_pdf_file)
+        if all or (enable_docx_generation and DOCX_AVAILABLE):
+            tools.append(self.generate_docx_file)
         if all or enable_txt_generation:
             tools.append(self.generate_text_file)
 
@@ -356,3 +374,74 @@ class FileGenerationTools(Toolkit):
         except Exception as e:
             logger.exception("Failed to generate text file")
             return ToolResult(content=f"Error generating text file: {e}")
+
+    def generate_docx_file(
+        self, content: str, filename: Optional[str] = None, title: Optional[str] = None
+    ) -> ToolResult:
+        """Generate a DOCX file from the provided content.
+
+        Args:
+            content: The text content to write to the DOCX file.
+            filename: Optional filename for the generated file. If not provided, a UUID will be used.
+            title: Optional title for the DOCX document.
+
+        Returns:
+            ToolResult: Result containing the generated DOCX file as a FileArtifact.
+        """
+        if not DOCX_AVAILABLE:
+            return ToolResult(
+                content="DOCX generation is not available. Please install python-docx: pip install python-docx"
+            )
+
+        try:
+            log_debug(f"Generating DOCX file with content length: {len(content)}")
+
+            # Create DOCX content in memory
+            document = Document()
+
+            if title:
+                document.add_paragraph(title)
+
+            # Split content into paragraphs and add to document
+            paragraphs = content.split("\n\n")
+            for para in paragraphs:
+                if para.strip():
+                    document.add_paragraph(para.strip())
+
+            buffer = io.BytesIO()
+            document.save(buffer)
+            docx_content = buffer.getvalue()
+            buffer.close()
+
+            # Generate filename if not provided
+            if not filename:
+                filename = f"generated_file_{str(uuid4())[:8]}.docx"
+            elif not filename.endswith(".docx"):
+                filename += ".docx"
+
+            # Save file to disk (if output_directory is set)
+            file_path = self._save_file_to_disk(docx_content, filename)
+
+            # Create FileArtifact
+            file_artifact = File(
+                id=str(uuid4()),
+                content=docx_content,
+                mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                file_type="docx",
+                filename=filename,
+                size=len(docx_content),
+                filepath=file_path if file_path else None,
+            )
+
+            log_debug("DOCX file generated successfully")
+            success_msg = f"DOCX file '{filename}' has been generated successfully with {len(docx_content)} bytes."
+            if file_path:
+                success_msg += f" File saved to: {file_path}"
+            else:
+                success_msg += " File is available in response."
+
+            return ToolResult(content=success_msg, files=[file_artifact])
+
+        except Exception as e:
+            logger.exception("Failed to generate DOCX file")
+            return ToolResult(content=f"Error generating DOCX file: {e}")

@@ -6,7 +6,7 @@ The tool can generate files from agent responses and make them available for dow
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.file_generation import FileGenerationTools
 
 # ---------------------------------------------------------------------------
@@ -15,7 +15,7 @@ from agno.tools.file_generation import FileGenerationTools
 
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-4o"),
     db=SqliteDb(db_file="tmp/test.db"),
     tools=[FileGenerationTools(output_directory="tmp")],
     description="You are a helpful assistant that can generate files in various formats.",
@@ -88,6 +88,21 @@ def example_text_generation():
     print()
 
 
+def example_docx_generation():
+    """Example: Generate a DOCX file"""
+    print("=== DOCX File Generation Example ===")
+    response = agent.run(
+        "Create a DOCX report about customer onboarding best practices. Include sections for welcome email, product tour, and success check-ins."
+    )
+    print(response.content)
+    if response.files:
+        for file in response.files:
+            print(f"Generated file: {file.filename} ({file.size} bytes)")
+            if file.url:
+                print(f"File location: {file.url}")
+    print()
+
+
 # ---------------------------------------------------------------------------
 # Run Agent
 # ---------------------------------------------------------------------------
@@ -96,4 +111,4 @@ if __name__ == "__main__":
     print("File Generation Tool Cookbook Example")
     print("=" * 50)
 
-    example_pdf_generation()
+    example_docx_generation()
