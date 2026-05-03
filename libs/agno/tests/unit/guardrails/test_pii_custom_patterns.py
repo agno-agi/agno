@@ -21,7 +21,7 @@ class TestPIICustomPatterns:
             enable_credit_card_check=False,
             enable_email_check=False,
             enable_phone_check=False,
-            custom_patterns={"bank_account": r"\d{10}"},
+            custom_patterns={"bank_account": r"\b\d{10}\b"},
         )
         from agno.exceptions import InputCheckError
         inp = _make_input("Account number: 1234567890")
@@ -49,7 +49,7 @@ class TestPIICustomPatterns:
             enable_credit_card_check=False,
             enable_email_check=False,
             enable_phone_check=False,
-            custom_patterns={"bank_account": r"\d{10}"},
+            custom_patterns={"bank_account": r"\b\d{10}\b"},
         )
         inp = _make_input("Hello, how are you?")
         guardrail.check(inp)  # should not raise
@@ -62,7 +62,7 @@ class TestPIICustomPatterns:
             enable_email_check=False,
             enable_phone_check=False,
             custom_patterns={
-                "bank_account": r"\d{10}",
+                "bank_account": r"\b\d{10}\b",
                 "employee_id": re.compile(r"EMP-\d{4}"),
             },
         )
