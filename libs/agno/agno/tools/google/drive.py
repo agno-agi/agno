@@ -585,7 +585,6 @@ class GoogleDriveTools(Toolkit):
                             "file": metadata,
                             "content": content,
                             "contentLength": len(content),
-                            "exportMimeType": None,
                             "extractedFrom": fmt,
                         }
                     )
