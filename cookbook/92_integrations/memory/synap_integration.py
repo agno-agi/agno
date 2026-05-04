@@ -9,8 +9,20 @@ preferences, episodes, emotions, and temporal events from conversations and retr
 only what is relevant to the current query — so agents remember users across sessions
 without any manual bookkeeping.
 
-Install:
-    pip install maximem-synap-agno
+Setup
+-----
+1. Install dependencies::
+
+       pip install maximem-synap-agno openai
+
+2. Set environment variables::
+
+       export SYNAP_API_KEY=<your-key>   # get a free key at https://synap.maximem.ai
+       export OPENAI_API_KEY=<your-key>  # used by OpenAIChat() in this example
+
+3. Run::
+
+       python synap_integration.py
 
 Docs: https://docs.maximem.ai/integrations/agno
 Dashboard: https://synap.maximem.ai
