@@ -14,6 +14,7 @@ Install:
 
 Docs: https://docs.maximem.ai/integrations/agno
 Dashboard: https://synap.maximem.ai
+Open source: https://github.com/maximem-ai/maximem_synap_sdk/tree/main/packages/integrations
 """
 
 import os
