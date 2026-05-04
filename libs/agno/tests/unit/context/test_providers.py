@@ -605,11 +605,12 @@ def test_slack_agent_mode_surface_is_query_only():
 
 
 def test_gdrive_defaults_to_oauth_when_no_sa(monkeypatch):
-    """GDrive supports OAuth, so no ValueError when SA is missing."""
+    """GDrive supports OAuth — status reports unauthenticated when no token."""
     monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
     p = GoogleDriveContextProvider()
-    assert p.status().ok is True
-    assert "oauth" in p.status().detail
+    status = p.status()
+    assert status.ok is False
+    assert "not authenticated" in status.detail
 
 
 def test_gdrive_status_fails_for_missing_sa_file(tmp_path):
