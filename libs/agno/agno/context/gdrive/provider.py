@@ -21,8 +21,18 @@ by default; uploads/downloads are disabled.
    - Or pass ``credentials_path`` / ``token_path`` directly
    - Opens browser on first use, caches token to ``gdrive_token.json``
 
-Uses ``GoogleDriveTools`` with ``corpora="allDrives"`` so service accounts
-can see files inside shared folders and Shared Drives.
+**Search scope (Shared Drive support):**
+
+By default uses ``corpora="allDrives"`` so service accounts can see files
+inside shared folders and Shared Drives. Customize with:
+
+- ``corpora="user"`` — personal Drive only (My Drive + Shared with me)
+- ``corpora="domain"`` — all files shared to user's domain
+- ``corpora="drive"`` + ``drive_id="..."`` — single Shared Drive
+- ``corpora="allDrives"`` — everything (default)
+
+When using non-"user" corpora, set ``supports_all_drives=True`` and
+``include_items_from_all_drives=True`` (both default to True).
 """
 
 from __future__ import annotations

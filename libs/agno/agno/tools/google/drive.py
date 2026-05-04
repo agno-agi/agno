@@ -19,6 +19,19 @@ Required Setup:
 4. Optionally set GOOGLE_DELEGATED_USER to impersonate a user via domain-wide delegation
 
 Install dependencies: `pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`
+
+**Shared Drive Support:**
+
+By default, searches only personal Drive (corpora="user"). To access Shared Drives:
+
+    GoogleDriveTools(
+        corpora="allDrives",           # Search all drives
+        supports_all_drives=True,      # Enable Shared Drive API features
+        include_items_from_all_drives=True,  # Include Shared Drive items in results
+    )
+
+Corpora options: "user" (default), "domain", "drive" (requires drive_id), "allDrives".
+See: https://developers.google.com/drive/api/guides/enable-shareddrives
 """
 
 import asyncio
