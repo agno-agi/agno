@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from jwt import PyJWK
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from agno.os.auth import INTERNAL_SERVICE_SCOPES
+from agno.os.auth import INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
 from agno.os.scopes import (
     AgentOSScope,
     get_accessible_resource_ids,
@@ -640,8 +640,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
         detail: str,
         origin: Optional[str] = None,
         cors_allowed_origins: Optional[List[str]] = None,
+        required_scopes: Optional[List[str]] = None,
     ) -> JSONResponse:
         """Create an error response with CORS headers."""
+        if required_scopes:
+            detail = build_insufficient_permissions_detail(required_scopes)
         response = JSONResponse(status_code=status_code, content={"detail": detail})
 
         # Add CORS headers to the error response
@@ -720,7 +723,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
                             f"Required: {required_scopes}, Token has: {internal_scopes}"
                         )
                         return self._create_error_response(
-                            403, "Insufficient permissions", origin, cors_allowed_origins
+                            403,
+                            "Insufficient permissions",
+                            origin,
+                            cors_allowed_origins,
+                            required_scopes=required_scopes,
                         )
 
             return await call_next(request)
@@ -792,6 +799,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
                     resource_id = self._extract_resource_id_from_path(path, resource_type)
 
                 required_scopes = self._get_required_scopes(method, path)
+                request.state.required_scopes = required_scopes
 
                 # Empty list [] means no scopes required (allow access)
                 if required_scopes:
@@ -831,7 +839,11 @@ class JWTMiddleware(BaseHTTPMiddleware):
                             f"Insufficient scopes for {method} {path}. Required: {required_scopes}, User has: {scopes}"
                         )
                         return self._create_error_response(
-                            403, "Insufficient permissions", origin, cors_allowed_origins
+                            403,
+                            "Insufficient permissions",
+                            origin,
+                            cors_allowed_origins,
+                            required_scopes=required_scopes,
                         )
 
                     log_debug(f"Scope check passed for {method} {path}. User scopes: {scopes}")

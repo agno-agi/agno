@@ -1382,6 +1382,80 @@ def test_router_denies_run_without_scope(jwt_test_agent):
     assert "Insufficient permissions" in response.json()["detail"]
 
 
+def test_403_detail_includes_required_scopes_from_middleware(jwt_test_agent):
+    """403 from middleware scope check should name the required scope(s)."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        user_id_claim="sub",
+        scopes_claim="scopes",
+        validate=True,
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    payload = {
+        "sub": "test_user_123",
+        "scopes": ["agents:jwt-test-agent:read"],  # read but not run
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    response = client.post(
+        "/agents/jwt-test-agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": "denied", "stream": "false"},
+    )
+
+    assert response.status_code == 403
+    detail = response.json()["detail"]
+    assert "Insufficient permissions" in detail
+    assert "Required scope(s):" in detail
+    assert "agents:run" in detail
+
+
+def test_403_detail_includes_required_scopes_from_listing_endpoint(jwt_test_agent):
+    """403 from list-endpoint check should name the required scope (e.g. agents:read)."""
+
+    agent_os = AgentOS(agents=[jwt_test_agent])
+    app = agent_os.get_app()
+
+    app.add_middleware(
+        JWTMiddleware,
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        user_id_claim="sub",
+        scopes_claim="scopes",
+        validate=True,
+        authorization=True,
+    )
+
+    client = TestClient(app)
+
+    payload = {
+        "sub": "test_user_123",
+        "scopes": ["teams:read"],  # no agents scope at all
+        "exp": datetime.now(UTC) + timedelta(hours=1),
+        "iat": datetime.now(UTC),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+    response = client.get("/agents", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 403
+    detail = response.json()["detail"]
+    assert "Insufficient permissions" in detail
+    assert "Required scope(s):" in detail
+    assert "agents:read" in detail
+
+
 def test_admin_scope_grants_all_access(jwt_test_agent):
     """Test that admin scope grants access to all resources."""
 

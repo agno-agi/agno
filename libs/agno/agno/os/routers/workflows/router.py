@@ -1044,12 +1044,20 @@ def get_workflow_router(
     async def get_workflows(request: Request) -> List[WorkflowSummaryResponse]:
         # Filter workflows based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
-            from agno.os.auth import filter_resources_by_access, get_accessible_resources
+            from agno.os.auth import (
+                build_insufficient_permissions_detail,
+                filter_resources_by_access,
+                get_accessible_resources,
+            )
 
             # Check if user has any workflow scopes at all
             accessible_ids = get_accessible_resources(request, "workflows")
             if not accessible_ids:
-                raise HTTPException(status_code=403, detail="Insufficient permissions")
+                required_scopes = getattr(request.state, "required_scopes", None)
+                raise HTTPException(
+                    status_code=403,
+                    detail=build_insufficient_permissions_detail(required_scopes),
+                )
 
             accessible_workflows = filter_resources_by_access(request, os.workflows or [], "workflows")
         else:

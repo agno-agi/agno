@@ -145,6 +145,14 @@ def validate_websocket_token(token: str, settings: AgnoAPISettings) -> bool:
     return token == settings.os_security_key
 
 
+def build_insufficient_permissions_detail(required_scopes: Optional[List[str]]) -> str:
+    """Format a 403 detail string, appending the required scope(s) when known."""
+    base = "Insufficient permissions"
+    if required_scopes:
+        return f"{base}. Required scope(s): {', '.join(required_scopes)}"
+    return base
+
+
 def get_accessible_resources(request: Request, resource_type: str) -> Set[str]:
     """
     Get the set of resource IDs the user has access to based on their scopes.
