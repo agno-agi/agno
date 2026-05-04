@@ -26,8 +26,6 @@ import json
 from typing import Any, Optional, cast
 
 from agno.tools.google.drive import (
-    BINARY_MIME_PREFIXES,
-    TEXT_EXCEPTIONS,
     GoogleDriveTools,
     WorkspaceType,
     _is_binary_mime,
@@ -47,7 +45,6 @@ except ImportError:
 
 
 # Office formats we can extract text from with optional dependencies
-# BINARY_MIME_PREFIXES, TEXT_EXCEPTIONS, _is_binary_mime imported from base toolkit
 DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PPTX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
