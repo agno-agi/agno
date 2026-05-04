@@ -35,6 +35,7 @@ from agno.utils.log import log_debug, log_warning, logger, use_agent_logger, use
 from agno.utils.merge_dict import merge_dictionaries
 from agno.workflow.types import (
     ErrorRequirement,
+    ExecutorType,
     HumanReview,
     OnError,
     OnReject,
@@ -895,14 +896,12 @@ class Step:
                             self._store_executor_response(workflow_run_response, response)  # type: ignore
 
                         # Check if agent/team response is paused (e.g., due to tool HITL)
-                        # This is NOT supported at workflow level - warn the user
+                        # Propagate the pause to the workflow level
                         if hasattr(response, "is_paused") and response.is_paused:
-                            logger.warning(
-                                f"Step '{self.name}': Agent/Team response is paused (likely due to tool HITL). "
-                                "Agent tool-level HITL is NOT propagated to the workflow. "
-                                "The workflow will continue but the paused tool may not have executed. "
-                                "Consider using workflow-level HITL (Step.requires_confirmation) instead."
-                            )
+                            use_workflow_logger()
+                            step_output = self._process_step_output(response)
+                            step_output.is_paused = True
+                            return step_output
 
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
@@ -993,11 +992,19 @@ class Step:
         # Set session_id to match workflow's session_id for consistent event tracking
         if hasattr(event, "session_id") and workflow_run_response.session_id:
             event.session_id = workflow_run_response.session_id
-        if hasattr(event, "step_id"):
-            event.step_id = self.step_id
-        if hasattr(event, "step_name") and self.name is not None:
-            if getattr(event, "step_name", None) is None:
-                event.step_name = self.name
+        # For nested events, preserve the inner workflow's step_id/step_name
+        if not is_nested_event:
+            if hasattr(event, "step_id"):
+                event.step_id = self.step_id
+            if hasattr(event, "step_name") and self.name is not None:
+                if getattr(event, "step_name", None) is None:
+                    event.step_name = self.name
+        else:
+            # For nested events, set parent_step_id so consumers know which outer step contains them.
+            # Only set if not already set — the innermost enclosing step is the true host;
+            # outer layers must not overwrite it (breaks depth-2+ nesting).
+            if hasattr(event, "parent_step_id") and event.parent_step_id is None:
+                event.parent_step_id = self.step_id
         # Only set step_index if it's not already set (preserve parallel.py's tuples)
         if hasattr(event, "step_index") and step_index is not None:
             if event.step_index is None:
@@ -1232,18 +1239,18 @@ class Step:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
 
                         # Check if agent/team response is paused (e.g., due to tool HITL)
-                        # This is NOT supported at workflow level - warn the user
+                        # Propagate the pause to the workflow level
                         if (
                             active_executor_run_response is not None
                             and hasattr(active_executor_run_response, "is_paused")
                             and active_executor_run_response.is_paused
                         ):
-                            logger.warning(
-                                f"Step '{self.name}': Agent/Team response is paused (likely due to tool HITL). "
-                                "Agent tool-level HITL is NOT propagated to the workflow. "
-                                "The workflow will continue but the paused tool may not have executed. "
-                                "Consider using workflow-level HITL (Step.requires_confirmation) instead."
-                            )
+                            use_workflow_logger()
+                            paused_output = self._process_step_output(active_executor_run_response)
+                            paused_output.is_paused = True
+                            # paused state is already set on paused_output.is_paused
+                            yield paused_output
+                            return
 
                         final_response = active_executor_run_response  # type: ignore
 
@@ -1549,14 +1556,12 @@ class Step:
                             self._store_executor_response(workflow_run_response, response)  # type: ignore
 
                         # Check if agent/team response is paused (e.g., due to tool HITL)
-                        # This is NOT supported at workflow level - warn the user
+                        # Propagate the pause to the workflow level
                         if hasattr(response, "is_paused") and response.is_paused:
-                            logger.warning(
-                                f"Step '{self.name}': Agent/Team response is paused (likely due to tool HITL). "
-                                "Agent tool-level HITL is NOT propagated to the workflow. "
-                                "The workflow will continue but the paused tool may not have executed. "
-                                "Consider using workflow-level HITL (Step.requires_confirmation) instead."
-                            )
+                            use_workflow_logger()
+                            step_output = self._process_step_output(response)
+                            step_output.is_paused = True
+                            return step_output
 
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
@@ -1868,18 +1873,18 @@ class Step:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
 
                         # Check if agent/team response is paused (e.g., due to tool HITL)
-                        # This is NOT supported at workflow level - warn the user
+                        # Propagate the pause to the workflow level
                         if (
                             active_executor_run_response is not None
                             and hasattr(active_executor_run_response, "is_paused")
                             and active_executor_run_response.is_paused
                         ):
-                            logger.warning(
-                                f"Step '{self.name}': Agent/Team response is paused (likely due to tool HITL). "
-                                "Agent tool-level HITL is NOT propagated to the workflow. "
-                                "The workflow will continue but the paused tool may not have executed. "
-                                "Consider using workflow-level HITL (Step.requires_confirmation) instead."
-                            )
+                            use_workflow_logger()
+                            paused_output = self._process_step_output(active_executor_run_response)
+                            paused_output.is_paused = True
+                            # paused state is already set on paused_output.is_paused
+                            yield paused_output
+                            return
 
                         final_response = active_executor_run_response  # type: ignore
 
@@ -2116,6 +2121,40 @@ class Step:
 
         # If no previous step outputs, return the original message unchanged
         return message
+
+    def _create_executor_step_requirement(
+        self,
+        step_index: int,
+        executor_response: Union[RunOutput, TeamRunOutput],
+    ) -> StepRequirement:
+        """Create a StepRequirement from a paused executor (agent/team) response.
+
+        This propagates tool-level HITL requirements from the executor up to the workflow level,
+        similar to how teams propagate member pauses via _propagate_member_pause().
+        """
+        executor_id = getattr(self.active_executor, "id", None) or getattr(self.active_executor, "agent_id", None)
+        executor_name = getattr(self.active_executor, "name", None)
+        executor_type = ExecutorType.TEAM if isinstance(self.active_executor, Team) else ExecutorType.AGENT
+
+        # Serialize requirements for transport
+        serialized_reqs: List[Any] = []
+        if executor_response.requirements:
+            for req in executor_response.requirements:
+                serialized_reqs.append(req.to_dict() if hasattr(req, "to_dict") else req)
+
+        return StepRequirement(
+            step_id=self.step_id or str(uuid4()),
+            step_name=self.name,
+            step_index=step_index,
+            step_type=StepType.STEP,
+            requires_executor_input=True,
+            executor_requirements=serialized_reqs,
+            executor_id=executor_id,
+            executor_name=executor_name,
+            executor_run_id=executor_response.run_id,
+            executor_type=executor_type,
+            executor_session_id=getattr(executor_response, "session_id", None),
+        )
 
     def _process_step_output(self, response: Union[RunOutput, TeamRunOutput, StepOutput]) -> StepOutput:
         """Create StepOutput from execution response"""

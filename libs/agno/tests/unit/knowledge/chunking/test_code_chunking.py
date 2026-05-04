@@ -7,6 +7,12 @@ import pytest
 from agno.knowledge.chunking.code import CodeChunking
 from agno.knowledge.document.base import Document
 
+# Skip all tests in this module if tree-sitter is not installed
+try:
+    import tree_sitter_language_pack  # noqa: F401
+except ImportError:
+    pytestmark = pytest.mark.skip(reason="tree-sitter-language-pack not installed")
+
 
 @pytest.fixture
 def sample_python_code():
