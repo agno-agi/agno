@@ -29,6 +29,7 @@ Dashboard: https://synap.maximem.ai
 Open source: https://github.com/maximem-ai/maximem_synap_sdk/tree/main/packages/integrations
 """
 
+import asyncio
 import os
 import time
 
@@ -41,6 +42,7 @@ from synap_agno import SynapDb
 # Setup
 # ---------------------------------------------------------------------------
 sdk = MaximemSynapSDK(api_key=os.environ["SYNAP_API_KEY"])
+asyncio.run(sdk.initialize())
 
 # SynapDb extends Agno's InMemoryDb and routes user-memory operations through
 # Synap while keeping sessions and traces in-process.
