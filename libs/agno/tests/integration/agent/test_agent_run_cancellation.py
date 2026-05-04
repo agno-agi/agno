@@ -298,7 +298,8 @@ def test_cancel_non_existent_agent_run():
         db=SqliteDb(db_file="tmp/test_agent_cancel.db"),
     )
 
-    result = agent.cancel_run("non_existent_run_id")
+    # Use a unique run_id so cancel-before-start intent doesn't leak across tests
+    result = agent.cancel_run(f"non_existent_run_id_{uuid.uuid4().hex}")
     assert result is False, "Cancelling non-existent run should return False"
 
 

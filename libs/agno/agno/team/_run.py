@@ -896,7 +896,9 @@ def _run_tasks_stream(
         run_response = _handle_team_run_cancellation(run_response, e, run_messages)
         # Append cancelled event BEFORE storing so the DB copy includes it
         cancelled_event = handle_event(
-            create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+            create_team_run_cancelled_event(
+                from_run_response=run_response, reason=_normalize_team_cancellation_reason(run_response, e)
+            ),
             run_response,
             events_to_skip=team.events_to_skip,
             store_events=team.store_events,
@@ -1670,7 +1672,9 @@ def _run_stream(
                 run_response = _handle_team_run_cancellation(run_response, e, run_messages)
                 # Append cancelled event BEFORE storing so the DB copy includes it
                 cancelled_event = handle_event(
-                    create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                    create_team_run_cancelled_event(
+                        from_run_response=run_response, reason=_normalize_team_cancellation_reason(run_response, e)
+                    ),
                     run_response,
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
@@ -2719,7 +2723,9 @@ async def _arun_tasks_stream(
         run_response = _handle_team_run_cancellation(run_response, e, run_messages)
         # Append cancelled event BEFORE storing so the DB copy includes it
         cancelled_event = handle_event(
-            create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+            create_team_run_cancelled_event(
+                from_run_response=run_response, reason=_normalize_team_cancellation_reason(run_response, e)
+            ),
             run_response,
             events_to_skip=team.events_to_skip,
             store_events=team.store_events,
@@ -3781,7 +3787,9 @@ async def _arun_stream(
                 run_response = _handle_team_run_cancellation(run_response, e, run_messages)
                 # Append cancelled event BEFORE storing so the DB copy includes it
                 cancelled_event = handle_event(
-                    create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                    create_team_run_cancelled_event(
+                        from_run_response=run_response, reason=_normalize_team_cancellation_reason(run_response, e)
+                    ),
                     run_response,
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
@@ -4111,13 +4119,23 @@ def _update_team_media(team: "Team", run_response: Union[TeamRunOutput, RunOutpu
         team.audio.extend(run_response.audio)
 
 
+def _normalize_team_cancellation_reason(
+    run_response: TeamRunOutput,
+    error: Union[RunCancelledException, KeyboardInterrupt],
+) -> str:
+    """Return a non-empty, human-readable reason for a team-run cancellation."""
+    if isinstance(error, RunCancelledException):
+        return str(error) or f"Run {run_response.run_id} was cancelled"
+    return "Operation cancelled by user"
+
+
 def _handle_team_run_cancellation(
     run_response: TeamRunOutput,
     error: Union[RunCancelledException, KeyboardInterrupt],
     run_messages: Optional["RunMessages"] = None,
 ) -> TeamRunOutput:
     """Prepare a team run response for cancellation: set status, preserve content and messages."""
-    reason = str(error) if isinstance(error, RunCancelledException) else "Operation cancelled by user"
+    reason = _normalize_team_cancellation_reason(run_response, error)
     log_info(f"Team run {run_response.run_id} was cancelled")
     run_response.status = RunStatus.cancelled
     if not run_response.content:
@@ -6270,7 +6288,9 @@ def _continue_run_stream(
                 run_response = _handle_team_run_cancellation(run_response, e, run_messages)
                 # Append cancelled event BEFORE storing so the DB copy includes it
                 cancelled_event = handle_event(
-                    create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                    create_team_run_cancelled_event(
+                        from_run_response=run_response, reason=_normalize_team_cancellation_reason(run_response, e)
+                    ),
                     run_response,
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
@@ -7262,7 +7282,9 @@ async def _acontinue_run_stream(
                 run_response = _handle_team_run_cancellation(run_response, e, run_messages)
                 # Append cancelled event BEFORE storing so the DB copy includes it
                 cancelled_event = handle_event(
-                    create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                    create_team_run_cancelled_event(
+                        from_run_response=run_response, reason=_normalize_team_cancellation_reason(run_response, e)
+                    ),
                     run_response,
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,

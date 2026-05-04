@@ -1117,7 +1117,9 @@ def _run_stream(
                 run_response = _handle_run_cancellation(run_response, e, run_messages)
                 # Append cancelled event BEFORE storing so the DB copy includes it
                 cancelled_event = handle_event(
-                    create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                    create_run_cancelled_event(
+                        from_run_response=run_response, reason=_normalize_cancellation_reason(run_response, e)
+                    ),
                     run_response,
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
@@ -1766,7 +1768,7 @@ async def _arun(
                     )
 
                 return run_response
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, asyncio.CancelledError):
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
                 try:
                     if agent_session is not None:
@@ -2128,6 +2130,9 @@ async def _arun_stream(
             if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
+            # Bind run_messages early — pre-hook iteration checks cancellation
+            # before run_messages is built, and the cancellation handler reads it.
+            run_messages: Optional[RunMessages] = None
             try:
                 # 1. Read or create session. Reuse pre-read session on first attempt.
                 if attempt == 0 and pre_session is not None:
@@ -2206,7 +2211,7 @@ async def _arun_stream(
                 )
 
                 # 6. Prepare run messages
-                run_messages: RunMessages = await aget_run_messages(
+                run_messages = await aget_run_messages(
                     agent,
                     run_response=run_response,
                     run_context=run_context,
@@ -2480,7 +2485,9 @@ async def _arun_stream(
                 run_response = _handle_run_cancellation(run_response, e, run_messages)
                 # Append cancelled event BEFORE storing so the DB copy includes it
                 cancelled_event = handle_event(
-                    create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                    create_run_cancelled_event(
+                        from_run_response=run_response, reason=_normalize_cancellation_reason(run_response, e)
+                    ),
                     run_response,
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
@@ -2531,7 +2538,7 @@ async def _arun_stream(
                 yield run_error
                 break
 
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, asyncio.CancelledError):
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
                 # Append cancelled event BEFORE storing so the DB copy includes it
                 cancelled_event = handle_event(
@@ -3499,7 +3506,9 @@ def _continue_run_stream(
                 run_response = _handle_run_cancellation(run_response, e, run_messages)
                 # Append cancelled event BEFORE storing so the DB copy includes it
                 cancelled_event = handle_event(
-                    create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                    create_run_cancelled_event(
+                        from_run_response=run_response, reason=_normalize_cancellation_reason(run_response, e)
+                    ),
                     run_response,
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
@@ -4222,7 +4231,7 @@ async def _acontinue_run(
                     )
 
                 return run_response
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, asyncio.CancelledError):
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
@@ -4652,7 +4661,9 @@ async def _acontinue_run_stream(
                 run_response = _handle_run_cancellation(run_response, e, run_messages)
                 # Append cancelled event BEFORE storing so the DB copy includes it
                 cancelled_event = handle_event(
-                    create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                    create_run_cancelled_event(
+                        from_run_response=run_response, reason=_normalize_cancellation_reason(run_response, e)
+                    ),
                     run_response,
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
@@ -4705,7 +4716,7 @@ async def _acontinue_run_stream(
                 # Yield the error event
                 yield run_error
                 break
-            except KeyboardInterrupt:
+            except (KeyboardInterrupt, asyncio.CancelledError):
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
@@ -4843,13 +4854,23 @@ def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
         scrub_history_messages_from_run_output(run_response)
 
 
+def _normalize_cancellation_reason(
+    run_response: RunOutput,
+    error: Union[RunCancelledException, KeyboardInterrupt],
+) -> str:
+    """Return a non-empty, human-readable reason for a cancellation."""
+    if isinstance(error, RunCancelledException):
+        return str(error) or f"Run {run_response.run_id} was cancelled"
+    return "Operation cancelled by user"
+
+
 def _handle_run_cancellation(
     run_response: RunOutput,
     error: Union[RunCancelledException, KeyboardInterrupt],
     run_messages: Optional["RunMessages"] = None,
 ) -> RunOutput:
     """Prepare a run response for cancellation: set status, preserve content and messages."""
-    reason = str(error) if isinstance(error, RunCancelledException) else "Operation cancelled by user"
+    reason = _normalize_cancellation_reason(run_response, error)
     log_info(f"Run {run_response.run_id} was cancelled")
     run_response.status = RunStatus.cancelled
     if not run_response.content:

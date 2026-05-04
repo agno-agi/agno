@@ -289,7 +289,8 @@ def test_cancel_non_existent_team_run():
         model=OpenAIChat(id="gpt-4o-mini"),
     )
 
-    result = team.cancel_run("non_existent_run_id")
+    # Use a unique run_id so cancel-before-start intent doesn't leak across tests
+    result = team.cancel_run(f"non_existent_run_id_{uuid.uuid4().hex}")
     assert result is False, "Cancelling non-existent run should return False"
 
 

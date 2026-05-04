@@ -126,3 +126,13 @@ DEBUG *
 
 ---
 
+### team_cancel_while_member_runs.py
+
+**Status:** PASS
+
+**Description:** Cancels a team run while a member agent is actively streaming. Verifies that cancellation propagates from the team to the in-flight member, and both runs are persisted with status=cancelled and partial content preserved.
+
+**Result:** Completed successfully. Two runs persisted (member + team), both Status=CANCELLED with partial content preserved (178 + 171 chars).
+
+---
+

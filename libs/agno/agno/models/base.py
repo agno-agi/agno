@@ -2143,6 +2143,8 @@ class Model(ABC):
             if a_exc.stop_execution:
                 stop_after_tool_call_from_exception = True
             # Set function call success to False if an exception occurred
+        except RunCancelledException:
+            raise
         except Exception as e:
             log_error(f"Error executing function {function_call.function.name}: {str(e)}")
             raise e
@@ -2468,6 +2470,8 @@ class Model(ABC):
                 success = result.status == "success"
         except AgentRunException as e:
             success = e
+        except RunCancelledException:
+            raise
         except Exception as e:
             log_error(f"Error executing function {function_call.function.name}: {str(e)}")
             success = False
@@ -2771,6 +2775,9 @@ class Model(ABC):
         for i, original_result in enumerate(results):
             # If result is an exception, skip processing it
             if isinstance(original_result, BaseException):
+                # Cancellation is intentional, not an error — re-raise without logging
+                if isinstance(original_result, RunCancelledException):
+                    raise original_result
                 log_error(f"Error during function call: {original_result}")
                 raise original_result
 
