@@ -70,8 +70,8 @@ class OpenAIChat(Model):
     strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     # Some OpenAI-compatible gateways reject requests that include both
     # response_format and tools. When True, response_format is omitted
-    # whenever tools are present.
-    omit_response_format_when_tools_present: bool = True
+    # whenever tools are present (opt in; most providers accept both).
+    omit_response_format_when_tools_present: bool = False
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     extra_body: Optional[Any] = None

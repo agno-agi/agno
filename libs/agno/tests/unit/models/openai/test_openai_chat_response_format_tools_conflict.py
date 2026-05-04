@@ -11,24 +11,24 @@ class OutputSchema(BaseModel):
 TOOLS = [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object", "properties": {}}}}]
 
 
-def test_chat_omits_response_format_when_tools_present_by_default():
+def test_chat_keeps_response_format_when_tools_present_by_default():
     model = OpenAIChat(id="gpt-4.1")
-    request_params = model.get_request_params(response_format=OutputSchema, tools=TOOLS)
-
-    assert "tools" in request_params
-    assert "response_format" not in request_params
-
-
-def test_chat_keeps_response_format_when_omit_flag_disabled():
-    model = OpenAIChat(id="gpt-4.1", omit_response_format_when_tools_present=False)
     request_params = model.get_request_params(response_format=OutputSchema, tools=TOOLS)
 
     assert "tools" in request_params
     assert "response_format" in request_params
 
 
-def test_openailike_omits_response_format_when_tools_present():
-    model = OpenAILike(id="claude-sonnet-4-5")
+def test_chat_omits_response_format_when_tools_present_opt_in():
+    model = OpenAIChat(id="gpt-4.1", omit_response_format_when_tools_present=True)
+    request_params = model.get_request_params(response_format=OutputSchema, tools=TOOLS)
+
+    assert "tools" in request_params
+    assert "response_format" not in request_params
+
+
+def test_openailike_omits_response_format_when_tools_present_opt_in():
+    model = OpenAILike(id="claude-sonnet-4-5", omit_response_format_when_tools_present=True)
     request_params = model.get_request_params(response_format=OutputSchema, tools=TOOLS)
 
     assert "tools" in request_params
