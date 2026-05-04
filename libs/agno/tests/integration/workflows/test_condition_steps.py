@@ -1258,3 +1258,76 @@ async def test_condition_on_error_pause_async():
     # Should re-raise the exception (same as fail)
     with pytest.raises(ValueError, match="Node failed!"):
         await condition.aexecute(step_input)
+
+
+@pytest.mark.asyncio
+async def test_condition_on_error_fail_async_streaming():
+    """Test async streaming condition with on_error='fail' re-raises exception."""
+    from agno.run.workflow import WorkflowRunOutput
+
+    condition = Condition(
+        name="ConditionalStep",
+        evaluator=True,
+        steps=[failing_step, success_step],
+        on_error=OnError.fail,
+    )
+    step_input = StepInput(input="test")
+
+    mock_response = WorkflowRunOutput(
+        run_id="test-run",
+        workflow_name="test-workflow",
+        workflow_id="test-id",
+        session_id="test-session",
+        content="",
+    )
+
+    with pytest.raises(ValueError, match="Node failed!"):
+        async for _ in condition.aexecute_stream(step_input, workflow_run_response=mock_response):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_condition_on_error_pause_async_streaming():
+    """Test async streaming condition with on_error='pause' re-raises exception."""
+    from agno.run.workflow import WorkflowRunOutput
+
+    condition = Condition(
+        name="ConditionalStep",
+        evaluator=True,
+        steps=[failing_step, success_step],
+        on_error=OnError.pause,
+    )
+    step_input = StepInput(input="test")
+
+    mock_response = WorkflowRunOutput(
+        run_id="test-run",
+        workflow_name="test-workflow",
+        workflow_id="test-id",
+        session_id="test-session",
+        content="",
+    )
+
+    with pytest.raises(ValueError, match="Node failed!"):
+        async for _ in condition.aexecute_stream(step_input, workflow_run_response=mock_response):
+            pass
+
+
+def test_condition_on_error_serialization_roundtrip():
+    """Test that on_error survives to_dict/from_dict roundtrip."""
+
+    for on_error_value in [OnError.skip, OnError.fail, OnError.pause]:
+        condition = Condition(
+            name="roundtrip_test",
+            evaluator=True,
+            steps=[success_step],
+            on_error=on_error_value,
+        )
+
+        data = condition.to_dict()
+        restored = Condition.from_dict(data)
+
+        restored_value = restored.on_error.value if isinstance(restored.on_error, OnError) else restored.on_error
+        expected_value = on_error_value.value if isinstance(on_error_value, OnError) else on_error_value
+        assert restored_value == expected_value, (
+            f"on_error={on_error_value} did not survive roundtrip: got {restored.on_error}"
+        )
