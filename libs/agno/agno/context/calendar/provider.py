@@ -148,6 +148,8 @@ class GoogleCalendarContextProvider(ContextProvider):
 
         self._read_instructions = read_instructions if read_instructions is not None else DEFAULT_READ_INSTRUCTIONS
         self._write_instructions = write_instructions if write_instructions is not None else DEFAULT_WRITE_INSTRUCTIONS
+        self._read_toolkit: GoogleCalendarTools | None = None
+        self._write_toolkit: GoogleCalendarTools | None = None
         self._read_agent: Agent | None = None
         self._write_agent: Agent | None = None
 
@@ -190,7 +192,17 @@ class GoogleCalendarContextProvider(ContextProvider):
         return self._read_write_tools()
 
     def _all_tools(self) -> list:
-        return [self._build_read_toolkit()]
+        return [self._ensure_read_toolkit()]
+
+    def _ensure_read_toolkit(self) -> GoogleCalendarTools:
+        if self._read_toolkit is None:
+            self._read_toolkit = self._build_read_toolkit()
+        return self._read_toolkit
+
+    def _ensure_write_toolkit(self) -> GoogleCalendarTools:
+        if self._write_toolkit is None:
+            self._write_toolkit = self._build_write_toolkit()
+        return self._write_toolkit
 
     def _ensure_read_agent(self) -> Agent:
         if self._read_agent is None:
@@ -199,7 +211,7 @@ class GoogleCalendarContextProvider(ContextProvider):
                 name=f"{self.name} (read)",
                 model=self.model,
                 instructions=self._read_instructions,
-                tools=[self._build_read_toolkit()],
+                tools=[self._ensure_read_toolkit()],
                 markdown=True,
             )
         return self._read_agent
@@ -211,7 +223,7 @@ class GoogleCalendarContextProvider(ContextProvider):
                 name=f"{self.name} (write)",
                 model=self.model,
                 instructions=self._write_instructions,
-                tools=[self._build_write_toolkit()],
+                tools=[self._ensure_write_toolkit()],
                 markdown=True,
             )
         return self._write_agent
