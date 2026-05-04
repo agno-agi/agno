@@ -3,7 +3,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -47,6 +47,7 @@ class LLMsTxtReader(Reader):
         timeout: int = 60,
         proxy: Optional[str] = None,
         skip_optional: bool = False,
+        allowed_hosts: Optional[List[str]] = None,
         **kwargs,
     ):
         if chunking_strategy is None:
@@ -57,6 +58,9 @@ class LLMsTxtReader(Reader):
         self.timeout = timeout
         self.proxy = proxy
         self.skip_optional = skip_optional
+        self.allowed_hosts: Optional[List[str]] = (
+            [host.lower() for host in allowed_hosts] if allowed_hosts is not None else None
+        )
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
@@ -73,6 +77,14 @@ class LLMsTxtReader(Reader):
         return [ContentType.URL]
 
     # Helpers
+
+    def is_host_allowed(self, url: str) -> bool:
+        if self.allowed_hosts is None:
+            return True
+        host = urlparse(url).hostname
+        if not host:
+            return False
+        return host.lower() in self.allowed_hosts
 
     def _process_response(self, content_type: str, text: str) -> str:
         if any(t in content_type for t in ["text/plain", "text/markdown"]):
@@ -174,9 +186,16 @@ class LLMsTxtReader(Reader):
         return overview, entries
 
     def fetch_url(self, url: str) -> Optional[str]:
+        if not self.is_host_allowed(url):
+            log_debug(f"Host not in allowed_hosts: {url}")
+            return None
         try:
             response = fetch_with_retry(
-                url, max_retries=1, proxy=self.proxy, timeout=self.timeout, follow_redirects=True
+                url,
+                max_retries=1,
+                proxy=self.proxy,
+                timeout=self.timeout,
+                follow_redirects=self.allowed_hosts is None,
             )
             return self._process_response(response.headers.get("content-type", ""), response.text)
         except Exception as e:
@@ -184,9 +203,16 @@ class LLMsTxtReader(Reader):
             return None
 
     async def async_fetch_url(self, client: httpx.AsyncClient, url: str) -> Optional[str]:
+        if not self.is_host_allowed(url):
+            log_debug(f"Host not in allowed_hosts: {url}")
+            return None
         try:
             response = await async_fetch_with_retry(
-                url, client=client, max_retries=1, timeout=self.timeout, follow_redirects=True
+                url,
+                client=client,
+                max_retries=1,
+                timeout=self.timeout,
+                follow_redirects=self.allowed_hosts is None,
             )
             return self._process_response(response.headers.get("content-type", ""), response.text)
         except Exception as e:
