@@ -25,7 +25,14 @@ import io
 import json
 from typing import Any, Optional, cast
 
-from agno.tools.google.drive import GoogleDriveTools, WorkspaceType, authenticate
+from agno.tools.google.drive import (
+    BINARY_MIME_PREFIXES,
+    TEXT_EXCEPTIONS,
+    GoogleDriveTools,
+    WorkspaceType,
+    _is_binary_mime,
+    authenticate,
+)
 from agno.utils.log import log_error
 
 try:
@@ -39,58 +46,8 @@ except ImportError:
     )
 
 
-BINARY_MIME_PREFIXES = (
-    # Microsoft Office
-    "application/vnd.openxmlformats-officedocument",  # .docx, .xlsx, .pptx
-    "application/vnd.ms-",  # .doc, .xls, .ppt (legacy Office)
-    "application/msword",  # .doc (alternative)
-    # OpenDocument (LibreOffice/OpenOffice)
-    "application/vnd.oasis.opendocument",  # .odt, .ods, .odp
-    "application/vnd.sun.xml",  # older OpenOffice
-    # Apple iWork
-    "application/vnd.apple.",  # .pages, .numbers, .key
-    # Documents
-    "application/pdf",
-    "application/x-pdf",
-    "application/rtf",
-    "application/x-rtf",
-    "application/epub",
-    "application/x-mobipocket-ebook",  # .mobi
-    "application/vnd.amazon.ebook",  # .azw
-    # Archives
-    "application/zip",
-    "application/x-zip",
-    "application/gzip",
-    "application/x-gzip",
-    "application/x-tar",
-    "application/tar",
-    "application/x-rar",
-    "application/vnd.rar",  # modern RAR
-    "application/x-7z",
-    "application/x-bzip",
-    "application/x-xz",
-    "application/x-lzma",
-    "application/zstd",
-    "application/x-zstd",
-    "application/java-archive",  # .jar
-    "application/vnd.android.package-archive",  # .apk
-    "application/x-iso9660-image",  # .iso
-    "application/x-apple-diskimage",  # .dmg
-    # Generic binary
-    "application/octet-stream",
-    # Media (excluding SVG which is text)
-    "image/",
-    "video/",
-    "audio/",
-    "font/",
-)
-
-# Text formats that start with binary prefixes but should be readable
-TEXT_EXCEPTIONS = {
-    "image/svg+xml",  # SVG is XML text
-}
-
 # Office formats we can extract text from with optional dependencies
+# BINARY_MIME_PREFIXES, TEXT_EXCEPTIONS, _is_binary_mime imported from base toolkit
 DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 PPTX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -144,13 +101,6 @@ def _extract_pptx_text(content_bytes: bytes) -> str:
                     if text.strip():
                         lines.append(text)
     return "\n".join(lines)
-
-
-def _is_binary_mime(mime_type: str) -> bool:
-    """Return True if the MIME type indicates a binary format that cannot be decoded as text."""
-    if mime_type in TEXT_EXCEPTIONS:
-        return False
-    return any(mime_type.startswith(prefix) for prefix in BINARY_MIME_PREFIXES)
 
 
 class AllDrivesGoogleDriveTools(GoogleDriveTools):

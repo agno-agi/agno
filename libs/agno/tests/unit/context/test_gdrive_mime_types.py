@@ -14,8 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from agno.context.gdrive.tools import _is_binary_mime
-from agno.tools.google.drive import GoogleDriveTools, WorkspaceType
+from agno.tools.google.drive import GoogleDriveTools, WorkspaceType, _is_binary_mime
 
 
 class TestGoogleWorkspaceExportable:
