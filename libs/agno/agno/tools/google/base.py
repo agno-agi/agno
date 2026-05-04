@@ -126,8 +126,11 @@ class GoogleToolkit(Toolkit):
         granted = set(row.get("granted_scopes") or [])
         required = set(self.scopes)
         if required and not required.issubset(granted):
-            log_debug(f"Token missing required scopes: need {required - granted}")
-            return None
+            missing = required - granted
+            raise PermissionError(
+                f"{self.google_service_name.title()} requires additional scopes: {', '.join(missing)}. "
+                "Please re-authenticate to grant access."
+            )
 
         try:
             # Decrypt token_data if encrypted (passes through if plaintext)

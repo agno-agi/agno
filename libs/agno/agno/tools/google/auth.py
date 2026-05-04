@@ -235,8 +235,11 @@ def load_token(
     granted = set(row.get("granted_scopes") or [])
     required = set(scopes)
     if required and not required.issubset(granted):
-        log_debug(f"Token missing required scopes: need {required - granted}")
-        return False
+        missing = required - granted
+        raise PermissionError(
+            f"Token missing required scopes: {', '.join(missing)}. "
+            "Please re-authenticate to grant access."
+        )
 
     try:
         from google.auth.transport.requests import Request
