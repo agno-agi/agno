@@ -23,6 +23,7 @@ back to ``SLACK_TOKEN`` since that's the variable agno's
 
 from __future__ import annotations
 
+import asyncio
 from os import getenv
 from typing import TYPE_CHECKING
 
@@ -74,7 +75,7 @@ class SlackContextProvider(ContextProvider):
         return Status(ok=True, detail="slack (token configured)")
 
     async def astatus(self) -> Status:
-        return self.status()
+        return await asyncio.to_thread(self.status)
 
     # ------------------------------------------------------------------
     # Query / update

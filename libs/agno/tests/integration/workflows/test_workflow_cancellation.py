@@ -13,7 +13,6 @@ from agno.run.workflow import WorkflowCancelledEvent
 from agno.workflow import Step, Workflow
 from agno.workflow.types import StepInput, StepOutput
 
-
 # ============================================================================
 # FIXTURES
 # ============================================================================
