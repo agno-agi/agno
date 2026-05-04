@@ -21,6 +21,8 @@ from agno.utils.media import (
 if TYPE_CHECKING:
     from agno.workflow.types import (
         ErrorRequirement,
+        ExecutorType,
+        PauseKind,
         StepOutput,
         StepRequirement,
         WorkflowMetrics,
@@ -30,6 +32,8 @@ else:
     StepRequirement = Any
     ErrorRequirement = Any
     WorkflowMetrics = Any
+    ExecutorType = Any
+    PauseKind = Any
 
 
 class WorkflowRunEvent(str, Enum):
@@ -46,6 +50,9 @@ class WorkflowRunEvent(str, Enum):
     step_started = "StepStarted"
     step_completed = "StepCompleted"
     step_paused = "StepPaused"
+    step_continued = "StepContinued"
+    step_executor_paused = "StepExecutorPaused"
+    step_executor_continued = "StepExecutorContinued"
     step_output_review = "StepOutputReview"
     step_error = "StepError"
 
@@ -257,6 +264,50 @@ class StepPausedEvent(BaseWorkflowRunOutputEvent):
     # User input fields
     requires_user_input: bool = False
     user_input_message: Optional[str] = None
+    user_input_schema: Optional[List[Dict[str, Any]]] = None
+
+
+@dataclass
+class StepContinuedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when a paused step resumes execution after step-level HITL is resolved"""
+
+    event: str = WorkflowRunEvent.step_continued.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    step_id: Optional[str] = None
+
+
+@dataclass
+class StepExecutorPausedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when a step's executor (agent/team) is paused for tool-level HITL"""
+
+    event: str = WorkflowRunEvent.step_executor_paused.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    step_id: Optional[str] = None
+
+    # Executor context
+    executor_id: Optional[str] = None
+    executor_name: Optional[str] = None
+    executor_run_id: Optional[str] = None
+    executor_type: Optional[Union[ExecutorType, str]] = None  # "agent" or "team"
+    executor_requirements: Optional[List[Any]] = None
+
+
+@dataclass
+class StepExecutorContinuedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when a paused executor resumes after executor-level HITL is resolved"""
+
+    event: str = WorkflowRunEvent.step_executor_continued.value
+    step_name: Optional[str] = None
+    step_index: Optional[Union[int, tuple]] = None
+    step_id: Optional[str] = None
+
+    # Executor context
+    executor_id: Optional[str] = None
+    executor_name: Optional[str] = None
+    executor_run_id: Optional[str] = None
+    executor_type: Optional[Union[ExecutorType, str]] = None  # "agent" or "team"
 
 
 @dataclass
@@ -508,6 +559,9 @@ WorkflowRunOutputEvent = Union[
     StepStartedEvent,
     StepCompletedEvent,
     StepPausedEvent,
+    StepContinuedEvent,
+    StepExecutorPausedEvent,
+    StepExecutorContinuedEvent,
     StepOutputReviewEvent,
     StepErrorEvent,
     LoopExecutionStartedEvent,
@@ -538,6 +592,9 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.step_started.value: StepStartedEvent,
     WorkflowRunEvent.step_completed.value: StepCompletedEvent,
     WorkflowRunEvent.step_paused.value: StepPausedEvent,
+    WorkflowRunEvent.step_continued.value: StepContinuedEvent,
+    WorkflowRunEvent.step_executor_paused.value: StepExecutorPausedEvent,
+    WorkflowRunEvent.step_executor_continued.value: StepExecutorContinuedEvent,
     WorkflowRunEvent.step_output_review.value: StepOutputReviewEvent,
     WorkflowRunEvent.step_error.value: StepErrorEvent,
     WorkflowRunEvent.loop_execution_started.value: LoopExecutionStartedEvent,
@@ -631,6 +688,9 @@ class WorkflowRunOutput:
     paused_step_index: Optional[int] = None
     paused_step_name: Optional[str] = None
 
+    # Kind of pause currently active: "step" or "executor". None when not paused.
+    pause_kind: Optional[Union[PauseKind, str]] = None
+
     @property
     def is_paused(self) -> bool:
         """Check if the workflow is paused waiting for step confirmation or router selection"""
@@ -676,6 +736,13 @@ class WorkflowRunOutput:
         return [req for req in self.step_requirements if req.needs_route_selection]
 
     @property
+    def steps_requiring_executor_resolution(self) -> List["StepRequirement"]:
+        """Get step requirements that need executor (agent/team) HITL resolution"""
+        if not self.step_requirements:
+            return []
+        return [req for req in self.step_requirements if req.needs_executor_resolution]
+
+    @property
     def active_error_requirements(self) -> List["ErrorRequirement"]:
         """Get error requirements that still need user decision"""
         if not self.error_requirements:
@@ -719,6 +786,12 @@ class WorkflowRunOutput:
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
+
+        if self.pause_kind is not None:
+            # Local import to avoid circular import at module load
+            from agno.workflow.types import PauseKind as _PauseKind
+
+            _dict["pause_kind"] = self.pause_kind.value if isinstance(self.pause_kind, _PauseKind) else self.pause_kind
 
         if self.metadata is not None:
             _dict["metadata"] = self.metadata
