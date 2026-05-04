@@ -231,6 +231,13 @@ def load_token(
     if not row:
         return False
 
+    # Check required scopes are included in granted scopes
+    granted = set(row.get("granted_scopes") or [])
+    required = set(scopes)
+    if required and not required.issubset(granted):
+        log_debug(f"Token missing required scopes: need {required - granted}")
+        return False
+
     try:
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
@@ -443,7 +450,10 @@ class GoogleAuth(Toolkit):
         }
         url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
         log_debug(f"Generated PKCE OAuth URL for user={user_id}, state_id={state_id}")
-        return json.dumps({"message": f"Connect {', '.join(services)}", "url": url})
+        link_text = f"Connect {', '.join(services)}"
+        # Pre-formatted link for Slack mrkdwn: <url|text>
+        slack_link = f"<{url}|{link_text}>"
+        return json.dumps({"message": link_text, "url": url, "link": slack_link})
 
     def handle_oauth_callback(self, code: str, state: str, db: Any) -> Dict[str, Any]:
         """Exchange an OAuth authorization code for credentials and store in DB.

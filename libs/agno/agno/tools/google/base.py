@@ -1,10 +1,10 @@
-import json
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.tools.google.auth import get_current_service, get_token_db, save_token
+from agno.utils.encryption import decrypt_dict
 from agno.utils.log import log_debug
 
 if TYPE_CHECKING:
@@ -122,9 +122,18 @@ class GoogleToolkit(Toolkit):
         if not row:
             return None
 
+        # Check required scopes are included in granted scopes
+        granted = set(row.get("granted_scopes") or [])
+        required = set(self.scopes)
+        if required and not required.issubset(granted):
+            log_debug(f"Token missing required scopes: need {required - granted}")
+            return None
+
         try:
+            # Decrypt token_data if encrypted (passes through if plaintext)
+            token_data = decrypt_dict(row["token_data"], key=getattr(self.google_auth, "_token_encryption_key", None))
             effective_scopes = row.get("granted_scopes") or self.scopes
-            creds = Credentials.from_authorized_user_info(row["token_data"], effective_scopes)
+            creds = Credentials.from_authorized_user_info(token_data, effective_scopes)
         except (ValueError, KeyError):
             return None
 
