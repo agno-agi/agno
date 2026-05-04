@@ -96,9 +96,15 @@ XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sh
 PPTX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
 
+# Optional dependency extraction helpers
+# Each function imports its library inline and raises ImportError if missing.
+# The caller (read_file) catches ImportError and returns a user-friendly install message.
+# This keeps the helpers reusable and error handling centralized.
+
+
 def _extract_docx_text(content_bytes: bytes) -> str:
     """Extract text content from a .docx file. Raises ImportError if python-docx not installed."""
-    import docx
+    import docx  # inline import — caller handles ImportError
 
     buffer = io.BytesIO(content_bytes)
     document = docx.Document(buffer)
@@ -108,7 +114,7 @@ def _extract_docx_text(content_bytes: bytes) -> str:
 
 def _extract_xlsx_text(content_bytes: bytes) -> str:
     """Extract text content from a .xlsx file. Raises ImportError if openpyxl not installed."""
-    import openpyxl
+    import openpyxl  # inline import — caller handles ImportError
 
     buffer = io.BytesIO(content_bytes)
     workbook = openpyxl.load_workbook(buffer, read_only=True, data_only=True)
