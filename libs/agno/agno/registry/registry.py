@@ -35,10 +35,10 @@ class Registry:
     vector_dbs: List[VectorDb] = field(default_factory=list)
     schemas: List[Type[BaseModel]] = field(default_factory=list)
     functions: List[Callable] = field(default_factory=list)
+    knowledge: List[Any] = field(default_factory=list)
     # Code-defined agents and teams (for workflow rehydration)
     agents: List[Agent] = field(default_factory=list)
     teams: List[Team] = field(default_factory=list)
-    knowledge: List[Any] = field(default_factory=list)
 
     @cached_property
     def _entrypoint_lookup(self) -> Dict[str, Callable]:

@@ -1227,6 +1227,10 @@ class AgentOS:
         for knowledge_base in self.knowledge or []:
             _add_knowledge_if_not_duplicate(knowledge_base)
 
+        if self.registry is not None:
+            for knowledge_base in self.registry.knowledge or []:
+                _add_knowledge_if_not_duplicate(knowledge_base)
+
         self.knowledge_instances = knowledge_instances
 
         # Validate that all knowledge instances have unique names
