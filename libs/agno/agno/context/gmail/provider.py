@@ -134,10 +134,12 @@ class GmailContextProvider(ContextProvider):
     def __init__(
         self,
         *,
+        # Service account auth
         service_account_path: str | None = None,
         delegated_user: str | None = None,
-        credentials_path: str | None = None,
-        token_path: str | None = None,
+        # OAuth auth (browser flow)
+        credentials_path: str | None = None,  # OAuth client config (client_id/secret JSON)
+        token_path: str | None = None,  # Cached user tokens after consent
         id: str = "gmail",
         name: str = "Gmail",
         read_instructions: str | None = None,

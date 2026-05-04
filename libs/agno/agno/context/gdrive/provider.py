@@ -48,9 +48,9 @@ class GoogleDriveContextProvider(ContextProvider):
     def __init__(
         self,
         *,
-        service_account_path: str | None = None,
-        credentials_path: str | None = None,
-        token_path: str | None = None,
+        service_account_path: str | None = None,  # SA JSON key file
+        credentials_path: str | None = None,  # OAuth client config (client_id/secret JSON)
+        token_path: str | None = None,  # Cached OAuth tokens after consent
         id: str = "gdrive",
         name: str = "Google Drive",
         instructions: str | None = None,
