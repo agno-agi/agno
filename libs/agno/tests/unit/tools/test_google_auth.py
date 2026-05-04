@@ -296,3 +296,26 @@ def test_pkce_callback_verifies_state_id(tmp_path):
     # Should fail at token exchange (no real Google), not state verification
     assert "error" in result
     assert "Token exchange failed" in result["error"]
+
+
+def test_token_encryption_roundtrip(tmp_path):
+    from agno.db.sqlite.sqlite import SqliteDb
+
+    db = SqliteDb(db_file=str(tmp_path / "enc.db"))
+    ga = GoogleAuth(
+        client_id="id",
+        client_secret="secret",
+        state_secret="s",
+        db=db,
+        encrypt_tokens=True,
+        token_encryption_key="test-encryption-key",
+    )
+    ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
+
+    # Generate OAuth URL (stores PKCE state)
+    ga.authenticate_google()
+
+    # Verify PKCE state is NOT encrypted (temporary, not sensitive)
+    row = db.get_auth_token("google", None, "google")
+    assert "encrypted" not in row["token_data"]
+    assert "pkce_verifier" in row["token_data"]

@@ -30,6 +30,7 @@ def _generate_pkce_pair() -> tuple[str, str]:
     code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     return code_verifier, code_challenge
 
+
 # Per-call service, creds, and user_id storage for stateless toolkit access
 _google_service: ContextVar[Any] = ContextVar("google_service", default=None)
 _google_creds: ContextVar[Any] = ContextVar("google_creds", default=None)
@@ -132,21 +133,31 @@ def _persist_google_token(
     creds: Any,
     user_id: Optional[str],
     services_registry: Optional[Dict[str, List[str]]] = None,
+    encryption_key: Optional[str] = None,
 ) -> bool:
     """Upsert a Google credentials row.
 
     services_registry: if provided, granted_scopes is the union of its values
     so multiple toolkits sharing one GoogleAuth consent agree on scope.
     Otherwise falls back to whatever scopes creds.to_json() reports.
+
+    encryption_key: if provided, token_data is encrypted at rest using Fernet.
     """
     if db is None:
         return False
     try:
-        token_data = json.loads(creds.to_json())
+        token_data: Dict[str, Any] = json.loads(creds.to_json())
         if services_registry:
             granted_scopes = sorted({s for scope_list in services_registry.values() for s in scope_list})
         else:
             granted_scopes = token_data.get("scopes", [])
+
+        # Encrypt token_data if key is configured
+        if encryption_key:
+            from agno.utils.encryption import encrypt_dict
+
+            token_data = encrypt_dict(token_data, key=encryption_key)
+
         db.upsert_auth_token(
             {
                 "provider": "google",
@@ -224,10 +235,19 @@ def load_token(
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
 
+        # Decrypt token_data if encrypted
+        token_data = row["token_data"]
+        ga = getattr(toolkit, "google_auth", None)
+        encryption_key = getattr(ga, "_token_encryption_key", None) if ga else None
+        if isinstance(token_data, dict) and "encrypted" in token_data:
+            from agno.utils.encryption import decrypt_dict
+
+            token_data = decrypt_dict(token_data, key=encryption_key)
+
         # Prefer stored granted_scopes (the full consent union) over the caller's
         # required scopes — a single-service toolkit must not narrow a shared token.
         effective_scopes = row.get("granted_scopes") or scopes
-        creds = Credentials.from_authorized_user_info(row["token_data"], effective_scopes)
+        creds = Credentials.from_authorized_user_info(token_data, effective_scopes)
     except (ValueError, KeyError, ImportError) as e:
         log_debug(f"Could not reconstruct google credentials: {e}")
         return False
@@ -255,11 +275,13 @@ def save_token(
 ) -> bool:
     """Persist credentials to DB. Returns True on success."""
     ga = getattr(toolkit, "google_auth", None)
+    encryption_key = getattr(ga, "_token_encryption_key", None) if ga else None
     return _persist_google_token(
         db=get_token_db(toolkit, agent=agent),
         creds=creds,
         user_id=user_id,
         services_registry=ga._services if ga else None,
+        encryption_key=encryption_key,
     )
 
 
@@ -290,6 +312,8 @@ class GoogleAuth(Toolkit):
         state_secret: Optional[str] = None,
         state_ttl_seconds: int = 600,
         include_granted_scopes: bool = False,
+        encrypt_tokens: bool = False,
+        token_encryption_key: Optional[str] = None,
         **kwargs: Any,
     ):
         super().__init__(
@@ -313,6 +337,11 @@ class GoogleAuth(Toolkit):
         # myaccount.google.com rather than clearing a scope-narrow row here.
         self._include_granted_scopes = include_granted_scopes
         self._state_ttl_seconds = state_ttl_seconds
+        # Token encryption at rest (opt-in). Requires cryptography package.
+        self._encrypt_tokens = encrypt_tokens
+        self._token_encryption_key = (
+            token_encryption_key or os.getenv("AGNO_ENCRYPTION_KEY") if encrypt_tokens else None
+        )
         self.register(self.authenticate_google)
 
     def register_service(self, service: str, scopes: List[str]) -> None:
@@ -531,6 +560,7 @@ class GoogleAuth(Toolkit):
             creds=creds,
             user_id=user_id,
             services_registry=self._services,
+            encryption_key=self._token_encryption_key,
         )
         if not stored:
             log_error(f"Token obtained but DB persistence failed for user={user_id}")
