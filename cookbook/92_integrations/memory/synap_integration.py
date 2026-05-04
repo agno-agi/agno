@@ -31,56 +31,56 @@ Open source: https://github.com/maximem-ai/maximem_synap_sdk/tree/main/packages/
 
 import asyncio
 import os
-import time
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from maximem_synap import MaximemSynapSDK
 from synap_agno import SynapDb
 
-# ---------------------------------------------------------------------------
-# Setup
-# ---------------------------------------------------------------------------
-sdk = MaximemSynapSDK(api_key=os.environ["SYNAP_API_KEY"])
-asyncio.run(sdk.initialize())
 
-# SynapDb extends Agno's InMemoryDb and routes user-memory operations through
-# Synap while keeping sessions and traces in-process.
-db = SynapDb(
-    sdk=sdk,
-    customer_id="agno-demo-customer",
-)
+async def main() -> None:
+    # ---------------------------------------------------------------------------
+    # Setup
+    # ---------------------------------------------------------------------------
+    sdk = MaximemSynapSDK(api_key=os.environ["SYNAP_API_KEY"])
+    await sdk.initialize()
 
-# ---------------------------------------------------------------------------
-# Create Agent
-# ---------------------------------------------------------------------------
-agent = Agent(
-    model=OpenAIChat(),
-    db=db,
-    user_id="agno-demo-user",
-    enable_agentic_memory=True,
-    description=(
-        "You are a helpful assistant. You remember facts and preferences "
-        "about the user across sessions."
-    ),
-)
+    # SynapDb extends Agno's InMemoryDb and routes user-memory operations through
+    # Synap while keeping sessions and traces in-process.
+    db = SynapDb(
+        sdk=sdk,
+        customer_id="agno-demo-customer",
+    )
 
-# ---------------------------------------------------------------------------
-# Run Example
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
+    # ---------------------------------------------------------------------------
+    # Create Agent
+    # ---------------------------------------------------------------------------
+    agent = Agent(
+        model=OpenAIChat(),
+        db=db,
+        user_id="agno-demo-user",
+        enable_agentic_memory=True,
+        description=(
+            "You are a helpful assistant. You remember facts and preferences "
+            "about the user across sessions."
+        ),
+    )
+
+    # ---------------------------------------------------------------------------
+    # Run Example
+    # ---------------------------------------------------------------------------
     # First turn — Synap extracts facts and preferences in the background
-    agent.print_response(
+    await agent.aprint_response(
         "My name is Alex. I'm a software engineer who loves Python "
         "and is allergic to peanuts. I prefer dark mode in all my tools."
     )
 
     # Synap ingests memories asynchronously; allow a moment for extraction
     # before querying so the facts are available for retrieval.
-    time.sleep(5)
+    await asyncio.sleep(5)
 
     # Second turn — Synap retrieves the relevant facts automatically
-    agent.print_response("What do you know about my dietary restrictions?")
+    await agent.aprint_response("What do you know about my dietary restrictions?")
 
     # Cross-session: create a fresh agent instance with the same user_id to
     # demonstrate that memories persist across independent agent instances.
@@ -94,4 +94,8 @@ if __name__ == "__main__":
         enable_agentic_memory=True,
         description="You are a helpful assistant with access to the user's memory.",
     )
-    fresh_agent.print_response("Which editor theme should I use?")
+    await fresh_agent.aprint_response("Which editor theme should I use?")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
