@@ -46,7 +46,6 @@ sdk = MaximemSynapSDK(api_key=os.environ["SYNAP_API_KEY"])
 # Synap while keeping sessions and traces in-process.
 db = SynapDb(
     sdk=sdk,
-    user_id="agno-demo-user",
     customer_id="agno-demo-customer",
 )
 
@@ -56,6 +55,7 @@ db = SynapDb(
 agent = Agent(
     model=OpenAIChat(),
     db=db,
+    user_id="agno-demo-user",
     enable_agentic_memory=True,
     description=(
         "You are a helpful assistant. You remember facts and preferences "
@@ -86,9 +86,9 @@ if __name__ == "__main__":
         model=OpenAIChat(),
         db=SynapDb(
             sdk=sdk,
-            user_id="agno-demo-user",
             customer_id="agno-demo-customer",
         ),
+        user_id="agno-demo-user",
         enable_agentic_memory=True,
         description="You are a helpful assistant with access to the user's memory.",
     )
