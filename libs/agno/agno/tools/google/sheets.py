@@ -45,19 +45,15 @@ A token.json file will be created to store the authentication credentials for fu
 """
 
 import json
-from os import getenv
-from pathlib import Path
 from typing import Any, List, Optional, Union
 
-from agno.tools import Toolkit
-from agno.tools.google.auth import get_current_creds, get_current_service, get_token_db, google_authenticate, save_token
+from agno.tools.google.auth import get_current_creds, google_authenticate
+from agno.tools.google.base import GoogleToolkit
 from agno.utils.log import log_debug
 
 try:
-    from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import build
 except ImportError:
     raise ImportError(
@@ -68,8 +64,12 @@ except ImportError:
 authenticate = google_authenticate("sheets")
 
 
-class GoogleSheetsTools(Toolkit):
-    # Default scopes for Google Sheets API access
+class GoogleSheetsTools(GoogleToolkit):
+    api_name = "sheets"
+    api_version = "v4"
+    google_service_name = "sheets"
+    default_scopes: List[str] = []
+
     DEFAULT_SCOPES = {
         "read": "https://www.googleapis.com/auth/spreadsheets.readonly",
         "write": "https://www.googleapis.com/auth/spreadsheets",
@@ -128,37 +128,25 @@ class GoogleSheetsTools(Toolkit):
             enable_create_duplicate_sheet if enable_create_duplicate_sheet is not None else create_duplicate_sheet
         )
 
-        self.google_auth = google_auth
-        self.store_token_in_db = store_token_in_db
-        self._db: Optional[Any] = None
+        # Sheets-specific attributes
         self.spreadsheet_id = spreadsheet_id
         self.spreadsheet_range = spreadsheet_range
-        self._explicit_creds = creds
-        self.credentials_path = creds_path
-        self.token_path = token_path
-        self.oauth_port = oauth_port
-        self.service_account_path = service_account_path
+
         # Determine required scopes based on operations if no custom scopes provided
         if scopes is None:
-            self.scopes = []
+            resolved_scopes: List[str] = []
             if _read_sheet:
-                self.scopes.append(self.DEFAULT_SCOPES["read"])
+                resolved_scopes.append(self.DEFAULT_SCOPES["read"])
             if _create_sheet or _update_sheet or _create_duplicate_sheet:
-                self.scopes.append(self.DEFAULT_SCOPES["write"])
-            # Remove duplicates while preserving order
-            self.scopes = list(dict.fromkeys(self.scopes))
+                resolved_scopes.append(self.DEFAULT_SCOPES["write"])
+            scopes = list(dict.fromkeys(resolved_scopes))
         else:
-            self.scopes = scopes
             # Validate that required scopes are present for requested operations
             if (_create_sheet or _update_sheet or _create_duplicate_sheet) and self.DEFAULT_SCOPES[
                 "write"
-            ] not in self.scopes:
+            ] not in scopes:
                 raise ValueError(f"The scope {self.DEFAULT_SCOPES['write']} is required for write operations")
-            if (
-                _read_sheet
-                and self.DEFAULT_SCOPES["read"] not in self.scopes
-                and self.DEFAULT_SCOPES["write"] not in self.scopes
-            ):
+            if _read_sheet and self.DEFAULT_SCOPES["read"] not in scopes and self.DEFAULT_SCOPES["write"] not in scopes:
                 raise ValueError(
                     f"Either {self.DEFAULT_SCOPES['read']} or {self.DEFAULT_SCOPES['write']} is required for read operations"
                 )
@@ -173,126 +161,19 @@ class GoogleSheetsTools(Toolkit):
         if all or _create_duplicate_sheet:
             tools.append(self.create_duplicate_sheet)
 
-        super().__init__(name="google_sheets_tools", tools=tools, **kwargs)
-
-        if self.google_auth:
-            self.google_auth.register_service("sheets", self.scopes)
-
-    @property
-    def service(self):
-        """Per-call service from contextvar. Set by @google_authenticate decorator."""
-        return get_current_service()
-
-    def _build_service(self, creds):
-        return build("sheets", "v4", credentials=creds)
-
-    def _load_from_db(self, run_context=None, agent=None) -> Optional[Credentials]:
-        """Load credentials from DB if available."""
-        db = get_token_db(self, agent=agent)
-        if db is None:
-            return None
-
-        user_id = getattr(run_context, "user_id", None) if run_context else None
-        row = db.read(table_name="google_tokens", filters={"user_id": user_id or "default"}, limit=1)
-        if not row:
-            return None
-
-        token_data = row[0].get("token_data")
-        if not token_data:
-            return None
-
-        try:
-            creds = Credentials.from_authorized_user_info(json.loads(token_data), self.scopes)
-        except (ValueError, json.JSONDecodeError):
-            return None
-
-        if creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-                save_token(self, creds, user_id=user_id, agent=agent)
-            except Exception:
-                return None
-
-        return creds if creds.valid else None
-
-    def _resolve_creds(self, run_context=None, agent=None):
-        """Resolve credentials without storing on self. Returns creds or None."""
-        user_id = getattr(run_context, "user_id", None) if run_context else None
-
-        # 1. Explicit creds passed to constructor (single-user mode only)
-        if self._explicit_creds and self._explicit_creds.valid and user_id is None:
-            return self._explicit_creds
-
-        # 2. Service account
-        service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-        if service_account_path:
-            creds = ServiceAccountCredentials.from_service_account_file(
-                service_account_path,
-                scopes=self.scopes,
-            )
-            if creds.expired:
-                creds.refresh(Request())
-            return creds
-
-        # 3. Load from DB
-        creds = self._load_from_db(run_context=run_context, agent=agent)
-        if creds:
-            return creds
-
-        # Check if callback mode — require OAuth via authenticate_google
-        if self.google_auth and self.google_auth._callback_configured and get_token_db(self, agent=agent):
-            raise PermissionError("Sheets not authenticated — user must complete OAuth via authenticate_google")
-
-        # 4. Load from file
-        token_file = Path(self.token_path or "token.json")
-        creds_file = Path(self.credentials_path or "credentials.json")
-
-        if token_file.exists():
-            try:
-                creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
-            except ValueError:
-                creds = None
-
-            if creds and creds.expired and creds.refresh_token:
-                try:
-                    creds.refresh(Request())
-                except Exception:
-                    creds = None
-
-            if creds and creds.valid:
-                return creds
-
-        # 5. Interactive OAuth
-        if self.google_auth is not None and self.google_auth._services:
-            consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
-        else:
-            consent_scopes = self.scopes
-
-        client_config = {
-            "installed": {
-                "client_id": getenv("GOOGLE_CLIENT_ID"),
-                "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
-                "project_id": getenv("GOOGLE_PROJECT_ID"),
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
-            }
-        }
-        if creds_file.exists():
-            flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), consent_scopes)
-        else:
-            flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
-        creds = flow.run_local_server(port=self.oauth_port, prompt="consent")
-
-        if creds and creds.valid:
-            if save_token(self, creds, user_id=user_id, agent=agent):
-                log_debug("Sheets credentials saved to DB")
-            else:
-                token_file.write_text(creds.to_json())
-                log_debug("Sheets credentials saved to file")
-
-        return creds
+        super().__init__(
+            name="google_sheets_tools",
+            tools=tools,
+            scopes=scopes,
+            creds=creds,
+            token_path=token_path,
+            credentials_path=creds_path,
+            service_account_path=service_account_path,
+            google_auth=google_auth,
+            store_token_in_db=store_token_in_db,
+            oauth_port=oauth_port,
+            **kwargs,
+        )
 
     @authenticate
     def read_sheet(self, spreadsheet_id: Optional[str] = None, spreadsheet_range: Optional[str] = None) -> str:

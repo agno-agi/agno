@@ -68,12 +68,11 @@ import re
 import tempfile
 import textwrap
 from datetime import datetime, timedelta
-from os import getenv
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-from agno.tools import Toolkit
-from agno.tools.google.auth import get_cache_key, get_current_service, get_token_db, google_authenticate, save_token
+from agno.tools.google.auth import get_cache_key, google_authenticate
+from agno.tools.google.base import GoogleToolkit
 from agno.utils.log import log_debug, log_error
 
 try:
@@ -81,11 +80,8 @@ try:
     from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
 
-    from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from googleapiclient.discovery import build
     from googleapiclient.errors import HttpError
 except ImportError:
     raise ImportError(
@@ -119,13 +115,18 @@ GMAIL_QUERY_INSTRUCTIONS = textwrap.dedent("""\
     - Combine with spaces (AND): `from:me newer_than:7d has:attachment`""")
 
 
-class GmailTools(Toolkit):
-    # Default scopes for Gmail API access
-    DEFAULT_SCOPES = [
+class GmailTools(GoogleToolkit):
+    api_name = "gmail"
+    api_version = "v1"
+    google_service_name = "gmail"
+    require_delegated_user_for_service_account = True
+    default_scopes = [
         "https://www.googleapis.com/auth/gmail.readonly",
         "https://www.googleapis.com/auth/gmail.modify",
         "https://www.googleapis.com/auth/gmail.compose",
     ]
+    # Keep alias for backward compatibility
+    DEFAULT_SCOPES = default_scopes
 
     def __init__(
         self,
@@ -207,25 +208,13 @@ class GmailTools(Toolkit):
             add_instructions (bool): Whether to inject toolkit instructions into the agent system prompt. Defaults to True.
         """
         if instructions is None:
-            self.instructions = GMAIL_QUERY_INSTRUCTIONS
-        else:
-            self.instructions = instructions
+            instructions = GMAIL_QUERY_INSTRUCTIONS
 
-        self.google_auth = google_auth
-        self.store_token_in_db = store_token_in_db
-        self._db: Optional[Any] = None
-        self._explicit_creds = creds
-        self.credentials_path = credentials_path
-        self.token_path = token_path
-        self.service_account_path = service_account_path
-        self.delegated_user = delegated_user
-        self.scopes = scopes or self.DEFAULT_SCOPES
-        # oauth_port is the canonical kwarg; port is kept for pre-existing callers.
-        # If oauth_port wasn't overridden from the 0 default, fall back to port.
+        # oauth_port is the canonical kwarg; port is kept for pre-existing callers
         if oauth_port == 0 and port is not None:
             oauth_port = port
-        self.oauth_port = oauth_port
-        self.login_hint = login_hint
+
+        # Gmail-specific attributes
         self.include_html = include_html
         self.max_body_length = max_body_length
         self.attachment_dir = attachment_dir
@@ -309,13 +298,20 @@ class GmailTools(Toolkit):
         super().__init__(
             name="gmail_tools",
             tools=tools,
-            instructions=self.instructions,
+            instructions=instructions,
             add_instructions=add_instructions,
+            scopes=scopes,
+            creds=creds,
+            token_path=token_path,
+            credentials_path=credentials_path,
+            service_account_path=service_account_path,
+            delegated_user=delegated_user,
+            google_auth=google_auth,
+            store_token_in_db=store_token_in_db,
+            oauth_port=oauth_port,
+            login_hint=login_hint,
             **kwargs,
         )
-
-        if self.google_auth:
-            self.google_auth.register_service("gmail", self.scopes)
 
         # Validate that required scopes are present for requested operations (only check registered functions)
         compose_tools = {"create_draft_email", "send_email", "send_email_reply", "send_draft", "update_draft"}
@@ -367,132 +363,6 @@ class GmailTools(Toolkit):
             modify_scope = "https://www.googleapis.com/auth/gmail.modify"
             if modify_scope not in self.scopes:
                 raise ValueError(f"The scope {modify_scope} is required for email modification operations")
-
-    @property
-    def service(self):
-        """Per-call service from contextvar. Set by @google_authenticate decorator."""
-        return get_current_service()
-
-    def _build_service(self, creds):
-        return build("gmail", "v1", credentials=creds)
-
-    def _resolve_creds(self, run_context=None, agent=None):
-        """Stateless credential resolution. Returns credentials, does not cache on self."""
-        user_id = getattr(run_context, "user_id", None) if run_context else None
-
-        # 1. Explicit creds from constructor (single-user mode only)
-        if self._explicit_creds and self._explicit_creds.valid and user_id is None:
-            return self._explicit_creds
-
-        # 2. Service account (never stored in DB)
-        service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-        if service_account_path:
-            delegated_user = self.delegated_user or getenv("GOOGLE_DELEGATED_USER")
-            if not delegated_user:
-                raise ValueError(
-                    "delegated_user is required for Gmail service account authentication. "
-                    "Gmail service accounts must impersonate a user via domain-wide delegation. "
-                    "Provide delegated_user as a parameter or set GOOGLE_DELEGATED_USER env var."
-                )
-            creds = ServiceAccountCredentials.from_service_account_file(
-                service_account_path,
-                scopes=self.scopes,
-                subject=delegated_user,
-            )
-            creds.refresh(Request())
-            return creds
-
-        # 3. DB lookup
-        db = get_token_db(self, agent=agent)
-        if db:
-            creds = self._load_from_db(db, user_id)
-            if creds:
-                return creds
-            # Server mode: don't fall through to browser OAuth
-            if self.google_auth and self.google_auth._callback_configured:
-                raise PermissionError("Gmail not authenticated — user must complete OAuth via authenticate_google")
-
-        # 4. File fallback (local mode)
-        token_file = Path(self.token_path or "token.json")
-        creds_file = Path(self.credentials_path or "credentials.json")
-
-        creds = None
-        if token_file.exists():
-            try:
-                creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
-            except ValueError:
-                creds = None
-
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-                token_file.write_text(creds.to_json())
-            except Exception:
-                creds = None
-
-        if creds and creds.valid:
-            return creds
-
-        # 5. Interactive OAuth (local only)
-        if self.google_auth is not None and self.google_auth._services:
-            consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
-        else:
-            consent_scopes = self.scopes
-
-        client_config = {
-            "installed": {
-                "client_id": getenv("GOOGLE_CLIENT_ID"),
-                "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
-                "project_id": getenv("GOOGLE_PROJECT_ID"),
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
-            }
-        }
-        if creds_file.exists():
-            flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), consent_scopes)
-        else:
-            flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
-
-        oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
-        if self.login_hint:
-            oauth_kwargs["login_hint"] = self.login_hint
-        creds = flow.run_local_server(port=self.oauth_port, **oauth_kwargs)
-
-        # Save to DB or file
-        if creds and creds.valid:
-            if save_token(self, creds, user_id=user_id, agent=agent):
-                log_debug("Gmail credentials saved to DB")
-            else:
-                token_file.write_text(creds.to_json())
-                log_debug("Gmail credentials saved to file")
-
-        return creds
-
-    def _load_from_db(self, db, user_id):
-        """Load and refresh credentials from DB."""
-        try:
-            row = db.get_auth_token("google", user_id, "google")
-        except (NotImplementedError, Exception):
-            return None
-        if not row:
-            return None
-
-        try:
-            effective_scopes = row.get("granted_scopes") or self.scopes
-            creds = Credentials.from_authorized_user_info(row["token_data"], effective_scopes)
-        except (ValueError, KeyError):
-            return None
-
-        if creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-                save_token(self, creds, user_id=user_id, agent=None)
-            except Exception:
-                return None
-
-        return creds if creds.valid else None
 
     def _format_emails(self, emails: List[dict]) -> str:
         """Format list of email dictionaries into a readable string"""

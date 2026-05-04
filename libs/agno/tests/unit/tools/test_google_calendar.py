@@ -16,6 +16,7 @@ def mock_credentials():
     mock_creds = Mock(spec=Credentials)
     mock_creds.valid = True
     mock_creds.expired = False
+    mock_creds.universe_domain = "googleapis.com"
     mock_creds.to_json.return_value = '{"token": "test_token"}'
     return mock_creds
 
@@ -29,11 +30,10 @@ def mock_calendar_service():
 @pytest.fixture
 def calendar_tools(mock_credentials, mock_calendar_service):
     with (
-        patch("agno.tools.google.calendar.build") as mock_build,
-        patch("agno.tools.google.calendar.authenticate", lambda func: func),
-        patch("agno.tools.google.calendar.get_current_service", return_value=mock_calendar_service),
+        patch("agno.tools.google.base.get_current_service", return_value=mock_calendar_service),
+        patch.object(GoogleCalendarTools, "_resolve_creds", return_value=mock_credentials),
+        patch.object(GoogleCalendarTools, "_build_service", return_value=mock_calendar_service),
     ):
-        mock_build.return_value = mock_calendar_service
         tools = GoogleCalendarTools(creds=mock_credentials)
         yield tools
 
@@ -42,11 +42,10 @@ def calendar_tools(mock_credentials, mock_calendar_service):
 def calendar_tools_all(mock_credentials, mock_calendar_service):
     """Instance with ALL tools enabled including write tools."""
     with (
-        patch("agno.tools.google.calendar.build") as mock_build,
-        patch("agno.tools.google.calendar.authenticate", lambda func: func),
-        patch("agno.tools.google.calendar.get_current_service", return_value=mock_calendar_service),
+        patch("agno.tools.google.base.get_current_service", return_value=mock_calendar_service),
+        patch.object(GoogleCalendarTools, "_resolve_creds", return_value=mock_credentials),
+        patch.object(GoogleCalendarTools, "_build_service", return_value=mock_calendar_service),
     ):
-        mock_build.return_value = mock_calendar_service
         tools = GoogleCalendarTools(
             creds=mock_credentials,
             quick_add_event=True,

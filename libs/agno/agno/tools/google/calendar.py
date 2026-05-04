@@ -2,20 +2,16 @@ import datetime
 import json
 import textwrap
 import uuid
-from os import getenv
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, cast
 
-from agno.tools import Toolkit
-from agno.tools.google.auth import get_cache_key, get_current_service, get_token_db, google_authenticate, save_token
+from agno.tools.google.auth import get_cache_key, google_authenticate
+from agno.tools.google.base import GoogleToolkit
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
-    from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from googleapiclient.discovery import Resource, build
+    from googleapiclient.discovery import Resource
     from googleapiclient.errors import HttpError
 except ImportError:
     raise ImportError(
@@ -42,11 +38,15 @@ CALENDAR_INSTRUCTIONS = textwrap.dedent("""\
 authenticate = google_authenticate("calendar")
 
 
-class GoogleCalendarTools(Toolkit):
-    DEFAULT_SCOPES = [
+class GoogleCalendarTools(GoogleToolkit):
+    api_name = "calendar"
+    api_version = "v3"
+    google_service_name = "calendar"
+    default_scopes = [
         "https://www.googleapis.com/auth/calendar.readonly",
         "https://www.googleapis.com/auth/calendar",
     ]
+    DEFAULT_SCOPES = default_scopes
 
     def __init__(
         self,
@@ -101,24 +101,12 @@ class GoogleCalendarTools(Toolkit):
             delete_event = True
 
         if instructions is None:
-            self.instructions = CALENDAR_INSTRUCTIONS
-        else:
-            self.instructions = instructions
+            instructions = CALENDAR_INSTRUCTIONS
 
-        self.google_auth = google_auth
-        self.store_token_in_db = store_token_in_db
-        self._db: Optional[Any] = None
-        self._explicit_creds = creds
+        # Calendar-specific attributes
         self.calendar_id = calendar_id
-        self.credentials_path = credentials_path
-        self.token_path = token_path
-        self.service_account_path = service_account_path
-        self.delegated_user = delegated_user
-        self.scopes = scopes or self.DEFAULT_SCOPES
-        self.oauth_port = oauth_port
-        self.login_hint = login_hint
-        # Cached email for respond_to_event
         self._user_email: Dict[Optional[str], str] = {}
+
         tools: List[Any] = []
 
         if list_events:
@@ -154,13 +142,20 @@ class GoogleCalendarTools(Toolkit):
         super().__init__(
             name="google_calendar_tools",
             tools=tools,
-            instructions=self.instructions,
+            instructions=instructions,
             add_instructions=add_instructions,
+            scopes=scopes,
+            creds=creds,
+            token_path=token_path,
+            credentials_path=credentials_path,
+            service_account_path=service_account_path,
+            delegated_user=delegated_user,
+            google_auth=google_auth,
+            store_token_in_db=store_token_in_db,
+            oauth_port=oauth_port,
+            login_hint=login_hint,
             **kwargs,
         )
-
-        if self.google_auth:
-            self.google_auth.register_service("calendar", self.scopes)
 
         # Validate that required scopes cover registered tools
         write_tools = {
@@ -191,126 +186,6 @@ class GoogleCalendarTools(Toolkit):
             write_scope = "https://www.googleapis.com/auth/calendar"
             if read_scope not in self.scopes and write_scope not in self.scopes:
                 raise ValueError(f"The scope {read_scope} is required for read operations")
-
-    @property
-    def service(self):
-        """Per-call service from contextvar. Set by @google_authenticate decorator."""
-        return get_current_service()
-
-    def _build_service(self, creds):
-        return build("calendar", "v3", credentials=creds)
-
-    def _resolve_creds(self, run_context=None, agent=None):
-        """Stateless credential resolution. Returns credentials, does not cache on self."""
-        user_id = getattr(run_context, "user_id", None) if run_context else None
-
-        # 1. Explicit creds from constructor (single-user mode only)
-        if self._explicit_creds and self._explicit_creds.valid and user_id is None:
-            return self._explicit_creds
-
-        # 2. Service account (never stored in DB)
-        service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-        if service_account_path:
-            delegated_user = self.delegated_user or getenv("GOOGLE_DELEGATED_USER")
-            sa_creds = ServiceAccountCredentials.from_service_account_file(
-                service_account_path,
-                scopes=self.scopes,
-            )
-            if delegated_user:
-                sa_creds = sa_creds.with_subject(delegated_user)
-            sa_creds.refresh(Request())
-            return sa_creds
-
-        # 3. DB lookup
-        db = get_token_db(self, agent=agent)
-        if db:
-            creds = self._load_from_db(db, user_id)
-            if creds:
-                return creds
-            if self.google_auth and self.google_auth._callback_configured:
-                raise PermissionError("Calendar not authenticated — user must complete OAuth via authenticate_google")
-
-        # 4. File fallback (local mode)
-        token_file = Path(self.token_path or "token.json")
-        creds_file = Path(self.credentials_path or "credentials.json")
-
-        creds = None
-        if token_file.exists():
-            try:
-                creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
-            except ValueError:
-                creds = None
-
-        if creds and creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-                token_file.write_text(creds.to_json())
-            except Exception:
-                creds = None
-
-        if creds and creds.valid:
-            return creds
-
-        # 5. Interactive OAuth (local only)
-        if self.google_auth is not None and self.google_auth._services:
-            consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
-        else:
-            consent_scopes = self.scopes
-
-        client_config = {
-            "installed": {
-                "client_id": getenv("GOOGLE_CLIENT_ID"),
-                "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
-                "project_id": getenv("GOOGLE_PROJECT_ID"),
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
-            }
-        }
-        if creds_file.exists():
-            flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), consent_scopes)
-        else:
-            flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
-
-        oauth_kwargs: Dict[str, Any] = {"prompt": "consent", "port": self.oauth_port}
-        if self.login_hint:
-            oauth_kwargs["login_hint"] = self.login_hint
-        creds = flow.run_local_server(**oauth_kwargs)
-
-        if creds and creds.valid:
-            if save_token(self, creds, user_id=user_id, agent=agent):
-                log_debug("Calendar credentials saved to DB")
-            else:
-                token_file.write_text(creds.to_json())
-                log_debug("Calendar credentials saved to file")
-                log_info(f"Token file path: {token_file}")
-
-        return creds
-
-    def _load_from_db(self, db, user_id):
-        """Load and refresh credentials from DB."""
-        try:
-            row = db.get_auth_token("google", user_id, "google")
-        except (NotImplementedError, Exception):
-            return None
-        if not row:
-            return None
-
-        try:
-            effective_scopes = row.get("granted_scopes") or self.scopes
-            creds = Credentials.from_authorized_user_info(row["token_data"], effective_scopes)
-        except (ValueError, KeyError):
-            return None
-
-        if creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-                save_token(self, creds, user_id=user_id, agent=None)
-            except Exception:
-                return None
-
-        return creds if creds.valid else None
 
     @authenticate
     def list_events(self, limit: int = 10, start_date: Optional[str] = None) -> str:

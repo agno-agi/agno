@@ -13,6 +13,7 @@ def mock_creds():
     creds = MagicMock(spec=Credentials)
     creds.valid = True
     creds.expired = False
+    creds.universe_domain = "googleapis.com"
     return creds
 
 
@@ -29,11 +30,10 @@ def mock_service():
 @pytest.fixture
 def drive_tools(mock_creds, mock_service):
     with (
-        patch("agno.tools.google.drive.build") as mock_build,
-        patch("agno.tools.google.drive.authenticate", lambda func: func),
-        patch("agno.tools.google.drive.get_current_service", return_value=mock_service),
+        patch("agno.tools.google.base.get_current_service", return_value=mock_service),
+        patch.object(GoogleDriveTools, "_resolve_creds", return_value=mock_creds),
+        patch.object(GoogleDriveTools, "_build_service", return_value=mock_service),
     ):
-        mock_build.return_value = mock_service
         tools = GoogleDriveTools(creds=mock_creds, oauth_port=5050)
         yield tools
 
@@ -54,7 +54,7 @@ def test_search_files_include_trashed(mock_creds, mock_service):
     # include_trashed=True skips the trashed=false filter
     with (
         patch("agno.tools.google.drive.authenticate", lambda func: func),
-        patch("agno.tools.google.drive.get_current_service", return_value=mock_service),
+        patch("agno.tools.google.base.get_current_service", return_value=mock_service),
     ):
         tools = GoogleDriveTools(creds=mock_creds, include_trashed=True)
         result = json.loads(tools.search_files(query="name contains 'x'"))
@@ -299,9 +299,8 @@ def test_init_scope_inference_write(mock_creds):
 
 def test_service_account_auth():
     with (
-        patch("agno.tools.google.drive.build"),
-        patch("agno.tools.google.drive.ServiceAccountCredentials") as mock_sa,
-        patch("agno.tools.google.drive.Request"),
+        patch("google.oauth2.service_account.Credentials") as mock_sa,
+        patch("google.auth.transport.requests.Request"),
         patch("agno.tools.google.drive.authenticate", lambda func: func),
     ):
         mock_creds = MagicMock()
@@ -610,9 +609,8 @@ async def test_async_download_file(tmp_path, drive_tools):
 
 def test_service_account_no_delegated_user():
     with (
-        patch("agno.tools.google.drive.build"),
-        patch("agno.tools.google.drive.ServiceAccountCredentials") as mock_sa,
-        patch("agno.tools.google.drive.Request"),
+        patch("google.oauth2.service_account.Credentials") as mock_sa,
+        patch("google.auth.transport.requests.Request"),
         patch("agno.tools.google.drive.authenticate", lambda func: func),
         patch.dict("os.environ", {"GOOGLE_DELEGATED_USER": ""}, clear=False),
     ):

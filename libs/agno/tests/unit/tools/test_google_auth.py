@@ -145,7 +145,7 @@ def test_shared_creds_same_object(mock_credentials):
 
 def test_shared_creds_skips_auth(mock_credentials):
     gmail = GmailTools(creds=mock_credentials)
-    with patch("agno.tools.google.gmail.build") as mock_build:
+    with patch("googleapiclient.discovery.build") as mock_build:
         mock_build.return_value = MagicMock()
         # Stateless: _resolve_creds returns _explicit_creds directly when valid
         with patch.object(gmail, "_resolve_creds", return_value=mock_credentials) as mock_resolve:

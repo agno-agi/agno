@@ -105,18 +105,20 @@ def mock_credentials():
     mock_creds = Mock(spec=Credentials)
     mock_creds.valid = True
     mock_creds.expired = False
+    mock_creds.universe_domain = "googleapis.com"
     return mock_creds
 
 
 @pytest.fixture
 def tools(mock_credentials, mock_slides_service, mock_drive_service):
+    mock_service_dict = {"slides": mock_slides_service, "drive": mock_drive_service}
     with (
-        patch("agno.tools.google.slides.build"),
-        patch("agno.tools.google.slides.authenticate", lambda func: func),
         patch(
             "agno.tools.google.slides.get_current_service",
-            return_value={"slides": mock_slides_service, "drive": mock_drive_service},
+            return_value=mock_service_dict,
         ),
+        patch.object(GoogleSlidesTools, "_resolve_creds", return_value=mock_credentials),
+        patch.object(GoogleSlidesTools, "_build_service", return_value=mock_service_dict),
     ):
         toolkit = GoogleSlidesTools(creds=mock_credentials)
         yield toolkit

@@ -26,19 +26,16 @@ import io
 import json
 import mimetypes
 import textwrap
-from os import getenv
 from pathlib import Path
 from typing import Any, List, Optional, Tuple, Union, cast
 
-from agno.tools import Toolkit
-from agno.tools.google.auth import get_current_service, get_token_db, google_authenticate, save_token
+from agno.tools.google.auth import google_authenticate
+from agno.tools.google.base import GoogleToolkit
 from agno.utils.log import log_debug, log_error
 
 try:
-    from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import Resource, build
     from googleapiclient.errors import HttpError
     from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
@@ -87,7 +84,12 @@ DRIVE_QUERY_INSTRUCTIONS = textwrap.dedent(f"""\
 authenticate = google_authenticate("drive")
 
 
-class GoogleDriveTools(Toolkit):
+class GoogleDriveTools(GoogleToolkit):
+    api_name = "drive"
+    api_version = "v3"
+    google_service_name = "drive"
+    default_scopes: List[str] = []
+
     DEFAULT_SCOPES = {
         "read": "https://www.googleapis.com/auth/drive.readonly",
         "write": "https://www.googleapis.com/auth/drive.file",
@@ -160,33 +162,20 @@ class GoogleDriveTools(Toolkit):
         add_instructions: bool = True,
         **kwargs,
     ):
-        if instructions is None:
-            self.instructions = DRIVE_QUERY_INSTRUCTIONS
-        else:
-            self.instructions = instructions
+        import os
 
-        self.google_auth = google_auth
-        self.store_token_in_db = store_token_in_db
-        self._db: Optional[Any] = None
+        if instructions is None:
+            instructions = DRIVE_QUERY_INSTRUCTIONS
+
+        # Drive-specific attributes
         self.include_trashed = include_trashed
         self.max_read_size = max_read_size
         self.download_dir = Path(download_dir).resolve()
+        self.quota_project_id = quota_project_id or os.getenv("GOOGLE_CLOUD_QUOTA_PROJECT_ID")
 
-        # Pre-built credentials skip the OAuth/service account flow entirely
-        self._explicit_creds = creds
-        self.credentials_path = creds_path
-        self.token_path = token_path
-        self.service_account_path = service_account_path
-        self.delegated_user = delegated_user
-        # Pre-selects this email in the OAuth consent screen
-        self.login_hint = login_hint
-        self.quota_project_id = quota_project_id or getenv("GOOGLE_CLOUD_QUOTA_PROJECT_ID")
-
-        # oauth_port is the canonical kwarg; auth_port is kept for pre-existing callers.
-        # If oauth_port wasn't overridden from the 5050 default, fall back to auth_port.
+        # oauth_port is the canonical kwarg; auth_port is kept for pre-existing callers
         if oauth_port == 5050 and auth_port is not None:
             oauth_port = auth_port
-        self.oauth_port = oauth_port
 
         read_tools_enabled = any([list_files, search_files, read_file, download_file])
 
@@ -199,17 +188,15 @@ class GoogleDriveTools(Toolkit):
                 resolved_scopes.append(self.DEFAULT_SCOPES["write"])
             if not resolved_scopes:
                 resolved_scopes.append(self.DEFAULT_SCOPES["read"])
-            self.scopes = list(dict.fromkeys(resolved_scopes))
-        else:
-            self.scopes = scopes
+            scopes = list(dict.fromkeys(resolved_scopes))
 
         # drive.file only covers app-created files — not sufficient for browsing all files
         read_scopes = {self.DEFAULT_SCOPES["read"], self.DEFAULT_SCOPES["full"]}
         write_scopes = {self.DEFAULT_SCOPES["write"], self.DEFAULT_SCOPES["full"]}
 
-        if read_tools_enabled and not any(s in self.scopes for s in read_scopes):
+        if read_tools_enabled and not any(s in scopes for s in read_scopes):
             raise ValueError("A Google Drive read scope is required for enabled tools")
-        if upload_file and not any(s in self.scopes for s in write_scopes):
+        if upload_file and not any(s in scopes for s in write_scopes):
             raise ValueError("A Google Drive write scope is required for enabled tools")
 
         tools: List[Any] = []
@@ -237,130 +224,20 @@ class GoogleDriveTools(Toolkit):
             name="google_drive_tools",
             tools=tools,
             async_tools=async_tools,
-            instructions=self.instructions,
+            instructions=instructions,
             add_instructions=add_instructions,
+            scopes=scopes,
+            creds=creds,
+            token_path=token_path,
+            credentials_path=creds_path,
+            service_account_path=service_account_path,
+            delegated_user=delegated_user,
+            google_auth=google_auth,
+            store_token_in_db=store_token_in_db,
+            oauth_port=oauth_port,
+            login_hint=login_hint,
             **kwargs,
         )
-
-        if self.google_auth:
-            self.google_auth.register_service("drive", self.scopes)
-
-    @property
-    def service(self):
-        """Per-call service from contextvar. Set by @google_authenticate decorator."""
-        return get_current_service()
-
-    def _load_from_db(self, db, user_id):
-        """Load and refresh credentials from DB."""
-        try:
-            row = db.get_auth_token("google", user_id, "google")
-        except (NotImplementedError, Exception):
-            return None
-        if not row:
-            return None
-
-        try:
-            effective_scopes = row.get("granted_scopes") or self.scopes
-            creds = Credentials.from_authorized_user_info(row["token_data"], effective_scopes)
-        except (ValueError, KeyError):
-            return None
-
-        if creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-                save_token(self, creds, user_id=user_id, agent=None)
-            except Exception:
-                return None
-
-        return creds if creds.valid else None
-
-    def _resolve_creds(self, run_context=None, agent=None):
-        """Resolve credentials using 5-step priority: explicit -> service account -> DB -> file -> interactive OAuth."""
-        user_id = getattr(run_context, "user_id", None) if run_context else None
-
-        # 1. Explicit credentials provided at construction (single-user mode only)
-        if self._explicit_creds and self._explicit_creds.valid and user_id is None:
-            return self._explicit_creds
-
-        # 2. Service account takes priority over OAuth
-        service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-        if service_account_path:
-            service_account_creds = ServiceAccountCredentials.from_service_account_file(
-                service_account_path,
-                scopes=self.scopes,
-            )
-            delegated_user = self.delegated_user or getenv("GOOGLE_DELEGATED_USER")
-            if delegated_user:
-                service_account_creds = service_account_creds.with_subject(delegated_user)
-            service_account_creds.refresh(Request())
-            return service_account_creds
-
-        # 3. Load from database (per-user OAuth)
-        db = get_token_db(self, agent=agent)
-        if db:
-            db_creds = self._load_from_db(db, user_id)
-        else:
-            db_creds = None
-        if db_creds:
-            return db_creds
-
-        # Callback mode without valid creds — user must complete OAuth externally
-        if self.google_auth and self.google_auth._callback_configured and get_token_db(self, agent=agent):
-            raise PermissionError("Drive not authenticated — user must complete OAuth via authenticate_google")
-
-        # 4. Load from token file
-        token_file = Path(self.token_path or "token.json")
-        creds_file = Path(self.credentials_path or "credentials.json")
-        creds: Optional[Credentials] = None
-
-        if token_file.exists():
-            try:
-                creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
-            except ValueError:
-                creds = None
-
-        if creds and creds.expired and getattr(creds, "refresh_token", None):
-            try:
-                creds.refresh(Request())
-            except Exception:
-                creds = None
-
-        if creds and creds.valid:
-            return creds
-
-        # 5. Interactive OAuth flow
-        if self.google_auth is not None and self.google_auth._services:
-            consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
-        else:
-            consent_scopes = self.scopes
-        client_config = {
-            "installed": {
-                "client_id": getenv("GOOGLE_CLIENT_ID"),
-                "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
-                "project_id": getenv("GOOGLE_PROJECT_ID"),
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
-            }
-        }
-        if creds_file.exists():
-            flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), consent_scopes)
-        else:
-            flow = InstalledAppFlow.from_client_config(client_config, consent_scopes)
-        run_kwargs: dict = {"port": self.oauth_port, "prompt": "consent"}
-        if self.login_hint:
-            run_kwargs["login_hint"] = self.login_hint
-        creds = flow.run_local_server(**run_kwargs)
-
-        if creds and creds.valid:
-            if save_token(self, creds, user_id=user_id, agent=agent):
-                log_debug("Drive credentials saved to DB")
-            else:
-                token_file.write_text(creds.to_json())
-                log_debug("Drive credentials saved to file")
-
-        return creds
 
     def _build_service(self, creds):
         creds_to_use = creds
