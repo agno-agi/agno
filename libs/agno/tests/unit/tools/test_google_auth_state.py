@@ -5,16 +5,23 @@ from unittest.mock import Mock
 import jwt
 import pytest
 
+from agno.db.sqlite.sqlite import SqliteDb
 from agno.tools.google.auth import GoogleAuth
 from agno.utils.oauth_state import sign_state, verify_state
 
 
 @pytest.fixture
-def google_auth():
+def test_db():
+    return SqliteDb(db_file=":memory:")
+
+
+@pytest.fixture
+def google_auth(test_db):
     ga = GoogleAuth(
         client_id="test-client-id",
         client_secret="test-client-secret",
         state_secret="test-state-secret-32-bytes-or-longer",
+        db=test_db,
     )
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
     return ga
@@ -42,9 +49,9 @@ def test_authenticate_google_produces_verifiable_state(google_auth):
     assert "iat" in payload and "exp" in payload
 
 
-def test_env_var_fallback(monkeypatch):
+def test_env_var_fallback(monkeypatch, test_db):
     monkeypatch.setenv("GOOGLE_OAUTH_STATE_SECRET", "env-secret")
-    ga = GoogleAuth(client_id="x")
+    ga = GoogleAuth(client_id="x", db=test_db)
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
     resp = json.loads(ga.authenticate_google(run_context=_fake_run_context("alice")))
     state = _state_from_url(resp["url"])
@@ -52,9 +59,9 @@ def test_env_var_fallback(monkeypatch):
     assert payload["user_id"] == "alice"
 
 
-def test_kwarg_overrides_env_var(monkeypatch):
+def test_kwarg_overrides_env_var(monkeypatch, test_db):
     monkeypatch.setenv("GOOGLE_OAUTH_STATE_SECRET", "env-value")
-    ga = GoogleAuth(client_id="x", state_secret="kwarg-wins")
+    ga = GoogleAuth(client_id="x", state_secret="kwarg-wins", db=test_db)
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
     resp = json.loads(ga.authenticate_google(run_context=_fake_run_context("alice")))
     state = _state_from_url(resp["url"])
