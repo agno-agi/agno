@@ -17,6 +17,7 @@ Dashboard: https://synap.maximem.ai
 """
 
 import os
+import time
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
@@ -42,7 +43,7 @@ db = SynapDb(
 agent = Agent(
     model=OpenAIChat(),
     db=db,
-    memory=True,
+    enable_agentic_memory=True,
     description=(
         "You are a helpful assistant. You remember facts and preferences "
         "about the user across sessions."
@@ -59,8 +60,23 @@ if __name__ == "__main__":
         "and is allergic to peanuts. I prefer dark mode in all my tools."
     )
 
-    # Later turn — Synap retrieves the relevant facts automatically
+    # Synap ingests memories asynchronously; allow a moment for extraction
+    # before querying so the facts are available for retrieval.
+    time.sleep(5)
+
+    # Second turn — Synap retrieves the relevant facts automatically
     agent.print_response("What do you know about my dietary restrictions?")
 
-    # Cross-session: same user_id retrieves memories from previous runs
-    agent.print_response("Which editor theme should I use?")
+    # Cross-session: create a fresh agent instance with the same user_id to
+    # demonstrate that memories persist across independent agent instances.
+    fresh_agent = Agent(
+        model=OpenAIChat(),
+        db=SynapDb(
+            sdk=sdk,
+            user_id="agno-demo-user",
+            customer_id="agno-demo-customer",
+        ),
+        enable_agentic_memory=True,
+        description="You are a helpful assistant with access to the user's memory.",
+    )
+    fresh_agent.print_response("Which editor theme should I use?")
