@@ -21,8 +21,8 @@ by default; uploads/downloads are disabled.
    - Or pass ``credentials_path`` / ``token_path`` directly
    - Opens browser on first use, caches token to ``gdrive_token.json``
 
-Uses ``AllDrivesGoogleDriveTools`` so service accounts can see files
-inside shared folders and Shared Drives — see ``agno.context.gdrive.tools``.
+Uses ``GoogleDriveTools`` with ``corpora="allDrives"`` so service accounts
+can see files inside shared folders and Shared Drives.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 
 from agno.agent import Agent
 from agno.context._utils import answer_from_run
-from agno.context.gdrive.tools import AllDrivesGoogleDriveTools
+from agno.tools.google.drive import GoogleDriveTools
 from agno.context.google import validate_google_credentials
 from agno.context.mode import ContextMode
 from agno.context.provider import Answer, ContextProvider, Status
@@ -66,7 +66,7 @@ class GoogleDriveContextProvider(ContextProvider):
         self._token_path = token_path or "gdrive_token.json"
 
         self.instructions_text = instructions if instructions is not None else DEFAULT_GDRIVE_INSTRUCTIONS
-        self._tools: AllDrivesGoogleDriveTools | None = None
+        self._tools: GoogleDriveTools | None = None
         self._agent: Agent | None = None
 
     def status(self) -> Status:
@@ -119,12 +119,15 @@ class GoogleDriveContextProvider(ContextProvider):
     # Internals
     # ------------------------------------------------------------------
 
-    def _ensure_tools(self) -> AllDrivesGoogleDriveTools:
+    def _ensure_tools(self) -> GoogleDriveTools:
         if self._tools is None:
-            self._tools = AllDrivesGoogleDriveTools(
+            self._tools = GoogleDriveTools(
                 service_account_path=self._sa_path,
                 creds_path=self._credentials_path,
                 token_path=self._token_path,
+                corpora="allDrives",
+                supports_all_drives=True,
+                include_items_from_all_drives=True,
             )
         return self._tools
 
