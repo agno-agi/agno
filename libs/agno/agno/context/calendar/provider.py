@@ -25,6 +25,7 @@ tools; writes get CRUD plus lookup tools.
 
 from __future__ import annotations
 
+import asyncio
 from os import getenv
 from typing import TYPE_CHECKING
 
@@ -162,7 +163,7 @@ class GoogleCalendarContextProvider(ContextProvider):
         )
 
     async def astatus(self) -> Status:
-        return self.status()
+        return await asyncio.to_thread(self.status)
 
     def query(self, question: str, *, run_context: RunContext | None = None) -> Answer:
         kwargs = self._run_kwargs_for_sub_agent(run_context)
