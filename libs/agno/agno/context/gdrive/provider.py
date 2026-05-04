@@ -52,6 +52,11 @@ class GoogleDriveContextProvider(ContextProvider):
         service_account_path: str | None = None,  # SA JSON key file
         credentials_path: str | None = None,  # OAuth client config (client_id/secret JSON)
         token_path: str | None = None,  # Cached OAuth tokens after consent
+        # Shared Drive support — passthrough to GoogleDriveTools
+        corpora: str = "allDrives",  # "user" | "domain" | "drive" | "allDrives"
+        supports_all_drives: bool = True,
+        include_items_from_all_drives: bool = True,
+        drive_id: str | None = None,  # Required when corpora="drive"
         id: str = "gdrive",
         name: str = "Google Drive",
         instructions: str | None = None,
@@ -64,6 +69,10 @@ class GoogleDriveContextProvider(ContextProvider):
         self._sa_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
         self._credentials_path = credentials_path
         self._token_path = token_path or "gdrive_token.json"
+        self._corpora = corpora
+        self._supports_all_drives = supports_all_drives
+        self._include_items_from_all_drives = include_items_from_all_drives
+        self._drive_id = drive_id
 
         self.instructions_text = instructions if instructions is not None else DEFAULT_GDRIVE_INSTRUCTIONS
         self._tools: GoogleDriveTools | None = None
@@ -125,9 +134,10 @@ class GoogleDriveContextProvider(ContextProvider):
                 service_account_path=self._sa_path,
                 creds_path=self._credentials_path,
                 token_path=self._token_path,
-                corpora="allDrives",
-                supports_all_drives=True,
-                include_items_from_all_drives=True,
+                corpora=self._corpora,
+                supports_all_drives=self._supports_all_drives,
+                include_items_from_all_drives=self._include_items_from_all_drives,
+                drive_id=self._drive_id,
             )
         return self._tools
 
