@@ -863,16 +863,7 @@ class Model(ABC):
             if self.cache_response:
                 self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
         finally:
-            # Close the Gemini client
-            if self.__class__.__name__ == "Gemini" and self.client is not None:  # type: ignore
-                try:
-                    self.client.close()  # type: ignore
-                    self.client = None
-                except AttributeError as e:
-                    log_warning(
-                        f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
-                        f" please upgrade Gemini to the latest version: pip install -U google-genai: {e}",
-                    )
+            pass  # Gemini cleanup removed — SDK is thread-safe (fixes #7427)
 
         return model_response
 
@@ -1084,16 +1075,7 @@ class Model(ABC):
             if self.cache_response:
                 self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
         finally:
-            # Close the Gemini client
-            if self.__class__.__name__ == "Gemini" and self.client is not None:
-                try:
-                    await self.client.aio.aclose()  # type: ignore
-                    self.client = None
-                except AttributeError as e:
-                    log_warning(
-                        f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
-                        f" please upgrade Gemini to the latest version: pip install -U google-genai: {e}",
-                    )
+            pass  # Gemini cleanup removed — SDK is thread-safe (fixes #7427)
 
         return model_response
 
@@ -1590,16 +1572,7 @@ class Model(ABC):
             if self.cache_response and cache_key and streaming_responses:
                 self._save_streaming_responses_to_cache(cache_key, streaming_responses)
         finally:
-            # Close the Gemini client
-            if self.__class__.__name__ == "Gemini" and self.client is not None:
-                try:
-                    self.client.close()  # type: ignore
-                    self.client = None
-                except AttributeError as e:
-                    log_warning(
-                        f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
-                        f" please upgrade Gemini to the latest version: pip install -U google-genai: {e}",
-                    )
+            pass  # Gemini cleanup removed — SDK is thread-safe (fixes #7427)
 
     async def aprocess_response_stream(
         self,
@@ -1870,16 +1843,7 @@ class Model(ABC):
                 self._save_streaming_responses_to_cache(cache_key, streaming_responses)
 
         finally:
-            # Close the Gemini client
-            if self.__class__.__name__ == "Gemini" and self.client is not None:
-                try:
-                    await self.client.aio.aclose()  # type: ignore
-                    self.client = None
-                except AttributeError as e:
-                    log_warning(
-                        f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
-                        f" please upgrade Gemini to the latest version: pip install -U google-genai: {e}",
-                    )
+            pass  # Gemini cleanup removed — SDK is thread-safe (fixes #7427)
 
     def _populate_assistant_message_from_stream_data(
         self, assistant_message: Message, stream_data: MessageData
