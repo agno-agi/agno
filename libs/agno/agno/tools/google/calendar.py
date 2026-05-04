@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Union, cast
 
 from agno.tools.google.auth import get_cache_key, google_authenticate
 from agno.tools.google.base import GoogleToolkit
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error
 
 try:
     from google.oauth2.credentials import Credentials

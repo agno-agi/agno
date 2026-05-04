@@ -49,7 +49,6 @@ from typing import Any, List, Optional, Union
 
 from agno.tools.google.auth import get_current_creds, google_authenticate
 from agno.tools.google.base import GoogleToolkit
-from agno.utils.log import log_debug
 
 try:
     from google.oauth2.credentials import Credentials

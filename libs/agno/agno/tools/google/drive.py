@@ -44,7 +44,7 @@ from typing import Any, List, Optional, Tuple, Union, cast
 
 from agno.tools.google.auth import google_authenticate
 from agno.tools.google.base import GoogleToolkit
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_error
 
 try:
     from google.oauth2.credentials import Credentials
