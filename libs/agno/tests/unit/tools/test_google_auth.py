@@ -11,9 +11,12 @@ from agno.tools.google.gmail import GmailTools
 
 
 @pytest.fixture
-def google_auth():
-    # authenticate_google requires a state signing secret; provide a test-only value
-    return GoogleAuth(client_id="test-client-id", state_secret="test-state-secret")
+def google_auth(tmp_path):
+    from agno.db.sqlite.sqlite import SqliteDb
+
+    # authenticate_google requires a state signing secret and db for PKCE
+    db = SqliteDb(db_file=str(tmp_path / "test_auth.db"))
+    return GoogleAuth(client_id="test-client-id", state_secret="test-state-secret", db=db)
 
 
 @pytest.fixture
@@ -101,6 +104,10 @@ def test_authenticate_google_includes_oauth_params(google_auth):
     assert params["prompt"] == ["consent"]
     # Default is False (privacy-first); see test_include_granted_scopes_opt_in for True case
     assert params["include_granted_scopes"] == ["false"]
+    # PKCE params
+    assert "code_challenge" in params
+    assert params["code_challenge_method"] == ["S256"]
+    assert len(params["code_challenge"][0]) == 43  # Base64url SHA256 without padding
 
 
 def test_include_granted_scopes_opt_in(tmp_path):
@@ -224,3 +231,68 @@ def test_authenticate_google_with_agent_db(tmp_path):
     result = json.loads(ga.authenticate_google())
     assert "url" in result
     assert ga._db is db
+
+
+def test_pkce_state_stored_in_db(tmp_path):
+    from urllib.parse import parse_qs, urlparse
+
+    from agno.db.sqlite.sqlite import SqliteDb
+
+    db = SqliteDb(db_file=str(tmp_path / "pkce.db"))
+    ga = GoogleAuth(client_id="id", client_secret="secret", state_secret="s", db=db)
+    ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
+
+    # Generate OAuth URL - this stores PKCE state in DB
+    result = json.loads(ga.authenticate_google())
+    assert "url" in result
+
+    # Verify PKCE params in URL
+    params = parse_qs(urlparse(result["url"]).query)
+    assert "code_challenge" in params
+    assert params["code_challenge_method"] == ["S256"]
+
+    # Verify PKCE state stored in DB
+    row = db.get_auth_token("google", None, "google")
+    assert row is not None
+    token_data = row["token_data"]
+    assert "pkce_verifier" in token_data
+    assert "pkce_state_id" in token_data
+    assert token_data["pending"] is True
+    assert len(token_data["pkce_verifier"]) == 64  # 48 bytes base64url
+
+
+def test_pkce_callback_verifies_state_id(tmp_path):
+    from agno.db.sqlite.sqlite import SqliteDb
+    from agno.utils.oauth_state import sign_state
+
+    db = SqliteDb(db_file=str(tmp_path / "pkce.db"))
+    ga = GoogleAuth(client_id="id", client_secret="secret", state_secret="s", db=db)
+    ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
+
+    # Generate OAuth URL
+    ga.authenticate_google()
+
+    # Get the stored state_id
+    row = db.get_auth_token("google", None, "google")
+    real_state_id = row["token_data"]["pkce_state_id"]
+
+    # Attacker tries callback with wrong state_id
+    fake_state = sign_state(
+        {"user_id": None, "services": ["gmail"], "state_id": "wrong-id"},
+        secret="s",
+        ttl_seconds=600,
+    )
+    result = ga.handle_oauth_callback(code="fake-code", state=fake_state, db=db)
+    assert "error" in result
+    assert "expired or invalid" in result["error"]
+
+    # Correct state_id should proceed (will fail at token exchange, but passes state verification)
+    correct_state = sign_state(
+        {"user_id": None, "services": ["gmail"], "state_id": real_state_id},
+        secret="s",
+        ttl_seconds=600,
+    )
+    result = ga.handle_oauth_callback(code="fake-code", state=correct_state, db=db)
+    # Should fail at token exchange (no real Google), not state verification
+    assert "error" in result
+    assert "Token exchange failed" in result["error"]

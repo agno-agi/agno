@@ -1,6 +1,9 @@
+import base64
+import hashlib
 import inspect
 import json
 import os
+import secrets
 from contextvars import ContextVar
 from functools import wraps
 from typing import Any, Dict, List, Optional, Set
@@ -9,6 +12,23 @@ from urllib.parse import urlencode
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.oauth_state import sign_state, verify_state
+
+
+def _generate_pkce_pair() -> tuple[str, str]:
+    """Generate PKCE code_verifier and code_challenge (S256).
+
+    Returns:
+        (code_verifier, code_challenge) tuple.
+
+    code_verifier: 64-char random string (A-Z, a-z, 0-9, -._~)
+    code_challenge: Base64URL(SHA256(code_verifier)), no padding
+    """
+    # 48 bytes → 64 chars base64url (within 43-128 char spec)
+    code_verifier = secrets.token_urlsafe(48)
+    # S256: SHA256 hash, base64url encoded, no padding
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return code_verifier, code_challenge
 
 # Per-call service, creds, and user_id storage for stateless toolkit access
 _google_service: ContextVar[Any] = ContextVar("google_service", default=None)
@@ -330,11 +350,26 @@ class GoogleAuth(Toolkit):
                 }
             )
 
-        # Signed JWT carries user_id through the Google round-trip unforgeably.
+        # Resolve DB for PKCE state storage
+        db = _valid_auth_token_db(self._db) or _valid_auth_token_db(getattr(agent, "db", None) if agent else None)
+        if db is None:
+            return json.dumps(
+                {
+                    "error": "GoogleAuth requires a database for PKCE state storage. "
+                    "Pass db= to GoogleAuth or ensure agent.db is configured."
+                }
+            )
+
+        # PKCE: generate code_verifier (secret, stored in DB) and code_challenge (sent to Google)
+        code_verifier, code_challenge = _generate_pkce_pair()
+        # Unique state_id links the JWT to the DB row — verifier never leaves the server
+        state_id = secrets.token_urlsafe(16)
+
+        # Signed JWT carries user_id + state_id through Google redirect (NOT the verifier)
         user_id = getattr(run_context, "user_id", None) if run_context else None
         try:
             state = sign_state(
-                {"user_id": user_id, "services": list(services)},
+                {"user_id": user_id, "services": list(services), "state_id": state_id},
                 secret=self._state_secret,
                 ttl_seconds=self._state_ttl_seconds,
             )
@@ -346,6 +381,25 @@ class GoogleAuth(Toolkit):
                 }
             )
 
+        # Store PKCE state in DB — same row will hold the token after exchange
+        try:
+            db.upsert_auth_token(
+                {
+                    "provider": "google",
+                    "user_id": user_id,
+                    "service": "google",
+                    "token_data": {
+                        "pkce_verifier": code_verifier,
+                        "pkce_state_id": state_id,
+                        "pending": True,
+                    },
+                    "granted_scopes": list(scopes),
+                }
+            )
+        except Exception as e:
+            log_error(f"Failed to store PKCE state: {e}")
+            return json.dumps({"error": f"Failed to initialize OAuth flow: {e}"})
+
         params = {
             "client_id": self.client_id,
             "redirect_uri": self.redirect_uri,
@@ -355,8 +409,11 @@ class GoogleAuth(Toolkit):
             "prompt": "consent",
             "include_granted_scopes": "true" if self._include_granted_scopes else "false",
             "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
         }
         url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
+        log_debug(f"Generated PKCE OAuth URL for user={user_id}, state_id={state_id}")
         return json.dumps({"message": f"Connect {', '.join(services)}", "url": url})
 
     def handle_oauth_callback(self, code: str, state: str, db: Any) -> Dict[str, Any]:
@@ -366,9 +423,13 @@ class GoogleAuth(Toolkit):
         The db is captured by the router closure at mount time — no process-local
         registry needed, works across workers and restarts.
 
+        PKCE flow: The code_verifier is retrieved from the DB (stored during
+        authenticate_google), verified via state_id, and used for token exchange.
+        The verifier never appears in URLs or JWTs — only the state_id reference.
+
         Args:
             code: Authorization code from Google's redirect.
-            state: HMAC-signed JWT carrying user_id and services (see authenticate_google).
+            state: HMAC-signed JWT carrying user_id, services, and state_id.
             db: Database handle for token persistence (captured by router closure).
 
         Returns:
@@ -396,6 +457,34 @@ class GoogleAuth(Toolkit):
 
         user_id = state_data.get("user_id")
         services = state_data.get("services", [])
+        state_id = state_data.get("state_id")
+
+        if not state_id:
+            log_warning("OAuth callback missing state_id — possible replay of pre-PKCE token")
+            return {"error": "Invalid state: missing state_id"}
+
+        # Retrieve PKCE verifier from DB and verify state_id matches
+        try:
+            row = db.get_auth_token("google", user_id, "google")
+        except Exception as e:
+            log_error(f"Failed to retrieve PKCE state: {e}")
+            return {"error": "Failed to verify OAuth state"}
+
+        if not row:
+            log_warning(f"No PKCE state found for user={user_id}")
+            return {"error": "OAuth session expired or invalid. Please try again."}
+
+        token_data = row.get("token_data", {})
+        stored_state_id = token_data.get("pkce_state_id")
+        code_verifier = token_data.get("pkce_verifier")
+
+        if not stored_state_id or stored_state_id != state_id:
+            log_warning(f"PKCE state_id mismatch for user={user_id}: expected {stored_state_id}, got {state_id}")
+            return {"error": "OAuth session expired or invalid. Please try again."}
+
+        if not code_verifier:
+            log_warning(f"Missing code_verifier for user={user_id}")
+            return {"error": "OAuth session corrupted. Please try again."}
 
         try:
             from google_auth_oauthlib.flow import Flow
@@ -429,7 +518,8 @@ class GoogleAuth(Toolkit):
             if self._include_granted_scopes:
                 flow.oauth2session.scope = None
 
-            flow.fetch_token(code=code)
+            # PKCE: pass code_verifier to token exchange
+            flow.fetch_token(code=code, code_verifier=code_verifier)
             creds = flow.credentials
 
         except Exception as e:
