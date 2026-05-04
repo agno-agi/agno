@@ -49,4 +49,4 @@ def validate_google_credentials(
         except Exception as e:
             return Status(ok=False, detail=f"invalid token file: {e}")
 
-    return Status(ok=True, detail=f"{provider_id} (oauth, not yet authenticated)")
+    return Status(ok=False, detail=f"{provider_id} (oauth, not authenticated)")

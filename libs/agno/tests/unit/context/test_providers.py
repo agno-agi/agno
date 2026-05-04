@@ -688,8 +688,8 @@ def test_gmail_status_reports_oauth_not_authenticated(monkeypatch):
     monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
     p = GmailContextProvider(token_path="/nonexistent/token.json")
     status = p.status()
-    assert status.ok is True
-    assert "not yet authenticated" in status.detail
+    assert status.ok is False
+    assert "not authenticated" in status.detail
 
 
 def test_gmail_default_surface_is_single_query_tool(monkeypatch):
@@ -745,8 +745,8 @@ def test_calendar_status_reports_oauth_not_authenticated(monkeypatch):
     monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
     p = GoogleCalendarContextProvider(token_path="/nonexistent/token.json")
     status = p.status()
-    assert status.ok is True
-    assert "not yet authenticated" in status.detail
+    assert status.ok is False
+    assert "not authenticated" in status.detail
 
 
 def test_calendar_default_surface_is_single_query_tool(monkeypatch):
@@ -804,8 +804,8 @@ def test_validate_google_credentials_oauth_not_authenticated():
         sa_path=None,
         token_path="/nonexistent/token.json",
     )
-    assert status.ok is True
-    assert "not yet authenticated" in status.detail
+    assert status.ok is False
+    assert "not authenticated" in status.detail
 
 
 def test_validate_google_credentials_oauth_valid_token(tmp_path):
