@@ -804,6 +804,48 @@ def attach_routes(
                     )
                     return
 
+                # HITL: Handle paused status in non-streaming mode
+                if response.status == "PAUSED":
+                    requirements = list(getattr(response, "active_requirements", None) or [])
+                    run_id = getattr(response, "run_id", None)
+                    if run_id and requirements:
+                        from agno.os.interfaces.slack.pause import _PAUSE_LABELS, post_pause_card
+                        from agno.os.interfaces.slack.types import _tool_name
+
+                        # Send the paused content message
+                        content = str(response.content) if response.content else ""
+                        if content:
+                            await send_slack_message_async(
+                                async_client,
+                                channel=ctx["channel_id"],
+                                message=content,
+                                thread_ts=ctx["thread_id"],
+                            )
+
+                        # Post awaiting indicator
+                        pause_labels = [_PAUSE_LABELS[r.pause_type].format(tool=_tool_name(r)) for r in requirements]
+                        awaiting_ts = None
+                        if pause_labels:
+                            try:
+                                awaiting_resp = await async_client.chat_postMessage(
+                                    channel=ctx["channel_id"],
+                                    thread_ts=ctx["thread_id"],
+                                    text="\n".join(pause_labels),
+                                    mrkdwn=True,
+                                )
+                                awaiting_ts = awaiting_resp.get("ts")
+                            except Exception as exc:
+                                log_error(f"[HITL] Non-streaming awaiting indicator failed: {exc}")
+
+                        # Post the HITL card with approve/reject buttons
+                        try:
+                            await post_pause_card(
+                                async_client, response, ctx["channel_id"], ctx["thread_id"], awaiting_ts
+                            )
+                        except Exception as exc:
+                            log_error(f"[HITL] Non-streaming pause card failed: {exc}")
+                        return
+
                 if hasattr(response, "reasoning_content") and response.reasoning_content:
                     rc = str(response.reasoning_content)
                     formatted = "*Reasoning:*\n> " + rc.replace("\n", "\n> ")
