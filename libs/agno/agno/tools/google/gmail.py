@@ -114,6 +114,13 @@ GMAIL_QUERY_INSTRUCTIONS = textwrap.dedent("""\
     - `from:me` — emails sent by the user
     - Combine with spaces (AND): `from:me newer_than:7d has:attachment`""")
 
+GMAIL_COMPOSE_INSTRUCTIONS = textwrap.dedent("""
+    ## Composing Emails
+    - **New email:** `send_email(to, subject, body)` or `create_draft_email(to, subject, body)`
+    - **Reply (send now):** `send_email_reply(message_id, body)` keeps the message in the thread
+    - **Reply (draft):** `create_draft_email(to, subject, body, thread_id=..., message_id=...)` \
+creates a draft reply in the thread. Get thread_id and message_id from the original message first.""")
+
 
 class GmailTools(GoogleToolkit):
     api_name = "gmail"
@@ -207,8 +214,12 @@ class GmailTools(GoogleToolkit):
             instructions (Optional[str]): Custom instructions for the toolkit. If None, uses DEFAULT_INSTRUCTIONS.
             add_instructions (bool): Whether to inject toolkit instructions into the agent system prompt. Defaults to True.
         """
+        # Build instructions dynamically based on enabled tools
+        has_compose = create_draft_email or send_email or send_email_reply or send_draft or update_draft
         if instructions is None:
             instructions = GMAIL_QUERY_INSTRUCTIONS
+            if has_compose:
+                instructions += GMAIL_COMPOSE_INSTRUCTIONS
 
         # oauth_port is the canonical kwarg; port is kept for pre-existing callers
         if oauth_port == 0 and port is not None:
