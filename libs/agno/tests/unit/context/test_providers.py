@@ -359,6 +359,29 @@ def test_db_status_ok_on_connectable_engine():
     assert p.status().ok is True
 
 
+def test_db_write_false_drops_update_tool():
+    """Read-only analytics DB — same shape as wiki's voice provider."""
+    engine = create_engine("sqlite:///:memory:")
+    p = DatabaseContextProvider(
+        id="crm",
+        sql_engine=engine,
+        readonly_engine=engine,
+        write=False,
+    )
+    assert [t.name for t in p.get_tools()] == ["query_crm"]
+
+
+def test_db_read_false_drops_query_tool():
+    engine = create_engine("sqlite:///:memory:")
+    p = DatabaseContextProvider(
+        id="crm",
+        sql_engine=engine,
+        readonly_engine=engine,
+        read=False,
+    )
+    assert [t.name for t in p.get_tools()] == ["update_crm"]
+
+
 # ---------------------------------------------------------------------------
 # Slack
 # ---------------------------------------------------------------------------
@@ -382,6 +405,12 @@ def test_slack_default_surface_is_query_plus_update():
     p = SlackContextProvider(token="xoxb-x")
     tools = p.get_tools()
     assert [t.name for t in tools] == ["query_slack", "update_slack"]
+
+
+def test_slack_write_false_drops_update_tool():
+    """Read-only Slack — useful for "watch but don't post" agents."""
+    p = SlackContextProvider(token="xoxb-x", write=False)
+    assert [t.name for t in p.get_tools()] == ["query_slack"]
 
 
 def test_slack_wrapped_tools_are_self_describing():

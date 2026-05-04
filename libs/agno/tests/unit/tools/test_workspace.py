@@ -120,6 +120,26 @@ def test_custom_partition_works():
         assert ws.functions["delete_file"].requires_confirmation is True
 
 
+def test_edit_instruction_only_added_when_edit_registered():
+    """The 'always read_file before editing' nudge is gated on edit_file actually being available."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        read_only = Workspace(tmp_dir, allowed=Workspace.READ_TOOLS, confirm=[])
+        assert "edit_file" not in read_only.functions
+        assert read_only.instructions is None
+        assert read_only.add_instructions is False
+
+        with_edit_allowed = Workspace(tmp_dir, allowed=["read", "edit"], confirm=[])
+        assert "edit_file" in with_edit_allowed.functions
+        assert with_edit_allowed.instructions is not None
+        assert "edit_file" in with_edit_allowed.instructions
+        assert with_edit_allowed.add_instructions is True
+
+        with_edit_confirm = Workspace(tmp_dir, allowed=["read"], confirm=["edit"])
+        assert "edit_file" in with_edit_confirm.functions
+        assert with_edit_confirm.instructions is not None
+        assert with_edit_confirm.add_instructions is True
+
+
 def test_root_kwarg_is_optional_positional():
     """Workspace('.') and Workspace(root='.') both work."""
     with tempfile.TemporaryDirectory() as tmp_dir:

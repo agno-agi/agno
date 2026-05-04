@@ -2037,6 +2037,8 @@ class Workflow:
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                         )
+                    except RunCancelledException:
+                        raise
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
                         step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
@@ -2189,6 +2191,9 @@ class Workflow:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.content = str(e)
+                # Preserve any completed step outputs before cancellation
+                if collected_step_outputs:
+                    workflow_run_response.step_results = collected_step_outputs
             except Exception as e:
                 import traceback
 
@@ -2437,6 +2442,8 @@ class Workflow:
                                 )
                                 if self.stream_executor_events:
                                     yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+                    except RunCancelledException:
+                        raise
                     except Exception as step_error:
                         step_error_occurred = True
                         step_error_exception = step_error
@@ -2902,6 +2909,8 @@ class Workflow:
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                         )
+                    except RunCancelledException:
+                        raise
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
                         step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
@@ -3057,6 +3066,9 @@ class Workflow:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
                 workflow_run_response.status = RunStatus.cancelled
                 workflow_run_response.content = str(e)
+                # Preserve any completed step outputs before cancellation
+                if collected_step_outputs:
+                    workflow_run_response.step_results = collected_step_outputs
             except Exception as e:
                 logger.exception("Workflow execution failed")
                 workflow_run_response.status = RunStatus.error
@@ -3325,6 +3337,8 @@ class Workflow:
                                     yield self._handle_event(
                                         enriched_event, workflow_run_response, websocket_handler=websocket_handler
                                     )  # type: ignore
+                    except RunCancelledException:
+                        raise
                     except Exception as step_error:
                         step_error_occurred = True
                         step_error_exception = step_error
@@ -5744,6 +5758,8 @@ class Workflow:
                         background_tasks=background_tasks,
                         **extra_kwargs,
                     )
+                except RunCancelledException:
+                    raise
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
                     step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
@@ -5863,6 +5879,9 @@ class Workflow:
             logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
             workflow_run_response.status = RunStatus.cancelled
             workflow_run_response.content = str(e)
+            # Preserve any completed step outputs before cancellation
+            if collected_step_outputs:
+                workflow_run_response.step_results = collected_step_outputs
         except Exception as e:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
@@ -6697,6 +6716,8 @@ class Workflow:
                             )
                             if self.stream_executor_events:
                                 yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+                except RunCancelledException:
+                    raise
                 except Exception as step_error:
                     step_error_occurred = True
                     step_error_exception = step_error
@@ -6827,6 +6848,9 @@ class Workflow:
             logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
             workflow_run_response.status = RunStatus.cancelled
             workflow_run_response.content = str(e)
+            # Preserve any completed step outputs before cancellation
+            if collected_step_outputs:
+                workflow_run_response.step_results = collected_step_outputs
 
             cancelled_event = WorkflowCancelledEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -7604,6 +7628,8 @@ class Workflow:
                         background_tasks=background_tasks,
                         **extra_kwargs,
                     )
+                except RunCancelledException:
+                    raise
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
                     step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
@@ -7718,6 +7744,9 @@ class Workflow:
             logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
             workflow_run_response.status = RunStatus.cancelled
             workflow_run_response.content = str(e)
+            # Preserve any completed step outputs before cancellation
+            if collected_step_outputs:
+                workflow_run_response.step_results = collected_step_outputs
         except Exception as e:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
@@ -8288,6 +8317,8 @@ class Workflow:
                             )
                             if self.stream_executor_events:
                                 yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+                except RunCancelledException:
+                    raise
                 except Exception as step_error:
                     step_error_occurred = True
                     step_error_exception = step_error
@@ -8418,6 +8449,9 @@ class Workflow:
             logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
             workflow_run_response.status = RunStatus.cancelled
             workflow_run_response.content = str(e)
+            # Preserve any completed step outputs before cancellation
+            if collected_step_outputs:
+                workflow_run_response.step_results = collected_step_outputs
 
             cancelled_event = WorkflowCancelledEvent(
                 run_id=workflow_run_response.run_id or "",

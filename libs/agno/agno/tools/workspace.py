@@ -285,17 +285,25 @@ class Workspace(Toolkit):
         sync_tools = [getattr(self, name) for name in registered]
         async_tools = [(getattr(self, "a" + name), name) for name in registered]
 
+        # Only nudge the agent about edit_file when edit_file is actually
+        # available — read-only surfaces (e.g. WikiContextProvider's read
+        # sub-agent) shouldn't be told how to use a tool they don't have.
+        edit_registered = "edit" in resolved_allowed_aliases or "edit" in resolved_confirm_aliases
+        toolkit_kwargs: dict = {}
+        if edit_registered:
+            toolkit_kwargs["instructions"] = (
+                "Always read_file before editing — the line-numbered output gives you "
+                "the exact substring to pass to edit_file's old_str parameter. "
+                "Do not guess file contents or pass line numbers to edit_file."
+            )
+            toolkit_kwargs["add_instructions"] = True
+
         super().__init__(
             name="workspace",
             tools=sync_tools,
             async_tools=async_tools,
             requires_confirmation_tools=resolved_confirm_methods,
-            instructions=(
-                "Always read_file before editing — the line-numbered output gives you "
-                "the exact substring to pass to edit_file's old_str parameter. "
-                "Do not guess file contents or pass line numbers to edit_file."
-            ),
-            add_instructions=True,
+            **toolkit_kwargs,
             **kwargs,
         )
 
