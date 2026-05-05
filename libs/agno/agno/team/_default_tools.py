@@ -514,6 +514,12 @@ def _get_delegate_task_function(
         if run_response and member_agent_run_response:
             run_response.add_member_run(member_agent_run_response)
 
+            # Propagate KB references from sub-agent to the team run output
+            if member_agent_run_response.references:
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.extend(member_agent_run_response.references)
+
         # Scrub the member run based on that member's storage flags before storing
         if member_agent_run_response:
             if (
