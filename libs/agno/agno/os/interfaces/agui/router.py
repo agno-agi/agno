@@ -28,6 +28,7 @@ from agno.os.interfaces.agui.utils import (
 )
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
+from agno.os.interfaces.agui.utils import _agui_messages_to_agno_messages, _agui_tools_to_external_functions
 
 
 async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
@@ -36,8 +37,11 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
 
     try:
         # AG-UI frontends send full conversation history every request.
-        # Extract only the last user message — agent manages history via session DB.
-        user_input = extract_agui_user_input(run_input.messages or [])
+        
+        #user_input = extract_agui_user_input(run_input.messages or [])
+        
+        # Extract all user messages (history context)
+        user_input = _agui_messages_to_agno_messages(run_input.messages or [])
 
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
@@ -48,9 +52,16 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
 
         # Validating the session state is of the expected type (dict)
         session_state = validate_agui_state(run_input.state, run_input.thread_id)
+        
+        # This is to merge AG-UI side tools with agent side tools        
+        run_agent_instance = agent
+        fe_functions = _agui_tools_to_external_functions(run_input.tools)
+        if fe_functions and isinstance(agent, Agent):
+            existing_tools = list(agent.tools) if agent.tools else []
+            run_agent_instance = agent.deep_copy(update={"tools": existing_tools + fe_functions})
 
         # Request streaming response from agent
-        response_stream = agent.arun(  # type: ignore
+        response_stream = run_agent_instance.arun(  # type: ignore
             input=user_input,
             session_id=run_input.thread_id,
             stream=True,
@@ -79,8 +90,10 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
     run_id = input.run_id or str(uuid.uuid4())
     try:
         # AG-UI frontends send full conversation history every request.
-        # Extract only the last user message — team manages history via session DB.
-        user_input = extract_agui_user_input(input.messages or [])
+        #user_input = extract_agui_user_input(input.messages or [])
+        
+        # Extract all user messages (history context)
+        user_input = _agui_messages_to_agno_messages(input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
         # Look for user_id in input.forwarded_props
@@ -90,9 +103,15 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
 
         # Validating the session state is of the expected type (dict)
         session_state = validate_agui_state(input.state, input.thread_id)
+        
+        run_agent_instance = team
+        fe_functions = _agui_tools_to_external_functions(input.tools)
+        if fe_functions and isinstance(team, Team):
+            existing_tools = list(team.tools) if team.tools else []
+            run_agent_instance = team.deep_copy(update={"tools": existing_tools + fe_functions})
 
         # Request streaming response from team
-        response_stream = team.arun(  # type: ignore
+        response_stream = run_agent_instance.arun(  # type: ignore
             input=user_input,
             session_id=input.thread_id,
             stream=True,

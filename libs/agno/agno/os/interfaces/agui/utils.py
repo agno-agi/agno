@@ -41,7 +41,10 @@ from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
 from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
-
+from agno.tools.function import (
+    Function,
+)
+from agno.models.message import Message
 
 def validate_agui_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
     """Validate the given AGUI state is of the expected type (dict)."""
@@ -74,6 +77,54 @@ def validate_agui_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
     log_warning(f"AGUI state must be a dict, got {type(state).__name__}. State will be ignored. Thread: {thread_id}")
     return None
 
+def _agui_tools_to_external_functions(agui_tools):
+    if not agui_tools:
+        return []
+    out = []
+    for tool in agui_tools:
+        out.append(Function(
+            name=tool.name,
+            description=tool.description,
+            parameters=tool.parameters or {"type": "object", "properties": {}},
+            external_execution=True,
+            external_execution_silent=True,
+        ))
+    return out
+
+def _agui_messages_to_agno_messages(agui_messages):
+    if not agui_messages:
+        return []
+    messages = []
+    for msg in agui_messages:
+        role = getattr(msg, "role", None)
+        if role not in ("system", "user", "assistant", "tool"):
+            continue  # skip ActivityMessage etc.
+
+        content = getattr(msg, "content", None)
+        if role == "user" and isinstance(content, list):
+            # multimodal -> flatten to text parts
+            text_parts = [p.text for p in content
+                          if getattr(p, "type", None) == "text" and hasattr(p, "text")]
+            content = "\n".join(text_parts) if text_parts else ""
+
+        tool_calls = None
+        if role == "assistant":
+            ac = getattr(msg, "tool_calls", None)
+            if ac:
+                tool_calls = [{
+                    "id": tc.id,
+                    "type": tc.type,
+                    "function": {"name": tc.function.name,
+                                 "arguments": tc.function.arguments},
+                } for tc in ac]
+
+        messages.append(Message(
+            role=role,
+            content=content,
+            tool_call_id=getattr(msg, "tool_call_id", None) if role == "tool" else None,
+            tool_calls=tool_calls,
+        ))
+    return messages
 
 @dataclass
 class EventBuffer:
