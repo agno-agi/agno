@@ -13,7 +13,7 @@ from agno.agents.claude import ClaudeAgent
 # ----- Wrap Claude Agent SDK for Agno -----
 agent = ClaudeAgent(
     name="Claude Assistant",
-    model="claude-sonnet-4-20250514",
+    model="claude-sonnet-4-6",
     max_turns=3,
 )
 
