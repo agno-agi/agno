@@ -11,6 +11,7 @@ the SDK path is available.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from os import getenv
 from typing import Any
@@ -52,7 +53,7 @@ class ExaMCPBackend(ContextBackend):
         return Status(ok=True, detail=f"mcp.exa.ai ({'keyed' if self.api_key else 'keyless'})")
 
     async def astatus(self) -> Status:
-        return self.status()
+        return await asyncio.to_thread(self.status)
 
     def get_tools(self) -> list:
         if self._mcp_tools is None:
