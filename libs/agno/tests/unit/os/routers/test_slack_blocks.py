@@ -114,10 +114,10 @@ class TestConfirmationRow:
         card = build_pause_message("A1", [_make_requirement(tool_name="delete_file")])[0]
         assert card.title.text == "*delete_file*"
 
-    def test_card_subtitle_renders_args(self):
+    def test_card_body_renders_args(self):
         card = build_pause_message("A1", [_make_requirement(tool_name="delete_file", tool_args={"path": "/tmp/x"})])[0]
-        assert "path" in card.subtitle.text
-        assert "/tmp/x" in card.subtitle.text
+        assert "path" in card.body.text
+        assert "/tmp/x" in card.body.text
 
     def test_button_action_ids(self):
         card = build_pause_message("A1", [_make_requirement()])[0]
@@ -368,12 +368,13 @@ class TestParseSubmitPayload:
         assert errors == []
         assert decisions[0].approved is False
 
-    def test_confirmation_without_click_defaults_to_rejected(self):
-        # Submit with no click — parser treats as rejected so runs stay safe.
+    def test_confirmation_without_click_requires_explicit_decision(self):
+        # Submit without clicking Approve/Deny returns validation error
         req = _make_requirement(tool_name="delete_file")
-        decisions, _ = parse_submit_payload(_submit_payload(), [req])
-        assert decisions[0].approved is False
-        assert decisions[0].rejected_note == "No decision made"
+        decisions, errors = parse_submit_payload(_submit_payload(), [req])
+        assert decisions[0].approved is None
+        assert len(errors) == 1
+        assert errors[0].message == "Approval decision required"
 
     def test_external_execution_strips_whitespace(self):
         # Strip avoids accidental whitespace from pasted terminal output.

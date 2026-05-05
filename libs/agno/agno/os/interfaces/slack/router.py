@@ -240,7 +240,7 @@ def attach_routes(
         from slack_sdk.web.async_client import AsyncWebClient
 
         from agno.os.interfaces.slack.builders import build_confirmation_toggle_card
-        from agno.os.interfaces.slack.types import ACTION_REJECT_REASON, encode_submit_button_value
+        from agno.os.interfaces.slack.types import encode_submit_button_value
 
         actions = payload.get("actions") or []
         if not actions:
@@ -256,7 +256,6 @@ def attach_routes(
         if not channel or not card_ts:
             return
 
-        clicked_block_id = actions[0].get("block_id", "")
         original_blocks = list(message.get("blocks") or [])
 
         def to_dict(b: Any) -> Dict[str, Any]:
@@ -373,7 +372,6 @@ def attach_routes(
         if not channel or not card_ts:
             return
 
-        clicked_block_id = actions[0].get("block_id", "")
         original_blocks = list(message.get("blocks") or [])
 
         def to_dict(b: Any) -> Dict[str, Any]:
@@ -389,7 +387,6 @@ def attach_routes(
 
         # Build updated blocks: toggle clicked row to "deny" + add reason input
         updated_blocks: List[Dict[str, Any]] = []
-        reason_input_exists = False
 
         for blk in original_blocks:
             block_id = blk.get("block_id", "")
@@ -429,13 +426,11 @@ def attach_routes(
                         "text": {"type": "plain_text", "text": " "},
                     }
                 )
-                reason_input_exists = True
             # Skip existing decision markers for this row (will be replaced above)
             elif block_id.startswith(f"row:{req_id}:confirmation:decided:"):
                 continue
             # Skip existing rejection reason input for this row (will be re-added above)
             elif block_id == f"reject_reason:{req_id}":
-                reason_input_exists = True
                 continue
             # Preserve all other blocks
             else:
