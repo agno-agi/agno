@@ -6,6 +6,8 @@ Examples for `tracing/dbs` in AgentOS.
 - `basic_agent_with_postgresdb.py` — Tracing with a production-oriented relational backend.
 - `basic_agent_with_sqlite.py` — Tracing with a lightweight local development backend.
 - `basic_agent_with_mongodb.py` — Tracing with a document database backend.
+- `basic_agent_with_clickhousedb.py` — Postgres for sessions + ClickHouse as a dedicated OLAP traces store. See `libs/agno/agno/db/clickhouse/README.md` for the full setup guide.
+- `basic_agent_with_async_clickhousedb.py` — Same dual-DB pattern but fully async (`AsyncPostgresDb` + `AsyncClickhouseDb`); `setup_tracing` awaits the exporter automatically.
 
 ## Supported Backends
 - The tracing pattern is the same across database backends: the agent setup is unchanged and only the DB adapter import/config differs.
