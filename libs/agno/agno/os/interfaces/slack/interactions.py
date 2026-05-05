@@ -59,7 +59,12 @@ def _get_action_state(state: SlackState, block_id: str, action_id: str) -> Dict[
     return state.get(block_id, {}).get(action_id, {})
 
 
-def _parse_confirmation(requirement: RunRequirement, blocks: SlackBlocks, state: SlackState = None) -> ParsedDecision:
+def _parse_confirmation(
+    requirement: RunRequirement,
+    blocks: SlackBlocks,
+    errors: List[ParseError],
+    state: SlackState = None,
+) -> ParsedDecision:
     req_id = requirement.id or ""
     state = state or {}
     # Confirmation state lives in block_id, not view state — button clicks update the block itself
@@ -89,11 +94,13 @@ def _parse_confirmation(requirement: RunRequirement, blocks: SlackBlocks, state:
             rejected_note = reason_text
 
     if decision is None:
+        # Undecided confirmation is a validation error, not an implicit rejection
+        tool_name = _tool_name(requirement)
+        errors.append(ParseError(requirement_id=req_id, field=tool_name, message="Approval decision required"))
         return ParsedDecision(
             requirement_id=req_id,
             pause_type="confirmation",
-            approved=False,
-            rejected_note="No decision made",
+            approved=None,
         )
     return ParsedDecision(
         requirement_id=req_id,
@@ -205,7 +212,7 @@ def parse_submit_payload(
     for requirement in requirements:
         kind = requirement.pause_type
         if kind == "confirmation":
-            decisions.append(_parse_confirmation(requirement, blocks, state))
+            decisions.append(_parse_confirmation(requirement, blocks, errors, state))
         elif kind == "user_input":
             decisions.append(_parse_user_input(requirement, state, errors))
         elif kind == "user_feedback":
