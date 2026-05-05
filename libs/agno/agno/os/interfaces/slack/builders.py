@@ -6,38 +6,15 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, get_args
 
 from slack_sdk.models.blocks import (
-    CheckboxesElement as Checkboxes,
-)
-from slack_sdk.models.blocks import (
-    ContextBlock as Context,
-)
-from slack_sdk.models.blocks import (
-    DividerBlock as Divider,
-)
-from slack_sdk.models.blocks import (
+    CheckboxesElement,
+    ContextBlock,
+    DividerBlock,
     InputBlock,
+    PlainTextInputElement,
+    StaticSelectElement,
 )
-from slack_sdk.models.blocks import (
-    PlainTextInputElement as PlainTextInput,
-)
-from slack_sdk.models.blocks import (
-    StaticSelectElement as StaticSelect,
-)
-from slack_sdk.models.blocks.basic_components import (
-    MarkdownTextObject as Markdown,
-)
-from slack_sdk.models.blocks.basic_components import (
-    Option,
-)
-from slack_sdk.models.blocks.basic_components import (
-    PlainTextObject as PlainText,
-)
-from slack_sdk.models.blocks.block_elements import (
-    ButtonElement as Button,
-)
-from slack_sdk.models.blocks.block_elements import (
-    ImageElement,
-)
+from slack_sdk.models.blocks.basic_components import MarkdownTextObject, Option, PlainTextObject
+from slack_sdk.models.blocks.block_elements import ButtonElement, ImageElement
 
 from agno.os.interfaces.slack.types import (
     ACTION_EXTERNAL_RESULT,
@@ -64,11 +41,11 @@ MAX_MESSAGE_BLOCKS = 50
 @dataclass
 class Card:
     # Card block shipped in Slack API 2024 but slack_sdk lacks model class
-    actions: List[Button]
+    actions: List[ButtonElement]
     icon: Optional[ImageElement] = None
-    title: Optional[PlainText | Markdown] = None
-    subtitle: Optional[PlainText | Markdown] = None
-    body: Optional[PlainText | Markdown] = None
+    title: Optional[PlainTextObject | MarkdownTextObject] = None
+    subtitle: Optional[PlainTextObject | MarkdownTextObject] = None
+    body: Optional[PlainTextObject | MarkdownTextObject] = None
     block_id: Optional[str] = None
 
     @property
@@ -104,8 +81,8 @@ def render_arg_value(value: Any) -> str:
 
 # Slack lacks native boolean input; checkbox implies multi-select which is confusing
 _BOOL_OPTIONS = [
-    Option(text=PlainText(text="True"), value="true"),
-    Option(text=PlainText(text="False"), value="false"),
+    Option(text=PlainTextObject(text="True"), value="true"),
+    Option(text=PlainTextObject(text="False"), value="false"),
 ]
 
 
@@ -121,26 +98,26 @@ def _build_input_field(req_id: str, ui_field: Any) -> InputBlock:
     # Check for typing.Literal — renders as dropdown with literal values as options
     literal_args = get_args(field_type) if str(field_type).startswith("typing.Literal") else None
     if literal_args:
-        options = [Option(text=PlainText(text=str(arg)), value=str(arg)) for arg in literal_args]
-        element = StaticSelect(
+        options = [Option(text=PlainTextObject(text=str(arg)), value=str(arg)) for arg in literal_args]
+        element = StaticSelectElement(
             action_id=f"{ACTION_INPUT_FIELD_PREFIX}{name}",
-            placeholder=PlainText(text="Select"),
+            placeholder=PlainTextObject(text="Select"),
             options=options,
         )
 
     # Check for Enum subclass — renders as dropdown with enum members as options
     elif isinstance(field_type, type) and issubclass(field_type, Enum):
-        options = [Option(text=PlainText(text=member.name), value=member.name) for member in field_type]
-        element = StaticSelect(
+        options = [Option(text=PlainTextObject(text=member.name), value=member.name) for member in field_type]
+        element = StaticSelectElement(
             action_id=f"{ACTION_INPUT_FIELD_PREFIX}{name}",
-            placeholder=PlainText(text="Select"),
+            placeholder=PlainTextObject(text="Select"),
             options=options,
         )
 
     elif type_name == "bool":
-        element = StaticSelect(
+        element = StaticSelectElement(
             action_id=f"{ACTION_INPUT_FIELD_PREFIX}{name}",
-            placeholder=PlainText(text="Select"),
+            placeholder=PlainTextObject(text="Select"),
             options=_BOOL_OPTIONS,
         )
 
@@ -149,18 +126,18 @@ def _build_input_field(req_id: str, ui_field: Any) -> InputBlock:
         initial_value: Optional[str] = None
         if initial_raw is not None:
             initial_value = initial_raw if isinstance(initial_raw, str) else json.dumps(initial_raw, default=str)
-        element = PlainTextInput(
+        element = PlainTextInputElement(
             action_id=f"{ACTION_INPUT_FIELD_PREFIX}{name}",
-            placeholder=PlainText(text=f"Enter {name}"),
+            placeholder=PlainTextObject(text=f"Enter {name}"),
             initial_value=initial_value,
             multiline=multiline or None,
         )
 
     return InputBlock(
         block_id=f"{row_block_id(req_id, 'user_input')}:{name}",
-        label=PlainText(text=name),
+        label=PlainTextObject(text=name),
         element=element,
-        hint=PlainText(text=description) if description else None,
+        hint=PlainTextObject(text=description) if description else None,
     )
 
 
@@ -168,9 +145,9 @@ def _option_to_slack(option: Any, index: int) -> Option:
     label = getattr(option, "label", f"option-{index}")
     description = getattr(option, "description", None)
     return Option(
-        text=PlainText(text=label),
+        text=PlainTextObject(text=label),
         value=label,
-        description=PlainText(text=description) if description else None,
+        description=PlainTextObject(text=description) if description else None,
     )
 
 
@@ -183,20 +160,20 @@ def _build_feedback_question(req_id: str, question: Any, q_index: int) -> InputB
 
     element: Any
     if multi_select:
-        element = Checkboxes(
+        element = CheckboxesElement(
             action_id=f"{ACTION_FEEDBACK_SELECT}:{q_index}",
             options=slack_options,
         )
     else:
-        element = StaticSelect(
+        element = StaticSelectElement(
             action_id=f"{ACTION_FEEDBACK_SELECT}:{q_index}",
-            placeholder=PlainText(text="Select one"),
+            placeholder=PlainTextObject(text="Select one"),
             options=slack_options,
         )
 
     return InputBlock(
         block_id=f"{row_block_id(req_id, 'user_feedback')}:q{q_index}",
-        label=PlainText(text=prompt),
+        label=PlainTextObject(text=prompt),
         element=element,
     )
 
@@ -214,18 +191,18 @@ def _build_confirmation_row(
     return [
         Card(
             block_id=f"rowact:{req_id}:confirmation",
-            title=Markdown(text=f"*{name}*"),
-            body=Markdown(text=body_text),
+            title=MarkdownTextObject(text=f"*{name}*"),
+            body=MarkdownTextObject(text=body_text),
             actions=[
-                Button(
+                ButtonElement(
                     action_id=ACTION_ROW_APPROVE,
-                    text=PlainText(text="Approve", emoji=True),
+                    text=PlainTextObject(text="Approve", emoji=True),
                     style="primary",
                     value=button_value,
                 ),
-                Button(
+                ButtonElement(
                     action_id=ACTION_ROW_REJECT,
-                    text=PlainText(text="Deny", emoji=True),
+                    text=PlainTextObject(text="Deny", emoji=True),
                     style="danger",
                     value=button_value,
                 ),
@@ -249,27 +226,27 @@ def build_confirmation_toggle_card(
     button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
 
     if selected == "approve":
-        approve_btn = Button(
+        approve_btn = ButtonElement(
             action_id=ACTION_ROW_APPROVE,
-            text=PlainText(text="Approved", emoji=True),
+            text=PlainTextObject(text="Approved", emoji=True),
             style="primary",
             value=button_value,
         )
-        deny_btn = Button(
+        deny_btn = ButtonElement(
             action_id=ACTION_ROW_REJECT,
-            text=PlainText(text="Deny", emoji=True),
+            text=PlainTextObject(text="Deny", emoji=True),
             value=button_value,
         )
         block_id = f"rowact:{req_id}:confirmation:selected:approve"
     else:
-        approve_btn = Button(
+        approve_btn = ButtonElement(
             action_id=ACTION_ROW_APPROVE,
-            text=PlainText(text="Approve", emoji=True),
+            text=PlainTextObject(text="Approve", emoji=True),
             value=button_value,
         )
-        deny_btn = Button(
+        deny_btn = ButtonElement(
             action_id=ACTION_ROW_REJECT,
-            text=PlainText(text="Denied", emoji=True),
+            text=PlainTextObject(text="Denied", emoji=True),
             style="danger",
             value=button_value,
         )
@@ -278,8 +255,8 @@ def build_confirmation_toggle_card(
     return [
         Card(
             block_id=block_id,
-            title=Markdown(text=f"*{tool_name}*"),
-            body=Markdown(text=body_text),
+            title=MarkdownTextObject(text=f"*{tool_name}*"),
+            body=MarkdownTextObject(text=body_text),
             actions=[approve_btn, deny_btn],
         ),
     ]
@@ -301,28 +278,28 @@ def build_rejection_input_card(
     return [
         Card(
             block_id=f"rowact:{req_id}:rejection_input",
-            title=Markdown(text=f"*Deny: {tool_name}*"),
-            subtitle=Markdown(text="_Provide an optional reason for rejection_"),
+            title=MarkdownTextObject(text=f"*Deny: {tool_name}*"),
+            subtitle=MarkdownTextObject(text="_Provide an optional reason for rejection_"),
             actions=[
-                Button(
+                ButtonElement(
                     action_id=ACTION_REJECT_CONFIRM,
-                    text=PlainText(text="Confirm Rejection", emoji=True),
+                    text=PlainTextObject(text="Confirm Rejection", emoji=True),
                     style="danger",
                     value=button_value,
                 ),
-                Button(
+                ButtonElement(
                     action_id=ACTION_REJECT_CANCEL,
-                    text=PlainText(text="Cancel", emoji=True),
+                    text=PlainTextObject(text="Cancel", emoji=True),
                     value=button_value,
                 ),
             ],
         ),
         InputBlock(
             block_id=f"reject_reason:{req_id}",
-            label=PlainText(text="Reason"),
-            element=PlainTextInput(
+            label=PlainTextObject(text="Reason"),
+            element=PlainTextInputElement(
                 action_id=ACTION_REJECT_REASON,
-                placeholder=PlainText(text="Why are you rejecting this action?"),
+                placeholder=PlainTextObject(text="Why are you rejecting this action?"),
                 multiline=True,
             ),
             optional=True,
@@ -344,18 +321,18 @@ def build_original_row_card(
     return [
         Card(
             block_id=f"rowact:{req_id}:{pause_type}",
-            title=Markdown(text=original_title),
-            body=Markdown(text=original_body),
+            title=MarkdownTextObject(text=original_title),
+            body=MarkdownTextObject(text=original_body),
             actions=[
-                Button(
+                ButtonElement(
                     action_id=ACTION_ROW_APPROVE,
-                    text=PlainText(text="Approve", emoji=True),
+                    text=PlainTextObject(text="Approve", emoji=True),
                     style="primary",
                     value=button_value,
                 ),
-                Button(
+                ButtonElement(
                     action_id=ACTION_ROW_REJECT,
-                    text=PlainText(text="Deny", emoji=True),
+                    text=PlainTextObject(text="Deny", emoji=True),
                     style="danger",
                     value=button_value,
                 ),
@@ -391,10 +368,10 @@ def _build_external_row(requirement: RunRequirement) -> List[Any]:
     return [
         InputBlock(
             block_id=f"{row_block_id(req_id, 'external_execution')}:result",
-            label=PlainText(text="Result"),
-            element=PlainTextInput(
+            label=PlainTextObject(text="Result"),
+            element=PlainTextInputElement(
                 action_id=ACTION_EXTERNAL_RESULT,
-                placeholder=PlainText(text="Paste the execution output here"),
+                placeholder=PlainTextObject(text="Paste the execution output here"),
                 multiline=True,
             ),
         ),
@@ -406,7 +383,7 @@ def build_pause_message(
     requirements: List[RunRequirement],
     awaiting_ts: Optional[str] = None,
 ) -> List[Any]:
-    from slack_sdk.models.blocks import ActionsBlock as Actions
+    from slack_sdk.models.blocks import ActionsBlock
 
     from agno.os.interfaces.slack.types import ACTION_SUBMIT, encode_submit_button_value, pause_block_id
 
@@ -437,15 +414,15 @@ def build_pause_message(
             truncated_count = total - processed
             break
         if i > 0:
-            blocks.append(Divider())
+            blocks.append(DividerBlock())
         blocks.extend(row_blocks)
         processed += 1
 
     if truncated_count:
         blocks.append(
-            Context(
+            ContextBlock(
                 elements=[
-                    Markdown(
+                    MarkdownTextObject(
                         text=f":warning: _{truncated_count} more pause row(s) omitted — "
                         "Slack message cap. Resolve shown rows; remaining re-render after._"
                     )
@@ -457,12 +434,12 @@ def build_pause_message(
     needs_submit = any(r.pause_type != "confirmation" for r in requirements[:processed])
     if needs_submit:
         blocks.append(
-            Actions(
+            ActionsBlock(
                 block_id=pause_block_id(run_id),
                 elements=[
-                    Button(
+                    ButtonElement(
                         action_id=ACTION_SUBMIT,
-                        text=PlainText(text="Submit"),
+                        text=PlainTextObject(text="Submit"),
                         style="primary",
                         value=encode_submit_button_value(run_id, awaiting_ts),
                     ),
