@@ -1,20 +1,27 @@
 """
-Google Drive Context Provider
-=============================
+Google Drive Office Document Reading
+=====================================
 
-GoogleDriveContextProvider wraps a read-only slice of `GoogleDriveTools`
-with `corpora="allDrives"` so a service account can see folders shared
-with it and files in Shared Drives. The calling agent gets a single
-`query_<id>` tool that routes through a sub-agent trained to
-escalate searches when the naive query comes back empty.
+Demonstrates reading Microsoft Office files (.docx, .xlsx, .pptx) from
+Google Drive with automatic text extraction. The GDrive provider uses
+optional dependencies to extract text content:
+
+- python-docx for Word documents
+- openpyxl for Excel spreadsheets
+- python-pptx for PowerPoint presentations
+
+Without these packages, Office files return a clear error with install
+instructions. Binary files (PDFs, images, etc.) are detected and rejected
+with a helpful message rather than returning garbage UTF-8.
 
 Setup:
     1. Create a service account in Google Cloud Console and download
        its JSON key.
-    2. Share the Drive folders you want the agent to see with the SA
-       email (found in the JSON key as `client_email`).
+    2. Share the Drive folders containing Office files with the SA email.
     3. Point the env at the key file:
            export GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/sa.json
+    4. Install optional dependencies for Office support:
+           pip install python-docx openpyxl python-pptx
 
 Requires:
     OPENAI_API_KEY
@@ -26,13 +33,13 @@ from __future__ import annotations
 import asyncio
 
 from agno.agent import Agent
-from agno.context.gdrive import GoogleDriveContextProvider
+from agno.context.gdrive import GDriveContextProvider
 from agno.models.openai import OpenAIResponses
 
 # ---------------------------------------------------------------------------
 # Create the provider (service-account path from env)
 # ---------------------------------------------------------------------------
-gdrive = GoogleDriveContextProvider(model=OpenAIResponses(id="gpt-5.4-mini"))
+gdrive = GDriveContextProvider(model=OpenAIResponses(id="gpt-5.4-mini"))
 
 # ---------------------------------------------------------------------------
 # Create the Agent
@@ -51,9 +58,8 @@ agent = Agent(
 if __name__ == "__main__":
     print(f"\ngdrive.status() = {gdrive.status()}\n")
     prompt = (
-        "What Google Docs can you see? Find the most recently modified "
-        "one, read it, and summarize it in three bullets. Cite its "
-        "webViewLink."
+        "Search for any .docx, .xlsx, or .pptx files in my Drive. "
+        "Pick one, read its contents, and summarize what it contains."
     )
     print(f"> {prompt}\n")
     asyncio.run(agent.aprint_response(prompt))
