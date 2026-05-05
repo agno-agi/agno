@@ -21,7 +21,7 @@ Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
 """
 
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Literal
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -119,7 +119,7 @@ def restart_service(service_name: str, reason: str) -> str:
 def file_incident_retro(
     title: str,
     summary: str,
-    priority: str,
+    priority: Literal["P0", "P1", "P2", "P3"],
     on_call_owner: str,
 ) -> str:
     """Open a retrospective ticket linking the incident timeline and

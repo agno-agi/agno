@@ -234,8 +234,13 @@ def attach_routes(
         return SlackEventResponse(status="ok")
 
     async def _handle_row_approve(payload: Dict[str, Any]) -> None:
-        # Strips buttons from Card (keeps title/subtitle for audit), then chains to _handle_submit
+        # Toggle confirmation row to "approved" state, preserve all other rows.
+        # If there's a global Submit button, don't auto-submit — user clicks Submit.
+        # If there's NO global Submit (only confirmation rows), auto-submit when all decided.
         from slack_sdk.web.async_client import AsyncWebClient
+
+        from agno.os.interfaces.slack.builders import build_confirmation_toggle_card
+        from agno.os.interfaces.slack.types import ACTION_REJECT_REASON, encode_submit_button_value
 
         actions = payload.get("actions") or []
         if not actions:
@@ -251,90 +256,9 @@ def attach_routes(
         if not channel or not card_ts:
             return
 
-        # Re-emit the original Card with the action row stripped
-        original_card: Dict[str, Any] = {}
-        for blk in message.get("blocks") or []:
-            if blk.get("type") == "card":
-                original_card = blk
-                break
+        clicked_block_id = actions[0].get("block_id", "")
+        original_blocks = list(message.get("blocks") or [])
 
-        resolved_blocks: List[Dict[str, Any]] = []
-        if original_card:
-            resolved_card: Dict[str, Any] = {"type": "card"}
-            for field in ("title", "subtitle", "body", "icon"):
-                if field in original_card:
-                    resolved_card[field] = original_card[field]
-            resolved_blocks = [resolved_card]
-
-        client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
-        try:
-            await client.chat_update(channel=channel, ts=card_ts, text="Approved", blocks=resolved_blocks)
-        except Exception as exc:
-            log_error(f"[HITL] chat_update (approve record) failed for card {card_ts}: {exc}")
-
-        if not run_id:
-            return
-
-        # Chain to the submit/resume flow via a synthetic payload
-        from agno.os.interfaces.slack.types import encode_submit_button_value
-
-        decided_block_id = f"row:{req_id}:confirmation:decided:approve"
-        synthetic_payload = dict(payload)
-        synthetic_payload["actions"] = [
-            {
-                "action_id": "submit_pause",
-                "block_id": f"pause:{run_id}",
-                "value": encode_submit_button_value(run_id, awaiting_ts),
-            }
-        ]
-        synthetic_payload["message"] = {
-            **(payload.get("message") or {}),
-            "blocks": [{"type": "section", "block_id": decided_block_id, "text": {"type": "plain_text", "text": ""}}],
-        }
-        await _handle_submit(synthetic_payload)
-
-    async def _handle_row_reject_start(payload: Dict[str, Any]) -> None:
-        # Instead of immediately rejecting, show inline rejection reason input
-        from slack_sdk.web.async_client import AsyncWebClient
-
-        from agno.os.interfaces.slack.builders import build_rejection_input_card
-
-        actions = payload.get("actions") or []
-        if not actions:
-            return
-        button_value = actions[0].get("value") or ""
-        if "|" not in button_value:
-            return
-        req_id, run_id, awaiting_ts = decode_row_button_value(button_value)
-
-        channel = (payload.get("channel") or {}).get("id")
-        message = payload.get("message") or {}
-        card_ts = message.get("ts")
-        if not channel or not card_ts:
-            return
-
-        # Extract tool name and original card data for Cancel restoration
-        original_card: Dict[str, Any] = {}
-        for blk in message.get("blocks") or []:
-            if blk.get("type") == "card":
-                original_card = blk
-                break
-
-        original_title = (original_card.get("title") or {}).get("text", "*Approve: tool*")
-        original_subtitle = (original_card.get("subtitle") or {}).get("text", "")
-        # Extract tool name from title like "*Approve: get_top_hackernews_stories*"
-        tool_name = original_title.replace("*Approve: ", "").replace("*", "").strip() or "tool"
-
-        rejection_blocks = build_rejection_input_card(
-            req_id=req_id,
-            run_id=run_id,
-            awaiting_ts=awaiting_ts,
-            tool_name=tool_name,
-            original_title=original_title,
-            original_subtitle=original_subtitle,
-        )
-
-        # Serialize blocks for chat_update
         def to_dict(b: Any) -> Dict[str, Any]:
             if hasattr(b, "to_dict"):
                 return b.to_dict()
@@ -344,32 +268,197 @@ def attach_routes(
 
             if is_dataclass(b) and not isinstance(b, type):
                 return asdict(b)
-            raise TypeError(f"Cannot serialize block of type {type(b).__name__}")
+            return b if isinstance(b, dict) else {}
 
-        block_dicts = [to_dict(b) for b in rejection_blocks]
+        # Build updated blocks: toggle clicked row to "approved", preserve others
+        updated_blocks: List[Dict[str, Any]] = []
+        pending_confirmation_rows: set[str] = set()
+        has_global_submit = False
+
+        for blk in original_blocks:
+            block_id = blk.get("block_id", "")
+            blk_type = blk.get("type", "")
+
+            # Match clicked row by block_id prefix (handles both fresh and toggled states)
+            if block_id.startswith(f"rowact:{req_id}:confirmation"):
+                # Extract tool_name and body from current card
+                tool_name = (blk.get("title") or {}).get("text", "*tool*").replace("*", "")
+                body_text = (blk.get("body") or {}).get("text", "")
+                # Build toggle card with "approve" selected
+                toggle_blocks = build_confirmation_toggle_card(
+                    req_id=req_id,
+                    run_id=run_id,
+                    awaiting_ts=awaiting_ts,
+                    tool_name=tool_name,
+                    body_text=body_text,
+                    selected="approve",
+                )
+                for tb in toggle_blocks:
+                    updated_blocks.append(to_dict(tb))
+                # Add decision marker for parse_submit_payload
+                updated_blocks.append({
+                    "type": "section",
+                    "block_id": f"row:{req_id}:confirmation:decided:approve",
+                    "text": {"type": "plain_text", "text": " "},
+                })
+            # Skip existing decision markers for this row (will be replaced above)
+            elif block_id.startswith(f"row:{req_id}:confirmation:decided:"):
+                continue
+            # Skip any existing rejection reason input for this row (user toggled from Deny to Approve)
+            elif block_id == f"reject_reason:{req_id}":
+                continue
+            # Global Submit button
+            elif blk_type == "actions" and block_id.startswith("pause:"):
+                updated_blocks.append(blk)
+                has_global_submit = True
+            # Another confirmation row (not this one)
+            elif block_id.startswith("rowact:") and "confirmation" in block_id:
+                updated_blocks.append(blk)
+                parts = block_id.split(":")
+                # Track as pending unless it's already in a "selected" state
+                if len(parts) >= 2 and ":selected:" not in block_id:
+                    pending_confirmation_rows.add(parts[1])
+            # All other blocks: preserve
+            else:
+                updated_blocks.append(blk)
+
+        client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
+        try:
+            await client.chat_update(channel=channel, ts=card_ts, text="Approval pending", blocks=updated_blocks)
+        except Exception as exc:
+            log_error(f"[HITL] chat_update (row approve) failed for card {card_ts}: {exc}")
+
+        if not run_id:
+            return
+
+        # Auto-submit only when: all confirmation rows decided AND no global Submit button
+        if not pending_confirmation_rows and not has_global_submit:
+            synthetic_payload = dict(payload)
+            synthetic_payload["actions"] = [
+                {
+                    "action_id": "submit_pause",
+                    "block_id": f"pause:{run_id}",
+                    "value": encode_submit_button_value(run_id, awaiting_ts),
+                }
+            ]
+            synthetic_payload["message"] = {
+                **(payload.get("message") or {}),
+                "blocks": updated_blocks,
+            }
+            await _handle_submit(synthetic_payload)
+
+    async def _handle_row_reject_start(payload: Dict[str, Any]) -> None:
+        # Toggle confirmation row to "denied" state + add reason input, preserve all other rows
+        from slack_sdk.web.async_client import AsyncWebClient
+        from slack_sdk.models.blocks import InputBlock, PlainTextInputElement as PlainTextInput
+        from slack_sdk.models.blocks.basic_components import PlainTextObject as PlainText
+
+        from agno.os.interfaces.slack.builders import build_confirmation_toggle_card
+        from agno.os.interfaces.slack.types import ACTION_REJECT_REASON
+
+        actions = payload.get("actions") or []
+        if not actions:
+            return
+        button_value = actions[0].get("value") or ""
+        if "|" not in button_value:
+            return
+        req_id, run_id, awaiting_ts = decode_row_button_value(button_value)
+
+        channel = (payload.get("channel") or {}).get("id")
+        message = payload.get("message") or {}
+        card_ts = message.get("ts")
+        if not channel or not card_ts:
+            return
+
+        clicked_block_id = actions[0].get("block_id", "")
+        original_blocks = list(message.get("blocks") or [])
+
+        def to_dict(b: Any) -> Dict[str, Any]:
+            if hasattr(b, "to_dict"):
+                return b.to_dict()
+            if hasattr(b, "model_dump"):
+                return b.model_dump(exclude_none=True, mode="json")
+            from dataclasses import asdict, is_dataclass
+
+            if is_dataclass(b) and not isinstance(b, type):
+                return asdict(b)
+            return b if isinstance(b, dict) else {}
+
+        # Build updated blocks: toggle clicked row to "deny" + add reason input
+        updated_blocks: List[Dict[str, Any]] = []
+        reason_input_exists = False
+
+        for blk in original_blocks:
+            block_id = blk.get("block_id", "")
+
+            # Match clicked row by block_id prefix (handles both fresh and toggled states)
+            if block_id.startswith(f"rowact:{req_id}:confirmation"):
+                tool_name = (blk.get("title") or {}).get("text", "*tool*").replace("*", "")
+                body_text = (blk.get("body") or {}).get("text", "")
+                # Build toggle card with "deny" selected
+                toggle_blocks = build_confirmation_toggle_card(
+                    req_id=req_id,
+                    run_id=run_id,
+                    awaiting_ts=awaiting_ts,
+                    tool_name=tool_name,
+                    body_text=body_text,
+                    selected="deny",
+                )
+                for tb in toggle_blocks:
+                    updated_blocks.append(to_dict(tb))
+                # Add inline reason input right after the card
+                reason_input = InputBlock(
+                    block_id=f"reject_reason:{req_id}",
+                    label=PlainText(text="Reason (optional)"),
+                    element=PlainTextInput(
+                        action_id=ACTION_REJECT_REASON,
+                        placeholder=PlainText(text="Why are you rejecting this action?"),
+                        multiline=True,
+                    ),
+                    optional=True,
+                )
+                updated_blocks.append(to_dict(reason_input))
+                # Add decision marker for parse_submit_payload
+                updated_blocks.append({
+                    "type": "section",
+                    "block_id": f"row:{req_id}:confirmation:decided:deny",
+                    "text": {"type": "plain_text", "text": " "},
+                })
+                reason_input_exists = True
+            # Skip existing decision markers for this row (will be replaced above)
+            elif block_id.startswith(f"row:{req_id}:confirmation:decided:"):
+                continue
+            # Skip existing rejection reason input for this row (will be re-added above)
+            elif block_id == f"reject_reason:{req_id}":
+                reason_input_exists = True
+                continue
+            # Preserve all other blocks
+            else:
+                updated_blocks.append(blk)
 
         client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
         try:
             await client.chat_update(
                 channel=channel,
                 ts=card_ts,
-                text="Enter rejection reason",
-                blocks=block_dicts,
+                text="Rejection pending",
+                blocks=updated_blocks,
             )
         except Exception as exc:
-            log_error(f"[HITL] chat_update (rejection input) failed for card {card_ts}: {exc}")
+            log_error(f"[HITL] chat_update (row reject) failed for card {card_ts}: {exc}")
 
     async def _handle_reject_confirm(payload: Dict[str, Any]) -> None:
-        # Extract rejection reason and proceed with rejection
+        # Mark this row as rejected, preserve all other rows.
+        # Auto-submit when ALL rows are decided.
         from slack_sdk.web.async_client import AsyncWebClient
 
-        from agno.os.interfaces.slack.types import decode_reject_card_value
+        from agno.os.interfaces.slack.types import decode_reject_card_value, encode_submit_button_value
 
         actions = payload.get("actions") or []
         if not actions:
             return
         button_value = actions[0].get("value") or ""
-        req_id, run_id, awaiting_ts, _, _ = decode_reject_card_value(button_value)
+        req_id, run_id, awaiting_ts, _, _, original_pause_type = decode_reject_card_value(button_value)
         if not req_id:
             return
 
@@ -385,72 +474,96 @@ def attach_routes(
         reason_state = state_values.get(reason_block_id, {}).get("reject_reason", {})
         rejected_note = (reason_state.get("value") or "").strip() or None
 
-        # Update card to show it's been rejected with reason (strip actions)
-        original_card: Dict[str, Any] = {}
-        for blk in message.get("blocks") or []:
-            if blk.get("type") == "card":
-                original_card = blk
-                break
+        original_blocks = list(message.get("blocks") or [])
 
-        resolved_blocks: List[Dict[str, Any]] = []
-        if original_card:
-            original_title = (original_card.get("title") or {}).get("text", "")
-            tool_name = original_title.replace("*Deny: ", "").replace("*", "").strip() or "tool"
-            resolved_card: Dict[str, Any] = {
-                "type": "card",
-                "title": {"type": "mrkdwn", "text": f"*Denied: {tool_name}*"},
-            }
-            if rejected_note:
-                resolved_card["subtitle"] = {"type": "mrkdwn", "text": f"_{rejected_note}_"}
-            resolved_blocks = [resolved_card]
+        # Build updated blocks: mark clicked row as rejected, preserve others
+        updated_blocks: List[Dict[str, Any]] = []
+        pending_rows: set[str] = set()
+
+        for blk in original_blocks:
+            block_id = blk.get("block_id", "")
+
+            # Check if this is the rejection input card for our req_id
+            if block_id == f"rowact:{req_id}:rejection_input":
+                original_title = (blk.get("title") or {}).get("text", "")
+                tool_name = original_title.replace("*Deny: ", "").replace("*", "").strip() or "tool"
+                # Mark as decided with the original pause type
+                decided_card: Dict[str, Any] = {
+                    "type": "card",
+                    "block_id": f"rowact:{req_id}:{original_pause_type}:decided:reject",
+                    "title": {"type": "mrkdwn", "text": f"*Denied: {tool_name}*"},
+                }
+                if rejected_note:
+                    decided_card["subtitle"] = {"type": "mrkdwn", "text": f"_{rejected_note}_"}
+                updated_blocks.append(decided_card)
+                # Add decision marker for parse_submit_payload (confirmation needs this)
+                if original_pause_type == "confirmation":
+                    updated_blocks.append(
+                        {
+                            "type": "section",
+                            "block_id": f"row:{req_id}:confirmation:decided:reject",
+                            "text": {"type": "plain_text", "text": " "},
+                        }
+                    )
+                    updated_blocks.append(
+                        {
+                            "type": "context",
+                            "block_id": f"reject_note:{req_id}",
+                            "elements": [{"type": "plain_text", "text": rejected_note or ""}],
+                        }
+                    )
+            # Skip the rejection reason input block (already processed above)
+            elif block_id == f"reject_reason:{req_id}":
+                continue
+            # Check if this is another undecided row header card (has actions = buttons)
+            elif block_id.startswith("rowact:") and blk.get("actions"):
+                updated_blocks.append(blk)
+                parts = block_id.split(":")
+                if len(parts) >= 2:
+                    pending_rows.add(parts[1])
+            # Already-decided cards or non-card blocks: preserve
+            else:
+                updated_blocks.append(blk)
 
         client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
         try:
-            await client.chat_update(channel=channel, ts=card_ts, text="Denied", blocks=resolved_blocks)
+            await client.chat_update(channel=channel, ts=card_ts, text="Rejection pending", blocks=updated_blocks)
         except Exception as exc:
             log_error(f"[HITL] chat_update (reject confirm) failed for card {card_ts}: {exc}")
 
         if not run_id:
             return
 
-        # Chain to _handle_submit with rejection note embedded
-        from agno.os.interfaces.slack.types import encode_submit_button_value
-
-        decided_block_id = f"row:{req_id}:confirmation:decided:reject"
-        synthetic_payload = dict(payload)
-        synthetic_payload["actions"] = [
-            {
-                "action_id": "submit_pause",
-                "block_id": f"pause:{run_id}",
-                "value": encode_submit_button_value(run_id, awaiting_ts),
-            }
-        ]
-        # Embed rejection note in a special block for parsing
-        synthetic_payload["message"] = {
-            **(payload.get("message") or {}),
-            "blocks": [
-                {"type": "section", "block_id": decided_block_id, "text": {"type": "plain_text", "text": ""}},
+        # Auto-submit when all rows are decided
+        if not pending_rows:
+            synthetic_payload = dict(payload)
+            synthetic_payload["actions"] = [
                 {
-                    "type": "context",
-                    "block_id": f"reject_note:{req_id}",
-                    "elements": [{"type": "plain_text", "text": rejected_note or ""}],
-                },
-            ],
-        }
-        await _handle_submit(synthetic_payload)
+                    "action_id": "submit_pause",
+                    "block_id": f"pause:{run_id}",
+                    "value": encode_submit_button_value(run_id, awaiting_ts),
+                }
+            ]
+            synthetic_payload["message"] = {
+                **(payload.get("message") or {}),
+                "blocks": updated_blocks,
+            }
+            await _handle_submit(synthetic_payload)
 
     async def _handle_reject_cancel(payload: Dict[str, Any]) -> None:
-        # Restore original Approve/Deny card
+        # Restore original Approve/Deny card, preserve all other rows
         from slack_sdk.web.async_client import AsyncWebClient
 
-        from agno.os.interfaces.slack.builders import build_original_confirmation_card
+        from agno.os.interfaces.slack.builders import build_original_row_card
         from agno.os.interfaces.slack.types import decode_reject_card_value
 
         actions = payload.get("actions") or []
         if not actions:
             return
         button_value = actions[0].get("value") or ""
-        req_id, run_id, awaiting_ts, original_title, original_subtitle = decode_reject_card_value(button_value)
+        req_id, run_id, awaiting_ts, original_title, original_body, original_pause_type = decode_reject_card_value(
+            button_value
+        )
         if not req_id:
             return
 
@@ -459,14 +572,6 @@ def attach_routes(
         card_ts = message.get("ts")
         if not channel or not card_ts:
             return
-
-        restored_blocks = build_original_confirmation_card(
-            req_id=req_id,
-            run_id=run_id,
-            awaiting_ts=awaiting_ts,
-            original_title=original_title,
-            original_subtitle=original_subtitle,
-        )
 
         def to_dict(b: Any) -> Dict[str, Any]:
             if hasattr(b, "to_dict"):
@@ -479,7 +584,33 @@ def attach_routes(
                 return asdict(b)
             raise TypeError(f"Cannot serialize block of type {type(b).__name__}")
 
-        block_dicts = [to_dict(b) for b in restored_blocks]
+        original_blocks = list(message.get("blocks") or [])
+
+        # Build updated blocks: replace rejection input with restored card, preserve others
+        updated_blocks: List[Dict[str, Any]] = []
+
+        for blk in original_blocks:
+            block_id = blk.get("block_id", "")
+
+            # Check if this is the rejection input card for our req_id
+            if block_id == f"rowact:{req_id}:rejection_input":
+                # Replace with restored card (correct pause type)
+                restored_blocks = build_original_row_card(
+                    req_id=req_id,
+                    run_id=run_id,
+                    awaiting_ts=awaiting_ts,
+                    original_title=original_title,
+                    original_body=original_body,
+                    pause_type=original_pause_type,
+                )
+                for rb in restored_blocks:
+                    updated_blocks.append(to_dict(rb))
+            # Skip the rejection reason input block (replaced above)
+            elif block_id == f"reject_reason:{req_id}":
+                continue
+            else:
+                # Preserve all other blocks unchanged
+                updated_blocks.append(blk)
 
         client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
         try:
@@ -487,7 +618,7 @@ def attach_routes(
                 channel=channel,
                 ts=card_ts,
                 text="Pending approval",
-                blocks=block_dicts,
+                blocks=updated_blocks,
             )
         except Exception as exc:
             log_error(f"[HITL] chat_update (reject cancel) failed for card {card_ts}: {exc}")

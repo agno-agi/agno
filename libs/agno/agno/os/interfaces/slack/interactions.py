@@ -7,6 +7,7 @@ from agno.os.interfaces.slack.types import (
     ACTION_EXTERNAL_RESULT,
     ACTION_FEEDBACK_SELECT,
     ACTION_INPUT_FIELD_PREFIX,
+    ACTION_REJECT_REASON,
     ParsedDecision,
     ParseError,
     _tool_args,
@@ -58,8 +59,11 @@ def _get_action_state(state: SlackState, block_id: str, action_id: str) -> Dict[
     return state.get(block_id, {}).get(action_id, {})
 
 
-def _parse_confirmation(requirement: RunRequirement, blocks: SlackBlocks) -> ParsedDecision:
+def _parse_confirmation(
+    requirement: RunRequirement, blocks: SlackBlocks, state: SlackState = None
+) -> ParsedDecision:
     req_id = requirement.id or ""
+    state = state or {}
     # Confirmation state lives in block_id, not view state — button clicks update the block itself
     decision = None
     rejected_note: Optional[str] = None
@@ -70,7 +74,7 @@ def _parse_confirmation(requirement: RunRequirement, blocks: SlackBlocks) -> Par
             if parsed.get("status") == "decided":
                 decision = parsed.get("decided")
 
-        # Extract rejection note from embedded context block
+        # Extract rejection note from embedded context block (legacy format)
         block_id = block.get("block_id", "")
         if block_id == f"reject_note:{req_id}":
             elements = block.get("elements") or []
@@ -78,6 +82,13 @@ def _parse_confirmation(requirement: RunRequirement, blocks: SlackBlocks) -> Par
                 note_text = elements[0].get("text", "").strip()
                 if note_text:
                     rejected_note = note_text
+
+    # Also check for rejection reason from InputBlock state (toggle format)
+    if rejected_note is None:
+        reason_state = _get_action_state(state, f"reject_reason:{req_id}", ACTION_REJECT_REASON)
+        reason_text = (reason_state.get("value") or "").strip()
+        if reason_text:
+            rejected_note = reason_text
 
     if decision is None:
         return ParsedDecision(
@@ -115,6 +126,9 @@ def _parse_user_input(
 
         try:
             values[field.name] = coerce_to_type(raw_value, field.field_type)
+            # All user_input fields are required — None means empty submission
+            if values[field.name] is None:
+                errors.append(ParseError(requirement_id=req_id, field=field.name, message="This field is required"))
         except (ValueError, TypeError) as exc:
             errors.append(ParseError(requirement_id=req_id, field=field.name, message=str(exc)))
             values[field.name] = None
@@ -193,7 +207,7 @@ def parse_submit_payload(
     for requirement in requirements:
         kind = requirement.pause_type
         if kind == "confirmation":
-            decisions.append(_parse_confirmation(requirement, blocks))
+            decisions.append(_parse_confirmation(requirement, blocks, state))
         elif kind == "user_input":
             decisions.append(_parse_user_input(requirement, state, errors))
         elif kind == "user_feedback":

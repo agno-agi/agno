@@ -15,7 +15,7 @@ Try in Slack:
 Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
 """
 
-from typing import Dict, List
+from typing import Dict, List, Literal
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -67,7 +67,7 @@ def search_existing_tickets(query: str) -> List[Dict[str, str]]:
 def create_support_ticket(
     title: str,
     description: str,
-    priority: str,
+    priority: Literal["P0", "P1", "P2", "P3"],
     component: str,
 ) -> str:
     """Open a support / engineering ticket.

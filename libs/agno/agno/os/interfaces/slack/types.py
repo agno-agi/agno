@@ -118,26 +118,32 @@ def decode_submit_button_value(value: str) -> Tuple[str, Optional[str]]:
 
 
 def encode_reject_card_value(
-    req_id: str, run_id: str, awaiting_ts: Optional[str], original_title: str, original_subtitle: str
+    req_id: str,
+    run_id: str,
+    awaiting_ts: Optional[str],
+    original_title: str,
+    original_body: str,
+    original_pause_type: str = "confirmation",
 ) -> str:
-    # Base64-encode title/subtitle to avoid delimiter collisions
+    # Base64-encode title/body to avoid delimiter collisions
     import base64
 
     title_b64 = base64.b64encode(original_title.encode()).decode()
-    subtitle_b64 = base64.b64encode(original_subtitle.encode()).decode()
-    return f"{req_id}|{run_id}|{awaiting_ts or ''}|{title_b64}|{subtitle_b64}"
+    body_b64 = base64.b64encode(original_body.encode()).decode()
+    return f"{req_id}|{run_id}|{awaiting_ts or ''}|{title_b64}|{body_b64}|{original_pause_type}"
 
 
-def decode_reject_card_value(value: str) -> Tuple[str, str, Optional[str], str, str]:
+def decode_reject_card_value(value: str) -> Tuple[str, str, Optional[str], str, str, str]:
     import base64
 
-    parts = value.split("|", 4)
+    parts = value.split("|", 5)
     if len(parts) < 5:
-        return "", "", None, "", ""
-    req_id, run_id, awaiting_ts, title_b64, subtitle_b64 = parts
+        return "", "", None, "", "", "confirmation"
+    req_id, run_id, awaiting_ts, title_b64, body_b64 = parts[:5]
+    original_pause_type = parts[5] if len(parts) > 5 else "confirmation"
     try:
         original_title = base64.b64decode(title_b64).decode()
-        original_subtitle = base64.b64decode(subtitle_b64).decode()
+        original_body = base64.b64decode(body_b64).decode()
     except Exception:
-        original_title, original_subtitle = "", ""
-    return req_id, run_id, awaiting_ts or None, original_title, original_subtitle
+        original_title, original_body = "", ""
+    return req_id, run_id, awaiting_ts or None, original_title, original_body, original_pause_type

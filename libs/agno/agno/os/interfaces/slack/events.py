@@ -223,6 +223,7 @@ async def _on_run_paused(chunk: BaseRunOutputEvent, state: StreamState, stream: 
     # requirement via stream.stop(blocks=...). The card carries the full
     # approval context (tool name, args, Approve/Deny buttons) and coexists
     # with the streaming plan above it.
+    print(f"[DEBUG] _on_run_paused called: run_id={getattr(chunk, 'run_id', None)}")
     state.paused_event = chunk
     # Keep pending task_cards in-progress rather than flipping to complete —
     # the run isn't finished, it's awaiting human input.
@@ -413,8 +414,13 @@ HANDLERS: Dict[str, _EventHandler] = {
 
 
 async def process_event(ev_raw: str, chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+    import logging
+
+    logging.basicConfig(filename="/tmp/slack_events_debug.log", level=logging.DEBUG, force=True)
+    logger = logging.getLogger("slack_events")
     # Strip "Team" prefix so agent + team events share handlers
     ev = ev_raw.removeprefix("Team")
+    logger.warning(f"[DEBUG] process_event: {ev_raw} -> {ev}")
 
     # Suppress nested agent internals in workflow mode
     if state.entity_type == "workflow" and ev in _SUPPRESSED_IN_WORKFLOW:
@@ -422,6 +428,12 @@ async def process_event(ev_raw: str, chunk: BaseRunOutputEvent, state: StreamSta
 
     handler = HANDLERS.get(ev)
     if handler:
-        return await handler(chunk, state, stream)
+        result = await handler(chunk, state, stream)
+        if ev == "RunPaused":
+            print(
+                f"[DEBUG] RunPaused handler returned: {result}, paused_event set: {state.paused_event is not None}",
+                flush=True,
+            )
+        return result
 
     return False
