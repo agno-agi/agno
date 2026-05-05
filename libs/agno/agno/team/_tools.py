@@ -341,6 +341,12 @@ def _determine_tools_for_model(
                 _functions.append(_func)
                 log_debug(f"Added tool {_func.name} from {tool.name}")
 
+                # Add per-function instructions
+                if _func.add_instructions and _func.instructions is not None:
+                    if team._tool_instructions is None:
+                        team._tool_instructions = []
+                    team._tool_instructions.append(_func.instructions)
+
             # Add instructions from the toolkit
             if tool.add_instructions and tool.instructions is not None:
                 if team._tool_instructions is None:

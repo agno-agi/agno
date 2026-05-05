@@ -21,6 +21,7 @@ the raw extraction payload.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from os import getenv
 from typing import Any, Optional
@@ -67,7 +68,7 @@ class ParallelMCPBackend(ContextBackend):
         return Status(ok=True, detail=f"search.parallel.ai/{endpoint} ({'keyed' if self.api_key else 'keyless'})")
 
     async def astatus(self) -> Status:
-        return self.status()
+        return await asyncio.to_thread(self.status)
 
     def get_tools(self) -> list:
         if self._mcp_tools is None:
