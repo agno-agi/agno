@@ -296,11 +296,13 @@ def attach_routes(
                 for tb in toggle_blocks:
                     updated_blocks.append(to_dict(tb))
                 # Add decision marker for parse_submit_payload
-                updated_blocks.append({
-                    "type": "section",
-                    "block_id": f"row:{req_id}:confirmation:decided:approve",
-                    "text": {"type": "plain_text", "text": " "},
-                })
+                updated_blocks.append(
+                    {
+                        "type": "section",
+                        "block_id": f"row:{req_id}:confirmation:decided:approve",
+                        "text": {"type": "plain_text", "text": " "},
+                    }
+                )
             # Skip existing decision markers for this row (will be replaced above)
             elif block_id.startswith(f"row:{req_id}:confirmation:decided:"):
                 continue
@@ -349,9 +351,10 @@ def attach_routes(
 
     async def _handle_row_reject_start(payload: Dict[str, Any]) -> None:
         # Toggle confirmation row to "denied" state + add reason input, preserve all other rows
-        from slack_sdk.web.async_client import AsyncWebClient
-        from slack_sdk.models.blocks import InputBlock, PlainTextInputElement as PlainTextInput
+        from slack_sdk.models.blocks import InputBlock
+        from slack_sdk.models.blocks import PlainTextInputElement as PlainTextInput
         from slack_sdk.models.blocks.basic_components import PlainTextObject as PlainText
+        from slack_sdk.web.async_client import AsyncWebClient
 
         from agno.os.interfaces.slack.builders import build_confirmation_toggle_card
         from agno.os.interfaces.slack.types import ACTION_REJECT_REASON
@@ -419,11 +422,13 @@ def attach_routes(
                 )
                 updated_blocks.append(to_dict(reason_input))
                 # Add decision marker for parse_submit_payload
-                updated_blocks.append({
-                    "type": "section",
-                    "block_id": f"row:{req_id}:confirmation:decided:deny",
-                    "text": {"type": "plain_text", "text": " "},
-                })
+                updated_blocks.append(
+                    {
+                        "type": "section",
+                        "block_id": f"row:{req_id}:confirmation:decided:deny",
+                        "text": {"type": "plain_text", "text": " "},
+                    }
+                )
                 reason_input_exists = True
             # Skip existing decision markers for this row (will be replaced above)
             elif block_id.startswith(f"row:{req_id}:confirmation:decided:"):

@@ -2,12 +2,23 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional
+from enum import Enum
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from agno.models.response import ToolExecution, UserFeedbackQuestion, UserInputField
 
-PauseType = Literal["confirmation", "user_input", "user_feedback", "external_execution"]
+
+class PauseType(str, Enum):
+    """Type of pause in a HITL flow."""
+
+    confirmation = "confirmation"
+    user_input = "user_input"
+    user_feedback = "user_feedback"
+    external_execution = "external_execution"
+
+    def __str__(self) -> str:
+        return self.value
 
 
 @dataclass
@@ -184,14 +195,14 @@ class RunRequirement:
         # Priority order: feedback > external > input > confirmation (most specific wins)
         tool = self.tool_execution
         if tool is None:
-            return "confirmation"
+            return PauseType.confirmation
         if getattr(tool, "user_feedback_schema", None):
-            return "user_feedback"
+            return PauseType.user_feedback
         if getattr(tool, "external_execution_required", False):
-            return "external_execution"
+            return PauseType.external_execution
         if getattr(tool, "requires_user_input", False):
-            return "user_input"
-        return "confirmation"
+            return PauseType.user_input
+        return PauseType.confirmation
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to JSON-serializable dictionary for storage."""

@@ -1,3 +1,17 @@
+"""
+Slack Streaming Event Handlers
+==============================
+
+Processes streaming events from agents, teams, and workflows,
+translating them into Slack task cards and buffered content.
+
+Key concepts:
+- Events are normalized (Team prefix stripped) for unified handling
+- Workflow mode suppresses inner agent events to reduce noise
+- Task cards track progress; content is buffered for streaming
+- Factory pattern generates simple paired handlers (Started/Completed)
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,6 +29,10 @@ if TYPE_CHECKING:
     from agno.run.base import BaseRunOutputEvent
 
 
+# =============================================================================
+# Type Aliases
+# =============================================================================
+
 # Event handlers return True on terminal events to break the stream loop
 _EventHandler = Callable[
     ["BaseRunOutputEvent", StreamState, "AsyncChatStream"],
@@ -22,14 +40,27 @@ _EventHandler = Callable[
 ]
 
 
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+
+def _normalize_event(event: str) -> str:
+    """Strip 'Team' prefix so agent and team events use the same handlers."""
+    return event.removeprefix("Team")
+
+
 @dataclass
 class _ToolRef:
+    """Reference to a tool call for task card tracking."""
+
     tid: str | None  # Slack task card ID (None when tool_call_id is missing)
     label: str  # Display title, e.g. "Researcher: web_search"
     errored: bool
 
 
 def _extract_tool_ref(chunk: BaseRunOutputEvent, state: StreamState, *, fallback_id: str | None = None) -> _ToolRef:
+    """Build unique (tid, label) for each tool call's Slack task card."""
     tool = getattr(chunk, "tool", None)
     tool_name = (tool.tool_name if tool else None) or "tool"
     call_id = (tool.tool_call_id if tool else None) or fallback_id
@@ -48,6 +79,7 @@ async def _emit_task(
     *,
     output: str | None = None,
 ) -> None:
+    """Send a task card update to the Slack stream."""
     chunk: dict = {"type": "task_update", "id": card_id, "title": title, "status": status}
     if output:
         # Slack rejects plain strings in task_card output slots — requires rich_text
@@ -69,6 +101,7 @@ async def _wf_task(
     started: bool,
     name_attr: str = "step_name",
 ) -> None:
+    """Emit a workflow task card for paired events (Started/Completed)."""
     name = getattr(chunk, name_attr, None) or prefix
     sid = getattr(chunk, "step_id", None) or name
     key = f"wf_{prefix}_{sid}"
@@ -80,6 +113,10 @@ async def _wf_task(
         state.complete_task(key)
         await _emit_task(stream, key, title, "complete")
 
+
+# =============================================================================
+# Suppression Set
+# =============================================================================
 
 # Workflows orchestrate multiple agents via steps/loops/conditions. Without
 # suppression, each inner agent's tool calls and reasoning events would flood

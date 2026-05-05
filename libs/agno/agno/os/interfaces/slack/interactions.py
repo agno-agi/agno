@@ -59,9 +59,7 @@ def _get_action_state(state: SlackState, block_id: str, action_id: str) -> Dict[
     return state.get(block_id, {}).get(action_id, {})
 
 
-def _parse_confirmation(
-    requirement: RunRequirement, blocks: SlackBlocks, state: SlackState = None
-) -> ParsedDecision:
+def _parse_confirmation(requirement: RunRequirement, blocks: SlackBlocks, state: SlackState = None) -> ParsedDecision:
     req_id = requirement.id or ""
     state = state or {}
     # Confirmation state lives in block_id, not view state — button clicks update the block itself

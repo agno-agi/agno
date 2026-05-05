@@ -32,8 +32,12 @@ from slack_sdk.models.blocks.basic_components import (
 from slack_sdk.models.blocks.basic_components import (
     PlainTextObject as PlainText,
 )
-from slack_sdk.models.blocks.block_elements import ButtonElement as Button
-from slack_sdk.models.blocks.block_elements import ImageElement
+from slack_sdk.models.blocks.block_elements import (
+    ButtonElement as Button,
+)
+from slack_sdk.models.blocks.block_elements import (
+    ImageElement,
+)
 
 from agno.os.interfaces.slack.types import (
     ACTION_EXTERNAL_RESULT,
