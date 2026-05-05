@@ -86,7 +86,11 @@ print("=" * 60)
 # Configure model to use the multimodal store
 model.file_search_store_names = [store.name]
 
-run = agent.run("What information is in the uploaded document? Describe it in detail.")
+# Note: For multimodal File Search, queries should describe the *visual content*
+# you expect to find (e.g., "mountain landscape", "product photo with red label",
+# "screenshot of a payment confirmation"). Generic meta-questions like "what's in
+# the uploaded document" tend to miss the embedding-based retrieval.
+run = agent.run("Describe the visual content. What do you see in the image?")
 print(f"\nResponse:\n{run.content}")
 
 # Display citations with media references
@@ -110,7 +114,11 @@ if run.citations and run.citations.raw:
                         print(f"      Media ID: {media_id}")
                         try:
                             blob_content = model.download_blob(media_id)
-                            print(f"      Downloaded blob: {blob_content}")
+                            output_path = Path(f"cited_image_{i}.png")
+                            output_path.write_bytes(blob_content)
+                            print(
+                                f"      Downloaded {len(blob_content)} bytes -> {output_path}"
+                            )
                         except Exception as e:
                             print(f"      Download failed: {e}")
 else:
