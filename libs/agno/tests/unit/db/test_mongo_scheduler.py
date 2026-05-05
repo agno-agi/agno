@@ -43,12 +43,12 @@ def test_mongo_constructor_maps_scheduler_collections(mock_sync_client):
 def test_mongo_get_schedule_run_returns_doc_without_mongo_id(monkeypatch: pytest.MonkeyPatch):
     db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
     collection = Mock()
-    collection.find_one.return_value = {"_id": "mongo-id", "id": "run-1", "status": "completed"}
+    collection.find_one.return_value = {"_id": "mongo-id", "id": "run-1", "status": "success"}
     monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
 
     result = db.get_schedule_run("run-1")
 
-    assert result == {"id": "run-1", "status": "completed"}
+    assert result == {"id": "run-1", "status": "success"}
 
 
 def test_mongo_get_schedule_run_missing_returns_none(monkeypatch: pytest.MonkeyPatch):
@@ -208,7 +208,7 @@ def test_mongo_create_schedule_run_inserts_and_returns_data(monkeypatch: pytest.
         lambda table_type, create_collection_if_not_found=True: collection,
     )
 
-    run_data = {"id": "run-1", "schedule_id": "sched-1", "status": "started"}
+    run_data = {"id": "run-1", "schedule_id": "sched-1", "status": "running"}
     result = db.create_schedule_run(run_data)
 
     collection.insert_one.assert_called_once_with(run_data)
@@ -222,11 +222,11 @@ def test_mongo_update_schedule_run_updates_and_returns_run(monkeypatch: pytest.M
     update_result.matched_count = 1
     collection.update_one.return_value = update_result
     monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
-    monkeypatch.setattr(db, "get_schedule_run", lambda run_id: {"id": run_id, "status": "completed"})
+    monkeypatch.setattr(db, "get_schedule_run", lambda run_id: {"id": run_id, "status": "success"})
 
-    result = db.update_schedule_run("run-1", status="completed")
+    result = db.update_schedule_run("run-1", status="success")
 
-    assert result == {"id": "run-1", "status": "completed"}
+    assert result == {"id": "run-1", "status": "success"}
     collection.update_one.assert_called_once()
 
 
@@ -328,12 +328,12 @@ def test_async_mongo_constructor_maps_scheduler_collections():
 async def test_async_mongo_get_schedule_run_returns_doc_without_mongo_id(monkeypatch: pytest.MonkeyPatch):
     db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
     collection = AsyncMock()
-    collection.find_one.return_value = {"_id": "mongo-id", "id": "run-1", "status": "completed"}
+    collection.find_one.return_value = {"_id": "mongo-id", "id": "run-1", "status": "success"}
     monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=collection))
 
     result = await db.get_schedule_run("run-1")
 
-    assert result == {"id": "run-1", "status": "completed"}
+    assert result == {"id": "run-1", "status": "success"}
 
 
 @pytest.mark.asyncio
@@ -497,7 +497,7 @@ async def test_async_mongo_create_schedule_run_inserts_and_returns_data(monkeypa
     collection = AsyncMock()
     monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=collection))
 
-    run_data = {"id": "run-1", "schedule_id": "sched-1", "status": "started"}
+    run_data = {"id": "run-1", "schedule_id": "sched-1", "status": "running"}
     result = await db.create_schedule_run(run_data)
 
     collection.insert_one.assert_called_once_with(run_data)
@@ -512,11 +512,11 @@ async def test_async_mongo_update_schedule_run_updates_and_returns_run(monkeypat
     update_result.matched_count = 1
     collection.update_one.return_value = update_result
     monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=collection))
-    monkeypatch.setattr(db, "get_schedule_run", AsyncMock(return_value={"id": "run-1", "status": "completed"}))
+    monkeypatch.setattr(db, "get_schedule_run", AsyncMock(return_value={"id": "run-1", "status": "success"}))
 
-    result = await db.update_schedule_run("run-1", status="completed")
+    result = await db.update_schedule_run("run-1", status="success")
 
-    assert result == {"id": "run-1", "status": "completed"}
+    assert result == {"id": "run-1", "status": "success"}
     collection.update_one.assert_called_once()
 
 

@@ -3019,7 +3019,6 @@ class AsyncMongoDb(AsyncBaseDb):
             return None
 
     async def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
-        """Get a schedule run by ID from the configured schedule runs collection."""
         try:
             collection = await self._get_collection(table_type="schedule_runs")
             if collection is None:

@@ -122,13 +122,14 @@ SCHEDULES_COLLECTION_SCHEMA = [
     {"key": "locked_at"},
     {"key": "created_at"},
     {"key": "updated_at"},
+    {"key": [("enabled", 1), ("next_run_at", 1)]},
 ]
 
 SCHEDULE_RUNS_COLLECTION_SCHEMA = [
     {"key": "id", "unique": True},
     {"key": "schedule_id"},
     {"key": "status"},
-    {"key": "started_at"},
+    {"key": "triggered_at"},
     {"key": "completed_at"},
     {"key": "created_at"},
 ]

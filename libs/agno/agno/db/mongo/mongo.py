@@ -2853,7 +2853,6 @@ class MongoDb(BaseDb):
             return None
 
     def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
-        """Get a schedule run by ID from the configured schedule runs collection."""
         try:
             collection = self._get_collection(table_type="schedule_runs")
             if collection is None:
