@@ -1601,103 +1601,44 @@ async def aprepare_model_request(
 ) -> PreparedAgentModelRequest:
     """Prepare the model request for an Agent without invoking the model."""
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
-    from agno.agent._response import get_response_format
-    from agno.agent._storage import aread_or_create_session, update_metadata
 
-    run_id = run_id or str(uuid4())
-
-    if (add_history_to_context or agent.add_history_to_context) and not agent.db and not agent.team_id:
-        log_warning(
-            "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
-        )
-
-    background_tasks = kwargs.pop("background_tasks", None)
-    if background_tasks is not None:
-        from fastapi import BackgroundTasks
-
-        background_tasks: BackgroundTasks = background_tasks  # type: ignore
-
-    validated_input = validate_input(input, agent.input_schema)
-
-    if not agent._hooks_normalised:
-        if agent.pre_hooks:
-            agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks, async_mode=True)  # type: ignore
-        if agent.post_hooks:
-            agent.post_hooks = normalize_post_hooks(agent.post_hooks, async_mode=True)  # type: ignore
-        agent._hooks_normalised = True
-
-    session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
-    agent.initialize_agent(debug_mode=debug_mode)
-
-    image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
-        images=images, videos=videos, audios=audio, files=files
-    )
-    run_input = RunInput(
-        input_content=validated_input,
-        images=image_artifacts,
-        videos=video_artifacts,
-        audios=audio_artifacts,
-        files=file_artifacts,
-    )
-
-    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-    update_metadata(agent, session=agent_session)
-
-    opts = resolve_run_options(
+    setup = _prepare_agent_run_setup(
         agent,
+        input,
+        async_mode=True,
+        start_metrics=False,
+        user_id=user_id,
+        session_id=session_id,
+        session_state=session_state,
+        run_context=run_context,
+        run_id=run_id,
+        audio=audio,
+        images=images,
+        videos=videos,
+        files=files,
+        knowledge_filters=knowledge_filters,
         add_history_to_context=add_history_to_context,
         add_dependencies_to_context=add_dependencies_to_context,
         add_session_state_to_context=add_session_state_to_context,
         dependencies=dependencies,
-        knowledge_filters=knowledge_filters,
         metadata=metadata,
         output_schema=output_schema,
+        debug_mode=debug_mode,
+        kwargs=kwargs,
     )
-
-    agent.model = cast(Model, agent.model)
-    run_context = run_context or RunContext(
-        run_id=run_id,
-        session_id=session_id,
-        user_id=user_id,
-        session_state=session_state,
-        dependencies=opts.dependencies,
-        knowledge_filters=opts.knowledge_filters,
-        metadata=opts.metadata,
-        output_schema=opts.output_schema,
-    )
-    opts.apply_to_context(
-        run_context,
-        dependencies_provided=dependencies is not None,
-        knowledge_filters_provided=knowledge_filters is not None,
-        metadata_provided=metadata is not None,
-    )
-
-    response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
-    run_response = RunOutput(
-        run_id=run_id,
-        session_id=session_id,
-        agent_id=agent.id,
-        user_id=user_id,
-        agent_name=agent.name,
-        metadata=run_context.metadata,
-        session_state=run_context.session_state,
-        input=run_input,
-    )
-    run_response.model = agent.model.id if agent.model is not None else None
-    run_response.model_provider = agent.model.provider if agent.model is not None else None
 
     try:
         return await _aprepare_agent_model_request(
             agent,
-            run_response=run_response,
-            run_context=run_context,
-            user_id=user_id,
-            session_id=session_id,
-            options=opts,
-            response_format=response_format,
+            run_response=setup.run_response,
+            run_context=setup.run_context,
+            user_id=setup.user_id,
+            session_id=setup.session_id,
+            options=setup.options,
+            response_format=setup.response_format,
             debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            session=agent_session,
+            background_tasks=setup.background_tasks,
+            session=setup.session,
             **kwargs,
         )
     finally:
