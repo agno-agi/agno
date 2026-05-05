@@ -1,7 +1,21 @@
 from dataclasses import dataclass
+from enum import Enum
 from functools import partial
 from importlib.metadata import version
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, TypeVar, get_type_hints
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    Type,
+    TypeVar,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 from docstring_parser import parse
 from packaging.version import Version
@@ -45,9 +59,23 @@ class UserInputField:
     value: Optional[Any] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        # Handle Literal types specially — extract the allowed values
+        origin = get_origin(self.field_type)
+        if origin is Literal:
+            field_type_serialized: Any = {"__literal__": list(get_args(self.field_type))}
+        elif isinstance(self.field_type, type) and issubclass(self.field_type, Enum):
+            # Handle Enum types — store class name and member names
+            field_type_serialized = {
+                "__enum__": self.field_type.__name__,
+                "__values__": [m.name for m in self.field_type],
+            }
+        else:
+            # For regular types, use __name__
+            field_type_serialized = getattr(self.field_type, "__name__", "str")
+
         return {
             "name": self.name,
-            "field_type": str(self.field_type.__name__),
+            "field_type": field_type_serialized,
             "description": self.description,
             "value": self.value,
         }
@@ -55,18 +83,29 @@ class UserInputField:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "UserInputField":
         type_mapping = {"str": str, "int": int, "float": float, "bool": bool, "list": list, "dict": dict}
-        field_type_raw = data["field_type"]
-        if isinstance(field_type_raw, str):
+        field_type_raw = data.get("field_type", "str")
+        field_type: Any = str
+
+        if isinstance(field_type_raw, dict):
+            if "__literal__" in field_type_raw:
+                # Reconstruct Literal type from serialized values
+                values = tuple(field_type_raw["__literal__"])
+                field_type = Literal[values]  # type: ignore[valid-type]
+            elif "__enum__" in field_type_raw:
+                # Reconstruct a dynamic Enum with the stored member names
+                enum_name = field_type_raw["__enum__"]
+                member_names = field_type_raw.get("__values__", [])
+                field_type = Enum(enum_name, {name: name for name in member_names})  # type: ignore[misc]
+        elif isinstance(field_type_raw, str):
             field_type = type_mapping.get(field_type_raw, str)
         elif isinstance(field_type_raw, type):
             field_type = field_type_raw
-        else:
-            field_type = str
+
         return cls(
-            name=data["name"],
+            name=data.get("name", ""),
             field_type=field_type,
-            description=data["description"],
-            value=data["value"],
+            description=data.get("description"),
+            value=data.get("value"),
         )
 
 
