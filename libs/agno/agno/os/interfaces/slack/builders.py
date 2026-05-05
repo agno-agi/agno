@@ -460,7 +460,7 @@ def response_blocks(
     requirements: List[RunRequirement],
 ) -> List[Dict[str, Any]]:
     preserved: List[Dict[str, Any]] = []
-    submissions: List[Dict[str, Any]] = []
+    submissions: List[str] = []
 
     confirmation_decisions: List[str] = []
 

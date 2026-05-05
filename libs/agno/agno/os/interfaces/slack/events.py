@@ -15,7 +15,7 @@ Key concepts:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Awaitable, Callable, Dict
+from typing import TYPE_CHECKING, Awaitable, Callable, Dict, Union, cast
 
 from agno.agent import RunEvent
 from agno.os.interfaces.slack.helpers import member_name, task_id
@@ -26,7 +26,9 @@ from agno.run.workflow import WorkflowRunEvent
 if TYPE_CHECKING:
     from slack_sdk.web.async_chat_stream import AsyncChatStream
 
+    from agno.run.agent import RunPausedEvent as AgentRunPausedEvent
     from agno.run.base import BaseRunOutputEvent
+    from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 
 
 # =============================================================================
@@ -261,7 +263,7 @@ async def _on_run_paused(chunk: BaseRunOutputEvent, state: StreamState, stream: 
     # approval context (tool name, args, Approve/Deny buttons) and coexists
     # with the streaming plan above it.
     print(f"[DEBUG] _on_run_paused called: run_id={getattr(chunk, 'run_id', None)}")
-    state.paused_event = chunk
+    state.paused_event = cast(Union["AgentRunPausedEvent", "TeamRunPausedEvent"], chunk)
     # Keep pending task_cards in-progress rather than flipping to complete —
     # the run isn't finished, it's awaiting human input.
     state.terminal_status = "in_progress"

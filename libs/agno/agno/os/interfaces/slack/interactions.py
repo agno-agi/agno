@@ -63,7 +63,7 @@ def _parse_confirmation(
     requirement: RunRequirement,
     blocks: SlackBlocks,
     errors: List[ParseError],
-    state: SlackState = None,
+    state: Optional[SlackState] = None,
 ) -> ParsedDecision:
     req_id = requirement.id or ""
     state = state or {}
