@@ -24,6 +24,7 @@ except ImportError as e:
 import warnings
 
 from agno.agent import Agent, RemoteAgent
+from agno.agent.protocol import AgentProtocol
 from agno.os.interfaces.a2a.utils import (
     map_a2a_request_to_run_input,
     map_run_output_to_a2a_task,
@@ -36,7 +37,7 @@ from agno.workflow import RemoteWorkflow, Workflow
 
 def attach_routes(
     router: APIRouter,
-    agents: Optional[List[Union[Agent, RemoteAgent]]] = None,
+    agents: Optional[List[Union[Agent, RemoteAgent, AgentProtocol]]] = None,
     teams: Optional[List[Union[Team, RemoteTeam]]] = None,
     workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
 ) -> APIRouter:
@@ -51,10 +52,11 @@ def attach_routes(
             raise HTTPException(status_code=404, detail="Agent not found")
 
         base_url = str(request.base_url).rstrip("/")
+        agent_description = getattr(agent, "description", None) or ""
         skill = AgentSkill(
             id=agent.id or "",
             name=agent.name or "",
-            description=agent.description or "",
+            description=agent_description,
             tags=["agno"],
             examples=["search", "ok"],
             output_modes=["application/json"],
@@ -63,7 +65,7 @@ def attach_routes(
         return AgentCard(
             name=agent.name or "",
             version="1.0.0",
-            description=agent.description or "",
+            description=agent_description,
             url=f"{base_url}/a2a/agents/{agent.id}/v1/message:stream",
             default_input_modes=["text"],
             default_output_modes=["text"],
@@ -122,6 +124,8 @@ def attach_routes(
         agent = get_agent_by_id(id, agents)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
+        if not isinstance(agent, (Agent, RemoteAgent)):
+            raise HTTPException(status_code=501, detail="A2A protocol is not supported for this agent type")
 
         # 2. Map the request to our run_input and run variables
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
@@ -206,6 +210,8 @@ def attach_routes(
             raise HTTPException(status_code=404, detail="Agent not found")
         if isinstance(agent, RemoteAgent):
             raise HTTPException(status_code=400, detail="Task polling is not supported for remote agents")
+        if not isinstance(agent, Agent):
+            raise HTTPException(status_code=501, detail="Task polling is not supported for this agent type")
 
         run_output = await agent.aget_run_output(run_id=task_id, session_id=context_id)
         if not run_output:
@@ -240,6 +246,8 @@ def attach_routes(
             raise HTTPException(status_code=404, detail="Agent not found")
         if isinstance(agent, RemoteAgent):
             raise HTTPException(status_code=400, detail="Task cancellation is not supported for remote agents")
+        if not isinstance(agent, Agent):
+            raise HTTPException(status_code=501, detail="Task cancellation is not supported for this agent type")
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
@@ -853,7 +861,7 @@ def attach_routes(
                 status_code=400,
                 detail="Entity ID required. Provide it via 'agentId' in params.message or 'X-Agent-ID' header.",
             )
-        entity: Optional[Union[Agent, RemoteAgent, Team, RemoteTeam, Workflow, RemoteWorkflow]] = None
+        entity: Optional[Union[Agent, RemoteAgent, AgentProtocol, Team, RemoteTeam, Workflow, RemoteWorkflow]] = None
         if agents:
             entity = get_agent_by_id(agent_id, agents)
         if not entity and teams:
@@ -967,7 +975,7 @@ def attach_routes(
                 status_code=400,
                 detail="Entity ID required. Provide 'agentId' in params.message or 'X-Agent-ID' header.",
             )
-        entity: Optional[Union[Agent, RemoteAgent, Team, RemoteTeam, Workflow, RemoteWorkflow]] = None
+        entity: Optional[Union[Agent, RemoteAgent, AgentProtocol, Team, RemoteTeam, Workflow, RemoteWorkflow]] = None
         if agents:
             entity = get_agent_by_id(agent_id, agents)
         if not entity and teams:
