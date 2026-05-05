@@ -600,7 +600,7 @@ def test_search_knowledge_timing(test_app, mock_knowledge):
 
 def test_search_knowledge_document_serialization(test_app, mock_knowledge):
     """Test that Document objects are properly serialized without numpy arrays."""
-    import numpy as np
+    np = pytest.importorskip("numpy", reason="numpy is not part of agno[dev]; agno[tests] carries it")
 
     from agno.knowledge.document import Document
 

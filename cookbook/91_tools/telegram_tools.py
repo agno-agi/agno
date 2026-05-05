@@ -1,15 +1,12 @@
 """
-Telegram Tools - Bot Communication and Messaging
+Telegram Tools
+==============
 
-This example demonstrates how to use TelegramTools for Telegram bot operations.
-Shows enable_ flag patterns for selective function access.
-TelegramTools is a small tool (<6 functions) so it uses enable_ flags.
+Environment variables:
+    TELEGRAM_TOKEN      Bot token from @BotFather
+    TELEGRAM_CHAT_ID    Chat ID to send messages to
 
-Prerequisites:
-- Create a new bot with BotFather on Telegram: https://core.telegram.org/bots/features#creating-a-new-bot
-- Get the token from BotFather
-- Send a message to the bot
-- Get the chat_id by going to: https://api.telegram.org/bot<your-bot-token>/getUpdates
+Get chat_id: https://api.telegram.org/bot<token>/getUpdates
 """
 
 from agno.agent import Agent
@@ -19,22 +16,49 @@ from agno.tools.telegram import TelegramTools
 # Create Agent
 # ---------------------------------------------------------------------------
 
-
-telegram_token = "<enter-your-bot-token>"
-chat_id = "<enter-your-chat-id>"
-
-# Example 1: All functions enabled (default behavior)
-agent = Agent(
-    name="telegram-full",
+# Example 1: Enable all Telegram tools
+agent_all = Agent(
     tools=[
-        TelegramTools(token=telegram_token, chat_id=chat_id)
-    ],  # All functions enabled
-    description="You are a comprehensive Telegram bot assistant with all messaging capabilities.",
-    instructions=[
-        "Help users with all Telegram bot operations",
-        "Send messages, handle media, and manage bot interactions",
-        "Provide clear feedback on bot operations",
-        "Follow Telegram bot best practices",
+        TelegramTools(
+            all=True,  # Enable all tools including pin_message, get_chat, get_file
+        )
+    ],
+    markdown=True,
+)
+
+# Example 2: Messaging only (default)
+agent_messaging = Agent(
+    tools=[
+        TelegramTools(
+            enable_send_message=True,
+            enable_edit_message=True,
+            enable_delete_message=True,
+        )
+    ],
+    markdown=True,
+)
+
+# Example 3: With file downloads saved to disk
+agent_downloads = Agent(
+    tools=[
+        TelegramTools(
+            enable_send_message=True,
+            enable_get_file=True,
+            save_downloads=True,
+            output_directory="/tmp/telegram_downloads",
+        )
+    ],
+    markdown=True,
+)
+
+# Example 4: Reactions and pinning
+agent_reactions = Agent(
+    tools=[
+        TelegramTools(
+            enable_send_message=True,
+            enable_react_with_emoji=True,
+            enable_pin_message=True,
+        )
     ],
     markdown=True,
 )
@@ -43,4 +67,22 @@ agent = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    agent.print_response("Send a message to the bot")
+    agent_all.print_response(
+        "Send 'Hello from Agno!' to the chat",
+        stream=True,
+    )
+
+    # agent_messaging.print_response(
+    #     "Send 'Testing edit' then edit it to say 'Message edited!'",
+    #     stream=True,
+    # )
+
+    # agent_downloads.print_response(
+    #     "Send a test message to the chat",
+    #     stream=True,
+    # )
+
+    # agent_reactions.print_response(
+    #     "Send 'Test pinned message' and pin it",
+    #     stream=True,
+    # )

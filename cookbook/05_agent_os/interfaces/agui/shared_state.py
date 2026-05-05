@@ -21,11 +21,13 @@ STATE_DELTA events that the frontend uses to update the recipe UI.
 """
 
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 
 shared_state_agent = Agent(
     name="shared_state",
     model=OpenAIResponses(id="gpt-5.5"),
+    db=SqliteDb(db_file="/tmp/agui_shared_state.db"),
     session_state={
         "recipe": {
             "title": "Make Your Recipe",

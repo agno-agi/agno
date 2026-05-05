@@ -19,7 +19,7 @@ Flow:
 from agno.db.sqlite import SqliteDb
 from agno.workflow.router import Router
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 
@@ -147,9 +147,11 @@ processing_router = Router(
             executor=aggregate_data,
         ),
     ],
-    requires_user_input=True,
-    user_input_message="Select processing steps to apply (comma-separated for multiple):",
     allow_multiple_selections=True,  # KEY: Allow selecting multiple steps
+    human_review=HumanReview(
+        requires_user_input=True,
+        user_input_message="Select processing steps to apply (comma-separated for multiple):",
+    ),
 )
 
 summary_step = Step(name="summarize", executor=summarize_results)
