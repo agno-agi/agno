@@ -40,6 +40,7 @@ from agno.models.response import ModelResponse
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
+from agno.run.prepared import PreparedTeamModelRequest
 from agno.run.team import (
     TeamRunEvent,
     TeamRunOutput,
@@ -744,6 +745,98 @@ class Team:
     @staticmethod
     async def acancel_run(run_id: str) -> bool:
         return await _run.acancel_run(run_id=run_id)
+
+    def prepare_model_request(
+        self,
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+        *,
+        session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
+        user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+        **kwargs: Any,
+    ) -> PreparedTeamModelRequest:
+        return _run.prepare_model_request(
+            self,
+            input=input,
+            session_id=session_id,
+            session_state=session_state,
+            run_context=run_context,
+            user_id=user_id,
+            run_id=run_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            dependencies=dependencies,
+            metadata=metadata,
+            debug_mode=debug_mode,
+            output_schema=output_schema,
+            **kwargs,
+        )
+
+    async def aprepare_model_request(
+        self,
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+        *,
+        session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
+        user_id: Optional[str] = None,
+        run_id: Optional[str] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+        **kwargs: Any,
+    ) -> PreparedTeamModelRequest:
+        return await _run.aprepare_model_request(
+            self,
+            input=input,
+            session_id=session_id,
+            session_state=session_state,
+            run_context=run_context,
+            user_id=user_id,
+            run_id=run_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            dependencies=dependencies,
+            metadata=metadata,
+            debug_mode=debug_mode,
+            output_schema=output_schema,
+            **kwargs,
+        )
 
     @overload
     def run(

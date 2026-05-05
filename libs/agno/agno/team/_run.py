@@ -51,6 +51,7 @@ from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
 from agno.run.messages import RunMessages
+from agno.run.prepared import PreparedTeamModelRequest
 from agno.run.team import (
     TaskData,
     TeamRunInput,
@@ -1756,6 +1757,429 @@ def _run_stream(
         _disconnect_connectable_tools(team)
         # Always clean up the run tracking
         cleanup_run(run_response.run_id)  # type: ignore
+
+
+def prepare_model_request(
+    team: "Team",
+    input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+    *,
+    stream: Optional[bool] = None,
+    stream_events: Optional[bool] = None,
+    session_id: Optional[str] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+    run_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    audio: Optional[Sequence[Audio]] = None,
+    images: Optional[Sequence[Image]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    files: Optional[Sequence[File]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    debug_mode: Optional[bool] = None,
+    output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+    **kwargs: Any,
+) -> PreparedTeamModelRequest:
+    """Prepare the model request for a Team without invoking the model."""
+    from agno.team._hooks import _execute_pre_hooks
+    from agno.team._init import (
+        _disconnect_connectable_tools,
+        _has_async_db,
+        _initialize_session,
+        _initialize_session_state,
+    )
+    from agno.team._messages import _get_run_messages
+    from agno.team._response import get_response_format
+    from agno.team._run_options import resolve_run_options
+    from agno.team._storage import _load_session_state, _read_or_create_session, _update_metadata
+    from agno.team._tools import _determine_tools_for_model
+
+    if _has_async_db(team):
+        raise RuntimeError(
+            "`prepare_model_request` is not supported with an async database. "
+            "Please use `aprepare_model_request` instead."
+        )
+
+    run_id = run_id or str(uuid4())
+    team.initialize_team(debug_mode=debug_mode)
+
+    if (add_history_to_context or team.add_history_to_context) and not team.db and not team.parent_team_id:
+        log_warning(
+            "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
+        )
+
+    background_tasks = kwargs.pop("background_tasks", None)
+    if background_tasks is not None:
+        from fastapi import BackgroundTasks
+
+        background_tasks: BackgroundTasks = background_tasks  # type: ignore
+
+    validated_input = validate_input(input, team.input_schema)
+
+    if not team._hooks_normalised:
+        if team.pre_hooks:
+            team.pre_hooks = normalize_pre_hooks(team.pre_hooks)  # type: ignore
+        if team.post_hooks:
+            team.post_hooks = normalize_post_hooks(team.post_hooks)  # type: ignore
+        team._hooks_normalised = True
+
+    session_id, user_id = _initialize_session(team, session_id=session_id, user_id=user_id)
+    image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
+        images=images, videos=videos, audios=audio, files=files
+    )
+    run_input = TeamRunInput(
+        input_content=validated_input,
+        images=image_artifacts,
+        videos=video_artifacts,
+        audios=audio_artifacts,
+        files=file_artifacts,
+    )
+
+    team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
+    _update_metadata(team, session=team_session)
+
+    opts = resolve_run_options(
+        team,
+        stream=stream,
+        stream_events=stream_events,
+        add_history_to_context=add_history_to_context,
+        add_dependencies_to_context=add_dependencies_to_context,
+        add_session_state_to_context=add_session_state_to_context,
+        dependencies=dependencies,
+        knowledge_filters=knowledge_filters,
+        metadata=metadata,
+        output_schema=output_schema,
+    )
+
+    prepared_session_state = _initialize_session_state(
+        team,
+        session_state=session_state if session_state is not None else {},
+        user_id=user_id,
+        session_id=session_id,
+        run_id=run_id,
+    )
+    prepared_session_state = _load_session_state(team, session=team_session, session_state=prepared_session_state)
+
+    team.model = cast(Model, team.model)
+    run_context = run_context or RunContext(
+        run_id=run_id,
+        session_id=session_id,
+        user_id=user_id,
+        session_state=prepared_session_state,
+        dependencies=opts.dependencies,
+        knowledge_filters=opts.knowledge_filters,
+        metadata=opts.metadata,
+        output_schema=opts.output_schema,
+    )
+    opts.apply_to_context(
+        run_context,
+        dependencies_provided=dependencies is not None,
+        knowledge_filters_provided=knowledge_filters is not None,
+        metadata_provided=metadata is not None,
+    )
+
+    if run_context.dependencies is not None:
+        _resolve_run_dependencies(team, run_context=run_context)
+
+    response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
+    run_response = TeamRunOutput(
+        run_id=run_id,
+        session_id=session_id,
+        user_id=user_id,
+        team_id=team.id,
+        team_name=team.name,
+        metadata=run_context.metadata,
+        session_state=run_context.session_state,
+        input=run_input,
+    )
+    run_response.model = team.model.id if team.model is not None else None
+    run_response.model_provider = team.model.provider if team.model is not None else None
+
+    try:
+        run_input = cast(TeamRunInput, run_response.input)
+        if team.pre_hooks is not None:
+            pre_hook_iterator = _execute_pre_hooks(
+                team,
+                hooks=team.pre_hooks,  # type: ignore
+                run_response=run_response,
+                run_input=run_input,
+                run_context=run_context,
+                session=team_session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+            deque(pre_hook_iterator, maxlen=0)
+
+        team_run_context: Dict[str, Any] = {}
+        tools = _determine_tools_for_model(
+            team,
+            model=team.model,
+            run_response=run_response,
+            run_context=run_context,
+            team_run_context=team_run_context,
+            session=team_session,
+            user_id=user_id,
+            async_mode=False,
+            input_message=run_input.input_content,
+            images=run_input.images,
+            videos=run_input.videos,
+            audio=run_input.audios,
+            files=run_input.files,
+            debug_mode=debug_mode,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
+            stream=False,
+            stream_events=False,
+        )
+        run_messages = _get_run_messages(
+            team,
+            run_response=run_response,
+            session=team_session,
+            run_context=run_context,
+            user_id=user_id,
+            input_message=run_input.input_content,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
+            tools=tools,
+            **kwargs,
+        )
+        if len(run_messages.messages) == 0:
+            log_error("No messages to be sent to the model.")
+
+        return PreparedTeamModelRequest(
+            run_response=run_response,
+            run_context=run_context,
+            session=team_session,
+            run_messages=run_messages,
+            tools=tools,
+            tool_instructions=list(team._tool_instructions or []),
+            response_format=response_format,
+        )
+    finally:
+        _disconnect_connectable_tools(team)
+
+
+async def aprepare_model_request(
+    team: "Team",
+    input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+    *,
+    stream: Optional[bool] = None,
+    stream_events: Optional[bool] = None,
+    session_id: Optional[str] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+    run_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    audio: Optional[Sequence[Audio]] = None,
+    images: Optional[Sequence[Image]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    files: Optional[Sequence[File]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    debug_mode: Optional[bool] = None,
+    output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+    **kwargs: Any,
+) -> PreparedTeamModelRequest:
+    """Prepare the model request for a Team without invoking the model."""
+    from agno.team._hooks import _aexecute_pre_hooks
+    from agno.team._init import (
+        _disconnect_connectable_tools,
+        _disconnect_mcp_tools,
+        _initialize_session,
+        _initialize_session_state,
+    )
+    from agno.team._messages import _aget_run_messages
+    from agno.team._response import get_response_format
+    from agno.team._run_options import resolve_run_options
+    from agno.team._storage import _aread_or_create_session, _load_session_state, _update_metadata
+    from agno.team._tools import _aresolve_callable_resources, _check_and_refresh_mcp_tools, _determine_tools_for_model
+
+    run_id = run_id or str(uuid4())
+    team.initialize_team(debug_mode=debug_mode)
+
+    if (add_history_to_context or team.add_history_to_context) and not team.db and not team.parent_team_id:
+        log_warning(
+            "add_history_to_context is True, but no database has been assigned to the team. History will not be added to the context."
+        )
+
+    background_tasks = kwargs.pop("background_tasks", None)
+    if background_tasks is not None:
+        from fastapi import BackgroundTasks
+
+        background_tasks: BackgroundTasks = background_tasks  # type: ignore
+
+    validated_input = validate_input(input, team.input_schema)
+
+    if not team._hooks_normalised:
+        if team.pre_hooks:
+            team.pre_hooks = normalize_pre_hooks(team.pre_hooks, async_mode=True)  # type: ignore
+        if team.post_hooks:
+            team.post_hooks = normalize_post_hooks(team.post_hooks, async_mode=True)  # type: ignore
+        team._hooks_normalised = True
+
+    session_id, user_id = _initialize_session(team, session_id=session_id, user_id=user_id)
+    image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
+        images=images, videos=videos, audios=audio, files=files
+    )
+    run_input = TeamRunInput(
+        input_content=validated_input,
+        images=image_artifacts,
+        videos=video_artifacts,
+        audios=audio_artifacts,
+        files=file_artifacts,
+    )
+
+    team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+    _update_metadata(team, session=team_session)
+
+    opts = resolve_run_options(
+        team,
+        stream=stream,
+        stream_events=stream_events,
+        add_history_to_context=add_history_to_context,
+        add_dependencies_to_context=add_dependencies_to_context,
+        add_session_state_to_context=add_session_state_to_context,
+        dependencies=dependencies,
+        knowledge_filters=knowledge_filters,
+        metadata=metadata,
+        output_schema=output_schema,
+    )
+
+    prepared_session_state = _initialize_session_state(
+        team,
+        session_state=session_state if session_state is not None else {},
+        user_id=user_id,
+        session_id=session_id,
+        run_id=run_id,
+    )
+    prepared_session_state = _load_session_state(team, session=team_session, session_state=prepared_session_state)
+
+    team.model = cast(Model, team.model)
+    run_context = run_context or RunContext(
+        run_id=run_id,
+        session_id=session_id,
+        user_id=user_id,
+        session_state=prepared_session_state,
+        dependencies=opts.dependencies,
+        knowledge_filters=opts.knowledge_filters,
+        metadata=opts.metadata,
+        output_schema=opts.output_schema,
+    )
+    opts.apply_to_context(
+        run_context,
+        dependencies_provided=dependencies is not None,
+        knowledge_filters_provided=knowledge_filters is not None,
+        metadata_provided=metadata is not None,
+    )
+
+    if run_context.dependencies is not None:
+        await _aresolve_run_dependencies(team, run_context=run_context)
+
+    response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None
+    run_response = TeamRunOutput(
+        run_id=run_id,
+        session_id=session_id,
+        user_id=user_id,
+        team_id=team.id,
+        team_name=team.name,
+        metadata=run_context.metadata,
+        session_state=run_context.session_state,
+        input=run_input,
+    )
+    run_response.model = team.model.id if team.model is not None else None
+    run_response.model_provider = team.model.provider if team.model is not None else None
+
+    try:
+        run_input = cast(TeamRunInput, run_response.input)
+        if team.pre_hooks is not None:
+            pre_hook_iterator = _aexecute_pre_hooks(
+                team,
+                hooks=team.pre_hooks,  # type: ignore
+                run_response=run_response,
+                run_context=run_context,
+                run_input=run_input,
+                session=team_session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+            async for _ in pre_hook_iterator:
+                pass
+
+        await _aresolve_callable_resources(team, run_context=run_context)
+        await _check_and_refresh_mcp_tools(team)
+
+        team_run_context: Dict[str, Any] = {}
+        tools = _determine_tools_for_model(
+            team,
+            model=team.model,
+            run_response=run_response,
+            run_context=run_context,
+            team_run_context=team_run_context,
+            session=team_session,
+            user_id=user_id,
+            async_mode=True,
+            input_message=run_input.input_content,
+            images=run_input.images,
+            videos=run_input.videos,
+            audio=run_input.audios,
+            files=run_input.files,
+            debug_mode=debug_mode,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
+            stream=False,
+            stream_events=False,
+        )
+        run_messages = await _aget_run_messages(
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            session=team_session,
+            user_id=user_id,
+            input_message=run_input.input_content,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
+            tools=tools,
+            **kwargs,
+        )
+        if len(run_messages.messages) == 0:
+            log_error("No messages to be sent to the model.")
+
+        return PreparedTeamModelRequest(
+            run_response=run_response,
+            run_context=run_context,
+            session=team_session,
+            run_messages=run_messages,
+            tools=tools,
+            tool_instructions=list(team._tool_instructions or []),
+            response_format=response_format,
+        )
+    finally:
+        _disconnect_connectable_tools(team)
+        await _disconnect_mcp_tools(team)
 
 
 def run_dispatch(

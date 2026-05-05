@@ -66,6 +66,7 @@ from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
 from agno.run.messages import RunMessages
+from agno.run.prepared import PreparedAgentModelRequest
 from agno.run.requirement import RunRequirement
 from agno.session import AgentSession
 from agno.tools.function import Function
@@ -1216,6 +1217,399 @@ def _run_stream(
         disconnect_connectable_tools(agent)
         # Always clean up the run tracking
         cleanup_run(run_response.run_id)  # type: ignore
+
+
+def prepare_model_request(
+    agent: Agent,
+    input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+    *,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+    run_id: Optional[str] = None,
+    audio: Optional[Sequence[Audio]] = None,
+    images: Optional[Sequence[Image]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    files: Optional[Sequence[File]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+    debug_mode: Optional[bool] = None,
+    **kwargs: Any,
+) -> PreparedAgentModelRequest:
+    """Prepare the model request for an Agent without invoking the model."""
+    from agno.agent._hooks import execute_pre_hooks
+    from agno.agent._init import disconnect_connectable_tools, has_async_db
+    from agno.agent._messages import get_run_messages
+    from agno.agent._response import get_response_format
+    from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
+    from agno.agent._tools import determine_tools_for_model
+
+    if has_async_db(agent):
+        raise RuntimeError(
+            "`prepare_model_request` is not supported with an async database. "
+            "Please use `aprepare_model_request` instead."
+        )
+
+    run_id = run_id or str(uuid4())
+
+    if (add_history_to_context or agent.add_history_to_context) and not agent.db and not agent.team_id:
+        log_warning(
+            "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+        )
+
+    background_tasks = kwargs.pop("background_tasks", None)
+    if background_tasks is not None:
+        from fastapi import BackgroundTasks
+
+        background_tasks: BackgroundTasks = background_tasks  # type: ignore
+
+    validated_input = validate_input(input, agent.input_schema)
+
+    if not agent._hooks_normalised:
+        if agent.pre_hooks:
+            agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks)  # type: ignore
+        if agent.post_hooks:
+            agent.post_hooks = normalize_post_hooks(agent.post_hooks)  # type: ignore
+        agent._hooks_normalised = True
+
+    session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
+    agent.initialize_agent(debug_mode=debug_mode)
+
+    image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
+        images=images, videos=videos, audios=audio, files=files
+    )
+    run_input = RunInput(
+        input_content=validated_input,
+        images=image_artifacts,
+        videos=video_artifacts,
+        audios=audio_artifacts,
+        files=file_artifacts,
+    )
+
+    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    update_metadata(agent, session=agent_session)
+
+    opts = resolve_run_options(
+        agent,
+        add_history_to_context=add_history_to_context,
+        add_dependencies_to_context=add_dependencies_to_context,
+        add_session_state_to_context=add_session_state_to_context,
+        dependencies=dependencies,
+        knowledge_filters=knowledge_filters,
+        metadata=metadata,
+        output_schema=output_schema,
+    )
+
+    agent.model = cast(Model, agent.model)
+    run_context = run_context or RunContext(
+        run_id=run_id,
+        session_id=session_id,
+        user_id=user_id,
+        session_state=session_state,
+        dependencies=opts.dependencies,
+        knowledge_filters=opts.knowledge_filters,
+        metadata=opts.metadata,
+        output_schema=opts.output_schema,
+    )
+    opts.apply_to_context(
+        run_context,
+        dependencies_provided=dependencies is not None,
+        knowledge_filters_provided=knowledge_filters is not None,
+        metadata_provided=metadata is not None,
+    )
+
+    response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
+    run_response = RunOutput(
+        run_id=run_id,
+        session_id=session_id,
+        agent_id=agent.id,
+        user_id=user_id,
+        agent_name=agent.name,
+        metadata=run_context.metadata,
+        session_state=run_context.session_state,
+        input=run_input,
+    )
+    run_response.model = agent.model.id if agent.model is not None else None
+    run_response.model_provider = agent.model.provider if agent.model is not None else None
+
+    try:
+        run_context.session_state = load_session_state(
+            agent,
+            session=agent_session,
+            session_state=run_context.session_state if run_context.session_state is not None else {},
+        )
+        _initialize_session_state(
+            run_context.session_state,
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_context.run_id,
+        )
+
+        if run_context.dependencies is not None:
+            resolve_run_dependencies(agent, run_context=run_context)
+
+        run_input = cast(RunInput, run_response.input)
+        if agent.pre_hooks is not None:
+            pre_hook_iterator = execute_pre_hooks(
+                agent,
+                hooks=agent.pre_hooks,  # type: ignore
+                run_response=run_response,
+                run_input=run_input,
+                run_context=run_context,
+                session=agent_session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+            deque(pre_hook_iterator, maxlen=0)
+
+        processed_tools = agent.get_tools(
+            run_response=run_response,
+            run_context=run_context,
+            session=agent_session,
+            user_id=user_id,
+        )
+        tools = determine_tools_for_model(
+            agent,
+            model=agent.model,
+            processed_tools=processed_tools,
+            run_response=run_response,
+            session=agent_session,
+            run_context=run_context,
+        )
+        run_messages = get_run_messages(
+            agent,
+            run_response=run_response,
+            run_context=run_context,
+            input=run_input.input_content,
+            session=agent_session,
+            user_id=user_id,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
+            tools=tools,
+            **kwargs,
+        )
+        if len(run_messages.messages) == 0:
+            log_error("No messages to be sent to the model.")
+
+        return PreparedAgentModelRequest(
+            run_response=run_response,
+            run_context=run_context,
+            session=agent_session,
+            run_messages=run_messages,
+            tools=tools,
+            tool_instructions=list(agent._tool_instructions or []),
+            response_format=response_format,
+        )
+    finally:
+        disconnect_connectable_tools(agent)
+
+
+async def aprepare_model_request(
+    agent: Agent,
+    input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+    *,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+    run_id: Optional[str] = None,
+    audio: Optional[Sequence[Audio]] = None,
+    images: Optional[Sequence[Image]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    files: Optional[Sequence[File]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+    debug_mode: Optional[bool] = None,
+    **kwargs: Any,
+) -> PreparedAgentModelRequest:
+    """Prepare the model request for an Agent without invoking the model."""
+    from agno.agent._hooks import aexecute_pre_hooks
+    from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
+    from agno.agent._messages import aget_run_messages
+    from agno.agent._response import get_response_format
+    from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
+    from agno.agent._tools import determine_tools_for_model
+
+    run_id = run_id or str(uuid4())
+
+    if (add_history_to_context or agent.add_history_to_context) and not agent.db and not agent.team_id:
+        log_warning(
+            "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+        )
+
+    background_tasks = kwargs.pop("background_tasks", None)
+    if background_tasks is not None:
+        from fastapi import BackgroundTasks
+
+        background_tasks: BackgroundTasks = background_tasks  # type: ignore
+
+    validated_input = validate_input(input, agent.input_schema)
+
+    if not agent._hooks_normalised:
+        if agent.pre_hooks:
+            agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks, async_mode=True)  # type: ignore
+        if agent.post_hooks:
+            agent.post_hooks = normalize_post_hooks(agent.post_hooks, async_mode=True)  # type: ignore
+        agent._hooks_normalised = True
+
+    session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
+    agent.initialize_agent(debug_mode=debug_mode)
+
+    image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
+        images=images, videos=videos, audios=audio, files=files
+    )
+    run_input = RunInput(
+        input_content=validated_input,
+        images=image_artifacts,
+        videos=video_artifacts,
+        audios=audio_artifacts,
+        files=file_artifacts,
+    )
+
+    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+    update_metadata(agent, session=agent_session)
+
+    opts = resolve_run_options(
+        agent,
+        add_history_to_context=add_history_to_context,
+        add_dependencies_to_context=add_dependencies_to_context,
+        add_session_state_to_context=add_session_state_to_context,
+        dependencies=dependencies,
+        knowledge_filters=knowledge_filters,
+        metadata=metadata,
+        output_schema=output_schema,
+    )
+
+    agent.model = cast(Model, agent.model)
+    run_context = run_context or RunContext(
+        run_id=run_id,
+        session_id=session_id,
+        user_id=user_id,
+        session_state=session_state,
+        dependencies=opts.dependencies,
+        knowledge_filters=opts.knowledge_filters,
+        metadata=opts.metadata,
+        output_schema=opts.output_schema,
+    )
+    opts.apply_to_context(
+        run_context,
+        dependencies_provided=dependencies is not None,
+        knowledge_filters_provided=knowledge_filters is not None,
+        metadata_provided=metadata is not None,
+    )
+
+    response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
+    run_response = RunOutput(
+        run_id=run_id,
+        session_id=session_id,
+        agent_id=agent.id,
+        user_id=user_id,
+        agent_name=agent.name,
+        metadata=run_context.metadata,
+        session_state=run_context.session_state,
+        input=run_input,
+    )
+    run_response.model = agent.model.id if agent.model is not None else None
+    run_response.model_provider = agent.model.provider if agent.model is not None else None
+
+    try:
+        run_context.session_state = load_session_state(
+            agent,
+            session=agent_session,
+            session_state=run_context.session_state if run_context.session_state is not None else {},
+        )
+        _initialize_session_state(
+            run_context.session_state,
+            user_id=user_id,
+            session_id=session_id,
+            run_id=run_context.run_id,
+        )
+
+        if run_context.dependencies is not None:
+            await aresolve_run_dependencies(agent, run_context=run_context)
+
+        run_input = cast(RunInput, run_response.input)
+        if agent.pre_hooks is not None:
+            pre_hook_iterator = aexecute_pre_hooks(
+                agent,
+                hooks=agent.pre_hooks,  # type: ignore
+                run_response=run_response,
+                run_context=run_context,
+                run_input=run_input,
+                session=agent_session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                **kwargs,
+            )
+            async for _ in pre_hook_iterator:
+                pass
+
+        processed_tools = await agent.aget_tools(
+            run_response=run_response,
+            run_context=run_context,
+            session=agent_session,
+            user_id=user_id,
+        )
+        tools = determine_tools_for_model(
+            agent,
+            model=agent.model,
+            processed_tools=processed_tools,
+            run_response=run_response,
+            run_context=run_context,
+            session=agent_session,
+            async_mode=True,
+        )
+        run_messages = await aget_run_messages(
+            agent,
+            run_response=run_response,
+            run_context=run_context,
+            input=run_input.input_content,
+            session=agent_session,
+            user_id=user_id,
+            audio=run_input.audios,
+            images=run_input.images,
+            videos=run_input.videos,
+            files=run_input.files,
+            add_history_to_context=opts.add_history_to_context,
+            add_dependencies_to_context=opts.add_dependencies_to_context,
+            add_session_state_to_context=opts.add_session_state_to_context,
+            tools=tools,
+            **kwargs,
+        )
+        if len(run_messages.messages) == 0:
+            log_error("No messages to be sent to the model.")
+
+        return PreparedAgentModelRequest(
+            run_response=run_response,
+            run_context=run_context,
+            session=agent_session,
+            run_messages=run_messages,
+            tools=tools,
+            tool_instructions=list(agent._tool_instructions or []),
+            response_format=response_format,
+        )
+    finally:
+        disconnect_connectable_tools(agent)
+        await disconnect_mcp_tools(agent)
 
 
 def run_dispatch(
