@@ -9,9 +9,9 @@ SlackContextProvider exposes two tools to the calling agent:
 - `update_<id>(instruction)` — post a message (resolves channel /
   user names, then calls `send_message` / `send_message_thread`)
 
-Two sub-agents under the hood with minimal scopes: the read agent
-never sees `send_message`, the write agent never sees
-`search_workspace`. Uploads / downloads are off on both.
+Separate sub-agents under the hood keep scopes minimal: read agents
+never see `send_message`, and the write agent never sees history or
+search tools. Uploads / downloads are off on both.
 
 This cookbook always runs the read prompt. If you set
 `SLACK_WRITE_CHANNEL` (e.g. `SLACK_WRITE_CHANNEL=#agno-test`), it
@@ -58,9 +58,8 @@ async def main() -> None:
     print(f"\nslack.status() = {slack.status()}\n")
 
     # --- Read path (always runs) ---
-    # Uses `search_workspace`, which is paginated by relevance and
-    # scales to huge workspaces — `list_channels` would page past
-    # most of what's there.
+    # CLI runs use bot-token-compatible channel history. Slack interface
+    # runs include an action_token, so the provider can use assistant search.
     read_prompt = (
         "Find the 3 most recent messages in the #agents channel."
         "For each, author, and a one-line quote."
