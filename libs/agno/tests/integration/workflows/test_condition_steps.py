@@ -13,7 +13,7 @@ from agno.run.workflow import (
 )
 from agno.workflow import Condition, Parallel, Workflow
 from agno.workflow.cel import CEL_AVAILABLE
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import OnError, StepInput, StepOutput
 
 
 # Helper functions
@@ -252,7 +252,7 @@ def test_condition_streaming(shared_db):
 
 
 def test_condition_error_handling(shared_db):
-    """Test condition error handling."""
+    """Test condition error handling"""
 
     def failing_evaluator(_: StepInput) -> bool:
         raise ValueError("Evaluator failed")
@@ -260,7 +260,14 @@ def test_condition_error_handling(shared_db):
     workflow = Workflow(
         name="Error Condition",
         db=shared_db,
-        steps=[Condition(name="failing_check", evaluator=failing_evaluator, steps=[research_step])],
+        steps=[
+            Condition(
+                name="failing_check",
+                evaluator=failing_evaluator,
+                steps=[research_step],
+                on_error=OnError.fail,  # Ensure exception propagates
+            )
+        ],
     )
 
     with pytest.raises(ValueError):
@@ -930,3 +937,397 @@ def test_cel_condition_previous_step_outputs():
     result = condition.execute(step_input)
     assert len(result.steps) == 1
     assert "Fact check" in result.steps[0].content
+
+
+# ============================================================================
+# ON_ERROR HANDLING TESTS
+# ============================================================================
+
+
+def failing_step(step_input: StepInput) -> StepOutput:
+    """Step that always fails."""
+    raise ValueError("Node failed!")
+
+
+def success_step(step_input: StepInput) -> StepOutput:
+    """Step that always succeeds."""
+    return StepOutput(content="Node completed", success=True)
+
+
+def test_condition_on_error_skip_default():
+    """Test that on_error='skip' (default) logs error and breaks execution."""
+    condition = Condition(
+        name="ConditionalStep",
+        evaluator=True,
+        steps=[failing_step, success_step],
+        # on_error defaults to OnError.skip
+    )
+    step_input = StepInput(input="test")
+
+    result = condition.execute(step_input)
+
+    # Should have 1 step result (the failed step)
+    assert isinstance(result, StepOutput)
+    assert len(result.steps) == 1
+    assert result.steps[0].success is False
+    assert "failed" in result.steps[0].content
+    # success_step should not have executed
+    assert not any("Node completed" in step.content for step in result.steps)
+
+
+def test_condition_on_error_fail_raises_exception():
+    """Test that on_error='fail' re-raises the exception."""
+
+    condition = Condition(
+        name="ConditionalStep",
+        evaluator=True,
+        steps=[failing_step, success_step],
+        on_error=OnError.fail,
+    )
+    step_input = StepInput(input="test")
+
+    with pytest.raises(ValueError, match="Node failed!"):
+        condition.execute(step_input)
+
+
+def test_condition_on_error_skip_in_workflow(shared_db):
+    """Test condition with on_error='skip' in a workflow."""
+    workflow = Workflow(
+        name="Test on_error skip",
+        db=shared_db,
+        steps=[
+            Condition(
+                name="ConditionalStep",
+                evaluator=True,
+                steps=[failing_step, success_step],
+                on_error="skip",  # Test string value
+            ),
+            success_step,  # This should still execute
+        ],
+    )
+
+    response = workflow.run(input="test")
+
+    # Workflow should complete successfully
+    assert isinstance(response, WorkflowRunOutput)
+    assert response.status == RunStatus.completed
+    # Should have 2 step results
+    assert len(response.step_results) == 2
+    # First step (condition) should have error
+    assert response.step_results[0].steps[0].success is False
+    # Second step should execute successfully
+    assert "Node completed" in response.step_results[1].content
+
+
+def test_condition_on_error_fail_in_workflow(shared_db):
+    """Test condition with on_error='fail' in a workflow."""
+
+    workflow = Workflow(
+        name="Test on_error fail",
+        db=shared_db,
+        steps=[
+            Condition(
+                name="ConditionalStep",
+                evaluator=True,
+                steps=[failing_step, success_step],
+                on_error=OnError.fail,
+            ),
+            success_step,  # This should not execute
+        ],
+    )
+
+    with pytest.raises(ValueError, match="Node failed!"):
+        workflow.run(input="test")
+
+
+@pytest.mark.asyncio
+async def test_condition_on_error_skip_async():
+    """Test async condition with on_error='skip'."""
+    condition = Condition(
+        name="ConditionalStep",
+        evaluator=True,
+        steps=[failing_step, success_step],
+        on_error="skip",
+    )
+    step_input = StepInput(input="test")
+
+    result = await condition.aexecute(step_input)
+
+    # Should have 1 step result (the failed step)
+    assert isinstance(result, StepOutput)
+    assert len(result.steps) == 1
+    assert result.steps[0].success is False
+    assert "failed" in result.steps[0].content
+
+
+@pytest.mark.asyncio
+async def test_condition_on_error_fail_async():
+    """Test async condition with on_error='fail'."""
+
+    condition = Condition(
+        name="ConditionalStep",
+        evaluator=True,
+        steps=[failing_step, success_step],
+        on_error=OnError.fail,
+    )
+    step_input = StepInput(input="test")
+
+    with pytest.raises(ValueError, match="Node failed!"):
+        await condition.aexecute(step_input)
+
+
+def test_condition_on_error_skip_streaming():
+    """Test streaming condition with on_error='skip'."""
+    from agno.run.workflow import WorkflowRunOutput
+
+    condition = Condition(
+        name="ConditionalStep",
+        evaluator=True,
+        steps=[failing_step, success_step],
+        on_error="skip",
+    )
+    step_input = StepInput(input="test")
+
+    mock_response = WorkflowRunOutput(
+        run_id="test-run",
+        workflow_name="test-workflow",
+        workflow_id="test-id",
+        session_id="test-session",
+        content="",
+    )
+
+    events = list(condition.execute_stream(step_input, workflow_run_response=mock_response, stream_events=True))
+
+    # Get the final step output
+    step_outputs = [e for e in events if isinstance(e, StepOutput)]
+    assert len(step_outputs) > 0
+    final_output = step_outputs[-1]  # The last one should be the condition result
+
+    # Should have nested steps with the failed step
+    assert final_output.steps is not None
+    assert len(final_output.steps) == 1
+    assert final_output.steps[0].success is False
+
+
+@pytest.mark.asyncio
+async def test_condition_on_error_skip_async_streaming():
+    """Test async streaming condition with on_error='skip'."""
+    from agno.run.workflow import WorkflowRunOutput
+
+    condition = Condition(
+        name="ConditionalStep",
+        evaluator=True,
+        steps=[failing_step, success_step],
+        on_error="skip",
+    )
+    step_input = StepInput(input="test")
+
+    mock_response = WorkflowRunOutput(
+        run_id="test-run",
+        workflow_name="test-workflow",
+        workflow_id="test-id",
+        session_id="test-session",
+        content="",
+    )
+
+    events = []
+    async for event in condition.aexecute_stream(step_input, workflow_run_response=mock_response, stream_events=True):
+        events.append(event)
+
+    # Get the final step output
+    step_outputs = [e for e in events if isinstance(e, StepOutput)]
+    assert len(step_outputs) > 0
+    final_output = step_outputs[-1]
+
+    # Should have nested steps with the failed step
+    assert final_output.steps is not None
+    assert len(final_output.steps) == 1
+    assert final_output.steps[0].success is False
+
+
+def test_condition_on_error_applies_to_all_execution_methods():
+    """Test that on_error setting is respected across all execution methods."""
+
+    # Test with on_error=fail - should raise in all execution modes
+    condition_fail = Condition(
+        name="FailCondition",
+        evaluator=True,
+        steps=[failing_step],
+        on_error=OnError.fail,
+    )
+    step_input = StepInput(input="test")
+
+    # Direct execute
+    with pytest.raises(ValueError):
+        condition_fail.execute(step_input)
+
+    # Streaming execute
+    from agno.run.workflow import WorkflowRunOutput
+
+    mock_response = WorkflowRunOutput(
+        run_id="test-run",
+        workflow_name="test-workflow",
+        workflow_id="test-id",
+        session_id="test-session",
+        content="",
+    )
+
+    with pytest.raises(ValueError):
+        list(condition_fail.execute_stream(step_input, workflow_run_response=mock_response))
+
+
+def test_condition_on_error_in_else_branch():
+    """Test that on_error applies to else_steps as well."""
+
+    condition = Condition(
+        name="ConditionalStep",
+        evaluator=False,  # Trigger else branch
+        steps=[success_step],
+        else_steps=[failing_step, success_step],
+        on_error=OnError.skip,
+    )
+    step_input = StepInput(input="test")
+
+    result = condition.execute(step_input)
+
+    # Should have 1 step result (the failed step from else branch)
+    assert isinstance(result, StepOutput)
+    assert len(result.steps) == 1
+    assert result.steps[0].success is False
+    assert "failed" in result.steps[0].content
+    # else branch should stop after failure
+    assert "else branch" in result.content
+
+
+def test_condition_on_error_pause_in_workflow(shared_db):
+    """Test condition with on_error='pause' in a workflow."""
+
+    workflow = Workflow(
+        name="Test on_error pause",
+        db=shared_db,
+        steps=[
+            Condition(
+                name="ConditionalStep",
+                evaluator=True,
+                steps=[failing_step, success_step],
+                on_error=OnError.pause,
+            ),
+            success_step,  # This should not execute
+        ],
+    )
+
+    response = workflow.run(input="test")
+
+    # Workflow should be paused
+    assert isinstance(response, WorkflowRunOutput)
+    assert response.status == RunStatus.paused
+    assert response.error_requirements is not None
+    assert len(response.error_requirements) == 1
+    assert response.error_requirements[0].step_name == "ConditionalStep"
+    assert "Node failed!" in response.error_requirements[0].error_message
+
+
+def test_condition_on_error_pause_direct():
+    """Test that on_error='pause' re-raises exception in direct execution."""
+
+    condition = Condition(
+        name="ConditionalStep",
+        evaluator=True,
+        steps=[failing_step, success_step],
+        on_error=OnError.pause,
+    )
+    step_input = StepInput(input="test")
+
+    # Should re-raise the exception (same as fail)
+    with pytest.raises(ValueError, match="Node failed!"):
+        condition.execute(step_input)
+
+
+@pytest.mark.asyncio
+async def test_condition_on_error_pause_async():
+    """Test async condition with on_error='pause' re-raises exception."""
+
+    condition = Condition(
+        name="ConditionalStep",
+        evaluator=True,
+        steps=[failing_step, success_step],
+        on_error=OnError.pause,
+    )
+    step_input = StepInput(input="test")
+
+    # Should re-raise the exception (same as fail)
+    with pytest.raises(ValueError, match="Node failed!"):
+        await condition.aexecute(step_input)
+
+
+@pytest.mark.asyncio
+async def test_condition_on_error_fail_async_streaming():
+    """Test async streaming condition with on_error='fail' re-raises exception."""
+    from agno.run.workflow import WorkflowRunOutput
+
+    condition = Condition(
+        name="ConditionalStep",
+        evaluator=True,
+        steps=[failing_step, success_step],
+        on_error=OnError.fail,
+    )
+    step_input = StepInput(input="test")
+
+    mock_response = WorkflowRunOutput(
+        run_id="test-run",
+        workflow_name="test-workflow",
+        workflow_id="test-id",
+        session_id="test-session",
+        content="",
+    )
+
+    with pytest.raises(ValueError, match="Node failed!"):
+        async for _ in condition.aexecute_stream(step_input, workflow_run_response=mock_response):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_condition_on_error_pause_async_streaming():
+    """Test async streaming condition with on_error='pause' re-raises exception."""
+    from agno.run.workflow import WorkflowRunOutput
+
+    condition = Condition(
+        name="ConditionalStep",
+        evaluator=True,
+        steps=[failing_step, success_step],
+        on_error=OnError.pause,
+    )
+    step_input = StepInput(input="test")
+
+    mock_response = WorkflowRunOutput(
+        run_id="test-run",
+        workflow_name="test-workflow",
+        workflow_id="test-id",
+        session_id="test-session",
+        content="",
+    )
+
+    with pytest.raises(ValueError, match="Node failed!"):
+        async for _ in condition.aexecute_stream(step_input, workflow_run_response=mock_response):
+            pass
+
+
+def test_condition_on_error_serialization_roundtrip():
+    """Test that on_error survives to_dict/from_dict roundtrip."""
+
+    for on_error_value in [OnError.skip, OnError.fail, OnError.pause]:
+        condition = Condition(
+            name="roundtrip_test",
+            evaluator=True,
+            steps=[success_step],
+            on_error=on_error_value,
+        )
+
+        data = condition.to_dict()
+        restored = Condition.from_dict(data)
+
+        restored_value = restored.on_error.value if isinstance(restored.on_error, OnError) else restored.on_error
+        expected_value = on_error_value.value if isinstance(on_error_value, OnError) else on_error_value
+        assert restored_value == expected_value, (
+            f"on_error={on_error_value} did not survive roundtrip: got {restored.on_error}"
+        )
