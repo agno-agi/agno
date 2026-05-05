@@ -490,7 +490,7 @@ def attach_routes(
                 # Mark as decided with the original pause type
                 decided_card: Dict[str, Any] = {
                     "type": "card",
-                    "block_id": f"rowact:{req_id}:{original_pause_type}:decided:reject",
+                    "block_id": f"rowact:{req_id}:{original_pause_type}:decided:deny",
                     "title": {"type": "mrkdwn", "text": f"*Denied: {tool_name}*"},
                 }
                 if rejected_note:
@@ -501,7 +501,7 @@ def attach_routes(
                     updated_blocks.append(
                         {
                             "type": "section",
-                            "block_id": f"row:{req_id}:confirmation:decided:reject",
+                            "block_id": f"row:{req_id}:confirmation:decided:deny",
                             "text": {"type": "plain_text", "text": " "},
                         }
                     )

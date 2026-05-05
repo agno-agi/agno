@@ -233,10 +233,11 @@ def apply_decisions(decisions: List[ParsedDecision], requirements: List[RunRequi
             continue
 
         if decision.pause_type == "confirmation":
-            if decision.approved:
+            if decision.approved is True:
                 requirement.confirm()
-            else:
+            elif decision.approved is False:
                 requirement.reject(decision.rejected_note)
+            # approved=None means undecided — skip, validation error already recorded
         elif decision.pause_type == "user_input" and decision.input_values is not None:
             requirement.provide_user_input(decision.input_values)
         elif decision.pause_type == "user_feedback" and decision.feedback_selections is not None:
