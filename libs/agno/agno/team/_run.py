@@ -379,6 +379,7 @@ async def _aprepare_team_model_request(
     *,
     run_response: TeamRunOutput,
     run_context: RunContext,
+    session_id: str,
     session: Optional[TeamSession],
     user_id: Optional[str],
     options: "ResolvedRunOptions",
@@ -395,7 +396,7 @@ async def _aprepare_team_model_request(
         session = await _asetup_session(
             team,
             run_context=run_context,
-            session_id=run_response.session_id,
+            session_id=session_id,
             user_id=user_id,
             run_id=run_response.run_id,
         )
@@ -2219,6 +2220,7 @@ async def aprepare_model_request(
             team,
             run_response=setup.run_response,
             run_context=setup.run_context,
+            session_id=setup.session_id,
             session=setup.session,
             user_id=setup.user_id,
             options=setup.options,
@@ -3262,6 +3264,7 @@ async def _arun(
                     team,
                     run_response=run_response,
                     run_context=run_context,
+                    session_id=session_id,
                     session=team_session,
                     user_id=user_id,
                     options=options,
