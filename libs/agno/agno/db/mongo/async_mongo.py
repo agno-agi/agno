@@ -1,7 +1,7 @@
 import asyncio
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, TypeAlias, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 try:
@@ -70,10 +70,25 @@ if not MOTOR_AVAILABLE and not PYMONGO_ASYNC_AVAILABLE:
         "  - `pip install -U motor` (legacy, deprecated)\n"
     )
 
-# Async Mongo concrete types vary by installed driver; keep aliases permissive for static checks.
-AsyncMongoClientType: TypeAlias = Any
-AsyncMongoDatabaseType: TypeAlias = Any
-AsyncMongoCollectionType: TypeAlias = Any
+# Create union types for client, database, and collection
+if TYPE_CHECKING:
+    if MOTOR_AVAILABLE and PYMONGO_ASYNC_AVAILABLE:
+        AsyncMongoClientType = Union[AsyncIOMotorClient, AsyncMongoClient]  # type: ignore
+        AsyncMongoDatabaseType = Union[AsyncIOMotorDatabase, AsyncDatabase]  # type: ignore
+        AsyncMongoCollectionType = Union[AsyncIOMotorCollection, AsyncCollection]  # type: ignore
+    elif MOTOR_AVAILABLE:
+        AsyncMongoClientType = AsyncIOMotorClient  # type: ignore
+        AsyncMongoDatabaseType = AsyncIOMotorDatabase  # type: ignore
+        AsyncMongoCollectionType = AsyncIOMotorCollection  # type: ignore
+    else:
+        AsyncMongoClientType = AsyncMongoClient  # type: ignore
+        AsyncMongoDatabaseType = AsyncDatabase  # type: ignore
+        AsyncMongoCollectionType = AsyncCollection  # type: ignore
+else:
+    # Runtime type - use Any to avoid import issues
+    AsyncMongoClientType = Any
+    AsyncMongoDatabaseType = Any
+    AsyncMongoCollectionType = Any
 
 
 # Client type constants (defined before class to allow use in _detect_client_type)
