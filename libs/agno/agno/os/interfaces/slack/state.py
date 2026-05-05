@@ -34,7 +34,7 @@ class TaskCard:
 class StreamState:
     # Slack thread title — set once on first content to avoid repeated API calls
     title_set: bool = False
-    # Incremented per error; used to generate unique fallback task card IDs
+    # Error events may lack tool_call_id; this generates fallback IDs (tool_error_0, tool_error_1, ...)
     error_count: int = 0
 
     text_buffer: str = ""
