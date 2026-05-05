@@ -2,9 +2,14 @@
 
 import json
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 from agno.db.clickhouse.schemas import SPAN_COLUMNS, TRACE_COLUMNS
+
+# ClickHouse datetime columns. Filter values for these columns get parsed
+# from ISO 8601 strings to tz-aware datetimes before binding so the server's
+# DateTime64(6, 'UTC') column accepts them.
+DATETIME_COLUMNS = {"start_time", "end_time", "created_at"}
 
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
@@ -116,6 +121,23 @@ def row_to_span(row: Dict[str, Any]) -> "Span":
     )
 
 
+def coerce_datetime(value: Any) -> Optional[datetime]:
+    """Best-effort coercion to a tz-aware UTC datetime for binding.
+
+    Accepts ``datetime`` (naive treated as UTC), ISO 8601 strings (with or
+    without trailing ``Z``), and integer/float epoch seconds. Returns ``None``
+    if ``value`` is ``None``. Raises on anything else so callers don't bind
+    silently-invalid values.
+    """
+    from agno.utils.dttm import parse_datetime_utc
+
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, tz=timezone.utc)
+    return parse_datetime_utc(value)
+
+
 def named_rows(column_names: Sequence[str], rows: Sequence[Sequence[Any]]) -> List[Dict[str, Any]]:
     """Zip column names with positional rows from clickhouse-connect results."""
     return [dict(zip(column_names, r)) for r in rows]
@@ -127,3 +149,146 @@ def trace_columns() -> List[str]:
 
 def span_columns() -> List[str]:
     return list(SPAN_COLUMNS)
+
+
+# --------------------------------------------------------------------------- #
+# FilterExpr -> ClickHouse SQL fragment
+# --------------------------------------------------------------------------- #
+#
+# Mirrors `agno.db.filter_converter.filter_expr_to_sqlalchemy` but emits a
+# parameterized SQL fragment compatible with `clickhouse-connect`. Column
+# names are validated against ``allowed_columns`` (no string interpolation
+# of arbitrary keys); values flow through ``%(name)s`` placeholders so the
+# server-side parser handles escaping.
+
+MAX_FILTER_DEPTH = 10
+_OP_TO_SQL = {
+    "EQ": "=",
+    "NEQ": "!=",
+    "GT": ">",
+    "GTE": ">=",
+    "LT": "<",
+    "LTE": "<=",
+}
+
+
+def filter_expr_to_clickhouse(
+    filter_dict: Dict[str, Any],
+    params: Dict[str, Any],
+    allowed_columns: set,
+    column_alias: str = "",
+    _depth: int = 0,
+    _counter: List[int] = None,  # type: ignore[assignment]
+) -> str:
+    """Convert a FilterExpr dict to a parameterized ClickHouse WHERE fragment.
+
+    Args:
+        filter_dict: Serialized FilterExpr (from ``to_dict()`` or JSON).
+        params: Mutable dict that the function appends parameters into.
+        allowed_columns: Whitelist of column names; unknown columns raise.
+        column_alias: Optional table alias (e.g. ``"t"``) prefixed to columns.
+        _depth: Internal recursion-depth tracker.
+        _counter: Internal placeholder-name counter (mutable list of length 1).
+
+    Returns:
+        A SQL fragment string; ``params`` is updated in place with the values.
+
+    Raises:
+        ValueError: On invalid structure, unknown operator, or unknown column.
+    """
+    if _depth > MAX_FILTER_DEPTH:
+        raise ValueError(f"Filter expression exceeds maximum nesting depth of {MAX_FILTER_DEPTH}")
+    if _counter is None:
+        _counter = [0]
+
+    if not isinstance(filter_dict, dict) or "op" not in filter_dict:
+        raise ValueError(f"Invalid filter: must be a dict with 'op' key. Got: {filter_dict}")
+
+    op = filter_dict["op"]
+    prefix = f"{column_alias}." if column_alias else ""
+
+    def _next_param() -> str:
+        _counter[0] += 1
+        return f"__filter_{_counter[0]}"
+
+    def _check_column(key: str) -> str:
+        if key not in allowed_columns:
+            raise ValueError(f"Invalid filter field: '{key}'. Allowed: {sorted(allowed_columns)}")
+        return f"{prefix}{key}"
+
+    if op in _OP_TO_SQL:
+        key = filter_dict.get("key")
+        value = filter_dict.get("value")
+        if key is None or value is None:
+            raise ValueError(f"{op} filter requires 'key' and 'value' fields. Got: {filter_dict}")
+        col = _check_column(key)
+        pname = _next_param()
+        if key in DATETIME_COLUMNS:
+            value = coerce_datetime(value)
+        params[pname] = value
+        return f"{col} {_OP_TO_SQL[op]} %({pname})s"
+
+    if op == "CONTAINS":
+        key = filter_dict.get("key")
+        value = filter_dict.get("value")
+        if key is None or value is None:
+            raise ValueError(f"CONTAINS filter requires 'key' and 'value' fields. Got: {filter_dict}")
+        col = _check_column(key)
+        pname = _next_param()
+        params[pname] = str(value).lower()
+        # positionCaseInsensitive returns a 1-based offset; > 0 means "found".
+        return f"positionCaseInsensitive(toString({col}), %({pname})s) > 0"
+
+    if op == "STARTSWITH":
+        key = filter_dict.get("key")
+        value = filter_dict.get("value")
+        if key is None or value is None:
+            raise ValueError(f"STARTSWITH filter requires 'key' and 'value' fields. Got: {filter_dict}")
+        col = _check_column(key)
+        pname = _next_param()
+        params[pname] = str(value).lower()
+        return f"startsWith(lower(toString({col})), %({pname})s)"
+
+    if op == "IN":
+        key = filter_dict.get("key")
+        values = filter_dict.get("values")
+        if key is None or values is None:
+            raise ValueError(f"IN filter requires 'key' and 'values' fields. Got: {filter_dict}")
+        col = _check_column(key)
+        pname = _next_param()
+        if key in DATETIME_COLUMNS:
+            params[pname] = [coerce_datetime(v) for v in values]
+        else:
+            params[pname] = list(values)
+        return f"{col} IN %({pname})s"
+
+    if op == "AND":
+        conditions = filter_dict.get("conditions")
+        if not conditions:
+            raise ValueError(f"AND filter requires 'conditions' field. Got: {filter_dict}")
+        parts = [
+            filter_expr_to_clickhouse(c, params, allowed_columns, column_alias, _depth + 1, _counter)
+            for c in conditions
+        ]
+        return "(" + " AND ".join(parts) + ")"
+
+    if op == "OR":
+        conditions = filter_dict.get("conditions")
+        if not conditions:
+            raise ValueError(f"OR filter requires 'conditions' field. Got: {filter_dict}")
+        parts = [
+            filter_expr_to_clickhouse(c, params, allowed_columns, column_alias, _depth + 1, _counter)
+            for c in conditions
+        ]
+        return "(" + " OR ".join(parts) + ")"
+
+    if op == "NOT":
+        condition = filter_dict.get("condition")
+        if not condition:
+            raise ValueError(f"NOT filter requires 'condition' field. Got: {filter_dict}")
+        inner = filter_expr_to_clickhouse(
+            condition, params, allowed_columns, column_alias, _depth + 1, _counter
+        )
+        return f"NOT ({inner})"
+
+    raise ValueError(f"Unknown filter operator: {op}")

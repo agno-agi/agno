@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 from agno.db.base import AsyncBaseDb
 from agno.db.clickhouse.schemas import SPANS_DDL, TRACES_DDL, VERSIONS_DDL
 from agno.db.clickhouse.utils import (
+    coerce_datetime,
+    filter_expr_to_clickhouse,
     named_rows,
     row_to_span,
     row_to_trace,
@@ -20,6 +22,7 @@ from agno.db.clickhouse.utils import (
     trace_columns,
     trace_to_row,
 )
+from agno.db.filter_converter import TRACE_COLUMNS as TRACE_FILTER_COLUMNS
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.utils.log import log_debug, log_error
@@ -300,10 +303,20 @@ class AsyncClickhouseDb(AsyncBaseDb):
                     params[col] = val
             if start_time is not None:
                 where.append("start_time >= %(__start_time)s")
-                params["__start_time"] = start_time
+                params["__start_time"] = coerce_datetime(start_time)
             if end_time is not None:
                 where.append("end_time <= %(__end_time)s")
-                params["__end_time"] = end_time
+                params["__end_time"] = coerce_datetime(end_time)
+
+            if filter_expr:
+                try:
+                    where.append(
+                        filter_expr_to_clickhouse(filter_expr, params, allowed_columns=TRACE_FILTER_COLUMNS)
+                    )
+                except ValueError:
+                    raise
+                except (KeyError, TypeError) as e:
+                    raise ValueError(f"Invalid filter expression: {e}") from e
 
             where_sql = f"WHERE {' AND '.join(where)}" if where else ""
             limit_n = max(1, int(limit or 20))
@@ -365,10 +378,22 @@ class AsyncClickhouseDb(AsyncBaseDb):
                     params[col] = val
             if start_time is not None:
                 where.append("t.created_at >= %(__start_time)s")
-                params["__start_time"] = start_time
+                params["__start_time"] = coerce_datetime(start_time)
             if end_time is not None:
                 where.append("t.created_at <= %(__end_time)s")
-                params["__end_time"] = end_time
+                params["__end_time"] = coerce_datetime(end_time)
+
+            if filter_expr:
+                try:
+                    where.append(
+                        filter_expr_to_clickhouse(
+                            filter_expr, params, allowed_columns=TRACE_FILTER_COLUMNS, column_alias="t"
+                        )
+                    )
+                except ValueError:
+                    raise
+                except (KeyError, TypeError) as e:
+                    raise ValueError(f"Invalid filter expression: {e}") from e
 
             where_sql = " AND ".join(where)
             limit_n = max(1, int(limit or 20))

@@ -248,6 +248,129 @@ class TestGetTableCache:
 # --------------------------------------------------------------------------- #
 
 
+class TestFilterExprConverter:
+    """Unit-test the FilterExpr -> ClickHouse SQL fragment converter directly."""
+
+    @pytest.fixture
+    def cols(self):
+        from agno.db.filter_converter import TRACE_COLUMNS
+
+        return TRACE_COLUMNS
+
+    def test_eq_emits_parameterized_sql(self, cols):
+        from agno.db.clickhouse.utils import filter_expr_to_clickhouse
+
+        params: dict = {}
+        sql = filter_expr_to_clickhouse(
+            {"op": "EQ", "key": "trace_id", "value": "abc"}, params, cols
+        )
+        assert "trace_id =" in sql
+        # Value is parameterized, not interpolated.
+        assert "abc" not in sql
+        assert "abc" in params.values()
+
+    def test_and_or_not_compose(self, cols):
+        from agno.db.clickhouse.utils import filter_expr_to_clickhouse
+
+        params: dict = {}
+        sql = filter_expr_to_clickhouse(
+            {
+                "op": "AND",
+                "conditions": [
+                    {"op": "EQ", "key": "status", "value": "OK"},
+                    {
+                        "op": "OR",
+                        "conditions": [
+                            {"op": "EQ", "key": "agent_id", "value": "a1"},
+                            {"op": "NOT", "condition": {"op": "EQ", "key": "user_id", "value": "u1"}},
+                        ],
+                    },
+                ],
+            },
+            params,
+            cols,
+        )
+        assert " AND " in sql
+        assert " OR " in sql
+        assert "NOT (" in sql
+        # 3 leaf comparisons → 3 placeholders.
+        assert len(params) == 3
+
+    def test_in_uses_list_placeholder(self, cols):
+        from agno.db.clickhouse.utils import filter_expr_to_clickhouse
+
+        params: dict = {}
+        sql = filter_expr_to_clickhouse(
+            {"op": "IN", "key": "status", "values": ["OK", "ERROR"]}, params, cols
+        )
+        assert " IN " in sql
+        assert ["OK", "ERROR"] in params.values()
+
+    def test_unknown_column_raises(self, cols):
+        from agno.db.clickhouse.utils import filter_expr_to_clickhouse
+
+        with pytest.raises(ValueError, match="Invalid filter field"):
+            filter_expr_to_clickhouse(
+                {"op": "EQ", "key": "not_a_column", "value": "x"}, {}, cols
+            )
+
+    def test_column_alias_is_prefixed(self, cols):
+        from agno.db.clickhouse.utils import filter_expr_to_clickhouse
+
+        params: dict = {}
+        sql = filter_expr_to_clickhouse(
+            {"op": "EQ", "key": "agent_id", "value": "a1"}, params, cols, column_alias="t"
+        )
+        assert sql.startswith("t.agent_id ")
+
+    def test_max_depth_enforced(self, cols):
+        from agno.db.clickhouse.utils import filter_expr_to_clickhouse
+
+        # Build a 12-deep AND chain (limit is 10).
+        node = {"op": "EQ", "key": "trace_id", "value": "x"}
+        for _ in range(12):
+            node = {"op": "AND", "conditions": [node]}
+        with pytest.raises(ValueError, match="maximum nesting depth"):
+            filter_expr_to_clickhouse(node, {}, cols)
+
+    def test_datetime_columns_coerce_iso_strings_to_utc(self, cols):
+        """Filter values for start_time/end_time/created_at must be parsed to
+        tz-aware datetimes so ClickHouse's DateTime64('UTC') accepts them."""
+        from datetime import datetime, timezone
+
+        from agno.db.clickhouse.utils import filter_expr_to_clickhouse
+
+        params: dict = {}
+        filter_expr_to_clickhouse(
+            {"op": "GTE", "key": "start_time", "value": "2026-05-05T16:30:00+05:30"},
+            params,
+            cols,
+        )
+        bound = next(iter(params.values()))
+        assert isinstance(bound, datetime)
+        assert bound.tzinfo is not None
+        assert bound.utcoffset() == timezone.utc.utcoffset(bound)  # converted to UTC
+
+    def test_in_filter_with_datetime_column_coerces_each_value(self, cols):
+        from datetime import datetime
+
+        from agno.db.clickhouse.utils import filter_expr_to_clickhouse
+
+        params: dict = {}
+        filter_expr_to_clickhouse(
+            {
+                "op": "IN",
+                "key": "created_at",
+                "values": ["2026-05-05T10:00:00Z", "2026-05-05T11:00:00+05:30"],
+            },
+            params,
+            cols,
+        )
+        bound = next(iter(params.values()))
+        assert isinstance(bound, list)
+        assert all(isinstance(v, datetime) for v in bound)
+
+
 class TestTraceWritePath:
     """Verify upsert_trace + create_spans hit the right insert API.
 

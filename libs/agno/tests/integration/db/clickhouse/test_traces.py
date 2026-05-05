@@ -152,6 +152,121 @@ def test_trace_round_trip(clickhouse_db: ClickhouseDb):
     assert fetched.agent_id == "agent-1"
 
 
+def test_get_traces_with_filter_expr_trace_id(clickhouse_db: ClickhouseDb):
+    """The FE filters by trace_id via FilterExpr; previously this was ignored
+    and returned all traces. Now it should match exactly the requested id."""
+    for i in range(3):
+        spans = _make_spans(f"trace-fe-{i}", count=1)
+        clickhouse_db.upsert_trace(create_trace_from_spans(spans))
+        clickhouse_db.create_spans(spans)
+
+    matched, total = clickhouse_db.get_traces(
+        filter_expr={"op": "EQ", "key": "trace_id", "value": "trace-fe-1"}
+    )
+    assert total == 1
+    assert matched[0].trace_id == "trace-fe-1"
+
+    miss, total = clickhouse_db.get_traces(
+        filter_expr={"op": "EQ", "key": "trace_id", "value": "does-not-exist"}
+    )
+    assert total == 0
+    assert miss == []
+
+
+def test_get_traces_accepts_iso_datetime_strings(clickhouse_db: ClickhouseDb):
+    """The FE sends start_time/end_time as ISO 8601 strings with TZ offsets
+    (e.g. '+05:30'). Previously these failed with TYPE_MISMATCH against the
+    DateTime64('UTC') column; now they're coerced to UTC datetimes."""
+    spans = _make_spans("trace-iso", count=1)
+    clickhouse_db.upsert_trace(create_trace_from_spans(spans))
+    clickhouse_db.create_spans(spans)
+
+    now = datetime.now(timezone.utc)
+    ist = timezone(timedelta(hours=5, minutes=30))
+    fe_start = (now - timedelta(hours=1)).astimezone(ist).isoformat()
+    fe_end = (now + timedelta(hours=1)).astimezone(ist).isoformat()
+
+    traces, total = clickhouse_db.get_traces(start_time=fe_start, end_time=fe_end)
+    assert total == 1
+    assert traces[0].trace_id == "trace-iso"
+
+    # get_trace_stats accepts the same format.
+    stats, total = clickhouse_db.get_trace_stats(start_time=fe_start, end_time=fe_end)
+    assert total == 1
+
+
+def test_get_traces_excludes_traces_outside_time_range(clickhouse_db: ClickhouseDb):
+    """Regression for the FE date-range filter: a trace whose start_time is
+    *outside* the requested window must be excluded, not silently returned."""
+    spans = _make_spans("trace-out-of-range", count=1)
+    clickhouse_db.upsert_trace(create_trace_from_spans(spans))
+    clickhouse_db.create_spans(spans)
+
+    # Request a window two months in the past — the trace is "now" so it
+    # must not appear.
+    ist = timezone(timedelta(hours=5, minutes=30))
+    past_start = (datetime.now(timezone.utc) - timedelta(days=60)).astimezone(ist).isoformat()
+    past_end = (datetime.now(timezone.utc) - timedelta(days=30)).astimezone(ist).isoformat()
+
+    traces, total = clickhouse_db.get_traces(start_time=past_start, end_time=past_end)
+    assert (traces, total) == ([], 0)
+
+    stats, total = clickhouse_db.get_trace_stats(start_time=past_start, end_time=past_end)
+    assert (stats, total) == ([], 0)
+
+
+def test_get_traces_partial_range_filters(clickhouse_db: ClickhouseDb):
+    """start_time alone and end_time alone must each apply correctly."""
+    spans = _make_spans("trace-partial", count=1)
+    clickhouse_db.upsert_trace(create_trace_from_spans(spans))
+    clickhouse_db.create_spans(spans)
+
+    now = datetime.now(timezone.utc)
+
+    # Only start_time, in the past → trace is included.
+    _, total = clickhouse_db.get_traces(start_time=(now - timedelta(hours=1)).isoformat())
+    assert total == 1
+
+    # Only start_time, in the future → trace is excluded.
+    _, total = clickhouse_db.get_traces(start_time=(now + timedelta(hours=1)).isoformat())
+    assert total == 0
+
+    # Only end_time, in the future → trace is included.
+    _, total = clickhouse_db.get_traces(end_time=(now + timedelta(hours=1)).isoformat())
+    assert total == 1
+
+    # Only end_time, in the past → trace is excluded.
+    _, total = clickhouse_db.get_traces(end_time=(now - timedelta(hours=1)).isoformat())
+    assert total == 0
+
+
+def test_get_traces_filter_expr_datetime_columns(clickhouse_db: ClickhouseDb):
+    """FilterExpr targeting datetime columns must coerce string values too."""
+    spans = _make_spans("trace-fe-dt", count=1)
+    clickhouse_db.upsert_trace(create_trace_from_spans(spans))
+    clickhouse_db.create_spans(spans)
+
+    now = datetime.now(timezone.utc)
+    iso = (now - timedelta(hours=1)).isoformat()
+
+    matched, total = clickhouse_db.get_traces(
+        filter_expr={"op": "GTE", "key": "start_time", "value": iso}
+    )
+    assert total == 1
+    assert matched[0].trace_id == "trace-fe-dt"
+
+
+def test_get_traces_with_filter_expr_unknown_column_returns_empty(clickhouse_db: ClickhouseDb):
+    """Matches PostgresDb semantics: invalid filter is logged + returns empty."""
+    spans = _make_spans("trace-bad-filter", count=1)
+    clickhouse_db.upsert_trace(create_trace_from_spans(spans))
+
+    out, total = clickhouse_db.get_traces(
+        filter_expr={"op": "EQ", "key": "not_a_column", "value": "x"}
+    )
+    assert (out, total) == ([], 0)
+
+
 def test_get_traces_paginates_and_filters(clickhouse_db: ClickhouseDb):
     for i in range(5):
         spans = _make_spans(f"trace-page-{i}", count=1, agent_id=f"agent-{i % 2}")
