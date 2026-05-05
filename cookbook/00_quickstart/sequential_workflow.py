@@ -35,7 +35,7 @@ workflow_db = SqliteDb(db_file="tmp/agents.db")
 data_agent = Agent(
     name="Data Gatherer",
     model=Gemini(id="gemini-3-flash-preview"),
-    tools=[YFinanceTools()],
+    tools=[YFinanceTools(all=True)],
     instructions="""\
 You are a data gathering agent. Your job is to fetch comprehensive market data.
 

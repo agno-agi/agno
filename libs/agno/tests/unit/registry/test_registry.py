@@ -641,3 +641,149 @@ class TestGetDb:
 
         not_found2 = reg.get_db("TEST-DB")
         assert not_found2 is None
+
+
+# =============================================================================
+# get_agent() / get_team() Tests
+# =============================================================================
+
+
+class TestGetAgent:
+    """Tests for Registry.get_agent() method."""
+
+    def test_get_agent_found(self):
+        """Test getting an agent that exists."""
+        agent = MagicMock()
+        agent.id = "agent-1"
+        reg = Registry(agents=[agent])
+
+        result = reg.get_agent("agent-1")
+
+        assert result is agent
+
+    def test_get_agent_multiple(self):
+        """Test getting different agents."""
+        a1 = MagicMock()
+        a1.id = "a1"
+        a2 = MagicMock()
+        a2.id = "a2"
+        reg = Registry(agents=[a1, a2])
+
+        assert reg.get_agent("a1") is a1
+        assert reg.get_agent("a2") is a2
+
+    def test_get_agent_not_found(self):
+        """Test getting an agent that doesn't exist."""
+        agent = MagicMock()
+        agent.id = "agent-1"
+        reg = Registry(agents=[agent])
+
+        assert reg.get_agent("nonexistent") is None
+
+    def test_get_agent_empty_registry(self, basic_registry):
+        """Test getting agent from registry with no agents."""
+        assert basic_registry.get_agent("any-id") is None
+
+    def test_get_agent_no_id_attribute(self):
+        """Test agent without id attribute is skipped."""
+        agent = MagicMock(spec=[])  # no attributes
+        reg = Registry(agents=[agent])
+
+        assert reg.get_agent("anything") is None
+
+
+class TestGetTeam:
+    """Tests for Registry.get_team() method."""
+
+    def test_get_team_found(self):
+        """Test getting a team that exists."""
+        team = MagicMock()
+        team.id = "team-1"
+        reg = Registry(teams=[team])
+
+        result = reg.get_team("team-1")
+
+        assert result is team
+
+    def test_get_team_not_found(self):
+        """Test getting a team that doesn't exist."""
+        team = MagicMock()
+        team.id = "team-1"
+        reg = Registry(teams=[team])
+
+        assert reg.get_team("nonexistent") is None
+
+    def test_get_team_empty_registry(self, basic_registry):
+        """Test getting team from registry with no teams."""
+        assert basic_registry.get_team("any-id") is None
+
+
+# =============================================================================
+# get_agent_ids() / get_team_ids() / get_all_component_ids() Tests
+# =============================================================================
+
+
+class TestGetComponentIds:
+    """Tests for Registry ID set methods."""
+
+    def test_get_agent_ids(self):
+        """Test getting all agent IDs."""
+        a1 = MagicMock()
+        a1.id = "agent-1"
+        a2 = MagicMock()
+        a2.id = "agent-2"
+        reg = Registry(agents=[a1, a2])
+
+        assert reg.get_agent_ids() == {"agent-1", "agent-2"}
+
+    def test_get_agent_ids_empty(self, basic_registry):
+        """Test agent IDs from empty registry."""
+        assert basic_registry.get_agent_ids() == set()
+
+    def test_get_agent_ids_skips_none(self):
+        """Test that agents without id are excluded."""
+        a1 = MagicMock()
+        a1.id = "agent-1"
+        a2 = MagicMock(spec=[])  # no id attribute
+        reg = Registry(agents=[a1, a2])
+
+        assert reg.get_agent_ids() == {"agent-1"}
+
+    def test_get_team_ids(self):
+        """Test getting all team IDs."""
+        t1 = MagicMock()
+        t1.id = "team-1"
+        t2 = MagicMock()
+        t2.id = "team-2"
+        reg = Registry(teams=[t1, t2])
+
+        assert reg.get_team_ids() == {"team-1", "team-2"}
+
+    def test_get_team_ids_empty(self, basic_registry):
+        """Test team IDs from empty registry."""
+        assert basic_registry.get_team_ids() == set()
+
+    def test_get_all_component_ids(self):
+        """Test getting combined agent + team IDs."""
+        a1 = MagicMock()
+        a1.id = "agent-1"
+        t1 = MagicMock()
+        t1.id = "team-1"
+        reg = Registry(agents=[a1], teams=[t1])
+
+        assert reg.get_all_component_ids() == {"agent-1", "team-1"}
+
+    def test_get_all_component_ids_no_overlap(self):
+        """Test that agent and team IDs are unioned, not intersected."""
+        a1 = MagicMock()
+        a1.id = "shared-id"
+        t1 = MagicMock()
+        t1.id = "shared-id"
+        reg = Registry(agents=[a1], teams=[t1])
+
+        # Same ID from both should appear once
+        assert reg.get_all_component_ids() == {"shared-id"}
+
+    def test_get_all_component_ids_empty(self, basic_registry):
+        """Test combined IDs from empty registry."""
+        assert basic_registry.get_all_component_ids() == set()

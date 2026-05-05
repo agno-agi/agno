@@ -2,7 +2,17 @@
 File Analyst
 ============
 
-Demonstrates file analyst.
+An agent that downloads files shared in Slack, analyzes their content,
+and can upload results back to the channel.
+
+Key concepts:
+  - ``SlackTools`` with ``enable_download_file`` and ``enable_upload_file``
+    gives the agent access to Slack's file APIs.
+  - Works with CSV, code, text, and other file types.
+  - Uses Claude for strong document comprehension.
+
+Slack scopes: app_mentions:read, assistant:write, chat:write, im:history,
+             files:read, files:write, channels:history
 """
 
 from agno.agent import Agent

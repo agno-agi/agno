@@ -102,7 +102,7 @@ agent_with_typed_input_output = Agent(
     name="Agent with Typed Input Output",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
-    tools=[YFinanceTools()],
+    tools=[YFinanceTools(all=True)],
     input_schema=AnalysisRequest,
     output_schema=StockAnalysis,
     db=agent_db,

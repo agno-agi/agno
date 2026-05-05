@@ -56,8 +56,8 @@ class Neo4jTools(Toolkit):
             self.driver = GraphDatabase.driver(uri, auth=(user, password))  # type: ignore
             self.driver.verify_connectivity()
             log_debug("Connected to Neo4j database")
-        except Exception as e:
-            logger.error(f"Failed to connect to Neo4j: {e}")
+        except Exception:
+            logger.exception("Failed to connect to Neo4j")
             raise
 
         self.database = database or "neo4j"
@@ -84,8 +84,8 @@ class Neo4jTools(Toolkit):
                 result = session.run("CALL db.labels()")
                 labels = [record["label"] for record in result]
             return labels
-        except Exception as e:
-            logger.error(f"Error listing labels: {e}")
+        except Exception:
+            logger.exception("Error listing labels")
             return []
 
     def list_relationship_types(self) -> list:
@@ -98,8 +98,8 @@ class Neo4jTools(Toolkit):
                 result = session.run("CALL db.relationshipTypes()")
                 types = [record["relationshipType"] for record in result]
             return types
-        except Exception as e:
-            logger.error(f"Error listing relationship types: {e}")
+        except Exception:
+            logger.exception("Error listing relationship types")
             return []
 
     def get_schema(self) -> list:
@@ -112,8 +112,8 @@ class Neo4jTools(Toolkit):
                 result = session.run("CALL db.schema.visualization()")
                 schema_data = result.data()
             return schema_data
-        except Exception as e:
-            logger.error(f"Error getting Neo4j schema: {e}")
+        except Exception:
+            logger.exception("Error getting Neo4j schema")
             return []
 
     def run_cypher_query(self, query: str) -> list:
@@ -129,6 +129,6 @@ class Neo4jTools(Toolkit):
                 result = session.run(query)  # type: ignore[arg-type]
                 data = result.data()
             return data
-        except Exception as e:
-            logger.error(f"Error running Cypher query: {e}")
+        except Exception:
+            logger.exception("Error running Cypher query")
             return []

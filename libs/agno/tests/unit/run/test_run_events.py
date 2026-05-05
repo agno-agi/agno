@@ -82,6 +82,7 @@ def test_workflow_run_events():
         "age": 30,
         "created_at": event.created_at,
         "event": "",
+        "nested_depth": 0,
     }
     assert json.loads(event.to_json(indent=None)) == expected_json_dict
 

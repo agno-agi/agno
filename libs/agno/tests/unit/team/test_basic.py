@@ -7,7 +7,7 @@ pytest.importorskip("yfinance")
 
 from agno.agent import Agent
 from agno.models.message import Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.models.openai import OpenAIChat
 from agno.run import RunContext
 from agno.run.team import TeamRunOutput
@@ -106,11 +106,11 @@ def test_set_id_auto_generated():
 def test_team_calculate_metrics_preserves_duration(team):
     """Test that _calculate_metrics preserves the duration from current_run_metrics."""
 
-    initial_metrics = Metrics()
+    initial_metrics = RunMetrics()
     initial_metrics.duration = 5.5
     initial_metrics.time_to_first_token = 0.5
 
-    message_metrics = Metrics()
+    message_metrics = RunMetrics()
     message_metrics.input_tokens = 10
     message_metrics.output_tokens = 20
 
@@ -136,7 +136,7 @@ def test_team_update_session_metrics_accumulates(team):
 
     # First Run
     run1 = TeamRunOutput(content="run 1")
-    run1.metrics = Metrics()
+    run1.metrics = RunMetrics()
     run1.metrics.duration = 2.0
     run1.metrics.input_tokens = 100
 
@@ -148,7 +148,7 @@ def test_team_update_session_metrics_accumulates(team):
 
     # Second Run
     run2 = TeamRunOutput(content="run 2")
-    run2.metrics = Metrics()
+    run2.metrics = RunMetrics()
     run2.metrics.duration = 3.0
     run2.metrics.input_tokens = 50
 

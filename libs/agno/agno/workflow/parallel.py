@@ -1,12 +1,12 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextvars import copy_context
-from copy import deepcopy
-from dataclasses import dataclass
+from copy import copy, deepcopy
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
@@ -18,11 +18,11 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error, logger
 from agno.utils.merge_dict import merge_parallel_session_states
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput, StepType
+from agno.workflow.types import HumanReview, StepInput, StepOutput, StepType
 
 WorkflowSteps = List[
     Union[
@@ -35,6 +35,7 @@ WorkflowSteps = List[
         "Parallel",  # type: ignore # noqa: F821
         "Condition",  # type: ignore # noqa: F821
         "Router",  # type: ignore # noqa: F821
+        "Workflow",  # type: ignore # noqa: F821 - Nested workflow support
     ]
 ]
 
@@ -52,16 +53,16 @@ class Parallel:
         Parallel("my_parallel", step1, step2)              # Name as first positional arg
     """
 
-    steps: WorkflowSteps
-
     name: Optional[str] = None
     description: Optional[str] = None
+    steps: WorkflowSteps = field(default_factory=list)
 
     def __init__(
         self,
         *args: Union[str, WorkflowSteps],
         name: Optional[str] = None,
         description: Optional[str] = None,
+        human_review: Optional[HumanReview] = None,
     ):
         resolved_name = name
         resolved_steps: List[Any] = []
@@ -84,6 +85,11 @@ class Parallel:
         self.steps = resolved_steps
         self.name = resolved_name
         self.description = description
+        self.human_review = human_review or HumanReview()
+
+        from agno.workflow.types import validate_human_review_for_parallel
+
+        validate_human_review_for_parallel(self.human_review)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -136,6 +142,7 @@ class Parallel:
         from agno.workflow.router import Router
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
+        from agno.workflow.workflow import Workflow
 
         prepared_steps: WorkflowSteps = []
         for step in self.steps:
@@ -145,6 +152,8 @@ class Parallel:
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
             elif isinstance(step, Team):
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
+            elif isinstance(step, Workflow):
+                prepared_steps.append(Step(name=step.name, description=step.description, workflow=step))
             elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
                 prepared_steps.append(step)
             else:
@@ -154,6 +163,15 @@ class Parallel:
 
     def _aggregate_results(self, step_outputs: List[StepOutput]) -> StepOutput:
         """Aggregate multiple step outputs into a single StepOutput"""
+        # Check for executor HITL pauses - not supported in parallel steps
+        for output in step_outputs:
+            if getattr(output, "is_paused", False):
+                raise ValueError(
+                    f"Executor HITL inside Parallel steps is not supported. "
+                    f"Step '{output.step_name}' has a paused agent/team. "
+                    f"Move HITL tools to non-parallel steps or use step-level HITL."
+                )
+
         if not step_outputs:
             return StepOutput(
                 step_name=self.name or "Parallel",
@@ -221,13 +239,13 @@ class Parallel:
             steps=step_outputs,
         )
 
-    def _extract_metrics_from_response(self, step_outputs: List[StepOutput]) -> Optional[Metrics]:
+    def _extract_metrics_from_response(self, step_outputs: List[StepOutput]) -> Optional[RunMetrics]:
         """Extract and aggregate metrics from parallel step outputs"""
         if not step_outputs:
             return None
 
         # Aggregate metrics from all parallel step outputs
-        total_metrics = Metrics()
+        total_metrics = RunMetrics()
 
         for result in step_outputs:
             if result.metrics:
@@ -279,6 +297,8 @@ class Parallel:
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> StepOutput:
         """Execute all steps in parallel and return aggregated result"""
         # Use workflow logger for parallel orchestration
@@ -303,6 +323,9 @@ class Parallel:
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
+            # Shallow-copy run_context so each parallel step gets its own output_schema
+            # (prevents race condition when agents have heterogeneous schemas)
+            step_run_context = copy(run_context) if run_context is not None else None
 
             try:
                 step_result = step.execute(
@@ -314,14 +337,16 @@ class Parallel:
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
-                    run_context=run_context,
+                    run_context=step_run_context,
                     session_state=step_session_state,
                     background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                 )  # type: ignore[union-attr]
                 return idx, step_result, step_session_state
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
-                logger.error(f"Parallel step {parallel_step_name} failed: {exc}")
+                log_error(f"Parallel step {parallel_step_name} failed: {exc}")
                 return (
                     idx,
                     StepOutput(
@@ -357,7 +382,7 @@ class Parallel:
                 except Exception as e:
                     index = future_to_index[future]
                     step_name = getattr(self.steps[index], "name", f"step_{index}")
-                    logger.error(f"Parallel step {step_name} failed: {e}")
+                    logger.exception(f"Parallel step {step_name} failed")
                     results_with_indices.append(
                         (
                             index,
@@ -410,6 +435,8 @@ class Parallel:
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -455,6 +482,8 @@ class Parallel:
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
+            # Shallow-copy run_context so each parallel step gets its own output_schema
+            step_run_context = copy(run_context) if run_context is not None else None
 
             try:
                 step_outputs = []
@@ -479,12 +508,14 @@ class Parallel:
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
                     session_state=step_session_state,
-                    run_context=run_context,
+                    run_context=step_run_context,
                     parent_step_id=parallel_step_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
                     background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                 ):
                     # Put event immediately in queue
                     event_queue.put(("event", idx, event))
@@ -496,7 +527,7 @@ class Parallel:
                 return idx, step_outputs, step_session_state
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
-                logger.error(f"Parallel step {parallel_step_name} streaming failed: {exc}")
+                log_error(f"Parallel step {parallel_step_name} streaming failed: {exc}")
                 error_event = StepOutput(
                     step_name=parallel_step_name,
                     content=f"Step {parallel_step_name} failed: {str(exc)}",
@@ -541,21 +572,21 @@ class Parallel:
                         step_name = getattr(self.steps[step_idx], "name", f"step_{step_idx}")
                         log_debug(f"Parallel step {step_name} streaming completed")
 
-                except queue.Empty:
+                except queue.Empty as e:
                     for i, future in enumerate(futures):
                         if future.done() and future.exception():
-                            logger.error(f"Parallel step {i} failed: {future.exception()}")
+                            log_error(f"Parallel step {i} failed: {future.exception()}: {str(e)}")
                             if completed_steps < total_steps:
                                 completed_steps += 1
-                except Exception as e:
-                    logger.error(f"Error processing parallel step events: {e}")
+                except Exception:
+                    logger.exception("Error processing parallel step events")
                     completed_steps += 1
 
             for future in futures:
                 try:
                     future.result()
-                except Exception as e:
-                    logger.error(f"Future completion error: {e}")
+                except Exception:
+                    logger.exception("Future completion error")
 
         # Merge all session_state changes back into the original session_state
         if run_context is None and session_state is not None:
@@ -605,6 +636,8 @@ class Parallel:
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> StepOutput:
         """Execute all steps in parallel using asyncio and return aggregated result"""
         # Use workflow logger for async parallel orchestration
@@ -629,6 +662,8 @@ class Parallel:
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
+            # Shallow-copy run_context so each parallel step gets its own output_schema
+            step_run_context = copy(run_context) if run_context is not None else None
 
             try:
                 inner_step_result = await step.aexecute(
@@ -641,13 +676,15 @@ class Parallel:
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
                     session_state=step_session_state,
-                    run_context=run_context,
+                    run_context=step_run_context,
                     background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                 )  # type: ignore[union-attr]
                 return idx, inner_step_result, step_session_state
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
-                logger.error(f"Parallel step {parallel_step_name} failed: {exc}")
+                log_error(f"Parallel step {parallel_step_name} failed: {exc}")
                 return (
                     idx,
                     StepOutput(
@@ -674,7 +711,7 @@ class Parallel:
         for i, result in enumerate(results_with_indices):
             if isinstance(result, Exception):
                 step_name = getattr(self.steps[i], "name", f"step_{i}")
-                logger.error(f"Parallel step {step_name} failed: {result}")
+                log_error(f"Parallel step {step_name} failed: {result}")
                 processed_results_with_indices.append(
                     (
                         i,
@@ -736,6 +773,8 @@ class Parallel:
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with async streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -781,6 +820,8 @@ class Parallel:
             idx, step = step_with_index
             # Use the individual session_state copy for this step
             step_session_state = session_state_copies[idx]
+            # Shallow-copy run_context so each parallel step gets its own output_schema
+            step_run_context = copy(run_context) if run_context is not None else None
 
             try:
                 step_outputs = []
@@ -805,12 +846,14 @@ class Parallel:
                     step_index=sub_step_index,
                     store_executor_outputs=store_executor_outputs,
                     session_state=step_session_state,
-                    run_context=run_context,
+                    run_context=step_run_context,
                     parent_step_id=parallel_step_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
                     num_history_runs=num_history_runs,
                     background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                 ):  # type: ignore[union-attr]
                     # Yield events immediately to the queue
                     await event_queue.put(("event", idx, event))
@@ -822,7 +865,7 @@ class Parallel:
                 return idx, step_outputs, step_session_state
             except Exception as e:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
-                logger.error(f"Parallel step {parallel_step_name} async streaming failed: {e}")
+                logger.exception(f"Parallel step {parallel_step_name} async streaming failed")
                 error_event = StepOutput(
                     step_name=parallel_step_name,
                     content=f"Step {parallel_step_name} failed: {str(e)}",
@@ -861,8 +904,8 @@ class Parallel:
                     step_name = getattr(self.steps[step_idx], "name", f"step_{step_idx}")
                     log_debug(f"Parallel step {step_name} async streaming completed")
 
-            except Exception as e:
-                logger.error(f"Error processing parallel step events: {e}")
+            except Exception:
+                logger.exception("Error processing parallel step events")
                 completed_steps += 1
 
         await asyncio.gather(*tasks, return_exceptions=True)

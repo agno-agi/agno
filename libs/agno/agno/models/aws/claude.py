@@ -6,7 +6,6 @@ import httpx
 from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
-from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_warning
 from agno.utils.models.claude import format_tools_for_model
 
@@ -35,6 +34,7 @@ class Claude(AnthropicClaude):
 
     aws_access_key: Optional[str] = None
     aws_secret_key: Optional[str] = None
+    aws_session_token: Optional[str] = None
     aws_region: Optional[str] = None
     api_key: Optional[str] = None
     session: Optional[Session] = None
@@ -44,45 +44,53 @@ class Claude(AnthropicClaude):
 
     def __post_init__(self):
         """Validate model configuration after initialization"""
-        # Validate thinking support immediately at model creation
-        if self.thinking:
-            self._validate_thinking_support()
+        super().__post_init__()
         # Overwrite output schema support for AWS Bedrock Claude
         self.supports_native_structured_outputs = False
         self.supports_json_schema_outputs = False
 
     def _get_client_params(self) -> Dict[str, Any]:
         if self.session:
-            credentials = self.session.get_credentials()
+            # Use get_frozen_credentials() for an atomic snapshot so that
+            # a credential refresh between property reads cannot produce a
+            # mismatched access-key / secret-key / token tuple.
+            resolved = self.session.get_credentials()
+            if resolved is None:
+                raise ValueError(
+                    "boto3 session has no credentials. Check your AWS configuration "
+                    "(environment variables, config files, IAM role, etc.)."
+                )
+            credentials = resolved.get_frozen_credentials()
             client_params: Dict[str, Any] = {
                 "aws_access_key": credentials.access_key,
                 "aws_secret_key": credentials.secret_key,
                 "aws_session_token": credentials.token,
-                "aws_region": self.session.region_name,
+                "aws_region": self.aws_region or self.session.region_name,
             }
         else:
             self.api_key = self.api_key or getenv("AWS_BEDROCK_API_KEY")
             if self.api_key:
-                self.aws_region = self.aws_region or getenv("AWS_REGION")
-                client_params = {
-                    "api_key": self.api_key,
-                }
-                if self.aws_region:
-                    client_params["aws_region"] = self.aws_region
-            else:
-                self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY_ID") or getenv("AWS_ACCESS_KEY")
-                self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_ACCESS_KEY") or getenv("AWS_SECRET_KEY")
-                self.aws_region = self.aws_region or getenv("AWS_REGION")
+                raise ValueError(
+                    "AWS_BEDROCK_API_KEY authentication is not currently supported by AnthropicBedrock. "
+                    "Use IAM credentials (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY[/AWS_SESSION_TOKEN]) "
+                    "or provide a boto3 session instead."
+                )
 
-                client_params = {
-                    "aws_secret_key": self.aws_secret_key,
-                    "aws_access_key": self.aws_access_key,
-                    "aws_region": self.aws_region,
-                }
+            self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY_ID") or getenv("AWS_ACCESS_KEY")
+            self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_ACCESS_KEY") or getenv("AWS_SECRET_KEY")
+            self.aws_session_token = self.aws_session_token or getenv("AWS_SESSION_TOKEN")
+            self.aws_region = self.aws_region or getenv("AWS_REGION")
 
-            if not (self.api_key or (self.aws_access_key and self.aws_secret_key)):
+            client_params = {
+                "aws_secret_key": self.aws_secret_key,
+                "aws_access_key": self.aws_access_key,
+                "aws_session_token": self.aws_session_token,
+                "aws_region": self.aws_region,
+            }
+
+            if not (self.aws_access_key and self.aws_secret_key):
                 log_warning(
-                    "AWS credentials not found. Please set AWS_BEDROCK_API_KEY or AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
+                    "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
                 )
 
         if self.timeout is not None:
@@ -100,7 +108,10 @@ class Claude(AnthropicClaude):
         Returns:
             AnthropicBedrock: The Bedrock client.
         """
-        if self.client is not None and not self.client.is_closed():
+        # When using a boto3 session, always recreate the client so
+        # session.get_credentials() can return rotated credentials
+        # (IAM roles, EKS pod identity, instance profiles, STS).
+        if not self.session and self.client is not None and not self.client.is_closed():
             return self.client
 
         client_params = self._get_client_params()
@@ -109,17 +120,24 @@ class Claude(AnthropicClaude):
             if isinstance(self.http_client, httpx.Client):
                 client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
-                # Use global sync client when user http_client is invalid
-                client_params["http_client"] = get_default_sync_client()
-        else:
-            # Use global sync client when no custom http_client is provided
-            client_params["http_client"] = get_default_sync_client()
+                log_warning("http_client is not an instance of httpx.Client. Ignoring and using SDK default.")
+        # When no custom http_client is provided, let the SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
 
-        self.client = AnthropicBedrock(
+        # Close the previous client before creating a new one to avoid leaking
+        # connection pools when session-based credential refresh forces recreation.
+        if self.session and self.client is not None and not self.client.is_closed():
+            self.client.close()
+
+        # Use a local variable so concurrent callers on the same model
+        # instance cannot overwrite each other's client via self.client.
+        client = AnthropicBedrock(
             **client_params,  # type: ignore
         )
-        return self.client
+        if not self.session:
+            self.client = client
+        return client
 
     def get_async_client(self):
         """
@@ -128,7 +146,9 @@ class Claude(AnthropicClaude):
         Returns:
             AsyncAnthropicBedrock: The Bedrock async client.
         """
-        if self.async_client is not None:
+        # When using a boto3 session, always recreate the client so
+        # session.get_credentials() can return rotated credentials.
+        if not self.session and self.async_client is not None and not self.async_client.is_closed():
             return self.async_client
 
         client_params = self._get_client_params()
@@ -137,19 +157,24 @@ class Claude(AnthropicClaude):
             if isinstance(self.http_client, httpx.AsyncClient):
                 client_params["http_client"] = self.http_client
             else:
-                log_warning(
-                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
-                )
-                # Use global async client when user http_client is invalid
-                client_params["http_client"] = get_default_async_client()
-        else:
-            # Use global async client when no custom http_client is provided
-            client_params["http_client"] = get_default_async_client()
+                log_warning("http_client is not an instance of httpx.AsyncClient. Ignoring and using SDK default.")
+        # When no custom http_client is provided, let the SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
 
-        self.async_client = AsyncAnthropicBedrock(
+        # Close the previous client before creating a new one to avoid leaking
+        # connection pools when session-based credential refresh forces recreation.
+        if self.session and self.async_client is not None and not self.async_client.is_closed():
+            self.async_client.close()
+
+        # Use a local variable so concurrent callers on the same model
+        # instance cannot overwrite each other's client via self.async_client.
+        async_client = AsyncAnthropicBedrock(
             **client_params,  # type: ignore
         )
-        return self.async_client
+        if not self.session:
+            self.async_client = async_client
+        return async_client
 
     def get_request_params(
         self,
@@ -171,6 +196,8 @@ class Claude(AnthropicClaude):
             _request_params["max_tokens"] = self.max_tokens
         if self.thinking:
             _request_params["thinking"] = self.thinking
+        if self.output_config:
+            _request_params["output_config"] = self.output_config
         if self.temperature:
             _request_params["temperature"] = self.temperature
         if self.stop_sequences:
@@ -201,6 +228,7 @@ class Claude(AnthropicClaude):
         system_message: str,
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        messages: Optional[List[Any]] = None,
     ) -> Dict[str, Any]:
         """
         Prepare the request keyword arguments for the API call.
@@ -209,26 +237,22 @@ class Claude(AnthropicClaude):
             system_message (str): The concatenated system messages.
             tools: Optional list of tools
             response_format: Optional response format (Pydantic model or dict)
+            messages: Optional list of Message objects for the conversation.
 
         Returns:
             Dict[str, Any]: The request keyword arguments.
         """
         # Pass response_format and tools to get_request_params for beta header handling
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools).copy()
-        if system_message:
-            if self.cache_system_prompt:
-                cache_control = (
-                    {"type": "ephemeral", "ttl": "1h"}
-                    if self.extended_cache_time is not None and self.extended_cache_time is True
-                    else {"type": "ephemeral"}
-                )
-                request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
-            else:
-                request_kwargs["system"] = [{"text": system_message, "type": "text"}]
+        system = self._build_system(system_message)
+        if system:
+            request_kwargs["system"] = system
 
         # Format tools (this will handle strict mode)
         if tools:
             request_kwargs["tools"] = format_tools_for_model(tools)
+
+        self._apply_cache_tools(request_kwargs)
 
         if request_kwargs:
             log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)

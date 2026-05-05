@@ -2,8 +2,7 @@
 YFinance Tools - Stock Market Analysis and Financial Data
 
 This example demonstrates how to use YFinanceTools for financial analysis,
-showing include_tools/exclude_tools patterns for selective function access.
-YFinanceTools is a large tool (≥6 functions) so it uses include_tools/exclude_tools.
+showing different patterns for selective function access using boolean flags.
 
 Run: `uv pip install yfinance` to install the dependencies
 """
@@ -17,9 +16,9 @@ from curl_cffi.requests import Session
 # ---------------------------------------------------------------------------
 
 
-# Example 1: All financial functions available (default behavior)
+# Example 1: All financial functions available
 agent_full = Agent(
-    tools=[YFinanceTools()],  # All functions enabled by default
+    tools=[YFinanceTools(all=True)],  # All functions enabled
     description="You are a comprehensive investment analyst with access to all financial data functions.",
     instructions=[
         "Use any financial function as needed for investment analysis",
@@ -30,15 +29,13 @@ agent_full = Agent(
     markdown=True,
 )
 
-# Example 2: Include only basic stock information
+# Example 2: Enable only basic stock information
 agent_basic = Agent(
     tools=[
         YFinanceTools(
-            include_tools=[
-                "get_current_stock_price",
-                "get_company_info",
-                "get_historical_stock_prices",
-            ]
+            enable_stock_price=True,
+            enable_company_info=True,
+            enable_historical_prices=True,
         )
     ],
     description="You are a basic stock information specialist focused on price and historical data.",
@@ -51,14 +48,18 @@ agent_basic = Agent(
     markdown=True,
 )
 
-# Example 3: Exclude complex financial analysis functions
+# Example 3: Enable most tools except complex financial analysis functions
 agent_simple = Agent(
     tools=[
         YFinanceTools(
-            exclude_tools=[
-                "get_income_statements",  # Complex financial statements
-                "get_key_financial_ratios",  # Detailed financial ratios
-            ]
+            enable_stock_price=True,
+            enable_company_info=True,
+            enable_stock_fundamentals=True,
+            enable_analyst_recommendations=True,
+            enable_company_news=True,
+            enable_technical_indicators=True,
+            enable_historical_prices=True,
+            # Excluding: enable_income_statements and enable_key_financial_ratios
         )
     ],
     description="You are a stock analyst focused on market data without complex financial statements.",
@@ -71,15 +72,13 @@ agent_simple = Agent(
     markdown=True,
 )
 
-# Example 4: Include only analysis and recommendation functions
+# Example 4: Enable only analysis and recommendation functions
 agent_analyst = Agent(
     tools=[
         YFinanceTools(
-            include_tools=[
-                "get_analyst_recommendations",
-                "get_company_news",
-                "get_current_stock_price",
-            ]
+            enable_stock_price=True,
+            enable_analyst_recommendations=True,
+            enable_company_news=True,
         )
     ],
     description="You are an equity research analyst focused on recommendations and market sentiment.",
@@ -96,9 +95,9 @@ agent_analyst = Agent(
 # If you want to disable SSL verification, you can do it like this:
 session = Session()
 session.verify = False  # Disable SSL verification (use with caution)
-yfinance_tools = YFinanceTools(session=session)
+yfinance_tools = YFinanceTools(all=True, session=session)
 agent_ssl_disabled = Agent(
-    tools=[yfinance_tools],  # All functions enabled by default
+    tools=[yfinance_tools],  # All functions enabled
     description="You are a comprehensive investment analyst with access to all financial data functions.",
     instructions=[
         "Use any financial function as needed for investment analysis",

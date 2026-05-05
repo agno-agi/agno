@@ -311,7 +311,7 @@ class TestTeamFromDict:
 
     def test_from_dict_with_model(self):
         """Test from_dict reconstructs model from config."""
-        from agno.models.openai import OpenAIChat
+        from agno.models.openai import OpenAIResponses
 
         config = {
             "id": "model-team",
@@ -322,7 +322,7 @@ class TestTeamFromDict:
         team = Team.from_dict(config)
 
         assert team.model is not None
-        assert isinstance(team.model, OpenAIChat)
+        assert isinstance(team.model, OpenAIResponses)
         assert team.model.id == "gpt-4o-mini"
 
     def test_from_dict_preserves_settings(self):
@@ -878,7 +878,7 @@ class TestGetTeams:
 
         get_teams(db=mock_db)
 
-        mock_db.list_components.assert_called_once_with(component_type=ComponentType.TEAM)
+        mock_db.list_components.assert_called_once_with(component_type=ComponentType.TEAM, exclude_component_ids=None)
 
     def test_get_teams_with_registry(self, mock_db):
         """Test get_teams passes registry to from_dict."""

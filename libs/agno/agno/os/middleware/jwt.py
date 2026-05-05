@@ -168,7 +168,7 @@ class JWTValidator:
                     # If no kid, use a default key (for single-key JWKS)
                     self.jwks_keys["_default"] = jwk
             except Exception as e:
-                log_warning(f"Failed to parse JWKS key: {e}")
+                log_warning(f"Failed to parse JWKS key: {str(e)}")
 
     def validate_token(
         self, token: str, expected_audience: Optional[Union[str, Iterable[str]]] = None
@@ -521,6 +521,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         return [
             "/",
             "/health",
+            "/info",
             "/docs",
             "/redoc",
             "/openapi.json",
@@ -739,6 +740,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.user_id = user_id
             request.state.session_id = session_id
             request.state.scopes = scopes
+            request.state.claims = payload  # Full decoded JWT for factory ctx.trusted.claims
             request.state.audience = audience
             request.state.authorization_enabled = self.authorization or False
 
@@ -825,8 +827,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.token = token
             request.state.authenticated = True
 
-        except jwt.InvalidAudienceError:
-            log_warning(f"Invalid token audience - expected: {expected_audience}")
+        except jwt.InvalidAudienceError as e:
+            log_warning(f"Invalid token audience - expected: {expected_audience}: {str(e)}")
             return self._create_error_response(
                 401, "Invalid token audience - token not valid for this AgentOS instance", origin, cors_allowed_origins
             )

@@ -85,7 +85,7 @@ def convert_dependencies_to_string(agent: Agent, context: Dict[str, Any]) -> str
     try:
         return json.dumps(context, indent=2, default=str)
     except (TypeError, ValueError, OverflowError) as e:
-        log_warning(f"Failed to convert context to JSON: {e}")
+        log_warning(f"Failed to convert context to JSON: {str(e)}")
         # Attempt a fallback conversion for non-serializable objects
         sanitized_context = {}
         for key, value in context.items():
@@ -100,18 +100,13 @@ def convert_dependencies_to_string(agent: Agent, context: Dict[str, Any]) -> str
         try:
             return json.dumps(sanitized_context, indent=2)
         except Exception as e:
-            log_error(f"Failed to convert sanitized context to JSON: {e}")
+            log_error(f"Failed to convert sanitized context to JSON: {str(e)}")
             return str(context)
 
 
 # ---------------------------------------------------------------------------
 # Deep copy
 # ---------------------------------------------------------------------------
-
-
-# Fields set by the parent Team/Workflow during initialization — not part of
-# __init__ and should not be carried over during deep copy.
-_DEEP_COPY_EXCLUDE = {"team_id", "workflow_id"}
 
 
 def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent:
@@ -125,16 +120,17 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
         Agent: A new Agent instance.
     """
     from dataclasses import fields
+    from inspect import signature
+
+    # Get the set of valid __init__ parameter names
+    init_params = set(signature(agent.__class__.__init__).parameters.keys()) - {"self"}
 
     # Extract the fields to set for the new Agent
     fields_for_new_agent: Dict = {}
 
     for f in fields(agent):
-        # Skip private fields (not part of __init__ signature)
-        if f.name.startswith("_"):
-            continue
-        # Skip fields that are not __init__ parameters
-        if f.name in _DEEP_COPY_EXCLUDE:
+        # Skip private fields and fields not accepted by __init__
+        if f.name.startswith("_") or f.name not in init_params:
             continue
 
         field_value = getattr(agent, f.name)
@@ -142,7 +138,7 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
             try:
                 fields_for_new_agent[f.name] = deep_copy_field(agent, f.name, field_value)
             except Exception as e:
-                log_warning(f"Failed to deep copy field '{f.name}': {e}. Using original value.")
+                log_warning(f"Failed to deep copy field '{f.name}'. Using original value.: {str(e)}")
                 fields_for_new_agent[f.name] = field_value
 
     # Update fields if provided
@@ -155,7 +151,7 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
         log_debug(f"Created new {agent.__class__.__name__}")
         return new_agent
     except Exception as e:
-        log_error(f"Failed to create deep copy of {agent.__class__.__name__}: {e}")
+        log_error(f"Failed to create deep copy of {agent.__class__.__name__}: {str(e)}")
         raise
 
 
@@ -169,8 +165,16 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
     if field_name == "reasoning_agent":
         return field_value.deep_copy()  # type: ignore
 
-    # For tools, share MCP tools but copy others
+    # For tools, return callable factories by reference; share MCP tools but copy others
     if field_name == "tools" and field_value is not None:
+        from agno.tools import Toolkit
+        from agno.tools.function import Function
+        from agno.utils.callables import is_callable_factory
+
+        # Callable-factory tools are shared by reference and resolved per-run
+        if is_callable_factory(field_value, excluded_types=(Toolkit, Function)):
+            return field_value
+
         try:
             copied_tools = []
             for tool in field_value:  # type: ignore
@@ -193,7 +197,7 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
             return copied_tools
         except Exception as e:
             # If entire tools processing fails, log and return original list
-            log_warning(f"Failed to process tools for deep copy: {e}")
+            log_warning(f"Failed to process tools for deep copy: {str(e)}")
             return field_value
 
     # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
@@ -221,7 +225,7 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
             try:
                 return copy(field_value)
             except Exception as e:
-                log_warning(f"Failed to copy field: {field_name} - {e}")
+                log_warning(f"Failed to copy field: {field_name}: {str(e)}")
                 return field_value
 
     # For pydantic models, attempt a model_copy
@@ -232,7 +236,7 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
             try:
                 return field_value.model_copy(deep=False)
             except Exception as e:
-                log_warning(f"Failed to copy field: {field_name} - {e}")
+                log_warning(f"Failed to copy field: {field_name}: {str(e)}")
                 return field_value
 
     # For other types, attempt a shallow copy first

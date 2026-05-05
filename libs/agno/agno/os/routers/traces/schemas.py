@@ -1,9 +1,17 @@
 from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
 from agno.os.utils import format_duration_ms
+
+
+class TraceSearchGroupBy(str, Enum):
+    """Grouping options for trace search results."""
+
+    RUN = "run"  # Returns individual traces (TraceDetail)
+    SESSION = "session"  # Returns aggregated session stats (TraceSessionStats)
 
 
 def _derive_span_type(span: Any) -> str:
@@ -412,3 +420,151 @@ class TraceDetail(BaseModel):
 
         # Build tree starting from roots
         return [build_node(root, is_root=True) for root in root_spans]
+
+
+class TraceSearchRequest(BaseModel):
+    """Request body for POST /traces/search with advanced filtering.
+
+    The filter field accepts a FilterExpr DSL dict supporting composable queries
+    with AND/OR/NOT logic and operators like EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH.
+
+    Example for run grouping (default):
+        {
+            "filter": {
+                "op": "AND",
+                "conditions": [
+                    {"op": "EQ", "key": "status", "value": "OK"},
+                    {"op": "CONTAINS", "key": "user_id", "value": "admin"}
+                ]
+            },
+            "group_by": "run",
+            "page": 1,
+            "limit": 20
+        }
+
+    Example for session grouping:
+        {
+            "filter": {"op": "EQ", "key": "agent_id", "value": "my-agent"},
+            "group_by": "session",
+            "page": 1,
+            "limit": 20
+        }
+    """
+
+    filter: Optional[Dict[str, Any]] = Field(
+        None,
+        description="FilterExpr DSL as JSON dict. Supports operators: EQ, NEQ, GT, GTE, LT, LTE, IN, CONTAINS, STARTSWITH, AND, OR, NOT.",
+    )
+    group_by: TraceSearchGroupBy = Field(
+        default=TraceSearchGroupBy.RUN,
+        description="Grouping mode: 'run' returns individual TraceDetail, 'session' returns aggregated TraceSessionStats.",
+    )
+    page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
+    limit: int = Field(default=20, ge=1, le=100, description="Number of traces per page (max 100)")
+
+
+class FilterFieldSchema(BaseModel):
+    """Schema describing a single filterable field for the frontend filter bar."""
+
+    key: str = Field(..., description="Column/field name used in filter expressions")
+    label: str = Field(..., description="Human-readable display label for the UI")
+    type: str = Field(..., description="Field data type: string, number, datetime, enum")
+    operators: List[str] = Field(..., description="List of valid filter operators for this field")
+    values: Optional[List[str]] = Field(None, description="Allowed enum values (for autocomplete/dropdown)")
+
+
+class FilterSchemaResponse(BaseModel):
+    """Response for the filter schema endpoint. Tells the FE what fields, operators, and values are available."""
+
+    fields: List[FilterFieldSchema] = Field(..., description="Available filterable fields")
+    logical_operators: List[str] = Field(
+        default=["AND", "OR"], description="Logical operators for combining filter clauses"
+    )
+
+
+# -- Trace filter schema definition --
+
+TRACE_FILTER_SCHEMA = FilterSchemaResponse(
+    fields=[
+        FilterFieldSchema(
+            key="status",
+            label="Status",
+            type="enum",
+            operators=["EQ", "NEQ", "IN"],
+            values=["OK", "ERROR"],
+        ),
+        FilterFieldSchema(
+            key="user_id",
+            label="User ID",
+            type="string",
+            operators=["EQ", "NEQ", "CONTAINS", "STARTSWITH", "IN"],
+        ),
+        FilterFieldSchema(
+            key="agent_id",
+            label="Agent ID",
+            type="string",
+            operators=["EQ", "NEQ", "CONTAINS", "STARTSWITH", "IN"],
+        ),
+        FilterFieldSchema(
+            key="team_id",
+            label="Team ID",
+            type="string",
+            operators=["EQ", "NEQ", "CONTAINS", "STARTSWITH", "IN"],
+        ),
+        FilterFieldSchema(
+            key="workflow_id",
+            label="Workflow ID",
+            type="string",
+            operators=["EQ", "NEQ", "CONTAINS", "STARTSWITH", "IN"],
+        ),
+        FilterFieldSchema(
+            key="session_id",
+            label="Session ID",
+            type="string",
+            operators=["EQ", "NEQ", "CONTAINS", "STARTSWITH", "IN"],
+        ),
+        FilterFieldSchema(
+            key="run_id",
+            label="Run ID",
+            type="string",
+            operators=["EQ", "NEQ", "CONTAINS", "STARTSWITH", "IN"],
+        ),
+        FilterFieldSchema(
+            key="name",
+            label="Trace Name",
+            type="string",
+            operators=["EQ", "NEQ", "CONTAINS", "STARTSWITH"],
+        ),
+        FilterFieldSchema(
+            key="trace_id",
+            label="Trace ID",
+            type="string",
+            operators=["EQ", "NEQ", "CONTAINS", "STARTSWITH", "IN"],
+        ),
+        FilterFieldSchema(
+            key="duration_ms",
+            label="Duration (ms)",
+            type="number",
+            operators=["EQ", "NEQ", "GT", "GTE", "LT", "LTE"],
+        ),
+        FilterFieldSchema(
+            key="start_time",
+            label="Start Time",
+            type="datetime",
+            operators=["GT", "GTE", "LT", "LTE"],
+        ),
+        FilterFieldSchema(
+            key="end_time",
+            label="End Time",
+            type="datetime",
+            operators=["GT", "GTE", "LT", "LTE"],
+        ),
+        FilterFieldSchema(
+            key="created_at",
+            label="Created At",
+            type="datetime",
+            operators=["GT", "GTE", "LT", "LTE"],
+        ),
+    ],
+    logical_operators=["AND", "OR"],
+)

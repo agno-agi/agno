@@ -83,7 +83,7 @@ def _convert_dependencies_to_string(team: Team, context: Dict[str, Any]) -> str:
     try:
         return json.dumps(context, indent=2, default=str)
     except (TypeError, ValueError, OverflowError) as e:
-        log_warning(f"Failed to convert context to JSON: {e}")
+        log_warning(f"Failed to convert context to JSON: {str(e)}")
         # Attempt a fallback conversion for non-serializable objects
         sanitized_context = {}
         for key, value in context.items():
@@ -92,14 +92,14 @@ def _convert_dependencies_to_string(team: Team, context: Dict[str, Any]) -> str:
                 json.dumps({key: value}, default=str)
                 sanitized_context[key] = value
             except Exception as e:
-                log_error(f"Failed to serialize to JSON: {e}")
+                log_error(f"Failed to serialize to JSON: {str(e)}")
                 # If serialization fails, convert to string representation
                 sanitized_context[key] = str(value)
 
         try:
             return json.dumps(sanitized_context, indent=2)
         except Exception as e:
-            log_error(f"Failed to convert sanitized context to JSON: {e}")
+            log_error(f"Failed to convert sanitized context to JSON: {str(e)}")
             return str(context)
 
 
@@ -122,13 +122,17 @@ def deep_copy(team: Team, *, update: Optional[Dict[str, Any]] = None) -> Team:
         Team: A new Team instance with copied state.
     """
     from dataclasses import fields
+    from inspect import signature
+
+    # Get the set of valid __init__ parameter names
+    init_params = set(signature(team.__class__.__init__).parameters.keys()) - {"self"}
 
     # Extract the fields to set for the new Team
     fields_for_new_team: Dict[str, Any] = {}
 
     for f in fields(cast(Any, team)):
-        # Skip private fields (not part of __init__ signature)
-        if f.name.startswith("_"):
+        # Skip private fields and fields not accepted by __init__
+        if f.name.startswith("_") or f.name not in init_params:
             continue
 
         field_value = getattr(team, f.name)
@@ -136,7 +140,7 @@ def deep_copy(team: Team, *, update: Optional[Dict[str, Any]] = None) -> Team:
             try:
                 fields_for_new_team[f.name] = _deep_copy_field(team, f.name, field_value)
             except Exception as e:
-                log_warning(f"Failed to deep copy field '{f.name}': {e}. Using original value.")
+                log_warning(f"Failed to deep copy field '{f.name}'. Using original value.: {str(e)}")
                 fields_for_new_team[f.name] = field_value
 
     # Update fields if provided
@@ -149,7 +153,7 @@ def deep_copy(team: Team, *, update: Optional[Dict[str, Any]] = None) -> Team:
         log_debug(f"Created new {team.__class__.__name__}")
         return new_team
     except Exception as e:
-        log_error(f"Failed to create deep copy of {team.__class__.__name__}: {e}")
+        log_error(f"Failed to create deep copy of {team.__class__.__name__}: {str(e)}")
         raise
 
 
@@ -159,9 +163,12 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
 
     from pydantic import BaseModel
 
+    from agno.utils.callables import is_callable_factory
+
     # For members, return callable factories by reference; deep copy static lists
     if field_name == "members" and field_value is not None:
-        if callable(field_value) and not isinstance(field_value, list):
+        # No excluded_types: Agent and Team instances are not callable
+        if is_callable_factory(field_value):
             return field_value
         copied_members = []
         for member in field_value:
@@ -173,7 +180,11 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
 
     # For tools, return callable factories by reference; share MCP tools but copy others
     if field_name == "tools" and field_value is not None:
-        if callable(field_value) and not isinstance(field_value, list):
+        from agno.tools import Toolkit
+        from agno.tools.function import Function
+
+        # Callable-factory tools are shared by reference and resolved per-run
+        if is_callable_factory(field_value, excluded_types=(Toolkit, Function)):
             return field_value
         try:
             copied_tools = []
@@ -197,7 +208,7 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
             return copied_tools
         except Exception as e:
             # If entire tools processing fails, log and return original list
-            log_warning(f"Failed to process tools for deep copy: {e}")
+            log_warning(f"Failed to process tools for deep copy: {str(e)}")
             return field_value
 
     # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
@@ -212,6 +223,7 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
         "session_summary_manager",
         "compression_manager",
         "learning",
+        "skills",
     ):
         return field_value
 
@@ -223,7 +235,7 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
             try:
                 return copy(field_value)
             except Exception as e:
-                log_warning(f"Failed to copy field: {field_name} - {e}")
+                log_warning(f"Failed to copy field: {field_name}: {str(e)}")
                 return field_value
 
     # For pydantic models, attempt a model_copy
@@ -234,7 +246,7 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
             try:
                 return field_value.model_copy(deep=False)
             except Exception as e:
-                log_warning(f"Failed to copy field: {field_name} - {e}")
+                log_warning(f"Failed to copy field: {field_name}: {str(e)}")
                 return field_value
 
     # For other types, attempt a shallow copy first

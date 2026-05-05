@@ -40,8 +40,6 @@ agent_basic = Agent(
             region_name="us-east-1",
             enable_list_functions=True,
             enable_invoke_function=True,
-            enable_create_function=False,  # Disable function creation
-            enable_update_function=False,  # Disable function updates
         )
     ],
     name="Lambda Reader Agent",
@@ -74,10 +72,8 @@ agent_tester = Agent(
     tools=[
         AWSLambdaTools(
             region_name="us-east-1",
-            enable_list_functions=True,  # Enable listing for reference
-            enable_invoke_function=True,  # Enable function testing
-            enable_create_function=False,  # Disable creation
-            enable_delete_function=False,  # Disable deletion (safety)
+            enable_list_functions=True,
+            enable_invoke_function=True,
         )
     ],
     name="Lambda Tester Agent",

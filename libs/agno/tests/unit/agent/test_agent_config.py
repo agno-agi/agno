@@ -243,7 +243,7 @@ class TestAgentFromDict:
 
     def test_from_dict_with_model(self):
         """Test from_dict reconstructs model from config."""
-        from agno.models.openai import OpenAIChat
+        from agno.models.openai import OpenAIResponses
 
         config = {
             "id": "model-agent",
@@ -256,7 +256,7 @@ class TestAgentFromDict:
 
         # Model should be reconstructed
         assert agent.model is not None
-        assert isinstance(agent.model, OpenAIChat)
+        assert isinstance(agent.model, OpenAIResponses)
         assert agent.model.id == "gpt-4o-mini"
 
     def test_from_dict_preserves_settings(self):
@@ -740,7 +740,7 @@ class TestGetAgents:
 
         get_agents(db=mock_db)
 
-        mock_db.list_components.assert_called_once_with(component_type=ComponentType.AGENT)
+        mock_db.list_components.assert_called_once_with(component_type=ComponentType.AGENT, exclude_component_ids=None)
 
     def test_get_agents_with_registry(self, mock_db):
         """Test get_agents passes registry to from_dict."""

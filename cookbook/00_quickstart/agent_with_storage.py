@@ -72,7 +72,7 @@ agent_with_storage = Agent(
     name="Agent with Storage",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
-    tools=[YFinanceTools()],
+    tools=[YFinanceTools(all=True)],
     db=agent_db,
     add_datetime_to_context=True,
     add_history_to_context=True,

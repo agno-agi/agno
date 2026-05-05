@@ -23,6 +23,23 @@ class TestCase:
 # Agent Test Cases
 # ---------------------------------------------------------------------------
 
+GCODE_TESTS: list[TestCase] = [
+    TestCase(
+        agent="gcode",
+        question="Tell me about yourself",
+        expected_strings=["Gcode", "coding", "agent"],
+        category="gcode_identity",
+        match_mode="any",
+    ),
+    TestCase(
+        agent="gcode",
+        question="List the files in the current directory",
+        expected_strings=["run.py", "README"],
+        category="gcode_coding",
+        match_mode="any",
+    ),
+]
+
 DASH_TESTS: list[TestCase] = [
     TestCase(
         agent="dash",
@@ -41,6 +58,23 @@ DASH_TESTS: list[TestCase] = [
         question="Which driver has won the most world championships?",
         expected_strings=["Schumacher", "7"],
         category="dash_aggregation",
+    ),
+]
+
+PAL_TESTS: list[TestCase] = [
+    TestCase(
+        agent="pal",
+        question="Tell me about yourself",
+        expected_strings=["Pal", "personal"],
+        category="pal_identity",
+        match_mode="any",
+    ),
+    TestCase(
+        agent="pal",
+        question="Save a note: Remember to review the Q1 roadmap by Friday",
+        expected_strings=["note", "save"],
+        category="pal_notes",
+        match_mode="any",
     ),
 ]
 
@@ -67,56 +101,12 @@ SCOUT_TESTS: list[TestCase] = [
     ),
 ]
 
-PAL_TESTS: list[TestCase] = [
-    TestCase(
-        agent="pal",
-        question="Tell me about yourself",
-        expected_strings=["Pal", "knowledge"],
-        category="pal_identity",
-        match_mode="any",
-    ),
-    TestCase(
-        agent="pal",
-        question="Note: We decided to use PostgreSQL for the new analytics service",
-        expected_strings=["saved", "note", "PostgreSQL"],
-        category="pal_capture",
-        match_mode="any",
-    ),
-]
-
 SEEK_TESTS: list[TestCase] = [
     TestCase(
         agent="seek",
         question="Tell me about yourself",
         expected_strings=["Seek", "research"],
         category="seek_identity",
-        match_mode="any",
-    ),
-]
-
-DEX_TESTS: list[TestCase] = [
-    TestCase(
-        agent="dex",
-        question="Tell me about yourself",
-        expected_strings=["Dex", "relationship", "people"],
-        category="dex_identity",
-        match_mode="any",
-    ),
-]
-
-ACE_TESTS: list[TestCase] = [
-    TestCase(
-        agent="ace",
-        question="Tell me about yourself",
-        expected_strings=["Ace", "draft", "response"],
-        category="ace_identity",
-        match_mode="any",
-    ),
-    TestCase(
-        agent="ace",
-        question="Draft a reply to: 'Thanks for the demo. Can we discuss pricing next week?'",
-        expected_strings=["pricing", "week", "meeting"],
-        category="ace_drafting",
         match_mode="any",
     ),
 ]
@@ -135,15 +125,6 @@ RESEARCH_TEAM_TESTS: list[TestCase] = [
     ),
 ]
 
-SUPPORT_TEAM_TESTS: list[TestCase] = [
-    TestCase(
-        agent="support-team",
-        question="What is our company's PTO policy?",
-        expected_strings=["PTO"],
-        category="support_team",
-    ),
-]
-
 # ---------------------------------------------------------------------------
 # Workflow Test Cases
 # ---------------------------------------------------------------------------
@@ -158,45 +139,29 @@ DAILY_BRIEF_TESTS: list[TestCase] = [
     ),
 ]
 
-MEETING_PREP_TESTS: list[TestCase] = [
-    TestCase(
-        agent="meeting-prep",
-        question="Prepare me for my 10 AM Product Strategy Review meeting",
-        expected_strings=["Product Strategy", "talking point"],
-        category="meeting_prep",
-        match_mode="any",
-    ),
-]
-
 # ---------------------------------------------------------------------------
 # All test cases combined
 # ---------------------------------------------------------------------------
 
 ALL_TEST_CASES: list[TestCase] = (
-    DASH_TESTS
-    + SCOUT_TESTS
+    GCODE_TESTS
+    + DASH_TESTS
     + PAL_TESTS
+    + SCOUT_TESTS
     + SEEK_TESTS
-    + DEX_TESTS
-    + ACE_TESTS
     + RESEARCH_TEAM_TESTS
-    + SUPPORT_TEAM_TESTS
     + DAILY_BRIEF_TESTS
-    + MEETING_PREP_TESTS
 )
 
 CATEGORIES = sorted(set(tc.category for tc in ALL_TEST_CASES))
 
 # Agent-specific test collections for targeted evaluation
 AGENT_TESTS: dict[str, list[TestCase]] = {
+    "gcode": GCODE_TESTS,
     "dash": DASH_TESTS,
-    "scout": SCOUT_TESTS,
     "pal": PAL_TESTS,
+    "scout": SCOUT_TESTS,
     "seek": SEEK_TESTS,
-    "dex": DEX_TESTS,
-    "ace": ACE_TESTS,
     "research-team": RESEARCH_TEAM_TESTS,
-    "support-team": SUPPORT_TEAM_TESTS,
     "daily-brief": DAILY_BRIEF_TESTS,
-    "meeting-prep": MEETING_PREP_TESTS,
 }

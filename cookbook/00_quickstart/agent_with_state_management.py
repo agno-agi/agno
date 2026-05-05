@@ -116,7 +116,7 @@ agent_with_state_management = Agent(
     tools=[
         add_to_watchlist,
         remove_from_watchlist,
-        YFinanceTools(),
+        YFinanceTools(all=True),
     ],
     session_state={"watchlist": []},
     add_session_state_to_context=True,

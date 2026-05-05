@@ -1,51 +1,39 @@
 chat:
   quick_prompts:
+    # ----- Agents -----
     dash:
-      - "Tell me about yourself"
       - "Who won the most F1 races in 2019?"
-      - "Compare Ferrari and Mercedes constructor championships from 2015-2020"
-    reasoning-dash:
-      - "Tell me about yourself"
-      - "What's the relationship between pole positions and race wins over the decades?"
-      - "Analyze the dominance patterns in F1 - which eras had the least competition?"
-    scout:
-      - "Tell me about yourself"
-      - "What is our PTO policy?"
-      - "Find the deployment runbook"
-    reasoning-scout:
-      - "Tell me about yourself"
-      - "Compare our security policy with our data retention policy"
-      - "What are the key architectural decisions in our system?"
+      - "Show the points gap between Hamilton and Verstappen by season"
+      - "Which circuits had the most DNFs in 2020?"
+
+    gcode:
+      - "Build a command-line todo app: add, list, done, delete. Persist to JSON. Write pytest tests and run them."
+      - "Create a Python library that parses and evaluates math expressions like '2 + 3 * (4 - 1)', with tests."
+      - "Build a URL shortener with an in-memory store: shorten, resolve, list stats. Include a demo script that exercises all features."
+
     pal:
-      - "Tell me about yourself"
-      - "Note: Decided to use PostgreSQL for the new project"
-      - "Research the latest developments in AI agents and save the key findings"
+      - "Save a note: quarterly planning meeting moved to Friday 3pm"
+      - "What notes have I saved recently?"
+      - "Save a bookmark: https://docs.agno.com -- Agno documentation"
+
+    scout:
+      - "What is our PTO policy?"
+      - "Find the incident response runbook"
+      - "How do I request a new laptop?"
+
     seek:
-      - "Tell me about yourself"
-      - "Research Anthropic - their products, funding, and recent developments"
-      - "Deep dive into the current state of AI regulation in the EU"
-    reasoning-seek:
-      - "Tell me about yourself"
-      - "Research and compare the business models of OpenAI, Anthropic, and Google DeepMind"
-      - "Analyze the competitive landscape for AI coding assistants"
-    dex:
-      - "Tell me about yourself"
-      - "I just met Sarah Chen - she's a Staff Engineer at Anthropic working on Claude"
-      - "Prep me for my meeting with James Wilson, CEO of our company"
-    ace:
-      - "Tell me about yourself"
-      - "Draft a reply to: 'Hi, loved the demo. Can we schedule a follow-up to discuss pricing?'"
-      - "Write a cold outreach email to a VP of Engineering about our AI platform"
+      - "Research Anthropic -- products, funding, and recent developments"
+      - "Compare the top 3 AI agent frameworks"
+      - "What are the latest developments in agentic AI?"
+
+    # ----- Teams -----
     research-team:
-      - "Research Anthropic - company overview, key people, products, and recent news"
-      - "Deep research on the AI agents market - key players, trends, and opportunities"
-      - "Investigate the competitive landscape for enterprise knowledge management"
-    support-team:
-      - "What is our company's PTO policy?"
-      - "How many F1 races did Hamilton win in 2020?"
-      - "Draft a reply to a customer asking about our enterprise pricing"
+      - "Research Anthropic comprehensively -- products, people, and market position"
+      - "What do our internal docs say about AI strategy vs industry trends?"
+      - "Research OpenAI -- enterprise products and recent developments"
+
+    # ----- Workflows -----
     daily-brief:
-      - "Generate my daily brief for today"
-    meeting-prep:
-      - "Prepare me for my 10 AM Product Strategy Review meeting"
-      - "I have a meeting with the CEO about Q1 roadmap - help me prepare"
+      - "Generate my morning briefing"
+      - "What's on my calendar today and any important emails?"
+      - "Brief me on today's priorities"
