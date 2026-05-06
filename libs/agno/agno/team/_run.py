@@ -4851,6 +4851,12 @@ def _route_requirements_to_members(
                         member_run_output = mr
                         break
 
+        # If still not found, look up from TeamSession.runs (member runs are upserted there)
+        if member_run_output is None:
+            member_run_id = reqs[0].member_run_id if reqs else None
+            if member_run_id:
+                member_run_output = session.get_run(member_run_id)
+
         if member_run_output is not None:
             # Update requirements and tool executions on the member's run output
             member_run_output.requirements = reqs
@@ -4942,6 +4948,12 @@ def _route_requirements_to_members_stream(
                     if getattr(mr, "run_id", None) == member_run_id:
                         member_run_output = mr
                         break
+
+        # If still not found, look up from TeamSession.runs (member runs are upserted there)
+        if member_run_output is None:
+            member_run_id = reqs[0].member_run_id if reqs else None
+            if member_run_id:
+                member_run_output = session.get_run(member_run_id)
 
         if member_run_output is not None:
             member_run_output.requirements = reqs
@@ -5051,6 +5063,12 @@ async def _aroute_requirements_to_members(
                         member_run_output = mr
                         break
 
+        # If still not found, look up from TeamSession.runs (member runs are upserted there)
+        if member_run_output is None:
+            member_run_id = reqs[0].member_run_id if reqs else None
+            if member_run_id:
+                member_run_output = session.get_run(member_run_id)
+
         if member_run_output is not None:
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
@@ -5152,6 +5170,12 @@ async def _aroute_requirements_to_members_stream(
                     if getattr(mr, "run_id", None) == member_run_id:
                         member_run_output = mr
                         break
+
+        # If still not found, look up from TeamSession.runs (member runs are upserted there)
+        if member_run_output is None:
+            member_run_id = reqs[0].member_run_id if reqs else None
+            if member_run_id:
+                member_run_output = session.get_run(member_run_id)
 
         if member_run_output is not None:
             member_run_output.requirements = reqs
