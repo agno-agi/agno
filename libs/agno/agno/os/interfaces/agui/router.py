@@ -57,6 +57,7 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
             stream_events=True,
             user_id=user_id,
             session_state=session_state,
+            context=run_input.context,
             run_id=run_id,
         )
 
@@ -99,6 +100,7 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
             stream_steps=True,
             user_id=user_id,
             session_state=session_state,
+            context=input.context,
             run_id=run_id,
         )
 
