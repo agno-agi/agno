@@ -187,14 +187,28 @@ class Gemini(Model):
 
         client_params = {k: v for k, v in client_params.items() if v is not None}
 
-        if self.timeout is not None:
-            http_options = client_params.get("http_options", {})
-            if isinstance(http_options, dict):
-                http_options["timeout"] = int(self.timeout * 1000)
-                client_params["http_options"] = http_options
-
         if self.client_params:
             client_params.update(self.client_params)
+
+        if self.timeout is not None:
+            # Normalize http_options to a dict so we can safely merge the timeout.
+            # client_params may supply http_options as either a plain dict or an
+            # HttpOptions object; both are normalised here to avoid silently
+            # skipping the timeout when the object form is used.
+            http_options = client_params.get("http_options", {})
+            if hasattr(http_options, "model_dump"):
+                # HttpOptions (or any pydantic model) → plain dict
+                http_options = http_options.model_dump(exclude_none=True)
+            elif not isinstance(http_options, dict):
+                log_warning(
+                    f"Unrecognized http_options type {type(http_options).__name__!r} in client_params; "
+                    "falling back to empty dict. Use a plain dict or HttpOptions object instead."
+                )
+                http_options = {}
+            # Only inject timeout when the caller has not already set one
+            if "timeout" not in http_options:
+                http_options["timeout"] = int(self.timeout * 1000)
+            client_params["http_options"] = http_options
 
         self.client = genai.Client(**client_params)
         return self.client
