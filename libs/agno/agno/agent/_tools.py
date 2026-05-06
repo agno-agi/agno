@@ -46,11 +46,13 @@ from agno.utils.log import log_debug, log_warning
 def _wire_google_auth(
     tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]],
 ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
-    """Consolidate OAuth scopes across Google toolkits sharing the same coordinator.
+    """Consolidate OAuth scopes across Google toolkits.
 
-    Detects Google toolkits with `google_auth=` set and registers each toolkit's
-    scopes with its GoogleAuth coordinator. This ensures a single OAuth consent
-    covers all services when the user authenticates.
+    Two modes:
+    1. Cookbook mode: No google_auth passed — auto-create one behind the scenes
+       for scope consolidation. Auth uses default file-based credentials.
+    2. Custom OAuth: User passes google_auth= with enterprise params — register
+       each toolkit's scopes with that coordinator.
 
     Does NOT auto-register any LLM tools. Users must explicitly add
     GoogleOAuthTools to their agent's tools list if they want oauth_google callable.
@@ -60,20 +62,43 @@ def _wire_google_auth(
 
     # Lazy import to avoid circular dependency
     try:
+        from agno.tools.google.auth import GoogleAuth
         from agno.tools.google.base import GoogleToolkit
     except ImportError:
         return tools
 
-    # Register each Google toolkit's scopes with its coordinator
-    for t in tools:
-        if isinstance(t, GoogleToolkit):
-            ga = getattr(t, "google_auth", None)
-            if ga is not None:
-                service_name = getattr(t, "google_service_name", None)
-                scopes = getattr(t, "scopes", None)
-                if service_name and scopes:
-                    ga.register_service(service_name, scopes)
-                    log_debug(f"Registered {service_name} scopes with GoogleAuth coordinator")
+    # Find Google toolkits
+    google_toolkits = [t for t in tools if isinstance(t, GoogleToolkit)]
+    if not google_toolkits:
+        return tools
+
+    # Check if any toolkit has a custom GoogleAuth configured
+    # If so, use it as the shared coordinator for all toolkits without one
+    shared_auth = None
+    for t in google_toolkits:
+        ga = getattr(t, "google_auth", None)
+        if ga is not None:
+            shared_auth = ga
+            break
+
+    # Auto-create GoogleAuth if none provided (cookbook mode)
+    if shared_auth is None:
+        shared_auth = GoogleAuth()
+        log_debug("Auto-created GoogleAuth for scope consolidation (cookbook mode)")
+
+    # Wire GoogleAuth to each toolkit and register scopes
+    for t in google_toolkits:
+        # Set google_auth on toolkits that don't have one
+        if getattr(t, "google_auth", None) is None:
+            t.google_auth = shared_auth
+
+        # Register toolkit's scopes with its coordinator
+        ga = t.google_auth
+        service_name = getattr(t, "google_service_name", None)
+        scopes = getattr(t, "scopes", None)
+        if ga is not None and service_name and scopes:
+            ga.register_service(service_name, scopes)
+            log_debug(f"Registered {service_name} scopes with GoogleAuth")
 
     return tools
 
