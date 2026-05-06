@@ -2,9 +2,10 @@ from unittest.mock import MagicMock
 
 import pytest
 from ag_ui.core import EventType
-from ag_ui.core.types import AssistantMessage, SystemMessage, TextInputContent, UserMessage
+from ag_ui.core.types import AssistantMessage, SystemMessage, TextInputContent, Tool, ToolMessage, UserMessage
 
 from agno.os.interfaces.agui.utils import (
+    _agui_tools_to_external_functions,
     EventBuffer,
     async_stream_agno_response_as_agui_events,
     extract_agui_user_input,
@@ -1502,3 +1503,81 @@ def test_extract_agui_user_input_multimodal_content():
     result = extract_agui_user_input(messages)
 
     assert result == "describe this image"
+
+
+def test_extract_agui_user_input_tool_message_when_no_user_message():
+    """Test extraction falls back to latest tool message content when no user message exists."""
+    messages = [
+        AssistantMessage(id="a1", content="Working on that"),
+        ToolMessage(id="t1", content="tool result", tool_call_id="call_1"),
+    ]
+
+    result = extract_agui_user_input(messages)
+
+    assert result == "tool result"
+
+
+def test_extract_agui_user_input_prefers_newer_tool_message_over_older_user_message():
+    """Test reverse scan returns the latest relevant message, including tool messages."""
+    messages = [
+        UserMessage(id="u1", content="original user request"),
+        AssistantMessage(id="a1", content="Calling tool"),
+        ToolMessage(id="t1", content="latest tool result", tool_call_id="call_1"),
+    ]
+
+    result = extract_agui_user_input(messages)
+
+    assert result == "latest tool result"
+
+
+def test_extract_agui_user_input_empty_tool_message_returns_follow_up_prompt():
+    """Test empty tool content returns the special follow-up prompt."""
+    messages = [
+        ToolMessage(id="t1", content="", tool_call_id="call_1"),
+    ]
+
+    result = extract_agui_user_input(messages)
+
+    assert result == "Ask user how else you can help them"
+
+
+def test_agui_tools_to_external_functions_empty_input():
+    """Test empty or missing AG-UI tools returns an empty list."""
+    assert _agui_tools_to_external_functions([]) == []
+    assert _agui_tools_to_external_functions(None) == []
+
+
+def test_agui_tools_to_external_functions_maps_tool_fields():
+    """Test AG-UI tool definitions are converted to external-execution Functions."""
+    tools = [
+        Tool(
+            name="showWeather",
+            description="Display weather in the UI",
+            parameters={"type": "object", "properties": {"city": {"type": "string"}}},
+        )
+    ]
+
+    result = _agui_tools_to_external_functions(tools)
+
+    assert len(result) == 1
+    assert result[0].name == "showWeather"
+    assert result[0].description == "Display weather in the UI"
+    assert result[0].parameters == {"type": "object", "properties": {"city": {"type": "string"}}}
+    assert result[0].external_execution is True
+    assert result[0].external_execution_silent is True
+
+
+def test_agui_tools_to_external_functions_defaults_empty_parameters_schema():
+    """Test missing AG-UI tool parameters fall back to an empty object schema."""
+    tools = [
+        Tool(
+            name="showToast",
+            description="Render a toast notification",
+            parameters=None,
+        )
+    ]
+
+    result = _agui_tools_to_external_functions(tools)
+
+    assert len(result) == 1
+    assert result[0].parameters == {"type": "object", "properties": {}}

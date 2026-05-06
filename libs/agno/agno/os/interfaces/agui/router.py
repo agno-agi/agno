@@ -28,7 +28,7 @@ from agno.os.interfaces.agui.utils import (
 )
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
-
+from agno.os.interfaces.agui.utils import _agui_tools_to_external_functions;
 
 async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     """Run the contextual Agent, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
@@ -38,6 +38,14 @@ async def run_agent(agent: Union[Agent, RemoteAgent], run_input: RunAgentInput) 
         # AG-UI frontends send full conversation history every request.
         # Extract only the last user message — agent manages history via session DB.
         user_input = extract_agui_user_input(run_input.messages or [])
+        fe_functions = _agui_tools_to_external_functions(run_input.tools)
+        
+        # Extracting unique tools from AG-UI request and injecting them into agent's tools for this run
+        existing_tools = list(agent.tools) if agent.tools else []
+        existing_names = {tool.name for tool in existing_tools if hasattr(tool, "name")}
+        new_tools = [tool for tool in fe_functions if getattr(tool, "name", None) not in existing_names]
+        agent.tools = existing_tools + new_tools
+     
 
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
@@ -81,6 +89,12 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
         # AG-UI frontends send full conversation history every request.
         # Extract only the last user message — team manages history via session DB.
         user_input = extract_agui_user_input(input.messages or [])
+        # Extracting unique tools from AG-UI request and injecting them into agent's tools for this run
+        fe_functions = _agui_tools_to_external_functions(input.tools)
+        existing_tools = list(team.tools) if team.tools else []
+        existing_names = {tool.name for tool in existing_tools if hasattr(tool, "name")}
+        new_tools = [tool for tool in fe_functions if getattr(tool, "name", None) not in existing_names]
+        team.tools = existing_tools + new_tools
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
         # Look for user_id in input.forwarded_props

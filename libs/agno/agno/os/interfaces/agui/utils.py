@@ -41,6 +41,7 @@ from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
 from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
+from agno.tools.function import Function
 
 
 def validate_agui_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
@@ -73,6 +74,20 @@ def validate_agui_state(state: Any, thread_id: str) -> Optional[Dict[str, Any]]:
 
     log_warning(f"AGUI state must be a dict, got {type(state).__name__}. State will be ignored. Thread: {thread_id}")
     return None
+
+def _agui_tools_to_external_functions(agui_tools):
+    if not agui_tools:
+        return []
+    out = []
+    for tool in agui_tools:
+        out.append(Function(
+            name=tool.name,
+            description=tool.description,
+            parameters=tool.parameters or {"type": "object", "properties": {}},
+            external_execution=True,
+            external_execution_silent=True,
+        ))
+    return out
 
 
 @dataclass
@@ -159,6 +174,8 @@ def extract_agui_user_input(messages: List[AGUIMessage]) -> str:
     AG-UI frontends send the full conversation history on every request.
     The agent manages its own history via session DB, so we only need the
     latest user message as input — matching the REST API pattern.
+    The last sent message could also be a tool role message in which 
+    case the agent would respond appropriately
     """
     for msg in reversed(messages):
         if msg.role == "user" and msg.content is not None:
@@ -166,6 +183,19 @@ def extract_agui_user_input(messages: List[AGUIMessage]) -> str:
             if isinstance(msg.content, str):
                 return msg.content
             # Multimodal: extract text parts
+            if isinstance(msg.content, list):
+                text_parts = []
+                for part in msg.content:
+                    if hasattr(part, "type") and part.type == "text" and hasattr(part, "text"):
+                        text_parts.append(part.text)
+                if text_parts:
+                    return "\n".join(text_parts)
+        if msg.role == "tool" and msg.content is not None:
+            # If we have a tool message with content, this likely means the tool call was made in the user turn (e.g. via REASONING_TOOL), so we should also consider this as part of the user input for tool calls in particular
+            if isinstance(msg.content, str):
+                if(msg.content == ''):
+                    return 'Ask user how else you can help them' 
+                return msg.content
             if isinstance(msg.content, list):
                 text_parts = []
                 for part in msg.content:
