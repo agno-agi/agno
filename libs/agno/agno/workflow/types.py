@@ -556,6 +556,9 @@ class StepOutput:
 
     stop: bool = False
 
+    # Executor HITL: indicates the step's agent/team is paused for tool-level HITL
+    is_paused: bool = False
+
     steps: Optional[List["StepOutput"]] = None
 
     # Loop iteration review: signals the workflow to pause for per-iteration review.
@@ -591,6 +594,7 @@ class StepOutput:
             "success": self.success,
             "error": self.error,
             "stop": self.stop,
+            "is_paused": self.is_paused,
         }
 
         # Add nested steps if they exist
@@ -638,6 +642,7 @@ class StepOutput:
             success=data.get("success", True),
             error=data.get("error"),
             stop=data.get("stop", False),
+            is_paused=data.get("is_paused", False),
             steps=steps,
         )
 
@@ -732,6 +737,24 @@ class StepType(str, Enum):
     WORKFLOW = "Workflow"
 
 
+class ExecutorType(str, Enum):
+    """Type of executor that raises executor-level HITL pauses inside a Step.
+
+    Only agent/team executors can bubble tool-level HITL up to the workflow;
+    nested workflows and plain functions are not covered by this enum.
+    """
+
+    AGENT = "agent"
+    TEAM = "team"
+
+
+class PauseKind(str, Enum):
+    """Kind of HITL pause currently active on a WorkflowRunOutput."""
+
+    STEP = "step"
+    EXECUTOR = "executor"
+
+
 @dataclass
 class UserInputField:
     """A field that requires user input.
@@ -824,6 +847,16 @@ class StepRequirement:
 
     # The step input that was prepared before pausing
     step_input: Optional["StepInput"] = None
+
+    # Executor HITL fields (for agent/team tool-level pauses within a step)
+    requires_executor_input: bool = False
+    executor_requirements: Optional[List[Any]] = None  # List of RunRequirement dicts
+    executor_id: Optional[str] = None
+    executor_name: Optional[str] = None
+    executor_run_id: Optional[str] = None
+    executor_type: Optional[Union[ExecutorType, str]] = None  # "agent" or "team"
+    # Session ID for the executor's session (needed for DB-based continue_run)
+    executor_session_id: Optional[str] = None
 
     # Post-execution output review fields
     requires_output_review: bool = False
@@ -1014,6 +1047,30 @@ class StepRequirement:
         return self.selected_choices is None or len(self.selected_choices) == 0
 
     @property
+    def needs_executor_resolution(self) -> bool:
+        """Check if this requirement needs executor (agent/team) HITL resolution.
+
+        True while any of the underlying RunRequirements are still unresolved.
+        """
+        if not self.requires_executor_input or not self.executor_requirements:
+            return False
+
+        from agno.run.requirement import RunRequirement
+
+        for req in self.executor_requirements:
+            if isinstance(req, dict):
+                parsed = RunRequirement.from_dict(req)
+                if not parsed.is_resolved():
+                    return True
+            elif isinstance(req, RunRequirement):
+                if not req.is_resolved():
+                    return True
+            else:
+                # Unknown shape — treat conservatively as unresolved.
+                return True
+        return False
+
+    @property
     def is_resolved(self) -> bool:
         """Check if this requirement has been resolved"""
         if self.requires_confirmation and self.confirmed is None:
@@ -1023,6 +1080,8 @@ class StepRequirement:
         if self.requires_user_input and self.needs_user_input:
             return False
         if self.requires_route_selection and self.needs_route_selection:
+            return False
+        if self.requires_executor_input and self.needs_executor_resolution:
             return False
         return True
 
@@ -1065,6 +1124,19 @@ class StepRequirement:
             result["user_input_schema"] = [f.to_dict() for f in self.user_input_schema]
         if self.step_input is not None:
             result["step_input"] = self.step_input.to_dict()
+
+        # Executor HITL fields
+        if self.requires_executor_input:
+            result["requires_executor_input"] = self.requires_executor_input
+            result["executor_requirements"] = self.executor_requirements
+            result["executor_id"] = self.executor_id
+            result["executor_name"] = self.executor_name
+            result["executor_run_id"] = self.executor_run_id
+            result["executor_type"] = (
+                self.executor_type.value if isinstance(self.executor_type, ExecutorType) else self.executor_type
+            )
+            result["executor_session_id"] = self.executor_session_id
+
         if self.step_output is not None:
             result["step_output"] = self.step_output.to_dict()
         if self.edited_output is not None:
@@ -1117,6 +1189,13 @@ class StepRequirement:
             allow_multiple_selections=data.get("allow_multiple_selections", False),
             selected_choices=data.get("selected_choices"),
             step_input=step_input,
+            requires_executor_input=data.get("requires_executor_input", False),
+            executor_requirements=data.get("executor_requirements"),
+            executor_id=data.get("executor_id"),
+            executor_name=data.get("executor_name"),
+            executor_run_id=data.get("executor_run_id"),
+            executor_type=data.get("executor_type"),
+            executor_session_id=data.get("executor_session_id"),
             # Post-execution output review
             requires_output_review=data.get("requires_output_review", False),
             output_review_message=data.get("output_review_message"),

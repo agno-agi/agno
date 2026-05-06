@@ -1,9 +1,13 @@
 """Tests for Team continue_run helpers (propagation, routing, normalization)."""
 
-from unittest.mock import MagicMock, patch
+import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from agno.models.response import ToolExecution
+from agno.run import RunStatus
 from agno.run.requirement import RunRequirement
+from agno.run.team import TeamRunOutput
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -660,3 +664,344 @@ class TestAsyncGatherErrorHandling:
                 member_results.append(r)
 
         assert len(member_results) == 0
+
+
+# ===========================================================================
+# 12. _tool_result_requires_human_input
+# ===========================================================================
+
+
+class TestToolResultRequiresHumanInput:
+    def test_matching_string(self):
+        from agno.team._run import _tool_result_requires_human_input
+
+        tool = _make_tool_execution(result="Tool requires human input to proceed")
+        assert _tool_result_requires_human_input(tool) is True
+
+    def test_case_insensitive(self):
+        from agno.team._run import _tool_result_requires_human_input
+
+        tool = _make_tool_execution(result="REQUIRES HUMAN INPUT")
+        assert _tool_result_requires_human_input(tool) is True
+
+    def test_no_match(self):
+        from agno.team._run import _tool_result_requires_human_input
+
+        tool = _make_tool_execution(result="Success: operation completed")
+        assert _tool_result_requires_human_input(tool) is False
+
+    def test_none_result(self):
+        from agno.team._run import _tool_result_requires_human_input
+
+        tool = _make_tool_execution(result=None)
+        assert _tool_result_requires_human_input(tool) is False
+
+    def test_non_string_result(self):
+        from agno.team._run import _tool_result_requires_human_input
+
+        tool = _make_tool_execution(result={"key": "requires human input"})
+        assert _tool_result_requires_human_input(tool) is False
+
+
+# ===========================================================================
+# 13. _prepare_member_hitl_continuation improvements
+# ===========================================================================
+
+
+class TestPrepareMemberHitlContinuation:
+    """Tests for the improved _prepare_member_hitl_continuation that handles
+    delegate_task_to_members (plural) and case-insensitive matching."""
+
+    def _make_run_response_with_tools(self, tools):
+        run_response = MagicMock()
+        run_response.tools = tools
+        run_response.requirements = None
+        return run_response
+
+    def _make_run_messages(self, tool_call_ids):
+        msgs = []
+        for tc_id in tool_call_ids:
+            msg = MagicMock()
+            msg.role = "tool"
+            msg.tool_call_id = tc_id
+            msg.content = "requires human input"
+            msgs.append(msg)
+        run_messages = MagicMock()
+        run_messages.messages = msgs
+        return run_messages
+
+    def test_updates_delegate_task_to_member(self):
+        from agno.team._run import _prepare_member_hitl_continuation
+
+        tool = _make_tool_execution(
+            tool_name="delegate_task_to_member",
+            tool_call_id="tc-1",
+            result="Tool requires human input",
+        )
+        run_response = self._make_run_response_with_tools([tool])
+        run_messages = self._make_run_messages(["tc-1"])
+
+        _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
+
+        assert "requires human input" not in tool.result
+        assert "Done" in tool.result
+
+    def test_updates_delegate_task_to_members_plural(self):
+        from agno.team._run import _prepare_member_hitl_continuation
+
+        tool = _make_tool_execution(
+            tool_name="delegate_task_to_members",
+            tool_call_id="tc-1",
+            result="Tool requires human input",
+        )
+        run_response = self._make_run_response_with_tools([tool])
+        run_messages = self._make_run_messages(["tc-1"])
+
+        _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
+
+        assert "Done" in tool.result
+
+    def test_updates_multiple_matching_tools(self):
+        from agno.team._run import _prepare_member_hitl_continuation
+
+        tool1 = _make_tool_execution(
+            tool_name="delegate_task_to_member",
+            tool_call_id="tc-1",
+            result="requires human input",
+        )
+        tool2 = _make_tool_execution(
+            tool_name="delegate_task_to_members",
+            tool_call_id="tc-2",
+            result="requires human input",
+        )
+        run_response = self._make_run_response_with_tools([tool1, tool2])
+        run_messages = self._make_run_messages(["tc-1", "tc-2"])
+
+        _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
+
+        assert "Done" in tool1.result
+        assert "Done" in tool2.result
+        assert run_messages.messages[0].content == run_messages.messages[1].content
+
+    def test_falls_back_to_any_tool_with_human_input(self):
+        """If no delegate tool matches, falls back to any tool with human input result."""
+        from agno.team._run import _prepare_member_hitl_continuation
+
+        tool = _make_tool_execution(
+            tool_name="some_other_tool",
+            tool_call_id="tc-1",
+            result="requires human input",
+        )
+        run_response = self._make_run_response_with_tools([tool])
+        run_messages = self._make_run_messages(["tc-1"])
+
+        _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
+
+        assert "Done" in tool.result
+
+    def test_resets_run_state(self):
+        from agno.team._run import _prepare_member_hitl_continuation
+
+        tool = _make_tool_execution(
+            tool_name="delegate_task_to_member",
+            tool_call_id="tc-1",
+            result="requires human input",
+        )
+        run_response = self._make_run_response_with_tools([tool])
+        run_response.status = RunStatus.paused
+        run_response.content = "old content"
+        run_messages = self._make_run_messages(["tc-1"])
+
+        _prepare_member_hitl_continuation(run_response, run_messages, ["[Agent]: Done"])
+
+        assert run_response.status == RunStatus.running
+        assert run_response.content is None
+
+
+# ===========================================================================
+# 14. Approval resolution fallback in continue_run_dispatch
+# ===========================================================================
+
+
+class TestContinueRunApprovalResolution:
+    def test_continue_run_dispatch_uses_resolved_admin_approval_without_requirements(self):
+        from agno.team._run import continue_run_dispatch
+
+        team = MagicMock()
+        team.session_id = None
+        team.add_history_to_context = False
+        team.parser_model = None
+        team.initialize_team = MagicMock()
+        team.db = MagicMock()
+
+        tool = _make_tool_execution(
+            tool_call_id="tool-1",
+            approval_type="required",
+            requires_confirmation=True,
+        )
+        requirement = RunRequirement(tool)
+        run_response = TeamRunOutput(
+            run_id="run-1",
+            session_id="session-1",
+            requirements=[requirement],
+            tools=[tool],
+        )
+
+        opts = SimpleNamespace(
+            stream=False,
+            stream_events=False,
+            yield_run_output=False,
+            dependencies=None,
+            knowledge_filters=None,
+            metadata=None,
+        )
+        team_session = MagicMock()
+        team_session.runs = [run_response]
+        sentinel = object()
+
+        def _resolve_approval(db, run_id, paused_run_response):
+            paused_run_response.requirements[0].confirm()
+
+        with (
+            patch("agno.team._init._has_async_db", return_value=False),
+            patch("agno.team._init._initialize_session", return_value=("session-1", None)),
+            patch("agno.team._storage._read_or_create_session", return_value=team_session),
+            patch("agno.team._storage._update_metadata"),
+            patch("agno.team._storage._load_session_state", return_value={}),
+            patch("agno.team._run_options.resolve_run_options", return_value=opts),
+            patch("agno.team._response.get_response_format", return_value=None),
+            patch("agno.team._tools._determine_tools_for_model", return_value=[]),
+            patch("agno.team._run._get_continue_run_messages", return_value=MagicMock(messages=[])),
+            patch("agno.team._run._handle_team_tool_call_updates"),
+            patch("agno.team._run._continue_run", return_value=sentinel) as mock_continue,
+            patch("agno.run.approval.check_and_apply_approval_resolution", side_effect=_resolve_approval) as mock_apply,
+        ):
+            result = continue_run_dispatch(
+                team,
+                run_id="run-1",
+                session_id="session-1",
+                stream=False,
+            )
+
+        assert result is sentinel
+        mock_apply.assert_called_once_with(team.db, "run-1", run_response)
+        mock_continue.assert_called_once()
+
+    def test_acontinue_run_uses_resolved_admin_approval_without_requirements(self):
+        from agno.team._run import _acontinue_run
+
+        team = MagicMock()
+        team.retries = 0
+        team.add_history_to_context = False
+        team.events_to_skip = []
+        team.store_events = False
+        team.db = MagicMock()
+        team.model = MagicMock()
+
+        tool = _make_tool_execution(
+            tool_call_id="tool-1",
+            approval_type="required",
+            requires_confirmation=True,
+        )
+        requirement = RunRequirement(tool)
+        run_response = TeamRunOutput(
+            run_id="run-1",
+            session_id="session-1",
+            requirements=[requirement],
+            tools=[tool],
+        )
+
+        team_session = MagicMock()
+        team_session.runs = [run_response]
+        run_context = MagicMock()
+        sentinel = object()
+
+        async def _resolve_approval(db, run_id, paused_run_response):
+            paused_run_response.requirements[0].confirm()
+
+        async def _exercise():
+            with (
+                patch("agno.team._run._asetup_session", new=AsyncMock(return_value=team_session)),
+                patch("agno.team._run.aregister_run", new=AsyncMock()),
+                patch("agno.team._run.acleanup_run", new=AsyncMock()),
+                patch("agno.team._init._disconnect_connectable_tools"),
+                patch("agno.team._init._disconnect_mcp_tools", new=AsyncMock()),
+                patch("agno.team._tools._check_and_refresh_mcp_tools", new=AsyncMock()),
+                patch("agno.team._tools._determine_tools_for_model", return_value=[]),
+                patch("agno.team._run._get_continue_run_messages", return_value=MagicMock(messages=[])),
+                patch("agno.team._run._ahandle_team_tool_call_updates", new=AsyncMock()),
+                patch("agno.team._run._ahandle_model_response_for_continue", new=AsyncMock(return_value=sentinel)),
+                patch(
+                    "agno.run.approval.acheck_and_apply_approval_resolution",
+                    side_effect=_resolve_approval,
+                ) as mock_apply,
+            ):
+                result = await _acontinue_run(
+                    team,
+                    session_id="session-1",
+                    run_context=run_context,
+                    run_id="run-1",
+                    requirements=None,
+                )
+
+            assert result is sentinel
+            mock_apply.assert_called_once_with(team.db, "run-1", run_response)
+
+        asyncio.run(_exercise())
+
+    def test_acontinue_run_stream_uses_run_id_for_empty_requirements(self):
+        from agno.team._run import _acontinue_run_stream
+
+        team = MagicMock()
+        team.retries = 0
+        team.events_to_skip = []
+        team.store_events = False
+        team.db = MagicMock()
+
+        tool = _make_tool_execution(
+            tool_call_id="tool-1",
+            approval_type="required",
+            requires_confirmation=True,
+        )
+        requirement = RunRequirement(tool)
+        run_response = TeamRunOutput(
+            run_id="run-1",
+            session_id="session-1",
+            requirements=[requirement],
+            tools=[tool],
+        )
+
+        team_session = MagicMock()
+        team_session.runs = [run_response]
+        run_context = MagicMock()
+
+        async def _pause_stream(*args, **kwargs):
+            yield "paused-event"
+
+        async def _exercise():
+            with (
+                patch("agno.team._run._asetup_session", new=AsyncMock(return_value=team_session)),
+                patch("agno.team._run.aregister_run", new=AsyncMock()),
+                patch("agno.team._run.acleanup_run", new=AsyncMock()),
+                patch("agno.team._init._disconnect_connectable_tools"),
+                patch("agno.team._init._disconnect_mcp_tools", new=AsyncMock()),
+                patch(
+                    "agno.run.approval.acheck_and_apply_approval_resolution",
+                    new=AsyncMock(),
+                ) as mock_apply,
+                patch("agno.team._hooks.ahandle_team_run_paused_stream", side_effect=_pause_stream),
+            ):
+                events = []
+                async for event in _acontinue_run_stream(
+                    team,
+                    session_id="session-1",
+                    run_context=run_context,
+                    run_id="run-1",
+                    requirements=None,
+                ):
+                    events.append(event)
+
+            assert events == ["paused-event"]
+            mock_apply.assert_called_once_with(team.db, "run-1", run_response)
+
+        asyncio.run(_exercise())

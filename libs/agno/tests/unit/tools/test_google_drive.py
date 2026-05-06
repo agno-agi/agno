@@ -156,8 +156,8 @@ def test_read_file_max_read_size_rejected(drive_tools):
     drive_tools.max_read_size = 100
     drive_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "big1",
-        "name": "huge.bin",
-        "mimeType": "application/octet-stream",
+        "name": "huge.txt",
+        "mimeType": "text/plain",
         "size": "50000",
     }
     result = json.loads(drive_tools.read_file("big1"))
@@ -634,3 +634,108 @@ def test_service_account_no_delegated_user():
 
         mock_sa.from_service_account_file.assert_called_once()
         mock_creds.with_subject.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# GoogleDriveTools with Shared Drive params (corpora="allDrives")
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def all_drives_tools(mock_creds, mock_service):
+    with (
+        patch("agno.tools.google.drive.build") as mock_build,
+        patch.object(GoogleDriveTools, "_auth", return_value=None),
+    ):
+        mock_build.return_value = mock_service
+        tools = GoogleDriveTools(
+            creds=mock_creds,
+            corpora="allDrives",
+            supports_all_drives=True,
+            include_items_from_all_drives=True,
+        )
+        tools.service = mock_service
+        return tools
+
+
+def test_all_drives_search_files_passes_all_drives_flags(all_drives_tools):
+    """GoogleDriveTools.search_files passes corpora=allDrives and related flags when configured."""
+    all_drives_tools.search_files(query="name contains 'test'")
+
+    call_kwargs = all_drives_tools.service.files.return_value.list.call_args[1]
+    assert call_kwargs["corpora"] == "allDrives"
+    assert call_kwargs["includeItemsFromAllDrives"] is True
+    assert call_kwargs["supportsAllDrives"] is True
+
+
+def test_all_drives_search_files_still_filters_trashed(all_drives_tools):
+    """GoogleDriveTools.search_files still adds trashed=false by default."""
+    result = json.loads(all_drives_tools.search_files(query="name contains 'x'"))
+    assert "trashed=false" in result["query"]
+
+
+def test_all_drives_get_file_metadata_passes_supports_all_drives(all_drives_tools):
+    """GoogleDriveTools._get_file_metadata passes supportsAllDrives when configured."""
+    all_drives_tools._get_file_metadata("file123", "id,name")
+
+    call_kwargs = all_drives_tools.service.files.return_value.get.call_args[1]
+    assert call_kwargs["supportsAllDrives"] is True
+    assert call_kwargs["fileId"] == "file123"
+
+
+def test_all_drives_read_file_passes_supports_all_drives(all_drives_tools):
+    """GoogleDriveTools.read_file passes supportsAllDrives on get_media when configured."""
+    all_drives_tools.service.files.return_value.get.return_value.execute.return_value = {
+        "id": "f1",
+        "name": "readme.txt",
+        "mimeType": "text/plain",
+        "size": "10",
+    }
+    mock_downloader = MagicMock()
+    mock_downloader.next_chunk.return_value = (MagicMock(), True)
+
+    with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader) as mock_dl:
+
+        def capture_buffer(buf, req):
+            buf.write(b"content")
+            return mock_downloader
+
+        mock_dl.side_effect = capture_buffer
+        all_drives_tools.read_file("f1")
+
+    call_kwargs = all_drives_tools.service.files.return_value.get_media.call_args[1]
+    assert call_kwargs["supportsAllDrives"] is True
+
+
+# ---------------------------------------------------------------------------
+# _download_bytes method
+# ---------------------------------------------------------------------------
+
+
+def test_download_bytes_method(mock_creds, mock_service):
+    """GoogleDriveTools._download_bytes correctly downloads bytes from MediaIoBaseDownload."""
+    with (
+        patch("agno.tools.google.drive.build") as mock_build,
+        patch.object(GoogleDriveTools, "_auth", return_value=None),
+    ):
+        mock_build.return_value = mock_service
+        tools = GoogleDriveTools(creds=mock_creds)
+        tools.service = mock_service
+
+    mock_request = MagicMock()
+    mock_downloader = MagicMock()
+    mock_downloader.next_chunk.side_effect = [
+        (MagicMock(), False),
+        (MagicMock(), True),
+    ]
+
+    with patch("agno.tools.google.drive.MediaIoBaseDownload") as mock_dl:
+
+        def capture_buffer(buf, req):
+            buf.write(b"chunk1chunk2")
+            return mock_downloader
+
+        mock_dl.side_effect = capture_buffer
+        result = tools._download_bytes(mock_request)
+
+    assert result == b"chunk1chunk2"
