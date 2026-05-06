@@ -28,25 +28,21 @@ from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
 from agno.tools.google.auth import GoogleAuth
 from agno.tools.google.gmail import GmailTools
+from agno.tools.google.oauth_tools import GoogleOAuthTools
 
 db = SqliteDb(db_file="tmp/slack_gmail_oauth.db")
 
-google_auth = GoogleAuth(
-    client_id=os.environ["GOOGLE_CLIENT_ID"],
-    client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
-    redirect_uri=os.environ["GOOGLE_REDIRECT_URI"],
-)
+# Explicit GoogleAuth needed for interface mode (to mount OAuth callback router)
+# Reads GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI from env vars
+google_auth = GoogleAuth()
 
 agent = Agent(
     name="Gmail Slack Agent",
     model=OpenAIResponses(id="gpt-5.4"),
     db=db,
     tools=[
-        google_auth,
-        GmailTools(
-            auth=google_auth,
-            include_tools=["get_latest_emails", "search_emails"],
-        ),
+        GoogleOAuthTools(auth=google_auth),
+        GmailTools(auth=google_auth, include_tools=["get_latest_emails", "search_emails"]),
     ],
     instructions=(
         "You are a Gmail assistant in Slack. If any Gmail tool returns an authentication error, "
@@ -64,7 +60,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 # Mount the OAuth callback router on the same FastAPI app
-app.include_router(google_auth.get_oauth_router())
+app.include_router(google_auth.get_oauth_router(db=db))
 
 
 if __name__ == "__main__":

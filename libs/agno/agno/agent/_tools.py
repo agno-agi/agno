@@ -46,7 +46,7 @@ from agno.utils.log import log_debug, log_warning
 def _wire_google_auth(
     tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]],
 ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
-    """Consolidate OAuth scopes across Google toolkits.
+    """Consolidate OAuth scopes across Google toolkits and wire GoogleOAuthTools.
 
     Two modes:
     1. Cookbook mode: No auth= passed — auto-create GoogleAuth behind the scenes
@@ -54,8 +54,9 @@ def _wire_google_auth(
     2. Custom OAuth: User passes auth=GoogleAuth(...) with enterprise params —
        register each toolkit's scopes with that coordinator.
 
-    Does NOT auto-register any LLM tools. Users must explicitly add
-    GoogleOAuthTools to their agent's tools list if they want oauth_google callable.
+    Also wires GoogleOAuthTools if present, so user can just do:
+        tools=[GoogleOAuthTools(), GmailTools()]
+    without explicitly passing auth= to either.
     """
     if tools is None:
         return tools
@@ -64,18 +65,21 @@ def _wire_google_auth(
     try:
         from agno.tools.google.auth import GoogleAuth
         from agno.tools.google.base import GoogleToolkit
+        from agno.tools.google.oauth_tools import GoogleOAuthTools
     except ImportError:
         return tools
 
-    # Find Google toolkits
+    # Find Google toolkits and OAuth tools
     google_toolkits = [t for t in tools if isinstance(t, GoogleToolkit)]
-    if not google_toolkits:
+    oauth_tools = [t for t in tools if isinstance(t, GoogleOAuthTools)]
+
+    # Nothing to wire if no Google toolkits
+    if not google_toolkits and not oauth_tools:
         return tools
 
-    # Check if any toolkit has a custom GoogleAuth configured
-    # If so, use it as the shared coordinator for all toolkits without one
+    # Check if any toolkit/oauth_tool has a custom GoogleAuth configured
     shared_auth = None
-    for t in google_toolkits:
+    for t in google_toolkits + oauth_tools:
         ga = getattr(t, "auth", None)
         if ga is not None:
             shared_auth = ga
@@ -86,19 +90,23 @@ def _wire_google_auth(
         shared_auth = GoogleAuth()
         log_debug("Auto-created GoogleAuth for scope consolidation (cookbook mode)")
 
-    # Wire GoogleAuth to each toolkit and register scopes
+    # Wire GoogleAuth to each Google toolkit and register scopes
     for t in google_toolkits:
-        # Set auth on toolkits that don't have one
         if getattr(t, "auth", None) is None:
             t.auth = shared_auth
 
-        # Register toolkit's scopes with its coordinator
         ga = t.auth
         service_name = getattr(t, "google_service_name", None)
         scopes = getattr(t, "scopes", None)
         if ga is not None and service_name and scopes:
             ga.register_service(service_name, scopes)
             log_debug(f"Registered {service_name} scopes with GoogleAuth")
+
+    # Wire GoogleAuth to GoogleOAuthTools if not already set
+    for t in oauth_tools:
+        if getattr(t, "auth", None) is None:
+            t.auth = shared_auth
+            log_debug("Wired GoogleAuth to GoogleOAuthTools")
 
     return tools
 
