@@ -47,6 +47,7 @@ from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
 from agno.os.routers.knowledge import get_knowledge_router
+from agno.os.routers.learnings import get_learnings_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.registry import get_registry_router
@@ -396,6 +397,7 @@ class AgentOS:
             get_home_router(self),
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
+            get_learnings_router(dbs=self.dbs, settings=self.settings),
             get_eval_router(
                 dbs=self.dbs,
                 agents=self._agents or None,  # type: ignore[arg-type]
@@ -763,6 +765,7 @@ class AgentOS:
         routers = [
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
+            get_learnings_router(dbs=self.dbs, settings=self.settings),
             get_eval_router(
                 dbs=self.dbs,
                 agents=self._agents or None,  # type: ignore[arg-type]

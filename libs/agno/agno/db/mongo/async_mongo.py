@@ -3286,3 +3286,69 @@ class AsyncMongoDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error getting learnings: {e}")
             return []
+
+    async def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        try:
+            collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return None
+            result = await collection.find_one({"learning_id": id})
+            if result is None:
+                return None
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_debug(f"Error getting learning by id: {e}")
+            return None
+
+    async def list_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            collection = await self._get_collection(table_type="learnings", create_collection_if_not_found=False)
+            if collection is None:
+                return [], 0
+
+            query: Dict[str, Any] = {}
+            if learning_type is not None:
+                query["learning_type"] = learning_type
+            if user_id is not None:
+                query["user_id"] = user_id
+            if agent_id is not None:
+                query["agent_id"] = agent_id
+            if team_id is not None:
+                query["team_id"] = team_id
+            if session_id is not None:
+                query["session_id"] = session_id
+            if namespace is not None:
+                query["namespace"] = namespace
+            if entity_id is not None:
+                query["entity_id"] = entity_id
+            if entity_type is not None:
+                query["entity_type"] = entity_type
+
+            total_count = await collection.count_documents(query)
+
+            cursor = collection.find(query).sort("updated_at", -1).skip((page - 1) * limit).limit(limit)
+            results = await cursor.to_list(length=limit)
+
+            learnings = []
+            for row in results:
+                row.pop("_id", None)
+                learnings.append(row)
+
+            return learnings, int(total_count)
+
+        except Exception as e:
+            log_debug(f"Error listing learnings: {e}")
+            return [], 0

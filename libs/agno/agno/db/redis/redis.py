@@ -2208,3 +2208,21 @@ class RedisDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for RedisDb")
+
+    def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError("Learning methods not yet implemented for RedisDb")
+
+    def list_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        raise NotImplementedError("Learning methods not yet implemented for RedisDb")

@@ -971,6 +971,49 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a single learning record by its primary key.
+
+        Args:
+            id: The learning ID.
+
+        Returns:
+            The learning record dict, or None if not found.
+        """
+        raise NotImplementedError
+
+    def list_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List learning records with pagination, returning the page and total count.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace.
+            entity_id: Filter by entity ID.
+            entity_type: Filter by entity type.
+            limit: Page size.
+            page: 1-indexed page number.
+
+        Returns:
+            Tuple of (records, total_count) where records is the requested page.
+        """
+        raise NotImplementedError
+
     # --- Schedules (Optional) ---
     # These methods are optional. Override in subclasses to enable scheduler persistence.
 
@@ -1684,6 +1727,49 @@ class AsyncBaseDb(ABC):
 
         Returns:
             List of learning records.
+        """
+        raise NotImplementedError
+
+    async def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        """Async retrieve a single learning record by its primary key.
+
+        Args:
+            id: The learning ID.
+
+        Returns:
+            The learning record dict, or None if not found.
+        """
+        raise NotImplementedError
+
+    async def list_learnings(
+        self,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Async list learning records with pagination, returning the page and total count.
+
+        Args:
+            learning_type: Filter by learning type.
+            user_id: Filter by user ID.
+            agent_id: Filter by agent ID.
+            team_id: Filter by team ID.
+            session_id: Filter by session ID.
+            namespace: Filter by namespace.
+            entity_id: Filter by entity ID.
+            entity_type: Filter by entity type.
+            limit: Page size.
+            page: 1-indexed page number.
+
+        Returns:
+            Tuple of (records, total_count) where records is the requested page.
         """
         raise NotImplementedError
 
