@@ -9,6 +9,7 @@ This enables semantic search over image content - the model can understand
 and retrieve relevant images based on natural language queries.
 
 Requirements:
+    - google-genai library must be installed and >= 1.75.0
     - GOOGLE_API_KEY environment variable must be set
     - Set IMAGE_PATH below to the path of your image file
 
@@ -110,7 +111,9 @@ if run.citations and run.citations.raw:
                         print(f"      Media ID: {media_id}")
                         try:
                             blob_content = model.download_blob(media_id)
-                            output_path = Path(f"cited_image_{i}.png")
+                            output_path = Path(
+                                f"cited_image_{i}{IMAGE_PATH.suffix.lower()}"
+                            )
                             output_path.write_bytes(blob_content)
                             print(
                                 f"      Downloaded {len(blob_content)} bytes -> {output_path}"

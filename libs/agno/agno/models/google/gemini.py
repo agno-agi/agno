@@ -2022,7 +2022,7 @@ class Gemini(Model):
 
         Args:
             media_id: The media_id from grounding metadata
-                (e.g., "fileSearchStores/store-123/blobs/BlobId-456")
+                (e.g., "fileSearchStores/store-123/media/genai-api/blobref/...")
 
         Returns:
             The blob content returned by the SDK
@@ -2041,7 +2041,7 @@ class Gemini(Model):
 
         Args:
             media_id: The media_id from grounding metadata
-                (e.g., "fileSearchStores/store-123/blobs/BlobId-456")
+                (e.g., "fileSearchStores/store-123/media/genai-api/blobref/...")
 
         Returns:
             The blob content returned by the SDK
