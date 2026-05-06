@@ -668,6 +668,20 @@ def test_all_drives_search_files_passes_all_drives_flags(all_drives_tools):
     assert call_kwargs["supportsAllDrives"] is True
 
 
+def test_all_drives_search_files_returns_incomplete_search(all_drives_tools):
+    """GoogleDriveTools.search_files returns incompleteSearch for allDrives queries."""
+    all_drives_tools.service.files.return_value.list.return_value.execute.return_value = {
+        "files": [],
+        "incompleteSearch": True,
+    }
+
+    result = json.loads(all_drives_tools.search_files(query="name contains 'test'"))
+
+    call_kwargs = all_drives_tools.service.files.return_value.list.call_args[1]
+    assert "incompleteSearch" in call_kwargs["fields"]
+    assert result["incompleteSearch"] is True
+
+
 def test_all_drives_search_files_still_filters_trashed(all_drives_tools):
     """GoogleDriveTools.search_files still adds trashed=false by default."""
     result = json.loads(all_drives_tools.search_files(query="name contains 'x'"))

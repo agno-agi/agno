@@ -241,7 +241,7 @@ class GoogleDriveTools(Toolkit):
     }
 
     # Partial response fields — only fetch what each tool needs
-    SEARCH_FIELDS = "nextPageToken, files(id, name, mimeType, modifiedTime, size, parents, description, webViewLink, webContentLink, owners(displayName, emailAddress))"
+    SEARCH_FIELDS = "nextPageToken, incompleteSearch, files(id, name, mimeType, modifiedTime, size, parents, description, webViewLink, webContentLink, owners(displayName, emailAddress))"
     READ_METADATA_FIELDS = "id,name,mimeType,modifiedTime,size,webViewLink"
 
     service: Optional[Resource]
@@ -519,6 +519,7 @@ class GoogleDriveTools(Toolkit):
                     "files": files,
                     "count": len(files),
                     "nextPageToken": results.get("nextPageToken"),
+                    "incompleteSearch": results.get("incompleteSearch", False),
                 }
             )
         except HttpError as e:
