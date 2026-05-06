@@ -114,9 +114,11 @@ def safe_join(directory: Union[str, Path], filename: str) -> Path:
     except OSError as e:
         log_error(f"Security violation: cannot resolve {filename!r}: {e}")
         raise PathSecurityError(f"Cannot resolve path {filename!r}: {e}") from e
-    if not resolved_file.is_relative_to(resolved_dir):
+    try:
+        resolved_file.relative_to(resolved_dir)
+    except ValueError:
         log_error(f"Security violation: path {filename!r} resolves outside {directory}")
-        raise PathSecurityError(f"Filename {filename!r} resolves outside directory (possible symlink escape)")
+        raise PathSecurityError(f"Filename {filename!r} resolves outside directory (possible symlink escape)") from None
     return resolved_file
 
 
@@ -154,7 +156,7 @@ def safe_join_subpath(directory: Union[str, Path], subpath: str) -> Path:
         raise PathSecurityError(f"Subpath must be relative (no drive/absolute): {subpath!r}")
     # Skip empty (from "//" or trailing "/"), "." (current dir), and ".." (parent).
     # ".." is a legitimate traversal marker — the downstream resolve() +
-    # is_relative_to() containment check catches actual escapes.
+    # relative_to()/ValueError containment check catches actual escapes.
     for segment in subpath.replace("\\", "/").split("/"):
         if segment in ("", ".", ".."):
             continue
@@ -167,7 +169,9 @@ def safe_join_subpath(directory: Union[str, Path], subpath: str) -> Path:
     except OSError as e:
         log_error(f"Security violation: cannot resolve subpath {subpath!r}: {e}")
         raise PathSecurityError(f"Cannot resolve subpath {subpath!r}: {e}") from e
-    if not resolved_target.is_relative_to(resolved_base):
+    try:
+        resolved_target.relative_to(resolved_base)
+    except ValueError:
         log_error(f"Security violation: subpath {subpath!r} escapes {directory}")
-        raise PathSecurityError(f"Subpath {subpath!r} resolves outside {directory} (possible symlink escape)")
+        raise PathSecurityError(f"Subpath {subpath!r} resolves outside {directory} (possible symlink escape)") from None
     return resolved_target
