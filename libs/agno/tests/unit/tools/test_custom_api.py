@@ -76,6 +76,7 @@ def test_init_with_custom_values():
         api_key="custom_key",
         headers={"X-Custom-Header": "custom_value"},
         verify_ssl=False,
+        acknowledge_mitm_risk=True,
         timeout=60,
         enable_make_request=False,
     )

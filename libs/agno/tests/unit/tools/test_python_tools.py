@@ -15,8 +15,12 @@ def temp_dir():
 
 @pytest.fixture
 def python_tools(temp_dir):
+    # Hardened build: pip/uv installers are only registered when
+    # enable_pip_install=True; opt in here so the upstream tests that
+    # exercise those tools continue to run.
     return PythonTools(
         base_dir=temp_dir,
+        enable_pip_install=True,
         include_tools=[
             "save_to_file_and_run",
             "run_python_code",

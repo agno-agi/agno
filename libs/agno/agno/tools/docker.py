@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error, log_warning, logger
@@ -56,15 +56,43 @@ except ImportError:
 
 
 class DockerTools(Toolkit):
+    """Docker toolkit.
+
+    Security notes (hardened build):
+
+    * The process-wide ``DOCKER_CONFIG=""`` wipe has been removed; it
+      invalidated registry credentials for unrelated code running in
+      the same Python process.
+    * Privileged and destructive operations (``run_container``,
+      ``exec_in_container``, ``build_image``, ``pull_image``,
+      ``remove_*``, volume / network create and connect) are not
+      registered as LLM-callable tools unless
+      ``enable_privileged_ops=True``. The read-only inspection tools
+      remain registered by default.
+    * When privileged ops are enabled, optional ``image_allowlist``
+      and ``container_allowlist`` sets restrict which targets the
+      LLM may act on. An image specifier without a tag matches the
+      bare repository name; ``@sha256`` suffixes are stripped before
+      comparison.
+
+    Args:
+        enable_privileged_ops: Register mutating Docker tools.
+        image_allowlist: Iterable of allowed image repositories or
+            fully qualified ``repo:tag`` specifiers.
+        container_allowlist: Iterable of allowed container IDs or
+            names.
+    """
+
     def __init__(
         self,
+        enable_privileged_ops: bool = False,
+        image_allowlist: Optional[Iterable[str]] = None,
+        container_allowlist: Optional[Iterable[str]] = None,
         **kwargs,
     ):
         self._check_docker_availability()
 
         try:
-            os.environ["DOCKER_CONFIG"] = ""
-
             if hasattr(self, "socket_path"):
                 socket_url = f"unix://{self.socket_path}"
                 self.client = docker.DockerClient(base_url=socket_url)
@@ -76,38 +104,76 @@ class DockerTools(Toolkit):
         except Exception:
             logger.exception("Error connecting to Docker")
 
+        self._enable_privileged_ops: bool = bool(enable_privileged_ops)
+        self._image_allowlist: Optional[FrozenSet[str]] = (
+            frozenset(i.strip() for i in image_allowlist) if image_allowlist else None
+        )
+        self._container_allowlist: Optional[FrozenSet[str]] = (
+            frozenset(c.strip() for c in container_allowlist) if container_allowlist else None
+        )
+
         tools: List[Any] = [
-            # Container management
             self.list_containers,
-            self.start_container,
-            self.stop_container,
-            self.remove_container,
             self.get_container_logs,
             self.inspect_container,
-            self.run_container,
-            self.exec_in_container,
-            # Image management
             self.list_images,
-            self.pull_image,
-            self.remove_image,
-            self.build_image,
-            self.tag_image,
             self.inspect_image,
-            # Volume management
             self.list_volumes,
-            self.create_volume,
-            self.remove_volume,
             self.inspect_volume,
-            # Network management
             self.list_networks,
-            self.create_network,
-            self.remove_network,
             self.inspect_network,
-            self.connect_container_to_network,
-            self.disconnect_container_from_network,
         ]
 
+        if self._enable_privileged_ops:
+            logger.warning(
+                "DockerTools: privileged operations ENABLED; the LLM "
+                "can mutate containers, images, volumes, and networks."
+            )
+            tools.extend(
+                [
+                    self.start_container,
+                    self.stop_container,
+                    self.remove_container,
+                    self.run_container,
+                    self.exec_in_container,
+                    self.pull_image,
+                    self.remove_image,
+                    self.build_image,
+                    self.tag_image,
+                    self.create_volume,
+                    self.remove_volume,
+                    self.create_network,
+                    self.remove_network,
+                    self.connect_container_to_network,
+                    self.disconnect_container_from_network,
+                ]
+            )
+
         super().__init__(name="docker_tools", tools=tools, **kwargs)
+
+    def _assert_image_allowed(self, image: str) -> Optional[str]:
+        """Return a reason string if ``image`` is outside the allowlist."""
+        if self._image_allowlist is None:
+            return None
+        base = image.split("@", 1)[0]
+        repo = base.split(":", 1)[0]
+        if base in self._image_allowlist or image in self._image_allowlist or repo in self._image_allowlist:
+            return None
+        return f"Image '{image}' is not in the configured allowlist."
+
+    def _assert_container_allowed(self, container_id: str) -> Optional[str]:
+        """Return a reason string if ``container_id`` is outside the allowlist."""
+        if self._container_allowlist is None:
+            return None
+        if container_id in self._container_allowlist:
+            return None
+        try:
+            c = self.client.containers.get(container_id)
+            if c.name in self._container_allowlist:
+                return None
+        except Exception:
+            pass
+        return f"Container '{container_id}' is not in the configured allowlist."
 
     def _check_docker_availability(self):
         """Check if Docker socket exists and is accessible."""
@@ -229,6 +295,10 @@ class DockerTools(Toolkit):
         Returns:
             str: A success message or error message.
         """
+        err = self._assert_container_allowed(container_id)
+        if err:
+            log_error(err)
+            return f"Error: {err}"
         try:
             container = self.client.containers.get(container_id)
             container.remove(force=force, v=volumes)
@@ -309,6 +379,10 @@ class DockerTools(Toolkit):
         Returns:
             str: Container ID or error message.
         """
+        err = self._assert_image_allowed(image)
+        if err:
+            log_error(err)
+            return f"Error: {err}"
         try:
             # Fix port mapping: convert integer values to strings
             if ports:
@@ -347,6 +421,10 @@ class DockerTools(Toolkit):
         Returns:
             str: Command output or error message.
         """
+        err = self._assert_container_allowed(container_id)
+        if err:
+            log_error(err)
+            return f"Error: {err}"
         try:
             container = self.client.containers.get(container_id)
             exit_code, output = container.exec_run(command)
@@ -403,6 +481,10 @@ class DockerTools(Toolkit):
         Returns:
             str: A success message or error message.
         """
+        err = self._assert_image_allowed(f"{image_name}:{tag}")
+        if err:
+            log_error(err)
+            return f"Error: {err}"
         try:
             logger.info(f"Starting to pull image {image_name}:{tag}")
             for line in self.client.api.pull(image_name, tag=tag, stream=True, decode=True):
@@ -429,6 +511,10 @@ class DockerTools(Toolkit):
         Returns:
             str: A success message or error message.
         """
+        err = self._assert_image_allowed(image_id)
+        if err:
+            log_error(err)
+            return f"Error: {err}"
         try:
             self.client.images.remove(image_id, force=force)
             return f"Image {image_id} removed successfully"
@@ -452,6 +538,10 @@ class DockerTools(Toolkit):
         Returns:
             str: A success message or error message.
         """
+        err = self._assert_image_allowed(tag)
+        if err:
+            log_error(err)
+            return f"Error: {err}"
         try:
             image, logs = self.client.images.build(path=path, tag=tag, dockerfile=dockerfile, rm=rm)
             return f"Image built successfully with ID: {image.id}"

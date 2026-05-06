@@ -3,6 +3,7 @@ from os import getenv
 from typing import Any, List, Optional
 
 from agno.tools import Toolkit
+from agno.tools._security import assert_read_only_sql
 from agno.utils.log import log_debug, logger
 
 try:
@@ -21,6 +22,34 @@ def _clean_sql(sql: str) -> str:
 
 
 class GoogleBigQueryTools(Toolkit):
+    """Query Google BigQuery datasets.
+
+    Security notes (hardened build):
+
+    * :meth:`run_sql_query` refuses any statement other than a single
+      ``SELECT`` / ``WITH`` via :func:`assert_read_only_sql`. A
+      ``dry_run`` flag is available to estimate cost without running
+      the query or materialising results.
+    * The toolkit honours the dataset scoping set at construction
+      time; queries run with ``default_dataset`` pointed at
+      ``project.dataset``.
+
+    Args:
+        dataset: BigQuery dataset name.
+        project: GCP project. Defaults to
+            ``$GOOGLE_CLOUD_PROJECT``.
+        location: BigQuery location. Defaults to
+            ``$GOOGLE_CLOUD_LOCATION``.
+        credentials: Optional ``google.auth.credentials.Credentials``
+            instance. Falls back to application-default credentials.
+        list_tables: Register :meth:`list_tables`.
+        describe_table: Register :meth:`describe_table`.
+        run_sql_query: Register :meth:`run_sql_query`.
+        enable_list_tables: Deprecated alias for ``list_tables``.
+        enable_describe_table: Deprecated alias for ``describe_table``.
+        enable_run_sql_query: Deprecated alias for ``run_sql_query``.
+    """
+
     def __init__(
         self,
         dataset: str,
@@ -100,22 +129,28 @@ class GoogleBigQueryTools(Toolkit):
             logger.exception("Error getting table schema")
             return f"Error getting table schema: {e}"
 
-    def run_sql_query(self, query: str) -> str:
+    def run_sql_query(self, query: str, dry_run: bool = False) -> str:
         """Use this function to run a BigQuery SQL query and return the result.
         Args:
             query (str): The query to run.
+            dry_run (bool): If True, run as a BigQuery dry run (no rows,
+                no cost) to validate the query and return byte estimate.
         Returns:
             str: Result of the Google BigQuery SQL query.
         Notes:
             - The result may be empty if the query does not return any data.
         """
         try:
-            return json.dumps(self._run_sql(sql=query), default=str)
+            assert_read_only_sql(query)
+        except ValueError as e:
+            return f"Error: {e}"
+        try:
+            return json.dumps(self._run_sql(sql=query, dry_run=dry_run), default=str)
         except Exception as e:
             logger.exception("Error running query")
             return f"Error running query: {e}"
 
-    def _run_sql(self, sql: str) -> str:
+    def _run_sql(self, sql: str, dry_run: bool = False) -> str:
         """Internal function to run a sql query.
         Args:
             sql (str): The sql query to run.
@@ -125,8 +160,19 @@ class GoogleBigQueryTools(Toolkit):
         try:
             log_debug(f"Running Google SQL |\n{sql}")
             cleaned_query = _clean_sql(sql)
-            job_config = bigquery.QueryJobConfig(default_dataset=f"{self.project}.{self.dataset}")
+            job_config = bigquery.QueryJobConfig(
+                default_dataset=f"{self.project}.{self.dataset}",
+                dry_run=dry_run,
+                use_query_cache=not dry_run,
+            )
             query_job = self.client.query(cleaned_query, job_config)
+            if dry_run:
+                return json.dumps(
+                    {
+                        "dry_run": True,
+                        "total_bytes_processed": query_job.total_bytes_processed,
+                    }
+                )
             results = query_job.result()
             results_str = str([dict(row) for row in results])
             return results_str.replace("\n", " ")
