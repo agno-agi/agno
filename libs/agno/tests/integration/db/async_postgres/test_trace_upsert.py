@@ -14,6 +14,10 @@ The race condition window:
 import asyncio
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
+
+import pytest
+from sqlalchemy import select
 
 from agno.db.postgres import AsyncPostgresDb
 from agno.tracing.schemas import Trace
@@ -92,6 +96,84 @@ async def cleanup_trace(db: AsyncPostgresDb, trace_id: str):
                 await sess.execute(delete(table).where(table.c.trace_id == trace_id))
     except Exception as e:
         print(f"Cleanup error (can be ignored): {e}")
+
+
+def _make_trace(
+    trace_id: str,
+    *,
+    session_id: Optional[str],
+    user_id: Optional[str] = None,
+    agent_id: Optional[str],
+    team_id: Optional[str],
+    workflow_id: Optional[str] = None,
+    run_id: Optional[str] = None,
+    name: str = "Test.run",
+) -> Trace:
+    """Build a Trace with explicit context for upsert tests."""
+    now = datetime.now(timezone.utc)
+    return Trace(
+        trace_id=trace_id,
+        name=name,
+        status="OK",
+        start_time=now,
+        end_time=now,
+        duration_ms=100,
+        total_spans=1,
+        error_count=0,
+        run_id=run_id,
+        session_id=session_id,
+        user_id=user_id,
+        agent_id=agent_id,
+        team_id=team_id,
+        workflow_id=workflow_id,
+        created_at=now,
+    )
+
+
+@pytest.mark.asyncio
+async def test_upsert_trace_preserves_existing_context(async_postgres_db_real):
+    """A second upsert with a different session_id must NOT overwrite the existing one.
+
+    Reproduces the bug where ON CONFLICT DO UPDATE used
+    ``COALESCE(excluded.session_id, table.c.session_id)`` (incoming wins),
+    silently rewriting an existing trace row's context whenever a second span
+    export shared the same trace_id under a different session.
+    """
+    db = async_postgres_db_real
+    trace_id = f"coalesce-test-{uuid.uuid4().hex[:8]}"
+
+    first = _make_trace(
+        trace_id,
+        session_id="team_session",
+        user_id="user_1",
+        agent_id=None,
+        team_id="team_x",
+    )
+    await db.upsert_trace(first)
+
+    # Second export shares the trace_id but carries a different session_id
+    # and a different agent_id (the original row had agent_id=None).
+    second = _make_trace(
+        trace_id,
+        session_id="rating_session",
+        user_id=None,
+        agent_id="agent_rating",
+        team_id=None,
+    )
+    await db.upsert_trace(second)
+
+    table = await db._get_table(table_type="traces")
+    assert table is not None
+    async with db.async_session_factory() as sess:
+        row = (await sess.execute(select(table).where(table.c.trace_id == trace_id))).fetchone()
+
+    assert row is not None
+    # Existing non-null context fields are preserved (incoming did NOT win).
+    assert row.session_id == "team_session"
+    assert row.team_id == "team_x"
+    assert row.user_id == "user_1"
+    # Field that was NULL on the first write gets filled by the incoming value.
+    assert row.agent_id == "agent_rating"
 
 
 async def run_race_test(db: AsyncPostgresDb, num_tasks: int = 10):
