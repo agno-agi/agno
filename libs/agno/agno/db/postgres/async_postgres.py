@@ -2455,12 +2455,13 @@ class AsyncPostgresDb(AsyncBaseDb):
                             else_=table.c.name,
                         ),
                         # Preserve existing non-null context values using COALESCE
-                        "run_id": func.coalesce(insert_stmt.excluded.run_id, table.c.run_id),
-                        "session_id": func.coalesce(insert_stmt.excluded.session_id, table.c.session_id),
-                        "user_id": func.coalesce(insert_stmt.excluded.user_id, table.c.user_id),
-                        "agent_id": func.coalesce(insert_stmt.excluded.agent_id, table.c.agent_id),
-                        "team_id": func.coalesce(insert_stmt.excluded.team_id, table.c.team_id),
-                        "workflow_id": func.coalesce(insert_stmt.excluded.workflow_id, table.c.workflow_id),
+                        # Existing value first so it wins; incoming fills NULLs only.
+                        "run_id": func.coalesce(table.c.run_id, insert_stmt.excluded.run_id),
+                        "session_id": func.coalesce(table.c.session_id, insert_stmt.excluded.session_id),
+                        "user_id": func.coalesce(table.c.user_id, insert_stmt.excluded.user_id),
+                        "agent_id": func.coalesce(table.c.agent_id, insert_stmt.excluded.agent_id),
+                        "team_id": func.coalesce(table.c.team_id, insert_stmt.excluded.team_id),
+                        "workflow_id": func.coalesce(table.c.workflow_id, insert_stmt.excluded.workflow_id),
                     },
                 )
                 await sess.execute(upsert_stmt)
