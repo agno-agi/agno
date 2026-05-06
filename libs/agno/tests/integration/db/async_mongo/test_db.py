@@ -198,7 +198,7 @@ async def test_get_schedule_run_integration(async_mongo_db_real):
     run_doc = {
         "id": "test-schedule-run-1",
         "schedule_id": "test-schedule-1",
-        "status": "completed",
+        "status": "success",
         "created_at": int(datetime.now(timezone.utc).timestamp()),
     }
     await schedule_runs_collection.insert_one(run_doc)
@@ -207,7 +207,7 @@ async def test_get_schedule_run_integration(async_mongo_db_real):
     assert fetched is not None
     assert fetched["id"] == "test-schedule-run-1"
     assert fetched["schedule_id"] == "test-schedule-1"
-    assert fetched["status"] == "completed"
+    assert fetched["status"] == "success"
     assert "_id" not in fetched
 
 
