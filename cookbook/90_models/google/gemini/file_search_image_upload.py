@@ -86,11 +86,7 @@ print("=" * 60)
 # Configure model to use the multimodal store
 model.file_search_store_names = [store.name]
 
-# Note: For multimodal File Search, queries should describe the *visual content*
-# you expect to find (e.g., "mountain landscape", "product photo with red label",
-# "screenshot of a payment confirmation"). Generic meta-questions like "what's in
-# the uploaded document" tend to miss the embedding-based retrieval.
-run = agent.run("Describe the visual content. What do you see in the image?")
+run = agent.run("Write your query regarding the media?")
 print(f"\nResponse:\n{run.content}")
 
 # Display citations with media references
