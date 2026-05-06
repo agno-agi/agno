@@ -9,7 +9,6 @@ from functools import wraps
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlencode
 
-from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.oauth_state import sign_state, verify_state
 
@@ -237,8 +236,7 @@ def load_token(
     if required and not required.issubset(granted):
         missing = required - granted
         raise PermissionError(
-            f"Token missing required scopes: {', '.join(missing)}. "
-            "Please re-authenticate to grant access."
+            f"Token missing required scopes: {', '.join(missing)}. Please re-authenticate to grant access."
         )
 
     try:
@@ -295,8 +293,8 @@ def save_token(
     )
 
 
-class GoogleAuth(Toolkit):
-    """Central auth coordinator and token store for all Google toolkits.
+class GoogleAuth:
+    """OAuth coordinator for Google toolkits — NOT a Toolkit itself.
 
     Handles:
     - OAuth URL generation for interactive auth flows (Slack, etc.)
@@ -306,11 +304,11 @@ class GoogleAuth(Toolkit):
     Usage (cookbook — file-based, zero config):
         gmail = GmailTools()
 
-    Usage (interface — DB-backed via agent):
+    Usage (interface — client-side OAuth, opt-in):
         google_auth = GoogleAuth(client_id="...")
         gmail = GmailTools(google_auth=google_auth)
-        agent = Agent(db=PgDb(...), tools=[google_auth, gmail])
-        # agent.db is read per-call via framework injection (no toolkit mutation)
+        agent = Agent(db=PgDb(...), tools=[gmail])
+        # Framework auto-registers oauth_google tool for error-recovery
     """
 
     def __init__(
@@ -324,13 +322,12 @@ class GoogleAuth(Toolkit):
         include_granted_scopes: bool = False,
         encrypt_tokens: bool = False,
         token_encryption_key: Optional[str] = None,
-        **kwargs: Any,
+        # Enterprise OAuth parameters
+        hosted_domain: Optional[str] = None,
+        access_type: str = "offline",
+        prompt: str = "consent",
+        login_hint: Optional[str] = None,
     ):
-        super().__init__(
-            name="google_auth",
-            instructions="When any Google tool (Gmail, Calendar, Drive, Sheets) returns an authentication error, immediately call authenticate_google to get the OAuth URL for the user.",
-            **kwargs,
-        )
         self.client_id = client_id or os.getenv("GOOGLE_CLIENT_ID")
         self.client_secret = client_secret or os.getenv("GOOGLE_CLIENT_SECRET")
         self.redirect_uri = redirect_uri or os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8080/")
@@ -352,111 +349,16 @@ class GoogleAuth(Toolkit):
         self._token_encryption_key = (
             token_encryption_key or os.getenv("AGNO_ENCRYPTION_KEY") if encrypt_tokens else None
         )
-        self.register(self.authenticate_google)
+        # Enterprise OAuth parameters
+        self._hosted_domain = hosted_domain or os.getenv("GOOGLE_HOSTED_DOMAIN")
+        self._access_type = access_type
+        self._prompt = prompt
+        self._login_hint = login_hint
 
     def register_service(self, service: str, scopes: List[str]) -> None:
-        self._services[service] = scopes
-
-    def authenticate_google(
-        self,
-        run_context: Optional[Any] = None,
-        agent: Optional[Any] = None,
-    ) -> str:
-        """
-        Get the Google OAuth URL for the user to authenticate their Google account.
-
-        Automatically requests scopes for ALL registered Google toolkits (Gmail, Calendar,
-        Drive, etc.) so the user only needs to authenticate once.
-
-        Returns:
-            str: JSON string containing the OAuth URL or error message
-        """
-        if not self._services:
-            return json.dumps(
-                {"error": "No Google services registered. Add GmailTools, GoogleCalendarTools, etc. to your agent."}
-            )
-
-        services = list(self._services.keys())
-        scopes: Set[str] = set()
-        for service_scopes in self._services.values():
-            scopes.update(service_scopes)
-
-        if not self._state_secret:
-            return json.dumps(
-                {
-                    "error": "GoogleAuth requires a state signing secret. Set state_secret= on "
-                    "construction or the GOOGLE_OAUTH_STATE_SECRET environment variable."
-                }
-            )
-
-        # Resolve DB for PKCE state storage
-        db = _valid_auth_token_db(self._db) or _valid_auth_token_db(getattr(agent, "db", None) if agent else None)
-        if db is None:
-            return json.dumps(
-                {
-                    "error": "GoogleAuth requires a database for PKCE state storage. "
-                    "Pass db= to GoogleAuth or ensure agent.db is configured."
-                }
-            )
-
-        # PKCE: generate code_verifier (secret, stored in DB) and code_challenge (sent to Google)
-        code_verifier, code_challenge = _generate_pkce_pair()
-        # Unique state_id links the JWT to the DB row — verifier never leaves the server
-        state_id = secrets.token_urlsafe(16)
-
-        # Signed JWT carries user_id + state_id through Google redirect (NOT the verifier)
-        user_id = getattr(run_context, "user_id", None) if run_context else None
-        try:
-            state = sign_state(
-                {"user_id": user_id, "services": list(services), "state_id": state_id},
-                secret=self._state_secret,
-                ttl_seconds=self._state_ttl_seconds,
-            )
-        except ImportError:
-            return json.dumps(
-                {
-                    "error": "PyJWT is required for OAuth state signing. "
-                    "Install with `pip install PyJWT` or `pip install agno[os]`."
-                }
-            )
-
-        # Store PKCE state in DB — same row will hold the token after exchange
-        try:
-            db.upsert_auth_token(
-                {
-                    "provider": "google",
-                    "user_id": user_id,
-                    "service": "google",
-                    "token_data": {
-                        "pkce_verifier": code_verifier,
-                        "pkce_state_id": state_id,
-                        "pending": True,
-                    },
-                    "granted_scopes": list(scopes),
-                }
-            )
-        except Exception as e:
-            log_error(f"Failed to store PKCE state: {e}")
-            return json.dumps({"error": f"Failed to initialize OAuth flow: {e}"})
-
-        params = {
-            "client_id": self.client_id,
-            "redirect_uri": self.redirect_uri,
-            "scope": " ".join(scopes),
-            "response_type": "code",
-            "access_type": "offline",
-            "prompt": "consent",
-            "include_granted_scopes": "true" if self._include_granted_scopes else "false",
-            "state": state,
-            "code_challenge": code_challenge,
-            "code_challenge_method": "S256",
-        }
-        url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
-        log_debug(f"Generated PKCE OAuth URL for user={user_id}, state_id={state_id}")
-        link_text = f"Connect {', '.join(services)}"
-        # Pre-formatted link for Slack mrkdwn: <url|text>
-        slack_link = f"<{url}|{link_text}>"
-        return json.dumps({"message": link_text, "url": url, "link": slack_link})
+        # Union scopes if service already registered (multiple toolkits, different scopes)
+        existing = self._services.get(service, [])
+        self._services[service] = list(set(existing) | set(scopes))
 
     def handle_oauth_callback(self, code: str, state: str, db: Any) -> Dict[str, Any]:
         """Exchange an OAuth authorization code for credentials and store in DB.

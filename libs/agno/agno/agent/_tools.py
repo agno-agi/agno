@@ -43,6 +43,41 @@ from agno.utils.events import (
 from agno.utils.log import log_debug, log_warning
 
 
+def _wire_google_auth(
+    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]],
+) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
+    """Consolidate OAuth scopes across Google toolkits sharing the same coordinator.
+
+    Detects Google toolkits with `google_auth=` set and registers each toolkit's
+    scopes with its GoogleAuth coordinator. This ensures a single OAuth consent
+    covers all services when the user authenticates.
+
+    Does NOT auto-register any LLM tools. Users must explicitly add
+    GoogleOAuthTools to their agent's tools list if they want oauth_google callable.
+    """
+    if tools is None:
+        return tools
+
+    # Lazy import to avoid circular dependency
+    try:
+        from agno.tools.google.base import GoogleToolkit
+    except ImportError:
+        return tools
+
+    # Register each Google toolkit's scopes with its coordinator
+    for t in tools:
+        if isinstance(t, GoogleToolkit):
+            ga = getattr(t, "google_auth", None)
+            if ga is not None:
+                service_name = getattr(t, "google_service_name", None)
+                scopes = getattr(t, "scopes", None)
+                if service_name and scopes:
+                    ga.register_service(service_name, scopes)
+                    log_debug(f"Registered {service_name} scopes with GoogleAuth coordinator")
+
+    return tools
+
+
 def raise_if_async_tools(agent: Agent) -> None:
     """Raise an exception if any tools contain async functions."""
     if agent.tools is None:
@@ -125,6 +160,9 @@ def get_tools(
 
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
+
+    # Auto-register oauth_google when Google toolkits have client-side OAuth enabled
+    resolved_tools = _wire_google_auth(resolved_tools)
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
@@ -229,6 +267,9 @@ async def aget_tools(
 
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
+
+    # Auto-register oauth_google when Google toolkits have client-side OAuth enabled
+    resolved_tools = _wire_google_auth(resolved_tools)
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
