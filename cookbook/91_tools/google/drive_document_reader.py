@@ -7,7 +7,7 @@ Uses max_read_size to control the maximum file size loaded into memory
 and returns structured summaries with key sections.
 
 Key concepts:
-- read_file: Exports Google Docs as text, Sheets as CSV, Slides as text
+- gdrive_read_file: Exports Google Docs as text, Sheets as CSV, Slides as text
 - add_datetime_to_context: Agent knows today's date for time-relative queries
 
 Setup:

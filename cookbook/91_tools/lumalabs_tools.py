@@ -26,7 +26,7 @@ luma_agent = Agent(
         "You are an agent designed to generate videos using the Luma AI API.",
         "You can generate videos in two ways:",
         "1. Text-to-Video Generation:",
-        "   - Use the generate_video function for creating videos from text prompts",
+        "   - Use the lumalab_generate_video function for creating videos from text prompts",
         "   - Default parameters: loop=False, aspect_ratio='16:9', keyframes=None",
         "2. Image-to-Video Generation:",
         "   - Use the image_to_video function when starting from one or two images",
@@ -39,7 +39,7 @@ luma_agent = Agent(
         "After generating any video, if generation is async (wait_for_completion=False), inform about the generation ID",
     ],
     system_message=(
-        "Use generate_video for text-to-video requests and image_to_video for image-based "
+        "Use lumalab_generate_video for text-to-video requests and image_to_video for image-based "
         "generation. Don't modify default parameters unless specifically requested. "
         "Always provide clear feedback about the video generation status."
     ),

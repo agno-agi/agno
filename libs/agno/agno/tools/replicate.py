@@ -34,11 +34,11 @@ class ReplicateTools(Toolkit):
 
         tools: List[Any] = []
         if all or enable_generate_media:
-            tools.append(self.generate_media)
+            tools.append(self.replicate_generate_media)
 
         super().__init__(name="replicate_toolkit", tools=tools, **kwargs)
 
-    def generate_media(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
+    def replicate_generate_media(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
         """
         Use this function to generate an image or a video using a replicate model.
         Args:

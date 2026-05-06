@@ -115,7 +115,7 @@ Analyze current market sentiment around AI stocks:
 3. Provide outlook for AI sector investing
 
 5. EARNINGS SEASON ANALYSIS:
-Prepare for upcoming earnings season - analyze Microsoft (MSFT):
+Prepare for upcoming earnings season - reasoning_analyze Microsoft (MSFT):
 1. Get current financial metrics and analyst expectations
 2. Research recent news and market sentiment
 3. Calculate historical earnings impact on stock price

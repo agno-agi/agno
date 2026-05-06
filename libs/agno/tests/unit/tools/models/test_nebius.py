@@ -130,7 +130,7 @@ def test_get_client_lazy_initialization():
         mock_nebius_instance.get_client.assert_called_once()
 
 
-# Test generate_image method
+# Test nebius_generate_image method
 def test_generate_image_success(mock_nebius_tools, mock_agent, mock_successful_response):
     """Test successful image generation."""
     mock_client = mock_nebius_tools._get_client()
@@ -139,7 +139,7 @@ def test_generate_image_success(mock_nebius_tools, mock_agent, mock_successful_r
     with patch("agno.tools.models.nebius.uuid4", return_value=UUID("12345678-1234-5678-1234-567812345678")):
         prompt = "A picture of a cat"
 
-        result = mock_nebius_tools.generate_image(mock_agent, prompt)
+        result = mock_nebius_tools.nebius_generate_image(mock_agent, prompt)
 
         # Check that it returns a ToolResult
         assert isinstance(result, ToolResult)
@@ -171,7 +171,7 @@ def test_generate_image_no_data(mock_nebius_tools, mock_agent, mock_failed_respo
 
     prompt = "A picture of a cat"
 
-    result = mock_nebius_tools.generate_image(mock_agent, prompt)
+    result = mock_nebius_tools.nebius_generate_image(mock_agent, prompt)
 
     # Check that it returns a ToolResult with error
     assert isinstance(result, ToolResult)
@@ -189,7 +189,7 @@ def test_generate_image_api_error(mock_nebius_tools, mock_agent):
 
     prompt = "A picture of a cat"
 
-    result = mock_nebius_tools.generate_image(mock_agent, prompt)
+    result = mock_nebius_tools.nebius_generate_image(mock_agent, prompt)
 
     expected_error = f"Failed to generate image: {error_message}"
 
@@ -234,7 +234,7 @@ def test_generate_image_with_custom_params():
         prompt = "A picture of a dog"
 
         with patch("agno.tools.models.nebius.uuid4", return_value=UUID("12345678-1234-5678-1234-567812345678")):
-            result = nebius_tools.generate_image(mock_agent, prompt)
+            result = nebius_tools.nebius_generate_image(mock_agent, prompt)
 
             # Check that it returns a ToolResult
             assert isinstance(result, ToolResult)

@@ -31,7 +31,7 @@ video_agent = Agent(
     tools=[FalTools(model="fal-ai/hunyuan-video")],
     instructions=[
         "You are a video generation assistant on WhatsApp.",
-        "When the user describes a scene, use the generate_media tool to create a short video.",
+        "When the user describes a scene, use the fal_generate_media tool to create a short video.",
         "After generating, briefly describe what was created.",
         "Keep messages short and conversational.",
     ],

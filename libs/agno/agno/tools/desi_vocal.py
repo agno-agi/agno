@@ -30,13 +30,13 @@ class DesiVocalTools(Toolkit):
 
         tools: List[Any] = []
         if all or enable_get_voices:
-            tools.append(self.get_voices)
+            tools.append(self.desi_vocal_get_voices)
         if all or enable_text_to_speech:
-            tools.append(self.text_to_speech)
+            tools.append(self.desi_vocal_text_to_speech)
 
         super().__init__(name="desi_vocal_tools", tools=tools, **kwargs)
 
-    def get_voices(self) -> str:
+    def desi_vocal_get_voices(self) -> str:
         """
         Use this function to get all the voices available.
         Returns:
@@ -69,7 +69,9 @@ class DesiVocalTools(Toolkit):
             logger.exception("Failed to get voices")
             return f"Error: {e}"
 
-    def text_to_speech(self, agent: Union[Agent, Team], prompt: str, voice_id: Optional[str] = None) -> ToolResult:
+    def desi_vocal_text_to_speech(
+        self, agent: Union[Agent, Team], prompt: str, voice_id: Optional[str] = None
+    ) -> ToolResult:
         """
         Use this function to generate audio from text.
         Args:

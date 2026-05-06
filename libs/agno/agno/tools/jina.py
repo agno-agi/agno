@@ -43,13 +43,13 @@ class JinaReaderTools(Toolkit):
 
         tools: List[Any] = []
         if all or enable_read_url:
-            tools.append(self.read_url)
+            tools.append(self.jina_read_url)
         if all or enable_search_query:
             tools.append(self.search_query)
 
         super().__init__(name="jina_reader_tools", tools=tools, **kwargs)
 
-    def read_url(self, url: str) -> str:
+    def jina_read_url(self, url: str) -> str:
         """Reads a URL and returns the truncated content using Jina Reader API."""
         full_url = f"{self.config.base_url}{url}"
         try:

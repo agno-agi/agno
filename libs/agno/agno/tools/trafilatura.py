@@ -102,7 +102,7 @@ class TrafilaturaTools(Toolkit):
             if not SPIDER_AVAILABLE:
                 logger.warning("Web crawling requested but spider module not available. Skipping crawler tool.")
             else:
-                tools.append(self.crawl_website)
+                tools.append(self.trafilatura_crawl_website)
 
         super().__init__(name="trafilatura_tools", tools=tools, **kwargs)
 
@@ -229,7 +229,7 @@ class TrafilaturaTools(Toolkit):
             log_warning(f"Error extracting metadata from {url}: {str(e)}")
             return f"Error extracting metadata from {url}: {e}"
 
-    def crawl_website(
+    def trafilatura_crawl_website(
         self,
         homepage_url: str,
         extract_content: bool = False,

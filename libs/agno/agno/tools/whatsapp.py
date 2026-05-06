@@ -78,7 +78,7 @@ class WhatsAppTools(Toolkit):
         if enable_send_image or all:
             tools.append(self.send_image)
         if enable_send_document or all:
-            tools.append(self.send_document)
+            tools.append(self.whatsapp_send_document)
         if enable_send_location or all:
             tools.append(self.send_location)
         if enable_send_reaction or all:
@@ -365,7 +365,7 @@ class WhatsAppTools(Toolkit):
             logger.exception("Error sending image")
             raise
 
-    def send_document(
+    def whatsapp_send_document(
         self,
         recipient: Optional[str] = None,
         document_url: Optional[str] = None,

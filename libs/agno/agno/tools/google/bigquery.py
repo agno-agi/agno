@@ -27,9 +27,9 @@ class GoogleBigQueryTools(Toolkit):
         project: Optional[str] = None,
         location: Optional[str] = None,
         credentials: Optional[Any] = None,
-        list_tables: bool = True,
-        describe_table: bool = True,
-        run_sql_query: bool = True,
+        bigquery_list_tables: bool = True,
+        bigquery_describe_table: bool = True,
+        bigquery_run_sql_query: bool = True,
         # Backward compat aliases (deprecated)
         enable_list_tables: Optional[bool] = None,
         enable_describe_table: Optional[bool] = None,
@@ -48,31 +48,31 @@ class GoogleBigQueryTools(Toolkit):
         self.dataset = dataset
 
         # Resolve deprecated aliases: explicit deprecated flag overrides new flag
-        _list_tables = enable_list_tables if enable_list_tables is not None else list_tables
-        _describe_table = enable_describe_table if enable_describe_table is not None else describe_table
-        _run_sql_query = enable_run_sql_query if enable_run_sql_query is not None else run_sql_query
+        _list_tables = enable_list_tables if enable_list_tables is not None else bigquery_list_tables
+        _describe_table = enable_describe_table if enable_describe_table is not None else bigquery_describe_table
+        _run_sql_query = enable_run_sql_query if enable_run_sql_query is not None else bigquery_run_sql_query
 
         # Initialize the BQ CLient
         self.client = bigquery.Client(project=self.project, credentials=credentials)
 
         tools: List[Any] = []
         if all or _list_tables:
-            tools.append(self.list_tables)
+            tools.append(self.bigquery_list_tables)
         if all or _describe_table:
-            tools.append(self.describe_table)
+            tools.append(self.bigquery_describe_table)
         if all or _run_sql_query:
-            tools.append(self.run_sql_query)
+            tools.append(self.bigquery_run_sql_query)
 
         super().__init__(name="google_bigquery_tools", tools=tools, **kwargs)
 
-    def list_tables(self) -> str:
+    def bigquery_list_tables(self) -> str:
         """Use this function to get a list of table names in the dataset.
         Returns:
             str: list of tables in the dataset.
         """
         try:
             log_debug("listing tables in the database")
-            tables = self.client.list_tables(self.dataset)
+            tables = self.client.bigquery_list_tables(self.dataset)
             tables_str = str([table.table_id for table in tables])
             log_debug(f"table_names: {tables_str}")
             return tables_str
@@ -80,7 +80,7 @@ class GoogleBigQueryTools(Toolkit):
             logger.exception("Error getting tables")
             return f"Error getting tables: {e}"
 
-    def describe_table(self, table_id: str) -> str:
+    def bigquery_describe_table(self, table_id: str) -> str:
         """Use this function to describe a table.
         Args:
             table_name (str): The name of the table to get the schema for.
@@ -100,7 +100,7 @@ class GoogleBigQueryTools(Toolkit):
             logger.exception("Error getting table schema")
             return f"Error getting table schema: {e}"
 
-    def run_sql_query(self, query: str) -> str:
+    def bigquery_run_sql_query(self, query: str) -> str:
         """Use this function to run a BigQuery SQL query and return the result.
         Args:
             query (str): The query to run.

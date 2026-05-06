@@ -57,7 +57,7 @@ if __name__ == "__main__":
         description="An AI assistant that uses standard OpenAI for chat and Azure OpenAI for image generation",
         instructions=[
             "You are an AI artist specializing in creating images based on user descriptions.",
-            "Use the generate_image tool to create detailed visualizations of user requests.",
+            "Use the azure_openai_generate_image tool to create detailed visualizations of user requests.",
             "Provide creative suggestions to enhance the images if needed.",
         ],
         debug_mode=True,
@@ -95,7 +95,7 @@ if __name__ == "__main__":
         description="An AI assistant that uses Azure OpenAI for both chat and image generation",
         instructions=[
             "You are an AI artist specializing in creating images based on user descriptions.",
-            "Use the generate_image tool to create detailed visualizations of user requests.",
+            "Use the azure_openai_generate_image tool to create detailed visualizations of user requests.",
             "Provide creative suggestions to enhance the images if needed.",
         ],
     )

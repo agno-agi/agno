@@ -26,11 +26,11 @@ class ResendTools(Toolkit):
 
         tools: List[Any] = []
         if all or enable_send_email:
-            tools.append(self.send_email)
+            tools.append(self.resend_send_email)
 
         super().__init__(name="resend_tools", tools=tools, **kwargs)
 
-    def send_email(self, to_email: str, subject: str, body: str) -> str:
+    def resend_send_email(self, to_email: str, subject: str, body: str) -> str:
         """Send an email using the Resend API. Returns if the email was sent successfully or an error message.
 
         :to_email: The email address to send the email to.

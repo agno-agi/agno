@@ -175,7 +175,7 @@ def test_enable_search_only():
         tools = WebSearchTools(enable_search=True, enable_news=False)
         tool_names = [t.__name__ for t in tools.tools]
         assert "web_search" in tool_names
-        assert "search_news" not in tool_names
+        assert "web_search_news" not in tool_names
 
 
 def test_enable_news_only():
@@ -184,7 +184,7 @@ def test_enable_news_only():
         tools = WebSearchTools(enable_search=False, enable_news=True)
         tool_names = [t.__name__ for t in tools.tools]
         assert "web_search" not in tool_names
-        assert "search_news" in tool_names
+        assert "web_search_news" in tool_names
 
 
 def test_enable_both():
@@ -193,7 +193,7 @@ def test_enable_both():
         tools = WebSearchTools(enable_search=True, enable_news=True)
         tool_names = [t.__name__ for t in tools.tools]
         assert "web_search" in tool_names
-        assert "search_news" in tool_names
+        assert "web_search_news" in tool_names
 
 
 def test_disable_both():
@@ -331,7 +331,7 @@ def test_search_news_basic(mock_ddgs):
     ]
 
     tools = WebSearchTools()
-    result = tools.search_news("breaking news")
+    result = tools.web_search_news("breaking news")
     result_data = json.loads(result)
 
     assert len(result_data) == 1
@@ -345,7 +345,7 @@ def test_search_news_with_timelimit(mock_ddgs):
     mock_instance.news.return_value = []
 
     tools = WebSearchTools(timelimit="d")
-    tools.search_news("test news")
+    tools.web_search_news("test news")
 
     mock_instance.news.assert_called_once_with(query="test news", max_results=5, backend="auto", timelimit="d")
 
@@ -356,7 +356,7 @@ def test_search_news_with_region(mock_ddgs):
     mock_instance.news.return_value = []
 
     tools = WebSearchTools(region="de-de")
-    tools.search_news("test news")
+    tools.web_search_news("test news")
 
     mock_instance.news.assert_called_once_with(query="test news", max_results=5, backend="auto", region="de-de")
 
@@ -367,7 +367,7 @@ def test_search_news_with_fixed_max_results(mock_ddgs):
     mock_instance.news.return_value = []
 
     tools = WebSearchTools(fixed_max_results=3)
-    tools.search_news("test", max_results=10)  # Should use 3, not 10
+    tools.web_search_news("test", max_results=10)  # Should use 3, not 10
 
     mock_instance.news.assert_called_once_with(query="test", max_results=3, backend="auto")
 
@@ -385,7 +385,7 @@ def test_search_news_with_all_params(mock_ddgs):
         region="fr-fr",
         fixed_max_results=8,
     )
-    result = tools.search_news("technology")
+    result = tools.web_search_news("technology")
     result_data = json.loads(result)
 
     assert len(result_data) == 1
@@ -613,14 +613,14 @@ def test_web_search_returns_json(mock_ddgs):
 
 
 def test_search_news_returns_json(mock_ddgs):
-    """Test that search_news returns valid JSON."""
+    """Test that web_search_news returns valid JSON."""
     mock_instance, _ = mock_ddgs
     mock_instance.news.return_value = [
         {"title": "News", "url": "https://news.com", "body": "News body"},
     ]
 
     tools = WebSearchTools()
-    result = tools.search_news("test")
+    result = tools.web_search_news("test")
 
     # Should be valid JSON
     parsed = json.loads(result)
@@ -641,12 +641,12 @@ def test_web_search_empty_results(mock_ddgs):
 
 
 def test_search_news_empty_results(mock_ddgs):
-    """Test search_news with empty results."""
+    """Test web_search_news with empty results."""
     mock_instance, _ = mock_ddgs
     mock_instance.news.return_value = []
 
     tools = WebSearchTools()
-    result = tools.search_news("nonexistent news")
+    result = tools.web_search_news("nonexistent news")
 
     parsed = json.loads(result)
     assert parsed == []

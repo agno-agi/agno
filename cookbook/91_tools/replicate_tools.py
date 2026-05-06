@@ -23,7 +23,7 @@ image_agent = Agent(
     tools=[ReplicateTools(model="luma/photon-flash", enable_generate_media=True)],
     description="You are an AI agent that can generate images using the Replicate API.",
     instructions=[
-        "When the user asks you to create an image, use the `generate_media` tool to create the image.",
+        "When the user asks you to create an image, use the `replicate_generate_media` tool to create the image.",
         "Return the URL as raw to the user.",
         "Don't convert image URL to markdown or anything else.",
     ],

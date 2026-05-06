@@ -33,11 +33,11 @@ class GroqTools(Toolkit):
     ):
         tools: List[Any] = []
         if all or enable_transcribe_audio:
-            tools.append(self.transcribe_audio)
+            tools.append(self.groq_transcribe_audio)
         if all or enable_translate_audio:
             tools.append(self.translate_audio)
         if all or enable_generate_speech:
-            tools.append(self.generate_speech)
+            tools.append(self.groq_generate_speech)
 
         super().__init__(name="groq_tools", tools=tools, **kwargs)
 
@@ -52,7 +52,7 @@ class GroqTools(Toolkit):
         self.tts_voice = tts_voice
         self.tts_format = "wav"
 
-    def transcribe_audio(self, audio_source: str) -> str:
+    def groq_transcribe_audio(self, audio_source: str) -> str:
         """Transcribe audio file or URL using Groq's Whisper API.
         Args:
             audio_source: Path to the local audio file or a publicly accessible URL to the audio.
@@ -115,7 +115,7 @@ class GroqTools(Toolkit):
             log_error(f"Failed to translate audio source '{audio_source}' with Groq: {str(e)}")
             return f"Failed to translate audio source '{audio_source}' with Groq: {str(e)}"
 
-    def generate_speech(
+    def groq_generate_speech(
         self,
         agent: Agent,
         text_input: str,

@@ -45,7 +45,7 @@ media_agent = Agent(
     instructions=[
         "You are a helpful multimedia assistant on Telegram.",
         "When asked to generate, create, or draw an image, use the DALL-E tool.",
-        "When asked to speak, read aloud, or convert text to speech, use the ElevenLabs text_to_speech tool.",
+        "When asked to speak, read aloud, or convert text to speech, use the ElevenLabs elevenlabs_text_to_speech tool.",
         "When asked for a sound effect, use the ElevenLabs generate_sound_effect tool.",
         "Keep text responses concise and friendly.",
         "You can also analyze images, audio, and video that users send you.",

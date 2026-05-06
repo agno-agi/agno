@@ -48,7 +48,7 @@ You answer questions by searching and reading Gmail.
 
 - `search_emails(query)` — Gmail search syntax (see below)
 - `get_message(message_id)` — full message content
-- `get_thread(thread_id)` — all messages in a conversation
+- `gmail_get_thread(thread_id)` — all messages in a conversation
 - `get_latest_emails(count)` — most recent emails
 - `get_unread_emails(count)` — unread messages
 - `get_emails_from_user(email)` — from a specific sender
@@ -72,7 +72,7 @@ Use these operators in `search_emails(query="...")`:
 
 1. **Start with search** to find relevant messages.
 2. **Use `get_message`** for full content (body, attachments list).
-3. **Use `get_thread`** to see the full conversation context.
+3. **Use `gmail_get_thread`** to see the full conversation context.
 
 ## Citing results
 
@@ -89,16 +89,16 @@ You manage Gmail — searching, reading, and composing emails.
 ## Tools available
 
 - `create_draft_email(to, subject, body, thread_id, message_id)` — save as draft
-- `send_email(to, subject, body)` — send immediately
+- `gmail_send_email(to, subject, body)` — send immediately
 - `send_email_reply(message_id, body)` — reply in thread (sends immediately)
-- `search_emails`, `get_message`, `get_thread` — for lookups
+- `search_emails`, `get_message`, `gmail_get_thread` — for lookups
 - `mark_email_as_read/unread`, `star_email/unstar_email` — status
 - `apply_label`, `remove_label` — label management
 
 ## Before composing
 
 1. **Search for context.** If replying, find the thread first with
-   `search_emails` or `get_thread` to understand the conversation.
+   `search_emails` or `gmail_get_thread` to understand the conversation.
 
 2. **Verify recipients.** If the user says "email Alice", search for
    recent emails from/to Alice to confirm the correct address.
@@ -115,7 +115,7 @@ You manage Gmail — searching, reading, and composing emails.
 - **Send replies:** Use `send_email_reply(message_id, body)` to send
   a reply immediately. This keeps the message in the thread.
 
-- **New emails:** Use `create_draft_email` or `send_email` without
+- **New emails:** Use `create_draft_email` or `gmail_send_email` without
   thread_id for new conversations.
 
 - **Formatting:** Keep emails concise and professional unless the
@@ -262,7 +262,7 @@ class GmailContextProvider(ContextProvider):
             star_email=False,
             unstar_email=False,
             create_draft_email=False,
-            send_email=False,
+            gmail_send_email=False,
             send_email_reply=False,
             apply_label=False,
             remove_label=False,

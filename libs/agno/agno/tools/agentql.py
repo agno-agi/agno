@@ -29,7 +29,7 @@ class AgentQLTools(Toolkit):
 
         tools: List[Any] = []
         if all or enable_scrape_website:
-            tools.append(self.scrape_website)
+            tools.append(self.agentql_scrape_website)
         if all or enable_custom_scrape_website or (agentql_query and not all and not enable_custom_scrape_website):
             if agentql_query:
                 log_info("Custom AgentQL query provided. Registering custom scrape function.")
@@ -37,7 +37,7 @@ class AgentQLTools(Toolkit):
 
         super().__init__(name="agentql_tools", tools=tools, **kwargs)
 
-    def scrape_website(self, url: str) -> str:
+    def agentql_scrape_website(self, url: str) -> str:
         """
         Scrape all text content from a website using AgentQL.
 

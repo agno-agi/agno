@@ -64,8 +64,8 @@ class FilesystemContextProvider(ContextProvider):
     def instructions(self) -> str:
         if self.mode == ContextMode.tools:
             return (
-                f"`{self.name}`: browse files under {self.root}. Use `list_files` / `search_files` "
-                "(glob) / `search_content` (text search) / `read_file` / `read_file_chunk`. "
+                f"`{self.name}`: browse files under {self.root}. Use `file_list` / `file_search` "
+                "(glob) / `search_content` (text search) / `file_read` / `read_file_chunk`. "
                 "Paths are relative to the root."
             )
         return f"`{self.name}`: call `{self.query_tool_name}(question)` to query files under {self.root}."
@@ -75,7 +75,7 @@ class FilesystemContextProvider(ContextProvider):
     # ------------------------------------------------------------------
 
     # Wrap in a `query_fs` sub-agent because `FileTools` exposes
-    # `list_files` / `search_files` / `read_file` — names that collide with
+    # `file_list` / `file_search` / `file_read` — names that collide with
     # other file-like toolkits, and agno's tool resolver dedupes by name
     # across the whole list (silently dropping the second toolkit).
     # mode=tools only works when FS is the sole file-like provider.
@@ -124,10 +124,10 @@ DEFAULT_FS_INSTRUCTIONS = """\
 You answer questions by browsing files under {root}.
 
 Workflow:
-1. **Start broad.** `list_files` to see what's available, or `search_files`
+1. **Start broad.** `file_list` to see what's available, or `file_search`
    with a glob (`**/*.py`, `docs/*`) to narrow.
 2. **Find content.** `search_content(query)` surfaces files whose text matches.
-3. **Read only what you need.** `read_file` for small files, `read_file_chunk`
+3. **Read only what you need.** `file_read` for small files, `read_file_chunk`
    for large ones.
 4. **Cite the paths.** Every claim points to a file path relative to the
    root. When quoting, use the exact text from the file — don't paraphrase.

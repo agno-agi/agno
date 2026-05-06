@@ -164,7 +164,7 @@ class GmailTools(Toolkit):
         archive_email: bool = False,
         # Composing
         create_draft_email: bool = True,
-        send_email: bool = True,
+        gmail_send_email: bool = True,
         send_email_reply: bool = True,
         # Labels
         list_custom_labels: bool = True,
@@ -173,7 +173,7 @@ class GmailTools(Toolkit):
         delete_custom_label: bool = True,
         # Thread & message tools
         get_message: bool = True,
-        get_thread: bool = True,
+        gmail_get_thread: bool = True,
         search_threads: bool = True,
         modify_thread_labels: bool = False,
         trash_thread: bool = False,
@@ -181,7 +181,7 @@ class GmailTools(Toolkit):
         list_drafts: bool = True,
         send_draft: bool = False,
         update_draft: bool = True,
-        list_labels: bool = False,
+        gmail_list_labels: bool = False,
         modify_message_labels: bool = False,
         trash_message: bool = False,
         download_attachment: bool = False,
@@ -209,7 +209,7 @@ class GmailTools(Toolkit):
             add_instructions (bool): Whether to inject toolkit instructions into the agent system prompt. Defaults to True.
         """
         # Build instructions dynamically based on enabled tools
-        has_compose = create_draft_email or send_email or send_email_reply or send_draft or update_draft
+        has_compose = create_draft_email or gmail_send_email or send_email_reply or send_draft or update_draft
         if instructions is None:
             self.instructions = GMAIL_QUERY_INSTRUCTIONS
             if has_compose:
@@ -265,8 +265,8 @@ class GmailTools(Toolkit):
         # Composing emails
         if create_draft_email:
             tools.append(self.create_draft_email)
-        if send_email:
-            tools.append(self.send_email)
+        if gmail_send_email:
+            tools.append(self.gmail_send_email)
         if send_email_reply:
             tools.append(self.send_email_reply)
         # Label management
@@ -281,8 +281,8 @@ class GmailTools(Toolkit):
         # Thread & message tools
         if get_message:
             tools.append(self.get_message)
-        if get_thread:
-            tools.append(self.get_thread)
+        if gmail_get_thread:
+            tools.append(self.gmail_get_thread)
         if search_threads:
             tools.append(self.search_threads)
         if modify_thread_labels:
@@ -297,8 +297,8 @@ class GmailTools(Toolkit):
             tools.append(self.send_draft)
         if update_draft:
             tools.append(self.update_draft)
-        if list_labels:
-            tools.append(self.list_labels)
+        if gmail_list_labels:
+            tools.append(self.gmail_list_labels)
         if modify_message_labels:
             tools.append(self.modify_message_labels)
         if trash_message:
@@ -315,7 +315,7 @@ class GmailTools(Toolkit):
         )
 
         # Validate that required scopes are present for requested operations (only check registered functions)
-        compose_tools = {"create_draft_email", "send_email", "send_email_reply", "send_draft", "update_draft"}
+        compose_tools = {"create_draft_email", "gmail_send_email", "send_email_reply", "send_draft", "update_draft"}
         if any(t in self.functions for t in compose_tools):
             if "https://www.googleapis.com/auth/gmail.compose" not in self.scopes:
                 raise ValueError(
@@ -333,9 +333,9 @@ class GmailTools(Toolkit):
             "search_emails",
             "list_custom_labels",
             "get_message",
-            "get_thread",
+            "gmail_get_thread",
             "search_threads",
-            "list_labels",
+            "gmail_list_labels",
             "get_draft",
             "list_drafts",
             "download_attachment",
@@ -679,7 +679,7 @@ class GmailTools(Toolkit):
             return f"Error creating draft: {type(error).__name__}: {error}"
 
     @authenticate
-    def send_email(
+    def gmail_send_email(
         self,
         to: str,
         subject: str,
@@ -1443,7 +1443,7 @@ class GmailTools(Toolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def get_thread(self, thread_id: str) -> str:
+    def gmail_get_thread(self, thread_id: str) -> str:
         """Get all messages in a Gmail thread as structured JSON.
 
         Args:
@@ -1704,7 +1704,7 @@ class GmailTools(Toolkit):
             return json.dumps({"error": f"{type(e).__name__}: {e}"})
 
     @authenticate
-    def list_labels(self) -> str:
+    def gmail_list_labels(self) -> str:
         """List all Gmail labels (system and custom) with message and thread counts.
 
         Returns:

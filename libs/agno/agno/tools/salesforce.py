@@ -106,7 +106,7 @@ class SalesforceTools(Toolkit):
         if all or enable_query:
             tools.append(self.query)
         if all or enable_search:
-            tools.append(self.search)
+            tools.append(self.salesforce_search)
         if all or enable_create_record:
             tools.append(self.create_record)
         if all or enable_update_record:
@@ -293,21 +293,21 @@ class SalesforceTools(Toolkit):
             logger.exception("Error executing SOQL query")
             return json.dumps({"error": str(e)})
 
-    def search(self, sosl: str) -> str:
+    def salesforce_search(self, sosl: str) -> str:
         """
-        Execute a SOSL full-text search across Salesforce objects.
+        Execute a SOSL full-text salesforce_search across Salesforce objects.
 
         Args:
-            sosl: The SOSL search string.
+            sosl: The SOSL salesforce_search string.
         """
         try:
-            result = self.sf.search(sosl)
+            result = self.sf.salesforce_search(sosl)
             records = result.get("searchRecords", []) if isinstance(result, dict) else []
             if len(records) > self.max_records:
                 result["searchRecords"] = records[: self.max_records]
             return json.dumps(result)
         except Exception as e:
-            logger.exception("Error executing SOSL search")
+            logger.exception("Error executing SOSL salesforce_search")
             return json.dumps({"error": str(e)})
 
     def get_report(self, report_id: str) -> str:

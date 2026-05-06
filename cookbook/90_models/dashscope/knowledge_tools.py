@@ -1,5 +1,5 @@
 """
-Here is a tool with reasoning capabilities to allow agents to search and analyze information from a knowledge base.
+Here is a tool with reasoning capabilities to allow agents to search and knowledge_analyze information from a knowledge base.
 
 1. Run: `uv pip install openai agno lancedb tantivy sqlalchemy` to install the dependencies
 2. Export your OPENAI_API_KEY

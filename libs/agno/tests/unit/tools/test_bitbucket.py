@@ -331,11 +331,11 @@ class TestBitbucketTools:
 
     @patch.object(BitbucketTools, "_make_request")
     def test_list_issues_success(self, mock_request, bitbucket_tools):
-        """Test list_issues method success."""
+        """Test bitbucket_list_issues method success."""
         mock_response = {"values": [{"id": 1, "title": "Issue 1"}, {"id": 2, "title": "Issue 2"}]}
         mock_request.return_value = mock_response
 
-        result = bitbucket_tools.list_issues(count=10)
+        result = bitbucket_tools.bitbucket_list_issues(count=10)
 
         assert isinstance(result, str)
         result_data = json.loads(result)
@@ -346,11 +346,11 @@ class TestBitbucketTools:
 
     @patch.object(BitbucketTools, "_make_request")
     def test_list_issues_max_count(self, mock_request, bitbucket_tools):
-        """Test list_issues respects maximum count of 50."""
+        """Test bitbucket_list_issues respects maximum count of 50."""
         mock_response = {"values": []}
         mock_request.return_value = mock_response
 
-        bitbucket_tools.list_issues(count=100)
+        bitbucket_tools.bitbucket_list_issues(count=100)
 
         # Should be limited to 50
         mock_request.assert_called_once_with(
@@ -381,7 +381,7 @@ class TestBitbucketTools:
         assert hasattr(bitbucket_tools, "list_all_pull_requests")
         assert hasattr(bitbucket_tools, "get_pull_request_details")
         assert hasattr(bitbucket_tools, "get_pull_request_changes")
-        assert hasattr(bitbucket_tools, "list_issues")
+        assert hasattr(bitbucket_tools, "bitbucket_list_issues")
 
     @patch.object(BitbucketTools, "_make_request")
     def test_error_handling_returns_json_error(self, mock_request, bitbucket_tools):

@@ -108,7 +108,7 @@ class DatabaseContextProvider(ContextProvider):
     def instructions(self) -> str:
         scope = f" in the `{self.schema}` schema" if self.schema else ""
         if self.mode == ContextMode.tools:
-            return f"`{self.name}`: read-only `run_sql_query`{scope}. Writes require mode=default (two-tool surface)."
+            return f"`{self.name}`: read-only `sql_query`{scope}. Writes require mode=default (two-tool surface)."
         return (
             f"`{self.name}`: call `{self.query_tool_name}(question)` to read data{scope}, "
             f"or `{self.update_tool_name}(instruction)` to modify it."

@@ -62,11 +62,11 @@ class NanoBananaTools(Toolkit):
 
         tools: List[Any] = []
         if enable_create_image:
-            tools.append(self.create_image)
+            tools.append(self.nano_banana_create_image)
 
         super().__init__(name="nano_banana", tools=tools, **kwargs)
 
-    def create_image(self, prompt: str) -> ToolResult:
+    def nano_banana_create_image(self, prompt: str) -> ToolResult:
         """Generate an image from a text prompt."""
         try:
             client = genai.Client(api_key=self.api_key)

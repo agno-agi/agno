@@ -14,7 +14,7 @@ except ImportError:
 class PerplexitySearch(Toolkit):
     """
     PerplexitySearch is a toolkit for the Perplexity Search API,
-    providing raw ranked web search results with filtering and
+    providing raw ranked web perplexity_search results with filtering and
     content extraction.
 
     Args:
@@ -52,21 +52,21 @@ class PerplexitySearch(Toolkit):
 
         super().__init__(
             name="perplexity_search",
-            tools=[self.search],
-            async_tools=[(self.asearch, "search")],
+            tools=[self.perplexity_search],
+            async_tools=[(self.aperplexity_search, "perplexity_search")],
             **kwargs,
         )
 
-    def search(self, query: str, max_results: Optional[int] = None) -> str:
-        """Use this function to search the web using the Perplexity Search API.
-        Returns ranked web search results with titles, URLs, snippets, and dates.
+    def perplexity_search(self, query: str, max_results: Optional[int] = None) -> str:
+        """Use this function to perplexity_search the web using the Perplexity Search API.
+        Returns ranked web perplexity_search results with titles, URLs, snippets, and dates.
 
         Args:
-            query (str): The search query.
+            query (str): The perplexity_search query.
             max_results (int, optional): Number of results to return. Defaults to instance setting.
 
         Returns:
-            str: JSON string of search results with url, title, snippet, and date fields.
+            str: JSON string of perplexity_search results with url, title, snippet, and date fields.
         """
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -88,7 +88,7 @@ class PerplexitySearch(Toolkit):
 
         try:
             response = httpx.post(
-                f"{self.base_url}/search",
+                f"{self.base_url}/perplexity_search",
                 headers=headers,
                 json=body,
                 timeout=30.0,
@@ -113,19 +113,19 @@ class PerplexitySearch(Toolkit):
             return parsed
 
         except Exception as e:
-            logger.exception("Perplexity search failed")
+            logger.exception("Perplexity perplexity_search failed")
             return json.dumps({"error": str(e)})
 
-    async def asearch(self, query: str, max_results: Optional[int] = None) -> str:
-        """Use this function to search the web using the Perplexity Search API.
-        Returns ranked web search results with titles, URLs, snippets, and dates.
+    async def aperplexity_search(self, query: str, max_results: Optional[int] = None) -> str:
+        """Use this function to perplexity_search the web using the Perplexity Search API.
+        Returns ranked web perplexity_search results with titles, URLs, snippets, and dates.
 
         Args:
-            query (str): The search query.
+            query (str): The perplexity_search query.
             max_results (int, optional): Number of results to return. Defaults to instance setting.
 
         Returns:
-            str: JSON string of search results with url, title, snippet, and date fields.
+            str: JSON string of perplexity_search results with url, title, snippet, and date fields.
         """
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -148,7 +148,7 @@ class PerplexitySearch(Toolkit):
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{self.base_url}/search",
+                    f"{self.base_url}/perplexity_search",
                     headers=headers,
                     json=body,
                     timeout=30.0,
@@ -173,5 +173,5 @@ class PerplexitySearch(Toolkit):
             return parsed
 
         except Exception as e:
-            logger.exception("Perplexity search failed")
+            logger.exception("Perplexity perplexity_search failed")
             return json.dumps({"error": str(e)})

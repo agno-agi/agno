@@ -47,7 +47,7 @@ def test_tools_available_to_agents(web_agent, finance_agent):
         assert tool_names == [
             "get_analyst_recommendations",
             "get_company_info",
-            "get_company_news",
+            "yfinance_get_company_news",
             "get_current_stock_price",
             "get_historical_stock_prices",
             "get_income_statements",
@@ -62,4 +62,4 @@ def test_tools_available_to_agents(web_agent, finance_agent):
         # Get the tools passed to invoke
         tools = mock_invoke.call_args[1].get("tools", [])
         tool_names = [tool["function"]["name"] for tool in tools]
-        assert tool_names == ["search_news", "web_search"]
+        assert tool_names == ["web_search_news", "web_search"]

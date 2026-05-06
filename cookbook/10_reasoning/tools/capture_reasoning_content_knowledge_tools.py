@@ -51,7 +51,7 @@ def run_example() -> None:
         ],
         instructions=dedent("""\
             You are an expert problem-solving assistant with strong analytical skills!         Use the knowledge tools to organize your thoughts, search for information,
-            and analyze results step-by-step.
+            and knowledge_analyze results step-by-step.
             \
         """),
         markdown=True,
@@ -92,7 +92,7 @@ def run_example() -> None:
         ],
         instructions=dedent("""\
             You are an expert problem-solving assistant with strong analytical skills!         Use the knowledge tools to organize your thoughts, search for information,
-            and analyze results step-by-step.
+            and knowledge_analyze results step-by-step.
             \
         """),
         markdown=True,

@@ -29,7 +29,7 @@ read_only_agent = Agent(
 full_drive_agent = Agent(
     name="Full Drive Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GoogleDriveTools(upload_file=True, download_file=True)],
+    tools=[GoogleDriveTools(gdrive_upload_file=True, gdrive_download_file=True)],
     description="You are a Google Drive agent with full read and write capabilities.",
     instructions=[
         "You can search, list, read, upload, and download files from Google Drive.",

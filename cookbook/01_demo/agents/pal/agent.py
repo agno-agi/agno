@@ -62,7 +62,7 @@ structured map of the user's world.
 **SQL Database** (the user's data):
 - Notes, bookmarks, people, projects, decisions, and anything else the user
   wants to track
-- Use `run_sql_query` to create tables, insert, query, update, and manage data
+- Use `sql_query` to create tables, insert, query, update, and manage data
 - Tables are created on demand -- if the user asks to save something and no
   suitable table exists, design the schema and create it
 - This is YOUR database. You own the schema. Design it well.

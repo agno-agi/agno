@@ -218,7 +218,7 @@ def test_send_image_no_source(whatsapp_tools):
 
 
 def test_send_document(whatsapp_tools):
-    result = whatsapp_tools.send_document(
+    result = whatsapp_tools.whatsapp_send_document(
         document_url="https://example.com/doc.pdf",
         filename="report.pdf",
         caption="Monthly report",
@@ -234,7 +234,7 @@ def test_send_document(whatsapp_tools):
 
 
 def test_send_document_no_source(whatsapp_tools):
-    result = whatsapp_tools.send_document(recipient="+1234567890")
+    result = whatsapp_tools.whatsapp_send_document(recipient="+1234567890")
     parsed = json.loads(result)
     assert "error" in parsed
 
@@ -305,7 +305,9 @@ def test_send_list_message_exceeds_total_rows(whatsapp_tools):
 
 
 def test_send_document_by_media_id(whatsapp_tools):
-    result = whatsapp_tools.send_document(media_id="doc_media_123", filename="report.pdf", recipient="+1234567890")
+    result = whatsapp_tools.whatsapp_send_document(
+        media_id="doc_media_123", filename="report.pdf", recipient="+1234567890"
+    )
     parsed = json.loads(result)
     assert parsed["ok"] is True
 
@@ -366,7 +368,7 @@ def test_send_image_error(whatsapp_tools):
 def test_send_document_error(whatsapp_tools):
     whatsapp_tools._mock_httpx.post.side_effect = Exception("doc API error")
     with pytest.raises(Exception, match="doc API error"):
-        whatsapp_tools.send_document(document_url="https://example.com/doc.pdf", recipient="+1234567890")
+        whatsapp_tools.whatsapp_send_document(document_url="https://example.com/doc.pdf", recipient="+1234567890")
 
 
 def test_send_location_error(whatsapp_tools):

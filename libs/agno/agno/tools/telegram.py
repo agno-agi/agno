@@ -18,15 +18,15 @@ class TelegramTools(Toolkit):
     Args:
         chat_id: Default chat ID. Falls back to TELEGRAM_CHAT_ID env var.
         token: Bot token. Falls back to TELEGRAM_TOKEN env var.
-        enable_send_message: Enable send_message tool. Defaults to True.
+        enable_send_message: Enable telegram_send_message tool. Defaults to True.
         enable_send_photo: Enable send_photo tool. Defaults to False.
-        enable_send_document: Enable send_document tool. Defaults to False.
+        enable_send_document: Enable telegram_send_document tool. Defaults to False.
         enable_send_video: Enable send_video tool. Defaults to False.
         enable_send_audio: Enable send_audio tool. Defaults to False.
         enable_send_animation: Enable send_animation tool. Defaults to False.
         enable_send_sticker: Enable send_sticker tool. Defaults to False.
         enable_edit_message: Enable edit_message tool. Defaults to False.
-        enable_delete_message: Enable delete_message tool. Defaults to False.
+        enable_delete_message: Enable telegram_delete_message tool. Defaults to False.
         all: Enable all tools. Overrides individual flags when True.
     """
 
@@ -55,11 +55,11 @@ class TelegramTools(Toolkit):
 
         tools: List[Any] = []
         if enable_send_message or all:
-            tools.append(self.send_message)
+            tools.append(self.telegram_send_message)
         if enable_send_photo or all:
             tools.append(self.send_photo)
         if enable_send_document or all:
-            tools.append(self.send_document)
+            tools.append(self.telegram_send_document)
         if enable_send_video or all:
             tools.append(self.send_video)
         if enable_send_audio or all:
@@ -71,7 +71,7 @@ class TelegramTools(Toolkit):
         if enable_edit_message or all:
             tools.append(self.edit_message)
         if enable_delete_message or all:
-            tools.append(self.delete_message)
+            tools.append(self.telegram_delete_message)
 
         super().__init__(name="telegram", tools=tools, **kwargs)
 
@@ -83,7 +83,7 @@ class TelegramTools(Toolkit):
             )
         return self.chat_id
 
-    def send_message(self, message: str) -> str:
+    def telegram_send_message(self, message: str) -> str:
         """Send a text message to a Telegram chat.
 
         Args:
@@ -94,7 +94,7 @@ class TelegramTools(Toolkit):
         """
         log_debug(f"Sending telegram message: {message}")
         try:
-            result = self.bot.send_message(self._chat_id, message)
+            result = self.bot.telegram_send_message(self._chat_id, message)
             return json.dumps({"status": "success", "message_id": result.message_id})
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})
@@ -115,7 +115,7 @@ class TelegramTools(Toolkit):
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def send_document(self, document: bytes, filename: str, caption: Optional[str] = None) -> str:
+    def telegram_send_document(self, document: bytes, filename: str, caption: Optional[str] = None) -> str:
         """Send a document to a Telegram chat.
 
         Args:
@@ -127,7 +127,7 @@ class TelegramTools(Toolkit):
             JSON string with status and message_id.
         """
         try:
-            result = self.bot.send_document(self._chat_id, (filename, document), caption=caption)
+            result = self.bot.telegram_send_document(self._chat_id, (filename, document), caption=caption)
             return json.dumps({"status": "success", "message_id": result.message_id})
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})
@@ -212,7 +212,7 @@ class TelegramTools(Toolkit):
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})
 
-    def delete_message(self, message_id: int) -> str:
+    def telegram_delete_message(self, message_id: int) -> str:
         """Delete a message from a Telegram chat.
 
         Args:
@@ -222,7 +222,7 @@ class TelegramTools(Toolkit):
             JSON string with status and deleted flag.
         """
         try:
-            self.bot.delete_message(self._chat_id, message_id)
+            self.bot.telegram_delete_message(self._chat_id, message_id)
             return json.dumps({"status": "success", "deleted": True})
         except ApiTelegramException as e:
             return json.dumps({"status": "error", "message": str(e)})

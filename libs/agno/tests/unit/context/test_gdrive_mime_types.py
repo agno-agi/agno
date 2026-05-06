@@ -1,5 +1,5 @@
 """
-Comprehensive test for all Google Drive MIME type handling in read_file.
+Comprehensive test for all Google Drive MIME type handling in gdrive_read_file.
 
 Google Drive files fall into 4 categories:
 1. Google Workspace (exportable) - Docs, Sheets, Slides, Scripts → export to text
@@ -7,7 +7,7 @@ Google Drive files fall into 4 categories:
 3. Binary files - Office, PDF, images, video, audio, archives → error (our fix)
 4. Text files - .txt, .json, .csv, .md, .py, .html → decode as UTF-8
 
-This test verifies that read_file correctly routes each MIME type.
+This test verifies that gdrive_read_file correctly routes each MIME type.
 """
 
 from __future__ import annotations

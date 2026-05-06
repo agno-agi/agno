@@ -57,12 +57,12 @@ class ScrapeGraphTools(Toolkit):
             enable_smartscraper (bool): Enable structured extraction via an AI prompt. Defaults to True.
             enable_markdownify (bool): Enable URL -> markdown conversion. Defaults to False.
             enable_searchscraper (bool): Enable web search with content extraction. Defaults to False.
-            enable_crawl (bool): Enable multi-page crawl with structured extraction. Defaults to False.
+            enable_crawl (bool): Enable multi-page scrapegraph_crawl with structured extraction. Defaults to False.
             enable_scrape (bool): Enable raw HTML scraping. Defaults to False.
             render_heavy_js (bool): Request JavaScript rendering on every call. Defaults to False.
             headers (Optional[Dict[str, str]]): Custom HTTP headers to send with every outbound fetch (e.g. User-Agent, Cookie, Authorization). Applied to every tool call when set. Defaults to None.
-            crawl_poll_interval (int): Seconds between crawl status polls. Defaults to 3. Raise this for very large crawls.
-            crawl_max_wait (int): Max seconds to wait for a crawl to complete. Defaults to 180. Raise this if your crawls legitimately take longer.
+            crawl_poll_interval (int): Seconds between scrapegraph_crawl status polls. Defaults to 3. Raise this for very large crawls.
+            crawl_max_wait (int): Max seconds to wait for a scrapegraph_crawl to complete. Defaults to 180. Raise this if your crawls legitimately take longer.
             all (bool): Enable all tools. Defaults to False.
         """
         self.api_key: Optional[str] = api_key or getenv("SGAI_API_KEY")
@@ -83,9 +83,9 @@ class ScrapeGraphTools(Toolkit):
         if all or enable_searchscraper:
             tools.append(self.searchscraper)
         if all or enable_crawl:
-            tools.append(self.crawl)
+            tools.append(self.scrapegraph_crawl)
         if all or enable_scrape:
-            tools.append(self.scrape)
+            tools.append(self.scrapegraph_scrape)
 
         super().__init__(name="scrapegraph_tools", tools=tools, **kwargs)
 
@@ -101,7 +101,7 @@ class ScrapeGraphTools(Toolkit):
         """Extract structured data from a webpage using an AI prompt.
 
         Args:
-            url (str): The URL to scrape.
+            url (str): The URL to scrapegraph_scrape.
             prompt (str): Natural language prompt describing what to extract.
 
         Returns:
@@ -128,7 +128,7 @@ class ScrapeGraphTools(Toolkit):
         """
         try:
             log_debug(f"ScrapeGraph markdownify request for URL: {url}")
-            response = self.client.scrape(
+            response = self.client.scrapegraph_scrape(
                 url,
                 formats=[MarkdownFormatConfig()],
                 fetch_config=self._fetch_config(),
@@ -160,7 +160,7 @@ class ScrapeGraphTools(Toolkit):
         except Exception as error:
             return f"Error searching: {type(error).__name__}: {error}"
 
-    def crawl(
+    def scrapegraph_crawl(
         self,
         url: str,
         prompt: str,
@@ -170,21 +170,21 @@ class ScrapeGraphTools(Toolkit):
     ) -> str:
         """Crawl a website and extract structured data across multiple pages.
 
-        Starts a crawl job upstream and polls until it completes or `crawl_max_wait` elapses.
+        Starts a scrapegraph_crawl job upstream and polls until it completes or `crawl_max_wait` elapses.
 
         Args:
-            url (str): The URL to crawl.
+            url (str): The URL to scrapegraph_crawl.
             prompt (str): Natural language prompt describing what to extract.
             schema (Dict[str, Any]): JSON schema for extraction.
-            max_depth (int): Max crawl depth. Defaults to 2.
-            max_pages (int): Max number of pages to crawl. Defaults to 2.
+            max_depth (int): Max scrapegraph_crawl depth. Defaults to 2.
+            max_pages (int): Max number of pages to scrapegraph_crawl. Defaults to 2.
 
         Returns:
-            str: JSON string with the crawl result, or an error message.
+            str: JSON string with the scrapegraph_crawl result, or an error message.
         """
         try:
-            log_debug(f"ScrapeGraph crawl start for URL: {url}")
-            start_response = self.client.crawl.start(
+            log_debug(f"ScrapeGraph scrapegraph_crawl start for URL: {url}")
+            start_response = self.client.scrapegraph_crawl.start(
                 url,
                 formats=[JsonFormatConfig(prompt=prompt, schema=schema)],
                 max_depth=max_depth,
@@ -192,36 +192,36 @@ class ScrapeGraphTools(Toolkit):
                 fetch_config=self._fetch_config(),
             )
             if start_response.status != "success" or start_response.data is None:
-                return f"Error starting crawl of {url}: {start_response.error or 'unknown error'}"
+                return f"Error starting scrapegraph_crawl of {url}: {start_response.error or 'unknown error'}"
 
             crawl_data = start_response.data
             crawl_id = crawl_data.id
             deadline = time.monotonic() + self.crawl_max_wait
             while crawl_data.status == "running":
                 if time.monotonic() > deadline:
-                    return f"Error: crawl timed out after {self.crawl_max_wait}s (id={crawl_id})"
+                    return f"Error: scrapegraph_crawl timed out after {self.crawl_max_wait}s (id={crawl_id})"
                 time.sleep(self.crawl_poll_interval)
-                status_response = self.client.crawl.get(crawl_id)
+                status_response = self.client.scrapegraph_crawl.get(crawl_id)
                 if status_response.status != "success" or status_response.data is None:
-                    return f"Error polling crawl {crawl_id}: {status_response.error or 'unknown error'}"
+                    return f"Error polling scrapegraph_crawl {crawl_id}: {status_response.error or 'unknown error'}"
                 crawl_data = status_response.data
 
             return crawl_data.model_dump_json(by_alias=True)
         except Exception as error:
             return f"Error crawling {url}: {type(error).__name__}: {error}"
 
-    def scrape(self, url: str) -> str:
+    def scrapegraph_scrape(self, url: str) -> str:
         """Get raw HTML content from a webpage.
 
         Args:
-            url (str): The URL to scrape.
+            url (str): The URL to scrapegraph_scrape.
 
         Returns:
-            str: JSON string with the scrape result, or an error message.
+            str: JSON string with the scrapegraph_scrape result, or an error message.
         """
         try:
-            log_debug(f"ScrapeGraph scrape request for URL: {url}")
-            response = self.client.scrape(
+            log_debug(f"ScrapeGraph scrapegraph_scrape request for URL: {url}")
+            response = self.client.scrapegraph_scrape(
                 url,
                 formats=[HtmlFormatConfig()],
                 fetch_config=self._fetch_config(),

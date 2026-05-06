@@ -37,7 +37,7 @@ class Neo4jTools(Toolkit):
             host (Optional[str]): The Neo4j host.
             port (Optional[int]): The Neo4j port.
             database (Optional[str]): The Neo4j database.
-            list_labels (bool): Whether to list node labels.
+            neo4j_list_labels (bool): Whether to list node labels.
             list_relationships (bool): Whether to list relationship types.
             get_schema (bool): Whether to get the schema.
             run_cypher (bool): Whether to run Cypher queries.
@@ -65,7 +65,7 @@ class Neo4jTools(Toolkit):
         # Register toolkit methods as tools
         tools: List[Any] = []
         if all or enable_list_labels:
-            tools.append(self.list_labels)
+            tools.append(self.neo4j_list_labels)
         if all or enable_list_relationships:
             tools.append(self.list_relationship_types)
         if all or enable_get_schema:
@@ -74,7 +74,7 @@ class Neo4jTools(Toolkit):
             tools.append(self.run_cypher_query)
         super().__init__(name="neo4j_tools", tools=tools, **kwargs)
 
-    def list_labels(self) -> list:
+    def neo4j_list_labels(self) -> list:
         """
         Retrieve all node labels present in the connected Neo4j database.
         """

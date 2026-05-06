@@ -43,17 +43,17 @@ class MemoryTools(Toolkit):
 
         tools: List[Any] = []
         if enable_think or all:
-            tools.append(self.think)
+            tools.append(self.memory_think)
         if enable_get_memories or all:
             tools.append(self.get_memories)
         if enable_add_memory or all:
-            tools.append(self.add_memory)
+            tools.append(self.memory_add)
         if enable_update_memory or all:
             tools.append(self.update_memory)
         if enable_delete_memory or all:
             tools.append(self.delete_memory)
         if enable_analyze or all:
-            tools.append(self.analyze)
+            tools.append(self.memory_analyze)
 
         super().__init__(
             name="memory_tools",
@@ -63,10 +63,10 @@ class MemoryTools(Toolkit):
             **kwargs,
         )
 
-    def think(self, run_context: RunContext, thought: str) -> str:
+    def memory_think(self, run_context: RunContext, thought: str) -> str:
         """Use this tool as a scratchpad to reason about memory operations, refine your approach, brainstorm memory content, or revise your plan.
 
-        Call `Think` whenever you need to figure out what to do next, analyze the user's requirements, plan memory operations, or decide on execution strategy.
+        Call `Think` whenever you need to figure out what to do next, memory_analyze the user's requirements, plan memory operations, or decide on execution strategy.
         You should use this tool as frequently as needed.
 
         Args:
@@ -123,7 +123,7 @@ class MemoryTools(Toolkit):
             log_error(f"Error getting memories: {str(e)}")
             return json.dumps({"error": str(e)}, indent=2)
 
-    def add_memory(
+    def memory_add(
         self,
         run_context: RunContext,
         memory: str,
@@ -164,7 +164,7 @@ class MemoryTools(Toolkit):
             memory_dict = created_memory.to_dict() if created_memory else None  # type: ignore
 
             operation_result = {
-                "operation": "add_memory",
+                "operation": "memory_add",
                 "success": created_memory is not None,
                 "memory": memory_dict,
                 "error": None,
@@ -172,15 +172,15 @@ class MemoryTools(Toolkit):
             run_context.session_state["memory_operations"].append(operation_result)
 
             if created_memory:
-                return json.dumps({"success": True, "operation": "add_memory", "memory": memory_dict}, indent=2)
+                return json.dumps({"success": True, "operation": "memory_add", "memory": memory_dict}, indent=2)
             else:
                 return json.dumps(
-                    {"success": False, "operation": "add_memory", "error": "Failed to create memory"}, indent=2
+                    {"success": False, "operation": "memory_add", "error": "Failed to create memory"}, indent=2
                 )
 
         except Exception as e:
             log_error(f"Error adding memory: {str(e)}")
-            return json.dumps({"success": False, "operation": "add_memory", "error": str(e)}, indent=2)
+            return json.dumps({"success": False, "operation": "memory_add", "error": str(e)}, indent=2)
 
     def update_memory(
         self,
@@ -306,7 +306,7 @@ class MemoryTools(Toolkit):
             log_error(f"Error deleting memory: {str(e)}")
             return json.dumps({"success": False, "operation": "delete_memory", "error": str(e)}, indent=2)
 
-    def analyze(self, run_context: RunContext, analysis: str) -> str:
+    def memory_analyze(self, run_context: RunContext, analysis: str) -> str:
         """Use this tool to evaluate whether the memory operations results are correct and sufficient.
         If not, go back to "Think" or use memory operations with refined parameters.
 
@@ -336,13 +336,13 @@ class MemoryTools(Toolkit):
             return f"Error recording memory analysis: {e}"
 
     DEFAULT_INSTRUCTIONS = dedent("""\
-        You have access to the Think, Add Memory, Update Memory, Delete Memory, and Analyze tools that will help you manage user memories and analyze their operations. Use these tools as frequently as needed to successfully complete memory management tasks.
+        You have access to the Think, Add Memory, Update Memory, Delete Memory, and Analyze tools that will help you manage user memories and memory_analyze their operations. Use these tools as frequently as needed to successfully complete memory management tasks.
 
         ## How to use the Think, Memory Operations, and Analyze tools:
 
         1. **Think**
         - Purpose: A scratchpad for planning memory operations, brainstorming memory content, and refining your approach. You never reveal your "Think" content to the user.
-        - Usage: Call `think` whenever you need to figure out what memory operations to perform, analyze requirements, or decide on strategy.
+        - Usage: Call `memory_think` whenever you need to figure out what memory operations to perform, memory_analyze requirements, or decide on strategy.
 
         2. **Get Memories**
         - Purpose: Retrieves a list of memories from the database for the current user.
@@ -350,7 +350,7 @@ class MemoryTools(Toolkit):
 
         3. **Add Memory**
         - Purpose: Creates new memories in the database with specified content and metadata.
-        - Usage: Call `add_memory` with memory content and optional topics when you need to store new information.
+        - Usage: Call `memory_add` with memory content and optional topics when you need to store new information.
 
         4. **Update Memory**
         - Purpose: Modifies existing memories in the database by memory ID.
@@ -362,7 +362,7 @@ class MemoryTools(Toolkit):
 
         6. **Analyze**
         - Purpose: Evaluate whether the memory operations results are correct and sufficient. If not, go back to "Think" or use memory operations with refined parameters.
-        - Usage: Call `analyze` after performing memory operations to verify:
+        - Usage: Call `memory_analyze` after performing memory operations to verify:
             - Success: Did the operation complete successfully?
             - Accuracy: Is the memory content correct and well-formed?
             - Completeness: Are all required fields populated appropriately?

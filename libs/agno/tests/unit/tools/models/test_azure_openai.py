@@ -78,9 +78,9 @@ def test_initialization_with_env_vars():
 
 def test_tools_registration(azure_openai_tools):
     """Test that the proper tools are registered."""
-    # The generate_image function should be registered
+    # The azure_openai_generate_image function should be registered
     function_names = [func.name for func in azure_openai_tools.functions.values()]
-    assert "generate_image" in function_names
+    assert "azure_openai_generate_image" in function_names
 
 
 @patch("agno.tools.models.azure_openai.post")
@@ -94,8 +94,8 @@ def test_generate_image_success(mock_post, azure_openai_tools, mock_agent):
     }
     mock_post.return_value = mock_response
 
-    # Call the generate_image function
-    result = azure_openai_tools.generate_image(agent=mock_agent, prompt="A test prompt", size="1024x1024")
+    # Call the azure_openai_generate_image function
+    result = azure_openai_tools.azure_openai_generate_image(agent=mock_agent, prompt="A test prompt", size="1024x1024")
 
     # Verify the API call
     mock_post.assert_called_once()
@@ -135,8 +135,8 @@ def test_generate_image_with_custom_parameters(mock_post, azure_openai_tools, mo
     }
     mock_post.return_value = mock_response
 
-    # Call the generate_image function with custom parameters
-    result = azure_openai_tools.generate_image(
+    # Call the azure_openai_generate_image function with custom parameters
+    result = azure_openai_tools.azure_openai_generate_image(
         agent=mock_agent, prompt="A test prompt", size="1792x1024", style="vivid"
     )
 
@@ -171,8 +171,8 @@ def test_generate_image_failure(mock_post, azure_openai_tools, mock_agent):
     mock_response.text = "Bad Request: Invalid prompt"
     mock_post.return_value = mock_response
 
-    # Call the generate_image function
-    result = azure_openai_tools.generate_image(agent=mock_agent, prompt="A test prompt")
+    # Call the azure_openai_generate_image function
+    result = azure_openai_tools.azure_openai_generate_image(agent=mock_agent, prompt="A test prompt")
 
     # Verify that it returns a ToolResult with error
     assert isinstance(result, ToolResult)
@@ -196,7 +196,7 @@ def test_invalid_parameters(azure_openai_tools, mock_agent):
         mock_post.return_value = mock_response
 
         # Test with invalid size - should be corrected to 1024x1024
-        result = azure_openai_tools.generate_image(
+        result = azure_openai_tools.azure_openai_generate_image(
             agent=mock_agent, prompt="A test prompt for size", size="invalid-size"
         )
 

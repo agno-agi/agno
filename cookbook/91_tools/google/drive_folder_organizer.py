@@ -3,12 +3,12 @@ Drive Folder Organizer
 ======================
 Lists folder contents and helps organize files by uploading to specific locations.
 
-Combines read tools (list_files, search_files) with write tools (upload_file)
+Combines read tools (gdrive_list_files, gdrive_search_files) with write tools (gdrive_upload_file)
 to give the agent a complete view of Drive structure.
 
 Key concepts:
-- list_files with folder queries: Browse Drive like a file system
-- upload_file: Upload local files to Drive (disabled by default, enabled here)
+- gdrive_list_files with folder queries: Browse Drive like a file system
+- gdrive_upload_file: Upload local files to Drive (disabled by default, enabled here)
 - Drive query syntax: "'<FOLDER_ID>' in parents" to scope to a folder
 
 Setup:
@@ -25,7 +25,7 @@ from agno.tools.google.drive import GoogleDriveTools
 agent = Agent(
     name="Drive Organizer",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GoogleDriveTools(upload_file=True, download_file=True)],
+    tools=[GoogleDriveTools(gdrive_upload_file=True, gdrive_download_file=True)],
     instructions=[
         "Help the user explore and organize their Google Drive.",
         "When listing folders, show structure as an indented tree.",

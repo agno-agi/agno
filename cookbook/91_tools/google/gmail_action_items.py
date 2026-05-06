@@ -5,10 +5,10 @@ Extracts action items from email threads and returns a structured checklist.
 
 The agent reads a thread, identifies who needs to do what by when,
 and returns structured action items. This is an LLM reasoning task --
-no special tool needed, just get_thread + output_schema.
+no special tool needed, just gmail_get_thread + output_schema.
 
 Key concepts:
-- get_thread: Fetches full thread context for multi-message analysis
+- gmail_get_thread: Fetches full thread context for multi-message analysis
 - output_schema: Forces structured action item extraction
 - add_datetime_to_context: Agent knows today's date for deadline reasoning
 
@@ -55,7 +55,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[GmailTools()],
     instructions=[
-        "Search for the requested thread, then use get_thread to read all messages.",
+        "Search for the requested thread, then use gmail_get_thread to read all messages.",
         "Extract action items from the FULL conversation -- check every message.",
         "An action item is anything someone is asked to do, agrees to do, or volunteers to do.",
         "Look for phrases like 'can you', 'please', 'I will', 'let's', 'by Friday', 'deadline'.",

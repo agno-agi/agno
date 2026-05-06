@@ -41,7 +41,7 @@ class CartesiaTools(Toolkit):
         if all or enable_localize_voice:
             tools.append(self.localize_voice)
         if all or enable_text_to_speech:
-            tools.append(self.text_to_speech)
+            tools.append(self.cartesia_text_to_speech)
         if all or enable_list_voices:
             tools.append(self.list_voices)
 
@@ -127,7 +127,7 @@ class CartesiaTools(Toolkit):
             log_error(f"Error localizing voice with Cartesia: {str(e)}")
             return json.dumps({"error": str(e), "type": type(e).__name__})
 
-    def text_to_speech(
+    def cartesia_text_to_speech(
         self,
         agent: Union[Agent, Team],
         transcript: str,
@@ -146,8 +146,8 @@ class CartesiaTools(Toolkit):
         try:
             effective_voice_id = voice_id or self.default_voice_id
 
-            log_info(f"Using voice_id: {effective_voice_id} for text_to_speech.")
-            log_info(f"Using model_id: {self.model_id} for text_to_speech.")
+            log_info(f"Using voice_id: {effective_voice_id} for cartesia_text_to_speech.")
+            log_info(f"Using model_id: {self.model_id} for cartesia_text_to_speech.")
 
             output_format_sample_rate = 44100
             requested_bit_rate = 128000
