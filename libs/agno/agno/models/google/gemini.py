@@ -4,7 +4,6 @@ import json
 import mimetypes
 import time
 from collections.abc import AsyncIterator
-from contextlib import contextmanager
 from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
@@ -62,46 +61,6 @@ try:
     from google.genai.types import ToolParallelAiSearch
 except ImportError:
     ToolParallelAiSearch = None
-
-
-@contextmanager
-def _patched_file_search_store_serializer():
-    """
-    Workaround for google-genai SDK bug: the SDK serializes `embedding_model`
-    into the request body as `embeddingModel`, but the API expects it as a
-    query parameter. This context manager temporarily patches the serializer
-    to put `embedding_model` in `_query` (as the SDK does for other query
-    parameters like `force` on delete).
-
-    Remove this patch once the SDK is fixed upstream.
-    See: https://github.com/googleapis/python-genai
-    """
-    try:
-        from google.genai import file_search_stores as _fss_module
-        from google.genai._common import get_value_by_path as getv
-        from google.genai._common import set_value_by_path as setv
-    except ImportError:
-        yield
-        return
-
-    original = getattr(_fss_module, "_CreateFileSearchStoreConfig_to_mldev", None)
-    if original is None:
-        yield
-        return
-
-    def patched(api_client, from_object, parent_object=None):
-        to_object: Dict[str, Any] = {}
-        if getv(from_object, ["display_name"]) is not None:
-            setv(parent_object, ["displayName"], getv(from_object, ["display_name"]))
-        if getv(from_object, ["embedding_model"]) is not None:
-            setv(parent_object, ["_query", "embedding_model"], getv(from_object, ["embedding_model"]))
-        return to_object
-
-    _fss_module._CreateFileSearchStoreConfig_to_mldev = patched
-    try:
-        yield
-    finally:
-        _fss_module._CreateFileSearchStoreConfig_to_mldev = original
 
 
 @dataclass
@@ -1551,8 +1510,7 @@ class Gemini(Model):
             config["embedding_model"] = embedding_model
 
         try:
-            with _patched_file_search_store_serializer():
-                store = self.get_client().file_search_stores.create(config=config or None)  # type: ignore[arg-type]
+            store = self.get_client().file_search_stores.create(config=config or None)  # type: ignore[arg-type]
             log_info(f"Created File Search store: {store.name}")
             return store
         except Exception as e:
@@ -1580,8 +1538,7 @@ class Gemini(Model):
             config["embedding_model"] = embedding_model
 
         try:
-            with _patched_file_search_store_serializer():
-                store = await self.get_client().aio.file_search_stores.create(config=config or None)  # type: ignore[arg-type]
+            store = await self.get_client().aio.file_search_stores.create(config=config or None)  # type: ignore[arg-type]
             log_info(f"Created File Search store: {store.name}")
             return store
         except Exception as e:
