@@ -54,7 +54,7 @@ def test_google_auth_default_redirect_uri_from_env(monkeypatch):
 
 def test_register_service(google_auth):
     google_auth.register_service("gmail", ["scope1", "scope2"])
-    assert google_auth._services["gmail"] == ["scope1", "scope2"]
+    assert set(google_auth._services["gmail"]) == {"scope1", "scope2"}
 
 
 def test_register_multiple_services(google_auth):
@@ -83,8 +83,8 @@ def test_authenticate_google_combined_url(google_auth):
     oauth_tools = GoogleOAuthTools(auth=google_auth)
     result = json.loads(oauth_tools.oauth_google())
 
-    assert "url" in result
-    parsed = urlparse(result["url"])
+    assert "oauth_url" in result
+    parsed = urlparse(result["oauth_url"])
     params = parse_qs(parsed.query)
 
     scope_str = params["scope"][0]
@@ -98,7 +98,7 @@ def test_authenticate_google_includes_oauth_params(google_auth):
 
     oauth_tools = GoogleOAuthTools(auth=google_auth)
     result = json.loads(oauth_tools.oauth_google())
-    parsed = urlparse(result["url"])
+    parsed = urlparse(result["oauth_url"])
     params = parse_qs(parsed.query)
 
     assert params["client_id"] == ["test-client-id"]
@@ -125,7 +125,7 @@ def test_include_granted_scopes_opt_in(tmp_path):
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
     oauth_tools = GoogleOAuthTools(auth=ga)
     result = json.loads(oauth_tools.oauth_google())
-    params = parse_qs(urlparse(result["url"]).query)
+    params = parse_qs(urlparse(result["oauth_url"]).query)
     assert params["include_granted_scopes"] == ["true"]
 
 
@@ -135,9 +135,9 @@ def test_authenticate_google_single_service(google_auth):
     oauth_tools = GoogleOAuthTools(auth=google_auth)
     result = json.loads(oauth_tools.oauth_google())
 
-    assert "url" in result
-    assert "calendar" in result["url"]
-    assert result["message"] == "Connect calendar"
+    assert "oauth_url" in result
+    assert "calendar" in result["oauth_url"]
+    assert "calendar" in result["message"]
 
 
 def test_authenticate_google_no_services_registered(google_auth):
@@ -236,7 +236,7 @@ def test_authenticate_google_with_agent_db(tmp_path):
 
     oauth_tools = GoogleOAuthTools(auth=ga)
     result = json.loads(oauth_tools.oauth_google())
-    assert "url" in result
+    assert "oauth_url" in result
     assert ga._db is db
 
 
@@ -252,10 +252,10 @@ def test_pkce_state_stored_in_db(tmp_path):
     # Generate OAuth URL - this stores PKCE state in DB
     oauth_tools = GoogleOAuthTools(auth=ga)
     result = json.loads(oauth_tools.oauth_google())
-    assert "url" in result
+    assert "oauth_url" in result
 
     # Verify PKCE params in URL
-    params = parse_qs(urlparse(result["url"]).query)
+    params = parse_qs(urlparse(result["oauth_url"]).query)
     assert "code_challenge" in params
     assert params["code_challenge_method"] == ["S256"]
 

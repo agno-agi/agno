@@ -44,7 +44,7 @@ def _state_from_url(url: str) -> str:
 def test_authenticate_google_produces_verifiable_state(google_auth):
     oauth_tools = GoogleOAuthTools(auth=google_auth)
     resp = json.loads(oauth_tools.oauth_google(run_context=_fake_run_context("alice")))
-    state = _state_from_url(resp["url"])
+    state = _state_from_url(resp["oauth_url"])
     payload = verify_state(state, secret="test-state-secret-32-bytes-or-longer")
     assert payload["user_id"] == "alice"
     assert payload["services"] == ["gmail"]
@@ -57,7 +57,7 @@ def test_env_var_fallback(monkeypatch, test_db):
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
     oauth_tools = GoogleOAuthTools(auth=ga)
     resp = json.loads(oauth_tools.oauth_google(run_context=_fake_run_context("alice")))
-    state = _state_from_url(resp["url"])
+    state = _state_from_url(resp["oauth_url"])
     payload = verify_state(state, secret="env-secret")
     assert payload["user_id"] == "alice"
 
@@ -68,7 +68,7 @@ def test_kwarg_overrides_env_var(monkeypatch, test_db):
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
     oauth_tools = GoogleOAuthTools(auth=ga)
     resp = json.loads(oauth_tools.oauth_google(run_context=_fake_run_context("alice")))
-    state = _state_from_url(resp["url"])
+    state = _state_from_url(resp["oauth_url"])
     # Decodes with kwarg secret; raises with env secret
     assert verify_state(state, secret="kwarg-wins")["user_id"] == "alice"
     with pytest.raises(jwt.InvalidTokenError):
@@ -85,7 +85,7 @@ def test_fabricated_state_rejected(google_auth):
 
 def test_tampered_state_rejected(google_auth):
     resp = json.loads(google_auth.authenticate_google(run_context=_fake_run_context("alice")))
-    state = _state_from_url(resp["url"])
+    state = _state_from_url(resp["oauth_url"])
     tampered = state[:-3] + ("A" if state[-3] != "A" else "B") + state[-2:]
     mock_db = Mock()
     result = google_auth.handle_oauth_callback(code="unused", state=tampered, db=mock_db)
