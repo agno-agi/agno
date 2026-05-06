@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -6,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from agno.client import AgentOSClient
 from agno.db.base import SessionType
+from agno.os.mcp import _resolve_user_id
 
 # ---------------------------------------------------------------------------
 # SDK Client tests — verify user_id is serialized into HTTP request params
@@ -274,3 +276,59 @@ def test_router_rename_session_receives_user_id_from_query(test_app, mock_db):
     assert call_kwargs["user_id"] == "alice"
     assert call_kwargs["session_id"] == "sess-1"
     assert call_kwargs["session_name"] == "Renamed"
+
+
+# ---------------------------------------------------------------------------
+# MCP handler tests — verify _resolve_user_id binds caller-supplied user_id
+# to request.state.user_id (the JWT subject), mirroring the HTTP router
+# behavior. Without this, MCP tools accept any user_id from the caller
+# and forward it to the DB — a multi-tenant IDOR.
+# ---------------------------------------------------------------------------
+
+
+def _fake_request(user_id):
+    """Mimic what JWTMiddleware writes to request.state."""
+    return SimpleNamespace(state=SimpleNamespace(user_id=user_id))
+
+
+@patch("fastmcp.server.dependencies.get_http_request")
+def test_mcp_jwt_subject_overrides_caller_user_id(mock_get_request):
+    """The IDOR fix: caller passes user_id='bob' but JWT subject is 'alice'."""
+    mock_get_request.return_value = _fake_request("alice")
+    assert _resolve_user_id("bob") == "alice"
+
+
+@patch("fastmcp.server.dependencies.get_http_request")
+def test_mcp_jwt_subject_used_when_caller_omits_user_id(mock_get_request):
+    mock_get_request.return_value = _fake_request("alice")
+    assert _resolve_user_id(None) == "alice"
+
+
+@patch("fastmcp.server.dependencies.get_http_request")
+def test_mcp_caller_user_id_kept_when_state_has_no_user_id(mock_get_request):
+    """JWT middleware not active: state exists but user_id was never set."""
+    mock_get_request.return_value = SimpleNamespace(state=SimpleNamespace())
+    assert _resolve_user_id("alice") == "alice"
+    assert _resolve_user_id(None) is None
+
+
+@patch("fastmcp.server.dependencies.get_http_request")
+def test_mcp_caller_user_id_kept_when_request_has_no_state(mock_get_request):
+    mock_get_request.return_value = SimpleNamespace()
+    assert _resolve_user_id("alice") == "alice"
+
+
+@patch("fastmcp.server.dependencies.get_http_request")
+def test_mcp_no_http_context_falls_back_to_caller(mock_get_request):
+    """Tool invoked outside an HTTP request — preserves no-auth behavior."""
+    mock_get_request.side_effect = RuntimeError("no request context")
+    assert _resolve_user_id("alice") == "alice"
+    assert _resolve_user_id(None) is None
+
+
+@patch("fastmcp.server.dependencies.get_http_request")
+def test_mcp_unexpected_exception_propagates(mock_get_request):
+    """Non-RuntimeError exceptions are real bugs and must not be silently swallowed."""
+    mock_get_request.side_effect = AttributeError("future API change")
+    with pytest.raises(AttributeError):
+        _resolve_user_id("alice")
