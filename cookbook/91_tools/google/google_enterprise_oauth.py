@@ -11,7 +11,7 @@ Demonstrates enterprise-grade Google OAuth features:
 
 Two modes:
 1. Bot/Service Account (default): Use pre-configured credentials, no OAuth needed
-2. Client-Side OAuth (opt-in): Pass google_auth= to enable per-user authentication
+2. Client-Side OAuth (opt-in): Pass auth= to enable per-user authentication
 
 Setup:
   1. Google Cloud Console -> OAuth consent screen -> Add your domain
@@ -70,10 +70,10 @@ oauth_agent = Agent(
     db=SqliteDb(db_file="tmp/enterprise_oauth.db"),
     tools=[
         # Explicit opt-in: add GoogleOAuthTools to expose oauth_google to LLM
-        GoogleOAuthTools(google_auth=google_auth),
-        # Pass google_auth= to enable client-side OAuth + scope consolidation
-        GmailTools(google_auth=google_auth, include_tools=["get_latest_emails", "search_emails"]),
-        GoogleCalendarTools(google_auth=google_auth, include_tools=["list_events", "create_event"]),
+        GoogleOAuthTools(auth=google_auth),
+        # Pass auth= to enable client-side OAuth + scope consolidation
+        GmailTools(auth=google_auth, include_tools=["get_latest_emails", "search_emails"]),
+        GoogleCalendarTools(auth=google_auth, include_tools=["list_events", "create_event"]),
     ],
     instructions=(
         "You are an enterprise assistant with access to Gmail and Calendar. "

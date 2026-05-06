@@ -200,7 +200,7 @@ def get_token_db(toolkit: Any, agent: Optional[Any] = None) -> Any:
 
     No toolkit state mutation — agent is read fresh per call.
     """
-    ga = getattr(toolkit, "google_auth", None)
+    ga = getattr(toolkit, "auth", None)
     agent_db = _valid_auth_token_db(getattr(agent, "db", None))
 
     if ga is not None:
@@ -245,7 +245,7 @@ def load_token(
 
         # Decrypt token_data if encrypted
         token_data = row["token_data"]
-        ga = getattr(toolkit, "google_auth", None)
+        ga = getattr(toolkit, "auth", None)
         encryption_key = getattr(ga, "_token_encryption_key", None) if ga else None
         if isinstance(token_data, dict) and "encrypted" in token_data:
             from agno.utils.encryption import decrypt_dict
@@ -282,7 +282,7 @@ def save_token(
     agent: Optional[Any] = None,
 ) -> bool:
     """Persist credentials to DB. Returns True on success."""
-    ga = getattr(toolkit, "google_auth", None)
+    ga = getattr(toolkit, "auth", None)
     encryption_key = getattr(ga, "_token_encryption_key", None) if ga else None
     return _persist_google_token(
         db=get_token_db(toolkit, agent=agent),

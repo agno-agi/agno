@@ -49,10 +49,10 @@ def _wire_google_auth(
     """Consolidate OAuth scopes across Google toolkits.
 
     Two modes:
-    1. Cookbook mode: No google_auth passed — auto-create one behind the scenes
+    1. Cookbook mode: No auth= passed — auto-create GoogleAuth behind the scenes
        for scope consolidation. Auth uses default file-based credentials.
-    2. Custom OAuth: User passes google_auth= with enterprise params — register
-       each toolkit's scopes with that coordinator.
+    2. Custom OAuth: User passes auth=GoogleAuth(...) with enterprise params —
+       register each toolkit's scopes with that coordinator.
 
     Does NOT auto-register any LLM tools. Users must explicitly add
     GoogleOAuthTools to their agent's tools list if they want oauth_google callable.
@@ -76,7 +76,7 @@ def _wire_google_auth(
     # If so, use it as the shared coordinator for all toolkits without one
     shared_auth = None
     for t in google_toolkits:
-        ga = getattr(t, "google_auth", None)
+        ga = getattr(t, "auth", None)
         if ga is not None:
             shared_auth = ga
             break
@@ -88,12 +88,12 @@ def _wire_google_auth(
 
     # Wire GoogleAuth to each toolkit and register scopes
     for t in google_toolkits:
-        # Set google_auth on toolkits that don't have one
-        if getattr(t, "google_auth", None) is None:
-            t.google_auth = shared_auth
+        # Set auth on toolkits that don't have one
+        if getattr(t, "auth", None) is None:
+            t.auth = shared_auth
 
         # Register toolkit's scopes with its coordinator
-        ga = t.google_auth
+        ga = t.auth
         service_name = getattr(t, "google_service_name", None)
         scopes = getattr(t, "scopes", None)
         if ga is not None and service_name and scopes:

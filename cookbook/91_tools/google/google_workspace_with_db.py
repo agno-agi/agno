@@ -26,7 +26,7 @@ Setup:
 6. For Slack/AgentOS deployments, mount the OAuth callback router instead:
        app.include_router(google_auth.get_oauth_router())
    The act of mounting the router switches GoogleAuth into interface mode,
-   where the agent returns an OAuth URL (via the authenticate_google tool)
+   where the agent returns an OAuth URL (via the oauth_google tool)
    instead of opening a local browser. See cookbook/05_agent_os/ for hosted
    examples.
 """
@@ -44,19 +44,19 @@ from agno.tools.google.gmail import GmailTools
 google_auth = GoogleAuth(include_granted_scopes=True)
 
 gmail = GmailTools(
-    google_auth=google_auth,
+    auth=google_auth,
     include_tools=["get_latest_emails", "search_emails"],
 )
 
 calendar = GoogleCalendarTools(
-    google_auth=google_auth,
+    auth=google_auth,
     create_event=False,
     update_event=False,
     delete_event=False,
 )
 
 drive = GoogleDriveTools(
-    google_auth=google_auth,
+    auth=google_auth,
     include_tools=["list_files", "search_files"],
 )
 
@@ -68,7 +68,7 @@ agent = Agent(
     instructions=[
         "You are a Google Workspace assistant with access to Gmail, Calendar, and Drive.",
         "When any Google tool returns an authentication error, immediately call",
-        "authenticate_google with the services you need and share the OAuth URL",
+        "oauth_google with the services you need and share the OAuth URL",
         "with the user so they can complete the consent flow.",
     ],
     add_datetime_to_context=True,

@@ -49,7 +49,7 @@ class GoogleToolkit(Toolkit):
         credentials_path: Optional[str] = None,
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
-        google_auth: Optional["GoogleAuth"] = None,
+        auth: Optional["GoogleAuth"] = None,
         store_token_in_db: bool = False,
         oauth_port: Optional[int] = 0,
         login_hint: Optional[str] = None,
@@ -62,14 +62,14 @@ class GoogleToolkit(Toolkit):
         self.credentials_path = credentials_path
         self.service_account_path = service_account_path
         self.delegated_user = delegated_user
-        self.google_auth = google_auth
+        self.auth = auth
         self.store_token_in_db = store_token_in_db
         self._db: Optional[Any] = None
         self.oauth_port = oauth_port
         self.login_hint = login_hint
 
-        if self.google_auth and self.google_service_name:
-            self.google_auth.register_service(self.google_service_name, self.scopes)
+        if self.auth and self.google_service_name:
+            self.auth.register_service(self.google_service_name, self.scopes)
 
     @property
     def service(self) -> Any:
@@ -134,7 +134,7 @@ class GoogleToolkit(Toolkit):
 
         try:
             # Decrypt token_data if encrypted (passes through if plaintext)
-            token_data = decrypt_dict(row["token_data"], key=getattr(self.google_auth, "_token_encryption_key", None))
+            token_data = decrypt_dict(row["token_data"], key=getattr(self.auth, "_token_encryption_key", None))
             effective_scopes = row.get("granted_scopes") or self.scopes
             creds = Credentials.from_authorized_user_info(token_data, effective_scopes)
         except (ValueError, KeyError):
@@ -173,10 +173,10 @@ class GoogleToolkit(Toolkit):
             if creds:
                 return creds
             # Server mode: don't fall through to browser OAuth
-            if self.google_auth and self.google_auth._callback_configured:
+            if self.auth and self.auth._callback_configured:
                 raise PermissionError(
                     f"{self.google_service_name.title()} not authenticated — "
-                    "user must complete OAuth via authenticate_google"
+                    "user must complete OAuth via oauth_google"
                 )
 
         # 4. File fallback (local mode)
@@ -201,8 +201,8 @@ class GoogleToolkit(Toolkit):
             return creds
 
         # 5. Interactive OAuth (local only)
-        if self.google_auth is not None and self.google_auth._services:
-            consent_scopes = sorted({s for scope_list in self.google_auth._services.values() for s in scope_list})
+        if self.auth is not None and self.auth._services:
+            consent_scopes = sorted({s for scope_list in self.auth._services.values() for s in scope_list})
         else:
             consent_scopes = self.scopes
 

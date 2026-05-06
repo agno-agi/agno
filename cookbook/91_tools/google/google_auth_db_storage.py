@@ -30,7 +30,7 @@ agent = Agent(
     tools=[
         google_auth,
         GmailTools(
-            google_auth=google_auth,
+            auth=google_auth,
             include_tools=["get_latest_emails", "search_emails"],
         ),
     ],

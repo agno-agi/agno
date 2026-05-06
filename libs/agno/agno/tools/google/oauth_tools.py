@@ -15,9 +15,9 @@ Usage:
     agent = Agent(
         db=db,
         tools=[
-            GoogleOAuthTools(google_auth=google_auth),  # Explicit opt-in
-            GmailTools(google_auth=google_auth),
-            GoogleCalendarTools(google_auth=google_auth),
+            GoogleOAuthTools(auth=google_auth),  # Explicit opt-in
+            GmailTools(auth=google_auth),
+            GoogleCalendarTools(auth=google_auth),
         ],
     )
 """
@@ -45,7 +45,7 @@ class GoogleOAuthTools(Toolkit):
 
     def __init__(
         self,
-        google_auth: Any,
+        auth: Any,
         name: str = "google_oauth_tools",
         **kwargs: Any,
     ):
@@ -57,7 +57,7 @@ class GoogleOAuthTools(Toolkit):
             ),
             **kwargs,
         )
-        self.google_auth = google_auth
+        self.auth = auth
         self.register(self.oauth_google)
 
     def oauth_google(
@@ -74,7 +74,7 @@ class GoogleOAuthTools(Toolkit):
         Returns:
             str: JSON string containing the OAuth URL or error message.
         """
-        ga = self.google_auth
+        ga = self.auth
         if ga is None:
             return json.dumps({"error": "GoogleOAuth coordinator not configured."})
 

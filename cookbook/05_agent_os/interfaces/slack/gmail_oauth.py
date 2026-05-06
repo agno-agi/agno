@@ -44,13 +44,13 @@ agent = Agent(
     tools=[
         google_auth,
         GmailTools(
-            google_auth=google_auth,
+            auth=google_auth,
             include_tools=["get_latest_emails", "search_emails"],
         ),
     ],
     instructions=(
         "You are a Gmail assistant in Slack. If any Gmail tool returns an authentication error, "
-        "IMMEDIATELY call `authenticate_google` with services=['gmail'] and send the resulting URL "
+        "IMMEDIATELY call `oauth_google` with services=['gmail'] and send the resulting URL "
         "to the user. Tell them to click it, complete consent, then retry their request."
     ),
     markdown=True,
