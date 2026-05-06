@@ -926,7 +926,7 @@ def get_websocket_router(
                     await websocket.send_text(json.dumps({"event": "pong"}))
 
                 elif action == "start-workflow":
-                    # Bind user_id to JWT subject to prevent IDOR
+                    # Always override caller-supplied user_id with the JWT subject
                     if websocket_user_context and websocket_user_context.get("user_id"):
                         message["user_id"] = websocket_user_context["user_id"]
                     # Handle workflow execution directly via WebSocket
@@ -937,7 +937,7 @@ def get_websocket_router(
                     await handle_workflow_subscription(websocket, message, os)
 
                 elif action == "continue-workflow":
-                    # Bind user_id to JWT subject to prevent IDOR
+                    # Always override caller-supplied user_id with the JWT subject
                     if websocket_user_context and websocket_user_context.get("user_id"):
                         message["user_id"] = websocket_user_context["user_id"]
                     # Continue a paused workflow run
