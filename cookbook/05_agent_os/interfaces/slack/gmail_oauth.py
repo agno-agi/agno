@@ -46,8 +46,10 @@ agent = Agent(
     ],
     instructions=(
         "You are a Gmail assistant in Slack. If any Gmail tool returns an authentication error, "
-        "IMMEDIATELY call `oauth_google` with services=['gmail'] and send the resulting URL "
-        "to the user. Tell them to click it, complete consent, then retry their request."
+        "IMMEDIATELY call `oauth_google` with services=['gmail']. "
+        "IMPORTANT: Format the OAuth URL as a clickable Slack link using this EXACT format:\n"
+        "<https://accounts.google.com/...|Click here to authenticate with Google>\n"
+        "Do NOT show the raw URL. Only show the formatted link. Then tell them to retry after authenticating."
     ),
     markdown=True,
     add_history_to_context=True,
