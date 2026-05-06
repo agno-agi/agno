@@ -865,8 +865,7 @@ class Model(ABC):
             # Close the Gemini client
             if self.__class__.__name__ == "Gemini" and self.client is not None:  # type: ignore
                 try:
-                    self.client.close()  # type: ignore
-                    self.client = None
+                    self.close_current_thread_client()  # type: ignore[attr-defined]
                 except AttributeError as e:
                     log_warning(
                         f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
@@ -1086,8 +1085,7 @@ class Model(ABC):
             # Close the Gemini client
             if self.__class__.__name__ == "Gemini" and self.client is not None:
                 try:
-                    await self.client.aio.aclose()  # type: ignore
-                    self.client = None
+                    await self.aclose_current_thread_client()  # type: ignore[attr-defined]
                 except AttributeError as e:
                     log_warning(
                         f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
@@ -1575,8 +1573,7 @@ class Model(ABC):
             # Close the Gemini client
             if self.__class__.__name__ == "Gemini" and self.client is not None:
                 try:
-                    self.client.close()  # type: ignore
-                    self.client = None
+                    self.close_current_thread_client()  # type: ignore[attr-defined]
                 except AttributeError as e:
                     log_warning(
                         f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
@@ -1852,8 +1849,7 @@ class Model(ABC):
             # Close the Gemini client
             if self.__class__.__name__ == "Gemini" and self.client is not None:
                 try:
-                    await self.client.aio.aclose()  # type: ignore
-                    self.client = None
+                    await self.aclose_current_thread_client()  # type: ignore[attr-defined]
                 except AttributeError as e:
                     log_warning(
                         f"Your Gemini client is outdated. For Agno to properly handle the lifecycle of the client,: {e}"
