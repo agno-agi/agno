@@ -329,6 +329,7 @@ class AgentOS:
 
         # Populate registry with code-defined agents/teams
         self._populate_registry()
+        self._populate_registry_managers()
 
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
@@ -377,6 +378,7 @@ class AgentOS:
 
         # Populate registry with code-defined agents/teams
         self._populate_registry()
+        self._populate_registry_managers()
 
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
@@ -652,6 +654,55 @@ class AgentOS:
                 if kb_name is not None and kb_name not in existing_names:
                     self.registry.knowledge.append(kb)
                     existing_names.add(kb_name)
+
+    def _populate_registry_managers(self) -> None:
+        """Add memory and session summary managers from agents/teams to the registry.
+
+        Each manager is tagged with a generated id of the form `{owner_id}__{kind}` so
+        it can be looked up later. Managers are deduplicated by that id.
+        """
+        if self.registry is None:
+            self.registry = Registry()
+
+        registry = self.registry
+        memory_ids = registry.get_memory_manager_ids()
+        summary_ids = registry.get_session_summary_manager_ids()
+
+        def _register(owner: Any, owner_type: str) -> None:
+            owner_id = getattr(owner, "id", None)
+            if owner_id is None:
+                return
+
+            mm = getattr(owner, "memory_manager", None)
+            if mm is not None:
+                mm_id = f"{owner_id}__memory_manager"
+                if mm_id not in memory_ids:
+                    try:
+                        setattr(mm, "_registry_id", mm_id)
+                        setattr(mm, "_registry_owner_id", owner_id)
+                        setattr(mm, "_registry_owner_type", owner_type)
+                    except (AttributeError, TypeError):
+                        pass
+                    registry.memory_managers.append(mm)
+                    memory_ids.add(mm_id)
+
+            sm = getattr(owner, "session_summary_manager", None)
+            if sm is not None:
+                sm_id = f"{owner_id}__session_summary_manager"
+                if sm_id not in summary_ids:
+                    try:
+                        setattr(sm, "_registry_id", sm_id)
+                        setattr(sm, "_registry_owner_id", owner_id)
+                        setattr(sm, "_registry_owner_type", owner_type)
+                    except (AttributeError, TypeError):
+                        pass
+                    registry.session_summary_managers.append(sm)
+                    summary_ids.add(sm_id)
+
+        for agent in self._agents:
+            _register(agent, "agent")
+        for team in self._teams:
+            _register(team, "team")
 
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.

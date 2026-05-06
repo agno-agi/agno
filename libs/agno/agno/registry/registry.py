@@ -36,6 +36,8 @@ class Registry:
     schemas: List[Type[BaseModel]] = field(default_factory=list)
     functions: List[Callable] = field(default_factory=list)
     knowledge: List[Any] = field(default_factory=list)
+    memory_managers: List[Any] = field(default_factory=list)
+    session_summary_managers: List[Any] = field(default_factory=list)
     # Code-defined agents and teams (for workflow rehydration)
     agents: List[Agent] = field(default_factory=list)
     teams: List[Team] = field(default_factory=list)
@@ -117,6 +119,36 @@ class Registry:
         """Get the set of all knowledge names in this registry."""
         if self.knowledge:
             return {kn for k in self.knowledge if (kn := getattr(k, "name", None)) is not None}
+        return set()
+
+    def get_memory_manager(self, manager_id: str) -> Optional[Any]:
+        """Get a memory manager by registry id."""
+        if self.memory_managers:
+            return next(
+                (m for m in self.memory_managers if getattr(m, "_registry_id", None) == manager_id),
+                None,
+            )
+        return None
+
+    def get_session_summary_manager(self, manager_id: str) -> Optional[Any]:
+        """Get a session summary manager by registry id."""
+        if self.session_summary_managers:
+            return next(
+                (m for m in self.session_summary_managers if getattr(m, "_registry_id", None) == manager_id),
+                None,
+            )
+        return None
+
+    def get_memory_manager_ids(self) -> Set[str]:
+        """Get the set of all memory manager registry ids."""
+        if self.memory_managers:
+            return {mid for m in self.memory_managers if (mid := getattr(m, "_registry_id", None)) is not None}
+        return set()
+
+    def get_session_summary_manager_ids(self) -> Set[str]:
+        """Get the set of all session summary manager registry ids."""
+        if self.session_summary_managers:
+            return {mid for m in self.session_summary_managers if (mid := getattr(m, "_registry_id", None)) is not None}
         return set()
 
     def get_all_component_ids(self) -> Set[str]:

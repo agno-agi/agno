@@ -12,6 +12,7 @@ from agno.os.schema import (
     FunctionMetadata,
     InternalServerErrorResponse,
     KnowledgeMetadata,
+    MemoryManagerMetadata,
     ModelMetadata,
     NotFoundResponse,
     PaginatedResponse,
@@ -19,6 +20,7 @@ from agno.os.schema import (
     RegistryContentResponse,
     RegistryResourceType,
     SchemaMetadata,
+    SessionSummaryManagerMetadata,
     ToolMetadata,
     UnauthenticatedResponse,
     ValidationErrorResponse,
@@ -493,6 +495,56 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                         type=RegistryResourceType.KNOWLEDGE,
                         description=_safe_str(getattr(kb, "description", None)),
                         metadata=kb_metadata.model_dump(exclude_none=True),
+                    )
+                )
+
+        # Memory managers
+        if resource_type is None or resource_type == RegistryResourceType.MEMORY_MANAGER:
+            for mm in getattr(registry, "memory_managers", []) or []:
+                mm_id = _safe_str(getattr(mm, "_registry_id", None)) or mm.__class__.__name__
+                model = getattr(mm, "model", None)
+                db = getattr(mm, "db", None)
+                mm_metadata = MemoryManagerMetadata(
+                    class_path=_class_path(mm),
+                    owner_id=_safe_str(getattr(mm, "_registry_owner_id", None)),
+                    owner_type=_safe_str(getattr(mm, "_registry_owner_type", None)),
+                    model_class=_class_path(model) if model else None,
+                    model_id=_safe_str(getattr(model, "id", None)) if model else None,
+                    db_class=_class_path(db) if db else None,
+                    add_memories=getattr(mm, "add_memories", None),
+                    update_memories=getattr(mm, "update_memories", None),
+                    delete_memories=getattr(mm, "delete_memories", None),
+                    clear_memories=getattr(mm, "clear_memories", None),
+                )
+                resources.append(
+                    RegistryContentResponse(
+                        name=mm_id,
+                        id=mm_id,
+                        type=RegistryResourceType.MEMORY_MANAGER,
+                        metadata=mm_metadata.model_dump(exclude_none=True),
+                    )
+                )
+
+        # Session summary managers
+        if resource_type is None or resource_type == RegistryResourceType.SESSION_SUMMARY_MANAGER:
+            for sm in getattr(registry, "session_summary_managers", []) or []:
+                sm_id = _safe_str(getattr(sm, "_registry_id", None)) or sm.__class__.__name__
+                model = getattr(sm, "model", None)
+                sm_metadata = SessionSummaryManagerMetadata(
+                    class_path=_class_path(sm),
+                    owner_id=_safe_str(getattr(sm, "_registry_owner_id", None)),
+                    owner_type=_safe_str(getattr(sm, "_registry_owner_type", None)),
+                    model_class=_class_path(model) if model else None,
+                    model_id=_safe_str(getattr(model, "id", None)) if model else None,
+                    last_n_runs=getattr(sm, "last_n_runs", None),
+                    conversation_limit=getattr(sm, "conversation_limit", None),
+                )
+                resources.append(
+                    RegistryContentResponse(
+                        name=sm_id,
+                        id=sm_id,
+                        type=RegistryResourceType.SESSION_SUMMARY_MANAGER,
+                        metadata=sm_metadata.model_dump(exclude_none=True),
                     )
                 )
 
