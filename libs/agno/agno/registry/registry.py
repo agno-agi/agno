@@ -15,7 +15,6 @@ from agno.vectordb.base import VectorDb
 
 if TYPE_CHECKING:
     from agno.agent import Agent
-    from agno.knowledge.knowledge import Knowledge
     from agno.team import Team
 
 
