@@ -97,6 +97,10 @@ def attach_routes(
     entity = agent or team or workflow
     # entity_type drives event dispatch (agent vs team vs workflow events)
     entity_type: Literal["agent", "team", "workflow"] = "agent" if agent else "team" if team else "workflow"
+    # Member HITL needs member runs embedded on Team run (member_responses).
+    # Without this, continue_run cannot reliably reload member tool state from DB.
+    if team is not None and not isinstance(team, RemoteTeam):
+        team.store_member_responses = True
     raw_name = getattr(entity, "name", None)
     # entity_name labels task cards; entity_id namespaces session IDs
     entity_name = raw_name if isinstance(raw_name, str) else entity_type

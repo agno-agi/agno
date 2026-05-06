@@ -21,6 +21,7 @@ from agno.agent import RunEvent
 from agno.os.interfaces.slack.helpers import member_name, task_id
 from agno.os.interfaces.slack.state import StreamState
 from agno.run.agent import BaseAgentRunEvent
+from agno.run.team import TeamRunEvent
 from agno.run.workflow import WorkflowRunEvent
 
 if TYPE_CHECKING:
@@ -258,11 +259,20 @@ async def _on_run_error(chunk: BaseRunOutputEvent, state: StreamState, stream: A
 
 
 async def _on_run_paused(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+    # For Teams: member agents emit RunPausedEvent (agent_id) before Team
+    # propagates the pause as TeamRunPausedEvent (team_id). Only stop on
+    # the Team-level pause so the HITL card carries the Team's run_id —
+    # otherwise aget_run_output(member_run_id) fails at approval time.
+    if state.entity_type == "team":
+        has_team_id = getattr(chunk, "team_id", None) is not None
+        if not has_team_id:
+            # Member pause — let it stream through, wait for Team pause
+            return False
+
     # Stash the event; the router attaches one `card` block per pending
     # requirement via stream.stop(blocks=...). The card carries the full
     # approval context (tool name, args, Approve/Deny buttons) and coexists
     # with the streaming plan above it.
-    print(f"[DEBUG] _on_run_paused called: run_id={getattr(chunk, 'run_id', None)}")
     state.paused_event = cast(Union["AgentRunPausedEvent", "TeamRunPausedEvent"], chunk)
     # Keep pending task_cards in-progress rather than flipping to complete —
     # the run isn't finished, it's awaiting human input.
@@ -419,6 +429,7 @@ HANDLERS: Dict[str, _EventHandler] = {
     RunEvent.run_cancelled.value: _on_run_error,
     # HITL pause — stream ends, router posts Block Kit approval card separately
     RunEvent.run_paused.value: _on_run_paused,
+    TeamRunEvent.run_paused.value: _on_run_paused,
     # Workflow Lifecycle Events
     WorkflowRunEvent.step_output.value: _on_step_output,
     WorkflowRunEvent.workflow_started.value: _on_workflow_started,
