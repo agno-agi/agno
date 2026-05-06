@@ -706,9 +706,15 @@ def attach_routes(
 
         apply_decisions(decisions, requirements)
 
-        # Lock the form: convert interactive inputs to readonly display
+        # Lock the form: convert interactive inputs/cards to readonly display
         original_blocks = list((payload.get("message") or {}).get("blocks") or [])
-        if any(b.get("type") == "input" for b in original_blocks):
+        has_inputs = any(b.get("type") == "input" for b in original_blocks)
+        # Check for cards with actions (buttons) — matches what response_blocks strips
+        has_interactive_cards = any(
+            b.get("type") == "card" and b.get("actions")
+            for b in original_blocks
+        )
+        if has_inputs or has_interactive_cards:
             from agno.os.interfaces.slack.builders import response_blocks
 
             state_values = (payload.get("state") or {}).get("values") or {}
