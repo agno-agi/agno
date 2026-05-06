@@ -1489,12 +1489,16 @@ class Gemini(Model):
 
         return metrics
 
-    def create_file_search_store(self, display_name: Optional[str] = None) -> Any:
+    def create_file_search_store(
+        self, display_name: Optional[str] = None, embedding_model: Optional[str] = None
+    ) -> Any:
         """
         Create a new File Search store.
 
         Args:
             display_name: Optional display name for the store
+            embedding_model: Optional embedding model to use (e.g., "models/gemini-embedding-2").
+                Use "models/gemini-embedding-2" to enable multimodal (image) file search.
 
         Returns:
             FileSearchStore: The created File Search store object
@@ -1502,6 +1506,8 @@ class Gemini(Model):
         config: Dict[str, Any] = {}
         if display_name:
             config["display_name"] = display_name
+        if embedding_model:
+            config["embedding_model"] = embedding_model
 
         try:
             store = self.get_client().file_search_stores.create(config=config or None)  # type: ignore[arg-type]
@@ -1511,10 +1517,16 @@ class Gemini(Model):
             log_error(f"Error creating File Search store: {str(e)}")
             raise
 
-    async def async_create_file_search_store(self, display_name: Optional[str] = None) -> Any:
+    async def async_create_file_search_store(
+        self, display_name: Optional[str] = None, embedding_model: Optional[str] = None
+    ) -> Any:
         """
+        Async version of create_file_search_store.
+
         Args:
             display_name: Optional display name for the store
+            embedding_model: Optional embedding model to use (e.g., "models/gemini-embedding-2").
+                Use "models/gemini-embedding-2" to enable multimodal (image) file search.
 
         Returns:
             FileSearchStore: The created File Search store object
@@ -1522,6 +1534,8 @@ class Gemini(Model):
         config: Dict[str, Any] = {}
         if display_name:
             config["display_name"] = display_name
+        if embedding_model:
+            config["embedding_model"] = embedding_model
 
         try:
             store = await self.get_client().aio.file_search_stores.create(config=config or None)  # type: ignore[arg-type]
@@ -1693,16 +1707,22 @@ class Gemini(Model):
         file_path: Union[str, Path],
         store_name: str,
         display_name: Optional[str] = None,
+        mime_type: Optional[str] = None,
         chunking_config: Optional[Dict[str, Any]] = None,
         custom_metadata: Optional[List[Dict[str, Any]]] = None,
     ) -> Any:
         """
         Upload a file directly to a File Search store.
 
+        Supports image uploads (image/jpeg, image/png) when the store is created
+        with the "models/gemini-embedding-2" embedding model for multimodal search.
+
         Args:
             file_path: Path to the file to upload
             store_name: Name of the File Search store
             display_name: Optional display name for the file (will be visible in citations)
+            mime_type: Optional MIME type of the file (e.g., "image/jpeg", "image/png", "application/pdf").
+                If not provided, the MIME type will be inferred from the file extension.
             chunking_config: Optional chunking configuration
                 Example: {
                     "white_space_config": {
@@ -1727,6 +1747,8 @@ class Gemini(Model):
         config: Dict[str, Any] = {}
         if display_name:
             config["display_name"] = display_name
+        if mime_type:
+            config["mime_type"] = mime_type
         if chunking_config:
             config["chunking_config"] = chunking_config
         if custom_metadata:
@@ -1750,14 +1772,22 @@ class Gemini(Model):
         file_path: Union[str, Path],
         store_name: str,
         display_name: Optional[str] = None,
+        mime_type: Optional[str] = None,
         chunking_config: Optional[Dict[str, Any]] = None,
         custom_metadata: Optional[List[Dict[str, Any]]] = None,
     ) -> Any:
         """
+        Async version of upload_to_file_search_store.
+
+        Supports image uploads (image/jpeg, image/png) when the store is created
+        with the "models/gemini-embedding-2" embedding model for multimodal search.
+
         Args:
             file_path: Path to the file to upload
             store_name: Name of the File Search store
             display_name: Optional display name for the file
+            mime_type: Optional MIME type of the file (e.g., "image/jpeg", "image/png", "application/pdf").
+                If not provided, the MIME type will be inferred from the file extension.
             chunking_config: Optional chunking configuration
             custom_metadata: Optional custom metadata
 
@@ -1772,6 +1802,8 @@ class Gemini(Model):
         config: Dict[str, Any] = {}
         if display_name:
             config["display_name"] = display_name
+        if mime_type:
+            config["mime_type"] = mime_type
         if chunking_config:
             config["chunking_config"] = chunking_config
         if custom_metadata:
@@ -1978,4 +2010,46 @@ class Gemini(Model):
             log_info(f"Deleted document: {document_name}")
         except Exception as e:
             log_error(f"Error deleting document {document_name}: {str(e)}")
+            raise
+
+    def download_blob(self, media_id: str) -> Any:
+        """
+        Download a media blob cited by Gemini File Search (multimodal).
+
+        When using multimodal file search with image uploads, the grounding metadata
+        may include a media_id for cited images. Use this method to download the
+        cited image content.
+
+        Args:
+            media_id: The media_id from grounding metadata
+                (e.g., "fileSearchStores/store-123/media/genai-api/blobref/...")
+
+        Returns:
+            The blob content returned by the SDK
+        """
+        try:
+            result = self.get_client().file_search_stores.download_media(media_id=media_id)
+            log_info(f"Downloaded blob: {media_id}")
+            return result
+        except Exception as e:
+            log_error(f"Error downloading blob {media_id}: {str(e)}")
+            raise
+
+    async def async_download_blob(self, media_id: str) -> Any:
+        """
+        Async version of download_blob.
+
+        Args:
+            media_id: The media_id from grounding metadata
+                (e.g., "fileSearchStores/store-123/media/genai-api/blobref/...")
+
+        Returns:
+            The blob content returned by the SDK
+        """
+        try:
+            result = await self.get_client().aio.file_search_stores.download_media(media_id=media_id)
+            log_info(f"Downloaded blob: {media_id}")
+            return result
+        except Exception as e:
+            log_error(f"Error downloading blob {media_id}: {str(e)}")
             raise
