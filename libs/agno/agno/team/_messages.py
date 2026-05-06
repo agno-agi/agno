@@ -480,6 +480,16 @@ def get_system_message(
             if knowledge_context:
                 system_message_content += knowledge_context + "\n"
 
+    # 2.3b Learnings — inject LearningMachine context into the system prompt (mirrors agent._messages.py)
+    if team._learning is not None and team.add_learnings_to_context:
+        learning_context = team._learning.build_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            agent_id=team.id,
+        )
+        if learning_context:
+            system_message_content += learning_context + "\n"
+
     # 2.4 Memories
     if team.add_memories_to_context:
         _memory_manager_not_set = False
@@ -700,6 +710,26 @@ async def aget_system_message(
             )
             if knowledge_context:
                 system_message_content += knowledge_context + "\n"
+
+    # 2.3b Learnings — inject LearningMachine context into the system prompt (mirrors agent._messages.py)
+    if team._learning is not None and team.add_learnings_to_context:
+        learning_context = team._learning.build_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            agent_id=team.id,
+        )
+        if learning_context:
+            system_message_content += learning_context + "\n"
+
+    # 2.3b Learnings (async) — inject LearningMachine context into the system prompt
+    if team._learning is not None and team.add_learnings_to_context:
+        learning_context = await team._learning.abuild_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            agent_id=team.id,
+        )
+        if learning_context:
+            system_message_content += learning_context + "\n"
 
     # 2.4 Memories
     if team.add_memories_to_context:
