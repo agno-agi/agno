@@ -23,9 +23,9 @@
 
 ## What is Agno
 
-Agno is the runtime for agentic software. Use it to serve agents as production services.
+Agno is the runtime for agentic software. Use it to run agents as a production service.
 
-Build agents using the Agno SDK, Claude Agent SDK, LangGraph, DSPy, or your own framework. Run them as production services with sessions, tracing, scheduling, and RBAC. Manage them from a single control plane.
+Build agents using any framework. Run them as production services with sessions, tracing, scheduling, and RBAC. Manage them from a single control plane.
 
 | Layer | What it does |
 |-------|--------------|
