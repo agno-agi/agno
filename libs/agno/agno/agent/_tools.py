@@ -388,6 +388,10 @@ def parse_tools(
                 _functions.append(_func)
                 log_debug(f"Added tool {name} from {tool.name}")
 
+                # Add per-function instructions
+                if _func.add_instructions and _func.instructions is not None:
+                    agent._tool_instructions.append(_func.instructions)
+
             # Add instructions from the toolkit
             if tool.add_instructions and tool.instructions is not None:
                 agent._tool_instructions.append(tool.instructions)
