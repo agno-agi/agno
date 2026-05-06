@@ -2083,9 +2083,21 @@ class Model(ABC):
             audios = function_execution_result.audios
             files = function_execution_result.files
 
+        # Prefix delegate_task_to_member results with member_id for history readability
+        content: Optional[Union[List[Any], str]] = output if success else function_call.error
+        if (
+            success
+            and function_call.function.name == "delegate_task_to_member"
+            and isinstance(output, str)
+            and function_call.arguments
+        ):
+            member_id = function_call.arguments.get("member_id")
+            if member_id and output and not output.lstrip().startswith(f"[{member_id}]"):
+                content = f"[{member_id}]: {output}"
+
         return Message(
             role=self.tool_message_role,
-            content=output if success else function_call.error,
+            content=content,
             tool_call_id=function_call.call_id,
             tool_name=function_call.function.name,
             tool_args=function_call.arguments,
