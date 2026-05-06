@@ -84,7 +84,8 @@ def test_fabricated_state_rejected(google_auth):
 
 
 def test_tampered_state_rejected(google_auth):
-    resp = json.loads(google_auth.authenticate_google(run_context=_fake_run_context("alice")))
+    oauth_tools = GoogleOAuthTools(auth=google_auth)
+    resp = json.loads(oauth_tools.oauth_google(run_context=_fake_run_context("alice")))
     state = _state_from_url(resp["oauth_url"])
     tampered = state[:-3] + ("A" if state[-3] != "A" else "B") + state[-2:]
     mock_db = Mock()
@@ -120,6 +121,7 @@ def test_authenticate_google_without_state_secret_errors(monkeypatch):
     monkeypatch.delenv("GOOGLE_OAUTH_STATE_SECRET", raising=False)
     ga = GoogleAuth(client_id="id")
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
-    resp = json.loads(ga.authenticate_google())
+    oauth_tools = GoogleOAuthTools(auth=ga)
+    resp = json.loads(oauth_tools.oauth_google())
     assert "error" in resp
     assert "state signing secret" in resp["error"].lower()

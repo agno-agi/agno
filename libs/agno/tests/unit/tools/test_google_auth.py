@@ -210,14 +210,14 @@ def test_get_token_db_reads_agent_db_without_mutating_toolkit(tmp_path):
 
 
 def test_get_token_db_with_coordinator_uses_agent_db_without_mutation(tmp_path):
-    # Coordinator path: GoogleAuth(db=None) + GmailTools(google_auth=...) + agent.db
+    # Coordinator path: GoogleAuth(db=None) + GmailTools(auth=...) + agent.db
     from agno.db.sqlite.sqlite import SqliteDb
     from agno.tools.google.auth import get_token_db
 
     db = SqliteDb(db_file=str(tmp_path / "t.db"))
     agent = Mock(db=db)
     ga = GoogleAuth(client_id="id", state_secret="s")
-    gmail = GmailTools(google_auth=ga)
+    gmail = GmailTools(auth=ga)
 
     assert ga._db is None
     assert gmail._db is None
