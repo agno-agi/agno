@@ -324,3 +324,11 @@ def test_mcp_no_http_context_falls_back_to_caller(mock_get_request):
     mock_get_request.side_effect = RuntimeError("no request context")
     assert _resolve_user_id("alice") == "alice"
     assert _resolve_user_id(None) is None
+
+
+@patch("fastmcp.server.dependencies.get_http_request")
+def test_mcp_unexpected_exception_propagates(mock_get_request):
+    """Non-RuntimeError exceptions are real bugs and must not be silently swallowed."""
+    mock_get_request.side_effect = AttributeError("future API change")
+    with pytest.raises(AttributeError):
+        _resolve_user_id("alice")

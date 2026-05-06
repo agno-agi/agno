@@ -48,11 +48,11 @@ logger = logging.getLogger(__name__)
 
 def _resolve_user_id(caller_user_id: Optional[str]) -> Optional[str]:
     """Bind user_id to the JWT subject when an authenticated request is in flight."""
-    try:
-        from fastmcp.server.dependencies import get_http_request
+    from fastmcp.server.dependencies import get_http_request
 
+    try:
         request = get_http_request()
-    except Exception:
+    except RuntimeError:
         return caller_user_id
 
     state_user_id = getattr(getattr(request, "state", None), "user_id", None)
