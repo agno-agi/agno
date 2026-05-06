@@ -7,6 +7,7 @@ import pytest
 
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.tools.google.auth import GoogleAuth
+from agno.tools.google.oauth_tools import GoogleOAuthTools
 from agno.utils.oauth_state import sign_state, verify_state
 
 
@@ -41,7 +42,8 @@ def _state_from_url(url: str) -> str:
 
 
 def test_authenticate_google_produces_verifiable_state(google_auth):
-    resp = json.loads(google_auth.authenticate_google(run_context=_fake_run_context("alice")))
+    oauth_tools = GoogleOAuthTools(auth=google_auth)
+    resp = json.loads(oauth_tools.oauth_google(run_context=_fake_run_context("alice")))
     state = _state_from_url(resp["url"])
     payload = verify_state(state, secret="test-state-secret-32-bytes-or-longer")
     assert payload["user_id"] == "alice"
@@ -53,7 +55,8 @@ def test_env_var_fallback(monkeypatch, test_db):
     monkeypatch.setenv("GOOGLE_OAUTH_STATE_SECRET", "env-secret")
     ga = GoogleAuth(client_id="x", db=test_db)
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
-    resp = json.loads(ga.authenticate_google(run_context=_fake_run_context("alice")))
+    oauth_tools = GoogleOAuthTools(auth=ga)
+    resp = json.loads(oauth_tools.oauth_google(run_context=_fake_run_context("alice")))
     state = _state_from_url(resp["url"])
     payload = verify_state(state, secret="env-secret")
     assert payload["user_id"] == "alice"
@@ -63,7 +66,8 @@ def test_kwarg_overrides_env_var(monkeypatch, test_db):
     monkeypatch.setenv("GOOGLE_OAUTH_STATE_SECRET", "env-value")
     ga = GoogleAuth(client_id="x", state_secret="kwarg-wins", db=test_db)
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
-    resp = json.loads(ga.authenticate_google(run_context=_fake_run_context("alice")))
+    oauth_tools = GoogleOAuthTools(auth=ga)
+    resp = json.loads(oauth_tools.oauth_google(run_context=_fake_run_context("alice")))
     state = _state_from_url(resp["url"])
     # Decodes with kwarg secret; raises with env secret
     assert verify_state(state, secret="kwarg-wins")["user_id"] == "alice"

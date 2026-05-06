@@ -6,11 +6,10 @@ import os
 import secrets
 from contextvars import ContextVar
 from functools import wraps
-from typing import Any, Dict, List, Optional, Set
-from urllib.parse import urlencode
+from typing import Any, Dict, List, Optional
 
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.oauth_state import sign_state, verify_state
+from agno.utils.oauth_state import verify_state
 
 
 def _generate_pkce_pair() -> tuple[str, str]:

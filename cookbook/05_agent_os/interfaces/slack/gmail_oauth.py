@@ -19,8 +19,6 @@ Run:
   .venvs/demo/bin/python cookbook/05_agent_os/interfaces/slack/gmail_oauth.py
 """
 
-import os
-
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses

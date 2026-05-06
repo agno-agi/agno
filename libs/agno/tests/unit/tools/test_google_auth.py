@@ -8,6 +8,7 @@ from google.oauth2.credentials import Credentials
 from agno.tools.google.auth import GoogleAuth
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
+from agno.tools.google.oauth_tools import GoogleOAuthTools
 
 
 @pytest.fixture
@@ -31,7 +32,7 @@ def test_google_auth_init():
     ga = GoogleAuth(client_id="my-id")
     assert ga.client_id == "my-id"
     assert ga._services == {}
-    assert "authenticate_google" in ga.functions
+    # GoogleAuth is a plain coordinator, not a Toolkit - no functions attribute
 
 
 def test_google_auth_init_from_env(monkeypatch):
@@ -79,7 +80,8 @@ def test_authenticate_google_combined_url(google_auth):
         ],
     )
 
-    result = json.loads(google_auth.authenticate_google())
+    oauth_tools = GoogleOAuthTools(auth=google_auth)
+    result = json.loads(oauth_tools.oauth_google())
 
     assert "url" in result
     parsed = urlparse(result["url"])
@@ -94,7 +96,8 @@ def test_authenticate_google_combined_url(google_auth):
 def test_authenticate_google_includes_oauth_params(google_auth):
     google_auth.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
 
-    result = json.loads(google_auth.authenticate_google())
+    oauth_tools = GoogleOAuthTools(auth=google_auth)
+    result = json.loads(oauth_tools.oauth_google())
     parsed = urlparse(result["url"])
     params = parse_qs(parsed.query)
 
@@ -120,7 +123,8 @@ def test_include_granted_scopes_opt_in(tmp_path):
         include_granted_scopes=True,
     )
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
-    result = json.loads(ga.authenticate_google())
+    oauth_tools = GoogleOAuthTools(auth=ga)
+    result = json.loads(oauth_tools.oauth_google())
     params = parse_qs(urlparse(result["url"]).query)
     assert params["include_granted_scopes"] == ["true"]
 
@@ -128,7 +132,8 @@ def test_include_granted_scopes_opt_in(tmp_path):
 def test_authenticate_google_single_service(google_auth):
     google_auth.register_service("calendar", ["https://www.googleapis.com/auth/calendar"])
 
-    result = json.loads(google_auth.authenticate_google())
+    oauth_tools = GoogleOAuthTools(auth=google_auth)
+    result = json.loads(oauth_tools.oauth_google())
 
     assert "url" in result
     assert "calendar" in result["url"]
@@ -137,7 +142,8 @@ def test_authenticate_google_single_service(google_auth):
 
 def test_authenticate_google_no_services_registered(google_auth):
     # New API: error when no services registered
-    result = json.loads(google_auth.authenticate_google())
+    oauth_tools = GoogleOAuthTools(auth=google_auth)
+    result = json.loads(oauth_tools.oauth_google())
     assert "error" in result
     assert "No Google services registered" in result["error"]
 
@@ -221,14 +227,15 @@ def test_get_token_db_with_coordinator_uses_agent_db_without_mutation(tmp_path):
 
 
 def test_authenticate_google_with_agent_db(tmp_path):
-    # authenticate_google now uses the db passed to constructor or from agent
+    # oauth_google now uses the db passed to GoogleAuth constructor
     from agno.db.sqlite.sqlite import SqliteDb
 
     db = SqliteDb(db_file=str(tmp_path / "t.db"))
     ga = GoogleAuth(client_id="id", state_secret="s", db=db)
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
 
-    result = json.loads(ga.authenticate_google())
+    oauth_tools = GoogleOAuthTools(auth=ga)
+    result = json.loads(oauth_tools.oauth_google())
     assert "url" in result
     assert ga._db is db
 
@@ -243,7 +250,8 @@ def test_pkce_state_stored_in_db(tmp_path):
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
 
     # Generate OAuth URL - this stores PKCE state in DB
-    result = json.loads(ga.authenticate_google())
+    oauth_tools = GoogleOAuthTools(auth=ga)
+    result = json.loads(oauth_tools.oauth_google())
     assert "url" in result
 
     # Verify PKCE params in URL
@@ -270,7 +278,8 @@ def test_pkce_callback_verifies_state_id(tmp_path):
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
 
     # Generate OAuth URL
-    ga.authenticate_google()
+    oauth_tools = GoogleOAuthTools(auth=ga)
+    oauth_tools.oauth_google()
 
     # Get the stored state_id
     row = db.get_auth_token("google", None, "google")
@@ -313,7 +322,8 @@ def test_token_encryption_roundtrip(tmp_path):
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
 
     # Generate OAuth URL (stores PKCE state)
-    ga.authenticate_google()
+    oauth_tools = GoogleOAuthTools(auth=ga)
+    oauth_tools.oauth_google()
 
     # Verify PKCE state is NOT encrypted (temporary, not sensitive)
     row = db.get_auth_token("google", None, "google")

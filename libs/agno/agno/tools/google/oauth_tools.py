@@ -24,7 +24,7 @@ Usage:
 
 import json
 import secrets
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, Optional, Set
 from urllib.parse import urlencode
 
 from agno.tools import Toolkit
