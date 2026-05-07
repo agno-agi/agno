@@ -862,6 +862,12 @@ def from_dict(
     #     from agno.compression.manager import CompressionManager
     #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
 
+    if "enable_user_memories" in config:
+        log_debug(
+            "'enable_user_memories' has been deprecated. Use 'update_memory_on_run' instead."
+        )
+        config.pop("enable_user_memories", None)
+
     team = cast(
         "Team",
         cls(

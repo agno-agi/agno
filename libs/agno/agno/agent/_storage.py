@@ -853,6 +853,12 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
     config.pop("team_id", None)
     config.pop("workflow_id", None)
 
+    if "enable_user_memories" in config:
+        log_debug(
+            "'enable_user_memories' has been deprecated. Use 'update_memory_on_run' instead."
+        )
+        config.pop("enable_user_memories", None)
+
     return cls(
         # --- Agent settings ---
         model=config.get("model"),
