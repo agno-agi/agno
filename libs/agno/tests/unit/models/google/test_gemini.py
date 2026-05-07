@@ -249,14 +249,14 @@ class TestGeminiTimeout:
             assert kwargs["http_options"]["timeout"] == 30000
 
     def test_timeout_none_does_not_set_http_options(self):
-        """Test that no http_options are added when timeout is None."""
+        """Test that timeout is not added to http_options when timeout is None."""
         model = Gemini(api_key="test-key", timeout=None)
 
         with patch("agno.models.google.gemini.genai.Client") as mock_client_cls:
             model.get_client()
 
             _, kwargs = mock_client_cls.call_args
-            assert "http_options" not in kwargs
+            assert "timeout" not in kwargs.get("http_options", {})
 
     def test_timeout_fractional_seconds(self):
         """Test that fractional seconds are correctly converted to integer milliseconds."""
@@ -298,6 +298,40 @@ class TestGeminiTimeout:
             _, kwargs = mock_client_cls.call_args
             assert kwargs["http_options"]["timeout"] == 10000
             assert kwargs["vertexai"] is True
+
+
+class TestGeminiHeaders:
+    def test_api_client_header_present(self):
+        """Test that the API client header is automatically added."""
+        from agno import __version__ as agno_version
+
+        model = Gemini(api_key="test-key")
+
+        with patch("agno.models.google.gemini.genai.Client") as mock_client_cls:
+            model.get_client()
+
+            _, kwargs = mock_client_cls.call_args
+            assert "http_options" in kwargs
+            assert "headers" in kwargs["http_options"]
+            assert kwargs["http_options"]["headers"]["x-goog-api-client"] == f"agno/{agno_version}"
+
+    def test_api_client_header_with_client_params(self):
+        """Test that the API client header merges with existing headers in client_params."""
+        from agno import __version__ as agno_version
+
+        model = Gemini(
+            api_key="test-key",
+            client_params={"http_options": {"headers": {"custom-header": "value"}}},
+        )
+
+        with patch("agno.models.google.gemini.genai.Client") as mock_client_cls:
+            model.get_client()
+
+            _, kwargs = mock_client_cls.call_args
+            assert "http_options" in kwargs
+            assert "headers" in kwargs["http_options"]
+            assert kwargs["http_options"]["headers"]["x-goog-api-client"] == f"agno/{agno_version}"
+            assert kwargs["http_options"]["headers"]["custom-header"] == "value"
 
 
 def test_parallel_search_requires_vertexai():

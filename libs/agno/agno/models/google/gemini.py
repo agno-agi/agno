@@ -21,7 +21,12 @@ from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
-from agno.utils.gemini import format_function_definitions, format_image_for_message, prepare_response_schema
+from agno.utils.gemini import (
+    format_function_definitions,
+    format_image_for_message,
+    inject_agno_client_header,
+    prepare_response_schema,
+)
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.tokens import count_schema_tokens, count_text_tokens, count_tool_tokens
 
@@ -195,6 +200,8 @@ class Gemini(Model):
 
         if self.client_params:
             client_params.update(self.client_params)
+
+        client_params = inject_agno_client_header(client_params)
 
         self.client = genai.Client(**client_params)
         return self.client
