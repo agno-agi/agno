@@ -83,3 +83,36 @@ def lookup_service(service_name: str) -> str:
 def list_recent_incidents() -> List[Dict[str, str]]:
     """Return the most recent incidents filed in this session (newest first)."""
     return list(reversed(_INCIDENTS[-5:]))
+
+
+# HITL tools — one per pause type
+
+
+@tool(external_execution=True)
+def run_diagnostic(command: str, note: str = "") -> str:
+    """Run a diagnostic command against production. The agent does NOT
+    execute this — the on-call engineer runs it on their jumpbox and
+    pastes the raw output back into the Slack card.
+
+    Args:
+        command: Exact shell / kubectl command to run.
+        note: Optional short note about what the agent wants to see.
+    """
+    # Unreachable — external_execution=True pauses before the body runs.
+    return f"[ran] {command} {note}".strip()
+
+
+@tool(requires_confirmation=True)
+def restart_service(service_name: str, reason: str) -> str:
+    """Roll-restart every replica of a service. Destructive — briefly
+    drops in-flight requests, so the Slack interface pauses for Approve
+    / Deny before running.
+
+    Args:
+        service_name: Service to restart (matches lookup_service).
+        reason: One-line justification, recorded in the audit log.
+    """
+    svc = _SERVICES.get(service_name)
+    if not svc:
+        return f"No service {service_name!r} — nothing restarted."
+    return f"Rolled {svc.replicas} replicas of {svc.name} in {svc.region}. Reason: {reason!r}."
