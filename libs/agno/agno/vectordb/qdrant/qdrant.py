@@ -522,24 +522,22 @@ class Qdrant(VectorDb):
         """
         log_debug("Redirecting the async request to async_insert")
         if self.async_client:
-            try:
-                filter_condition = models.Filter(
-                    must=[models.FieldCondition(key="content_hash", match=models.MatchValue(value=content_hash))]
+            # Let delete errors propagate: inserting after a failed dedup would stack new points on top of old ones.
+            filter_condition = models.Filter(
+                must=[models.FieldCondition(key="content_hash", match=models.MatchValue(value=content_hash))]
+            )
+            count_result = await self.async_client.count(
+                collection_name=self.collection, count_filter=filter_condition, exact=True
+            )
+            if count_result.count > 0:
+                log_info(
+                    f"Deleting {count_result.count} existing points with content_hash: {content_hash} before upsert"
                 )
-                count_result = await self.async_client.count(
-                    collection_name=self.collection, count_filter=filter_condition, exact=True
+                await self.async_client.delete(
+                    collection_name=self.collection,
+                    points_selector=filter_condition,
+                    wait=True,
                 )
-                if count_result.count > 0:
-                    log_info(
-                        f"Deleting {count_result.count} existing points with content_hash: {content_hash} before upsert"
-                    )
-                    await self.async_client.delete(
-                        collection_name=self.collection,
-                        points_selector=filter_condition,
-                        wait=True,
-                    )
-            except Exception as e:
-                log_info(f"Error deleting existing points with content_hash {content_hash}: {e}")
         await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
 
     def search(
