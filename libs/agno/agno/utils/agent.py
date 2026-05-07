@@ -634,6 +634,16 @@ def get_last_run_output_util(
     Returns:
         RunOutput: The last run response from the database.
     """
+    # Ensure id consistency with stored agent_id/team_id: arun() auto-derives
+    # an id from the name during initialization; do the same on reads so a
+    # fresh Agent(name="x") (id=None) still matches its persisted runs.
+    if entity.__class__.__name__ == "Team":
+        from agno.team._init import set_id
+    else:
+        from agno.agent._init import set_id
+
+    set_id(entity)  # type: ignore[arg-type]
+
     if session_id is not None:
         if _has_async_db(entity):
             raise ValueError("Async database not supported for sync functions")
@@ -677,6 +687,16 @@ async def aget_last_run_output_util(
     Returns:
         RunOutput: The last run response from the database.
     """
+    # Ensure id consistency with stored agent_id/team_id: arun() auto-derives
+    # an id from the name during initialization; do the same on reads so a
+    # fresh Agent(name="x") (id=None) still matches its persisted runs.
+    if entity.__class__.__name__ == "Team":
+        from agno.team._init import set_id
+    else:
+        from agno.agent._init import set_id
+
+    set_id(entity)  # type: ignore[arg-type]
+
     if session_id is not None:
         session = await entity.aget_session(session_id=session_id)
         if session is not None and session.runs is not None and len(session.runs) > 0:
