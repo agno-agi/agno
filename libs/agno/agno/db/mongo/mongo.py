@@ -59,6 +59,8 @@ class MongoDb(BaseDb):
         culture_collection: Optional[str] = None,
         traces_collection: Optional[str] = None,
         spans_collection: Optional[str] = None,
+        schedules_collection: Optional[str] = None,
+        schedule_runs_collection: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -76,6 +78,8 @@ class MongoDb(BaseDb):
             culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
+            schedules_collection (Optional[str]): Name of the collection to store schedules.
+            schedule_runs_collection (Optional[str]): Name of the collection to store schedule runs.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -97,6 +101,8 @@ class MongoDb(BaseDb):
             culture_table=culture_collection,
             traces_table=traces_collection,
             spans_table=spans_collection,
+            schedules_table=schedules_collection,
+            schedule_runs_table=schedule_runs_collection,
         )
 
         _client: Optional[MongoClient] = db_client
@@ -152,6 +158,8 @@ class MongoDb(BaseDb):
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
             ("culture", self.culture_table_name),
+            ("schedules", self.schedules_table_name),
+            ("schedule_runs", self.schedule_runs_table_name),
         ]
 
         for collection_type, collection_name in collections_to_create:
@@ -256,6 +264,28 @@ class MongoDb(BaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.spans_collection
+
+        if table_type == "schedules":
+            if not hasattr(self, "schedules_collection"):
+                if self.schedules_table_name is None:
+                    raise ValueError("Schedules collection was not provided on initialization")
+                self.schedules_collection = self._get_or_create_collection(
+                    collection_name=self.schedules_table_name,
+                    collection_type="schedules",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.schedules_collection
+
+        if table_type == "schedule_runs":
+            if not hasattr(self, "schedule_runs_collection"):
+                if self.schedule_runs_table_name is None:
+                    raise ValueError("Schedule runs collection was not provided on initialization")
+                self.schedule_runs_collection = self._get_or_create_collection(
+                    collection_name=self.schedule_runs_table_name,
+                    collection_type="schedule_runs",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.schedule_runs_collection
 
         raise ValueError(f"Unknown table type: {table_type}")
 
@@ -2643,6 +2673,223 @@ class MongoDb(BaseDb):
         except Exception as e:
             log_error(f"Error getting spans: {str(e)}")
             return []
+
+    # -- Scheduler methods --
+    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            collection = self._get_collection(table_type="schedules")
+            if collection is None:
+                return None
+
+            result = collection.find_one({"id": schedule_id})
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_debug(f"Error getting schedule: {e}")
+            return None
+
+    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        try:
+            collection = self._get_collection(table_type="schedules")
+            if collection is None:
+                return None
+
+            result = collection.find_one({"name": name})
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_debug(f"Error getting schedule by name: {e}")
+            return None
+
+    def get_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            collection = self._get_collection(table_type="schedules")
+            if collection is None:
+                return [], 0
+
+            query: Dict[str, Any] = {}
+            if enabled is not None:
+                query["enabled"] = enabled
+
+            total_count = collection.count_documents(query)
+
+            offset = (page - 1) * limit
+            cursor = collection.find(query).sort([("created_at", -1)]).skip(offset).limit(limit)
+            schedules = list(cursor)
+            for schedule in schedules:
+                schedule.pop("_id", None)
+            return schedules, total_count
+        except Exception as e:
+            log_debug(f"Error listing schedules: {e}")
+            return [], 0
+
+    def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            collection = self._get_collection(table_type="schedules", create_collection_if_not_found=True)
+            if collection is None:
+                raise RuntimeError("Failed to get or create schedules collection")
+
+            collection.insert_one(schedule_data)
+            schedule_data.pop("_id", None)
+            return schedule_data
+        except Exception as e:
+            log_error(f"Error creating schedule: {e}")
+            raise e
+
+    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            collection = self._get_collection(table_type="schedules")
+            if collection is None:
+                return None
+
+            kwargs["updated_at"] = int(time.time())
+            result = collection.update_one({"id": schedule_id}, {"$set": kwargs})
+            if result.matched_count == 0:
+                return None
+            return self.get_schedule(schedule_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule: {e}")
+            return None
+
+    def delete_schedule(self, schedule_id: str) -> bool:
+        try:
+            schedules_collection = self._get_collection(table_type="schedules")
+            if schedules_collection is None:
+                return False
+
+            runs_collection = self._get_collection(table_type="schedule_runs")
+            if runs_collection is not None:
+                runs_collection.delete_many({"schedule_id": schedule_id})
+
+            result = schedules_collection.delete_one({"id": schedule_id})
+            return result.deleted_count > 0
+        except Exception as e:
+            log_debug(f"Error deleting schedule: {e}")
+            return False
+
+    def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
+        try:
+            collection = self._get_collection(table_type="schedules")
+            if collection is None:
+                return None
+
+            now = int(time.time())
+            stale_lock_threshold = now - lock_grace_seconds
+
+            result = collection.find_one_and_update(
+                {
+                    "enabled": True,
+                    "next_run_at": {"$lte": now},
+                    "$or": [
+                        {"locked_by": None},
+                        {"locked_at": {"$lte": stale_lock_threshold}},
+                    ],
+                },
+                {"$set": {"locked_by": worker_id, "locked_at": now}},
+                sort=[("next_run_at", 1)],
+                return_document=ReturnDocument.AFTER,
+            )
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_debug(f"Error claiming schedule: {e}")
+            return None
+
+    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+        try:
+            collection = self._get_collection(table_type="schedules")
+            if collection is None:
+                return False
+
+            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            if next_run_at is not None:
+                updates["next_run_at"] = next_run_at
+
+            result = collection.update_one({"id": schedule_id}, {"$set": updates})
+            return result.matched_count > 0
+        except Exception as e:
+            log_debug(f"Error releasing schedule: {e}")
+            return False
+
+    def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            collection = self._get_collection(table_type="schedule_runs", create_collection_if_not_found=True)
+            if collection is None:
+                raise RuntimeError("Failed to get or create schedule runs collection")
+
+            collection.insert_one(run_data)
+            run_data.pop("_id", None)
+            return run_data
+        except Exception as e:
+            log_error(f"Error creating schedule run: {e}")
+            raise e
+
+    def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            collection = self._get_collection(table_type="schedule_runs")
+            if collection is None:
+                return None
+
+            result = collection.update_one({"id": schedule_run_id}, {"$set": kwargs})
+            if result.matched_count == 0:
+                return None
+            return self.get_schedule_run(schedule_run_id)
+        except Exception as e:
+            log_debug(f"Error updating schedule run: {e}")
+            return None
+
+    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            collection = self._get_collection(table_type="schedule_runs")
+            if collection is None:
+                return None
+            result = collection.find_one({"id": run_id})
+            if result is None:
+                return None
+
+            result.pop("_id", None)
+            return result
+        except Exception as e:
+            log_debug(f"Error getting schedule run: {e}")
+            return None
+
+    def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 20,
+        page: int = 1,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            collection = self._get_collection(table_type="schedule_runs")
+            if collection is None:
+                return [], 0
+
+            query = {"schedule_id": schedule_id}
+            total_count = collection.count_documents(query)
+
+            offset = (page - 1) * limit
+            cursor = collection.find(query).sort([("created_at", -1)]).skip(offset).limit(limit)
+            runs = list(cursor)
+            for run in runs:
+                run.pop("_id", None)
+            return runs, total_count
+        except Exception as e:
+            log_debug(f"Error getting schedule runs: {e}")
+            return [], 0
 
     # -- Learning methods (stubs) --
     def get_learning(
