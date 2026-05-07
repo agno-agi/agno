@@ -326,6 +326,10 @@ def _determine_tools_for_model(
             toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
             for name, _func in toolkit_functions.items():
                 if name in _function_names:
+                    log_warning(
+                        f"Duplicate tool name '{name}' from toolkit '{tool.name}' "
+                        f"already registered on team; skipping the duplicate."
+                    )
                     continue
                 _function_names.append(name)
                 _func = _func.model_copy(deep=True)
@@ -355,6 +359,7 @@ def _determine_tools_for_model(
 
         elif isinstance(tool, Function):
             if tool.name in _function_names:
+                log_warning(f"Duplicate tool name '{tool.name}' already registered on team; skipping the duplicate.")
                 continue
             _function_names.append(tool.name)
             tool = tool.model_copy(deep=True)
@@ -381,6 +386,9 @@ def _determine_tools_for_model(
                 _func = Function.from_callable(tool, strict=strict)
                 _func = _func.model_copy(deep=True)
                 if _func.name in _function_names:
+                    log_warning(
+                        f"Duplicate tool name '{_func.name}' already registered on team; skipping the duplicate."
+                    )
                     continue
                 _function_names.append(_func.name)
 
