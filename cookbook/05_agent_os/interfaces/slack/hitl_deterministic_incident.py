@@ -116,3 +116,50 @@ def restart_service(service_name: str, reason: str) -> str:
     if not svc:
         return f"No service {service_name!r} — nothing restarted."
     return f"Rolled {svc.replicas} replicas of {svc.name} in {svc.region}. Reason: {reason!r}."
+
+
+@tool(requires_user_input=True, user_input_fields=["priority", "on_call_owner"])
+def file_incident_retro(
+    title: str,
+    summary: str,
+    priority: Literal["P0", "P1", "P2", "P3"],
+    on_call_owner: str,
+) -> str:
+    """Open a retrospective ticket linking the incident timeline and
+    action items. The agent drafts title + summary; the human supplies
+    priority and the on-call owner who should drive the follow-up.
+
+    Args:
+        title: Short incident title (agent drafts).
+        summary: Timeline + resolution notes (agent drafts).
+        priority: Severity tier. Requester picks via the Slack pause form.
+        on_call_owner: Email / handle of the engineer who owns the retro.
+    """
+    incident_id = f"INC-{uuid4().hex[:6].upper()}"
+    _INCIDENTS.append(
+        {
+            "id": incident_id,
+            "title": title,
+            "priority": priority,
+            "owner": on_call_owner,
+        }
+    )
+    return f"Incident {incident_id} filed: {title} (priority={priority}, owner={on_call_owner}).\nSummary: {summary}"
+
+
+# Termination tool — gives the agent a clean exit when tool_choice="required"
+# is set. Without this, the agent would loop forever after file_incident_retro
+# because the API forces a tool call every turn and the agent has nothing else
+# meaningful to call.
+
+
+@tool(stop_after_tool_call=True)
+def conclude_incident(summary: str) -> str:
+    """Mark the incident as concluded. Call this AFTER file_incident_retro
+    as the LAST action. The summary is shown verbatim to the operator
+    and the run terminates here.
+
+    Args:
+        summary: Final human-readable summary shown to the operator.
+    """
+    return summary
