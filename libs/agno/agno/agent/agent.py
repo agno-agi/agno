@@ -391,9 +391,6 @@ class Agent:
         search_past_sessions: Optional[bool] = False,
         num_past_sessions_to_search: Optional[int] = None,
         num_past_session_runs_in_search: Optional[int] = None,
-        # Deprecated params — kept for backward compatibility
-        search_session_history: Optional[bool] = None,
-        num_history_sessions: Optional[int] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
@@ -511,12 +508,6 @@ class Agent:
         self.overwrite_db_session_state = overwrite_db_session_state
         self.enable_agentic_state = enable_agentic_state
         self.cache_session = cache_session
-
-        # Deprecated param mapping
-        if search_session_history is not None and not search_past_sessions:
-            search_past_sessions = search_session_history
-        if num_history_sessions is not None and num_past_sessions_to_search is None:
-            num_past_sessions_to_search = num_history_sessions
 
         self.search_past_sessions = search_past_sessions
         self.num_past_sessions_to_search = num_past_sessions_to_search

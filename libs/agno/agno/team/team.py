@@ -453,9 +453,6 @@ class Team:
         search_past_sessions: Optional[bool] = False,
         num_past_sessions_to_search: Optional[int] = None,
         num_past_session_runs_in_search: Optional[int] = None,
-        # Deprecated params — kept for backward compatibility
-        search_session_history: Optional[bool] = None,
-        num_history_sessions: Optional[int] = None,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         use_instruction_tags: bool = False,
@@ -576,8 +573,6 @@ class Team:
             search_past_sessions=search_past_sessions,
             num_past_sessions_to_search=num_past_sessions_to_search,
             num_past_session_runs_in_search=num_past_session_runs_in_search,
-            search_session_history=search_session_history,
-            num_history_sessions=num_history_sessions,
             description=description,
             instructions=instructions,
             use_instruction_tags=use_instruction_tags,

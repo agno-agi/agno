@@ -893,8 +893,8 @@ def from_dict(
             add_team_history_to_members=config.get("add_team_history_to_members", False),
             num_team_history_runs=config.get("num_team_history_runs", 3),
             share_member_interactions=config.get("share_member_interactions", False),
-            search_past_sessions=config.get("search_past_sessions", config.get("search_session_history", False)),
-            num_past_sessions_to_search=config.get("num_past_sessions_to_search", config.get("num_history_sessions")),
+            search_past_sessions=config.get("search_past_sessions", False),
+            num_past_sessions_to_search=config.get("num_past_sessions_to_search"),
             num_past_session_runs_in_search=config.get(
                 "num_past_session_runs_in_search", config.get("num_past_session_runs")
             ),
