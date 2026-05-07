@@ -440,6 +440,43 @@ def attach_routes(
             else:
                 updated_blocks.append(blk)
 
+        # Check if we need to add a Submit button for confirmation-only cards
+        # (cards with no global Submit button and all rows now decided)
+        has_global_submit = any(
+            (blk.get("type") == "actions" and blk.get("block_id", "").startswith("pause:"))
+            for blk in updated_blocks
+        )
+        pending_confirmation_rows: set[str] = set()
+        for blk in updated_blocks:
+            block_id = blk.get("block_id", "")
+            # Fresh confirmation row not yet decided
+            if block_id.startswith("rowact:") and ":confirmation" in block_id and ":decided:" not in block_id:
+                parts = block_id.split(":")
+                if len(parts) >= 2:
+                    pending_confirmation_rows.add(parts[1])
+            # Decision marker removes from pending
+            if block_id.startswith("row:") and ":confirmation:decided:" in block_id:
+                parts = block_id.split(":")
+                if len(parts) >= 2:
+                    pending_confirmation_rows.discard(parts[1])
+
+        # Add Submit button if all rows decided and no global submit exists
+        if not pending_confirmation_rows and not has_global_submit and run_id:
+            from slack_sdk.models.blocks import ActionsBlock
+            from slack_sdk.models.blocks.block_elements import ButtonElement
+            from slack_sdk.models.blocks.basic_components import PlainTextObject
+
+            from agno.os.interfaces.slack.types import encode_submit_button_value
+
+            submit_btn = ButtonElement(
+                action_id="submit_pause",
+                text=PlainTextObject(text="Submit", emoji=True),
+                style="primary",
+                value=encode_submit_button_value(run_id, awaiting_ts),
+            )
+            submit_block = ActionsBlock(block_id=f"pause:{run_id}", elements=[submit_btn])
+            updated_blocks.append(submit_block.to_dict())
+
         client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
         try:
             await client.chat_update(
