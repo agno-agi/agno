@@ -622,6 +622,28 @@ async def aget_run_output_util(
     return None
 
 
+def _ensure_entity_id(entity: Union["Agent", "Team"]) -> None:
+    """Auto-derive ``entity.id`` from ``entity.name`` when it is not set.
+
+    Mirrors what ``arun()`` / ``initialize_*()`` do during a run. Uses
+    ``isinstance`` rather than class-name comparison so the right ``set_id``
+    is picked even for subclasses, and so mypy can narrow the argument type.
+    Imports are local because ``Agent`` / ``Team`` would cause a circular
+    import at module load time.
+    """
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
+    if isinstance(entity, Team):
+        from agno.team._init import set_id as set_team_id
+
+        set_team_id(entity)
+    elif isinstance(entity, Agent):
+        from agno.agent._init import set_id as set_agent_id
+
+        set_agent_id(entity)
+
+
 def get_last_run_output_util(
     entity: Union["Agent", "Team"], session_id: Optional[str] = None
 ) -> Optional[Union[RunOutput, TeamRunOutput]]:
@@ -634,17 +656,7 @@ def get_last_run_output_util(
     Returns:
         RunOutput: The last run response from the database.
     """
-    # Ensure id consistency with stored agent_id/team_id: arun() auto-derives
-    # an id from the name during initialization; do the same on reads so a
-    # fresh Agent(name="x") (id=None) still matches its persisted runs.
-    if entity.__class__.__name__ == "Team":
-        from agno.team._init import set_id as _set_team_id
-
-        _set_team_id(entity)  # type: ignore[arg-type]
-    else:
-        from agno.agent._init import set_id as _set_agent_id
-
-        _set_agent_id(entity)  # type: ignore[arg-type]
+    _ensure_entity_id(entity)
 
     if session_id is not None:
         if _has_async_db(entity):
@@ -689,17 +701,7 @@ async def aget_last_run_output_util(
     Returns:
         RunOutput: The last run response from the database.
     """
-    # Ensure id consistency with stored agent_id/team_id: arun() auto-derives
-    # an id from the name during initialization; do the same on reads so a
-    # fresh Agent(name="x") (id=None) still matches its persisted runs.
-    if entity.__class__.__name__ == "Team":
-        from agno.team._init import set_id as _set_team_id
-
-        _set_team_id(entity)  # type: ignore[arg-type]
-    else:
-        from agno.agent._init import set_id as _set_agent_id
-
-        _set_agent_id(entity)  # type: ignore[arg-type]
+    _ensure_entity_id(entity)
 
     if session_id is not None:
         session = await entity.aget_session(session_id=session_id)
