@@ -163,3 +163,70 @@ def conclude_incident(summary: str) -> str:
         summary: Final human-readable summary shown to the operator.
     """
     return summary
+
+
+# Agent + AgentOS + Slack interface
+
+db = SqliteDb(
+    db_file="tmp/hitl_deterministic_incident.db",
+    session_table="agent_sessions",
+    approvals_table="approvals",
+)
+
+agent = Agent(
+    name="Deterministic Incident Commander",
+    id="deterministic-incident-commander-agent",
+    model=OpenAIResponses(id="gpt-5.4"),
+    db=db,
+    tools=[
+        UserFeedbackTools(),
+        lookup_service,
+        list_recent_incidents,
+        run_diagnostic,
+        restart_service,
+        file_incident_retro,
+        conclude_incident,
+        WebSearchTools(),
+    ],
+    instructions=[
+        "You are an incident commander. Drive every incident through these "
+        "phases, pausing for the human when the framework does:",
+        "  1) Triage — call ask_user once to collect severity (single-select: "
+        "P0/P1/P2/P3) and affected subsystems (multi-select: api, db, cache, "
+        "queue, frontend). Call lookup_service for each subsystem named.",
+        "  2) Diagnose — call run_diagnostic with a concrete command "
+        "(curl against a health endpoint, kubectl describe, etc.). The "
+        "engineer pastes output back; use it to form a hypothesis.",
+        "  3) Remediate — if the fix is a restart, call restart_service. "
+        "Slack will gate this with Approve / Deny; do NOT ask for extra "
+        "confirmation yourself.",
+        "  4) Retro — once the incident is stable, call "
+        "file_incident_retro with a clean title + summary. Priority and "
+        "on-call owner come from the Slack pause form, not from you.",
+        "  5) Conclude — after file_incident_retro returns, call "
+        "conclude_incident with a final summary. This is your LAST "
+        "action; the run ends here.",
+        "Use WebSearchTools only if lookup_service + list_recent_incidents "
+        "give you nothing and the symptom is clearly a public library error.",
+    ],
+    markdown=True,
+)
+
+agent_os = AgentOS(
+    description="Slack HITL — deterministic incident commander (audit-friendly compound flow)",
+    agents=[agent],
+    db=db,
+    interfaces=[
+        Slack(
+            agent=agent,
+            reply_to_mentions_only=True,
+            token=os.environ["SLACK_BOT_TOKEN"],
+            signing_secret=os.environ["SLACK_SIGNING_SECRET"],
+        ),
+    ],
+)
+app = agent_os.get_app()
+
+
+if __name__ == "__main__":
+    agent_os.serve(app="hitl_deterministic_incident:app", reload=True)
