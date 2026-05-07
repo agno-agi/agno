@@ -3,6 +3,7 @@ from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.knowledge.embedder.base import Embedder
+from agno.utils.gemini import inject_agno_client_header
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
@@ -52,15 +53,7 @@ class GeminiEmbedder(Embedder):
         if self.client_params:
             _client_params.update(self.client_params)
 
-        http_options = _client_params.get("http_options", {})
-        if isinstance(http_options, dict):
-            headers = http_options.get("headers", {})
-            if isinstance(headers, dict):
-                from agno import __version__ as agno_version
-
-                headers["x-goog-api-client"] = f"agno/{agno_version}"
-                http_options["headers"] = headers
-                _client_params["http_options"] = http_options
+        _client_params = inject_agno_client_header(_client_params)
 
         self.gemini_client = genai.Client(**_client_params)
 
