@@ -873,8 +873,8 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         enable_agentic_state=config.get("enable_agentic_state", False),
         overwrite_db_session_state=config.get("overwrite_db_session_state", False),
         cache_session=config.get("cache_session", False),
-        search_past_sessions=config.get("search_past_sessions", config.get("search_session_history", False)),
-        num_past_sessions_to_search=config.get("num_past_sessions_to_search", config.get("num_history_sessions")),
+        search_past_sessions=config.get("search_past_sessions", False),
+        num_past_sessions_to_search=config.get("num_past_sessions_to_search"),
         num_past_session_runs_in_search=config.get(
             "num_past_session_runs_in_search", config.get("num_past_session_runs")
         ),
