@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import (
@@ -203,7 +203,8 @@ async def agent_continue_response_streamer(
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
-    **kwargs: Any,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> AsyncGenerator:
     """Default SSE generator for continue_run. Agent runs inline — client disconnect cancels agent."""
     try:
@@ -219,8 +220,9 @@ async def agent_continue_response_streamer(
             stream=True,
             stream_events=True,
             background_tasks=background_tasks,
+            dependencies=dependencies,
+            metadata=metadata,
             **extra_kwargs,
-            **kwargs,
         )
         async for run_response_chunk in continue_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
@@ -255,7 +257,8 @@ async def agent_resumable_continue_response_streamer(
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
-    **kwargs: Any,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> AsyncGenerator:
     """Resumable SSE generator for continue_run with background=True, stream=True.
 
@@ -281,8 +284,9 @@ async def agent_resumable_continue_response_streamer(
             stream=True,
             stream_events=True,
             background=True,
+            dependencies=dependencies,
+            metadata=metadata,
             **extra_kwargs,
-            **kwargs,
         ):
             yield sse_data
     except (InputCheckError, OutputCheckError) as e:
@@ -899,23 +903,45 @@ def get_agent_router(
             False,
             description="Run continue in background (survives client disconnect). Requires database. Use /resume to reconnect.",
         ),
+        dependencies: Optional[str] = Form(
+            None,
+            description=(
+                "JSON object of runtime dependencies (e.g. user tokens, request-scoped values) "
+                "made available to tools via run_context.dependencies."
+            ),
+        ),
+        metadata: Optional[str] = Form(
+            None,
+            description="JSON object of metadata attached to the run.",
+        ),
     ):
-        kwargs = await get_request_kwargs(request, continue_agent_run)
+        # Parse dependencies / metadata JSON form fields.
+        dependencies_dict: Optional[Dict[str, Any]] = None
+        if dependencies:
+            try:
+                dependencies_dict = json.loads(dependencies)
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Invalid JSON in dependencies field")
+        metadata_dict: Optional[Dict[str, Any]] = None
+        if metadata:
+            try:
+                metadata_dict = json.loads(metadata)
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Invalid JSON in metadata field")
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             session_id = request.state.session_id
+        # Request state from middleware overrides form-provided values.
         if hasattr(request.state, "dependencies") and request.state.dependencies is not None:
-            dependencies = request.state.dependencies
-            if "dependencies" in kwargs:
-                log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
-            kwargs["dependencies"] = dependencies
+            if dependencies_dict is not None:
+                log_warning("Dependencies parameter passed in both request state and form, using request state")
+            dependencies_dict = request.state.dependencies
         if hasattr(request.state, "metadata") and request.state.metadata is not None:
-            metadata = request.state.metadata
-            if "metadata" in kwargs:
-                log_warning("Metadata parameter passed in both request state and kwargs, using request state")
-            kwargs["metadata"] = metadata
+            if metadata_dict is not None:
+                log_warning("Metadata parameter passed in both request state and form, using request state")
+            metadata_dict = request.state.metadata
 
         # Parse the JSON string manually
         try:
@@ -1009,7 +1035,8 @@ def get_agent_router(
                     user_id=user_id,
                     background_tasks=background_tasks,
                     auth_token=auth_token,
-                    **kwargs,
+                    dependencies=dependencies_dict,
+                    metadata=metadata_dict,
                 ),
                 media_type="text/event-stream",
             )
@@ -1023,7 +1050,8 @@ def get_agent_router(
                     user_id=user_id,
                     background_tasks=background_tasks,
                     auth_token=auth_token,
-                    **kwargs,
+                    dependencies=dependencies_dict,
+                    metadata=metadata_dict,
                 ),
                 media_type="text/event-stream",
             )
@@ -1043,8 +1071,9 @@ def get_agent_router(
                         user_id=user_id,
                         stream=False,
                         background_tasks=background_tasks,
+                        dependencies=dependencies_dict,
+                        metadata=metadata_dict,
                         **extra_kwargs,
-                        **kwargs,
                     ),
                 )
                 return run_response_obj.to_dict()

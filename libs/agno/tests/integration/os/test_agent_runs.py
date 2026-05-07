@@ -147,3 +147,99 @@ def test_kwargs_propagate_to_run_context(test_os_client, test_agent: Agent):
     assert response_json["run_id"] is not None
     assert response_json["agent_id"] == test_agent.id
     assert response_json["content"] is not None
+
+
+# ---------------------------------------------------------------------------
+# /continue dependencies + metadata forwarding (full e2e through HITL pause)
+# ---------------------------------------------------------------------------
+
+
+def test_continue_agent_run_forwards_dependencies_and_metadata_e2e(test_os_client, test_agent: Agent):
+    """End-to-end: /runs pauses for confirmation, /continue forwards dependencies
+    and metadata so the resumed tool can read run_context.dependencies.
+    """
+    from agno.tools import tool
+
+    captured: dict = {}
+
+    @tool(requires_confirmation=True)
+    def delete_resource(resource_id: str, run_context: RunContext) -> str:
+        """Delete a resource."""
+        captured["dependencies"] = run_context.dependencies
+        captured["metadata"] = run_context.metadata
+        return f"Deleted {resource_id}"
+
+    test_agent.tools = [delete_resource]
+    test_agent.instructions = ["When asked to delete a resource, call delete_resource with the given id."]
+
+    # Step 1: /runs -> tool pauses for confirmation
+    run_response = test_os_client.post(
+        f"/agents/{test_agent.id}/runs",
+        data={
+            "message": "delete resource abc-123",
+            "stream": "false",
+            "session_id": "deps-session-1",
+            "dependencies": json.dumps({"user_token": "INITIAL"}),
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert run_response.status_code == 200
+    run_json = run_response.json()
+    run_id = run_json["run_id"]
+    paused_tools = run_json.get("tools") or []
+    assert paused_tools, f"expected paused tools, got: {run_json}"
+
+    # Step 2: /continue with confirmed tool + dependencies + metadata
+    confirmed = [{**t, "confirmed": True} for t in paused_tools]
+    continue_response = test_os_client.post(
+        f"/agents/{test_agent.id}/runs/{run_id}/continue",
+        data={
+            "tools": json.dumps(confirmed),
+            "session_id": "deps-session-1",
+            "stream": "false",
+            "dependencies": json.dumps({"user_token": "CONTINUE_TOKEN"}),
+            "metadata": json.dumps({"trace_id": "trace-xyz"}),
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    assert continue_response.status_code == 200
+    # The resumed tool actually ran and saw the dependencies / metadata we sent.
+    assert captured["dependencies"] == {"user_token": "CONTINUE_TOKEN"}
+    assert captured["metadata"] == {"trace_id": "trace-xyz"}
+
+
+def test_continue_agent_run_invalid_dependencies_returns_400(test_os_client, test_agent: Agent):
+    """Malformed JSON in the dependencies field returns a 400 with a clear detail.
+
+    Uses a dummy session_id because validation runs before the run is loaded.
+    """
+    response = test_os_client.post(
+        f"/agents/{test_agent.id}/runs/run-123/continue",
+        data={
+            "tools": "",
+            "session_id": "session-123",
+            "stream": "false",
+            "dependencies": "not-json",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    assert response.status_code == 400
+    assert "dependencies" in response.json()["detail"].lower()
+
+
+def test_continue_agent_run_invalid_metadata_returns_400(test_os_client, test_agent: Agent):
+    response = test_os_client.post(
+        f"/agents/{test_agent.id}/runs/run-123/continue",
+        data={
+            "tools": "",
+            "session_id": "session-123",
+            "stream": "false",
+            "metadata": "{not json",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    assert response.status_code == 400
+    assert "metadata" in response.json()["detail"].lower()

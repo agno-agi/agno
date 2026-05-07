@@ -199,3 +199,103 @@ def test_continue_team_run_allows_empty_requirements_payload(test_os_client, tes
     # type signatures are satisfied.  The continue_run dispatch treats [] as "no
     # client-provided requirements" via a truthy check (`if requirements:`).
     assert mock_continue_run.call_args.kwargs["requirements"] == []
+
+
+# ---------------------------------------------------------------------------
+# /continue dependencies + metadata forwarding (full e2e through HITL pause)
+# ---------------------------------------------------------------------------
+
+
+def test_continue_team_run_forwards_dependencies_and_metadata_e2e(test_os_client, test_team: Team):
+    """End-to-end: /runs pauses for confirmation, /continue forwards dependencies
+    and metadata so the resumed tool can read run_context.dependencies.
+    """
+    from agno.tools import tool
+
+    captured: dict = {}
+
+    @tool(requires_confirmation=True)
+    def delete_resource(resource_id: str, run_context: RunContext) -> str:
+        """Delete a resource."""
+        captured["dependencies"] = run_context.dependencies
+        captured["metadata"] = run_context.metadata
+        return f"Deleted {resource_id}"
+
+    # Configure the team for HITL: clear members, give it the tool directly.
+    test_team.members = []
+    test_team.tools = [delete_resource]
+    test_team.instructions = ["When asked to delete a resource, call delete_resource with the given id."]
+
+    # Step 1: /runs -> team pauses for confirmation
+    run_response = test_os_client.post(
+        f"/teams/{test_team.id}/runs",
+        data={
+            "message": "delete resource abc-123",
+            "stream": "false",
+            "session_id": "team-deps-session-1",
+            "dependencies": json.dumps({"user_token": "INITIAL"}),
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    assert run_response.status_code == 200
+    run_json = run_response.json()
+    run_id = run_json["run_id"]
+    requirements = run_json.get("requirements") or []
+    assert requirements, f"expected paused requirements, got: {run_json}"
+
+    # Step 2: /continue with confirmed requirements + dependencies + metadata
+    confirmed_reqs = []
+    for r in requirements:
+        te = dict(r.get("tool_execution") or {})
+        te["confirmed"] = True
+        confirmed_reqs.append({**r, "tool_execution": te, "confirmation": True})
+
+    continue_response = test_os_client.post(
+        f"/teams/{test_team.id}/runs/{run_id}/continue",
+        data={
+            "requirements": json.dumps(confirmed_reqs),
+            "session_id": "team-deps-session-1",
+            "stream": "false",
+            "dependencies": json.dumps({"user_token": "CONTINUE_TOKEN"}),
+            "metadata": json.dumps({"trace_id": "trace-xyz"}),
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    assert continue_response.status_code == 200
+    # The resumed tool actually ran and saw the dependencies / metadata we sent.
+    assert captured["dependencies"] == {"user_token": "CONTINUE_TOKEN"}
+    assert captured["metadata"] == {"trace_id": "trace-xyz"}
+
+
+def test_continue_team_run_invalid_dependencies_returns_400(test_os_client, test_team: Team):
+    """Malformed JSON in the dependencies field returns a 400 with a clear detail."""
+    response = test_os_client.post(
+        f"/teams/{test_team.id}/runs/run-123/continue",
+        data={
+            "requirements": "",
+            "session_id": "session-123",
+            "stream": "false",
+            "dependencies": "not-json",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    assert response.status_code == 400
+    assert "dependencies" in response.json()["detail"].lower()
+
+
+def test_continue_team_run_invalid_metadata_returns_400(test_os_client, test_team: Team):
+    response = test_os_client.post(
+        f"/teams/{test_team.id}/runs/run-123/continue",
+        data={
+            "requirements": "",
+            "session_id": "session-123",
+            "stream": "false",
+            "metadata": "{not json",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+    assert response.status_code == 400
+    assert "metadata" in response.json()["detail"].lower()
