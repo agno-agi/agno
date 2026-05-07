@@ -60,3 +60,26 @@ _SERVICES: Dict[str, Service] = {
 }
 
 _INCIDENTS: List[Dict[str, str]] = []
+
+
+# Read-only context tools
+
+
+@tool
+def lookup_service(service_name: str) -> str:
+    """Return replica count, region, and runbook link for a service.
+
+    Args:
+        service_name: Logical service name (e.g. "api-gateway").
+    """
+    svc = _SERVICES.get(service_name)
+    if not svc:
+        known = ", ".join(_SERVICES) or "(none)"
+        return f"No service {service_name!r}. Known: {known}."
+    return f"{svc.name}: region={svc.region}, replicas={svc.replicas}, runbook={svc.runbook}"
+
+
+@tool
+def list_recent_incidents() -> List[Dict[str, str]]:
+    """Return the most recent incidents filed in this session (newest first)."""
+    return list(reversed(_INCIDENTS[-5:]))
