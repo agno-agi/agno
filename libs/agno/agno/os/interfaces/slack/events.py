@@ -148,6 +148,11 @@ _SUPPRESSED_IN_WORKFLOW: frozenset[str] = frozenset(
 )
 
 
+# =============================================================================
+# Handler Factory
+# =============================================================================
+
+
 def _make_wf_handler(
     prefix: str,
     label: str,
@@ -155,12 +160,23 @@ def _make_wf_handler(
     started: bool,
     name_attr: str = "step_name",
 ) -> _EventHandler:
-    # Factory for paired events that just call _wf_task with different params
+    """
+    Factory to create workflow event handlers for simple paired events.
+
+    This eliminates boilerplate for events that just call _wf_task with
+    different parameters (e.g., ParallelStarted, ConditionCompleted, etc.).
+    """
+
     async def handler(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
         await _wf_task(chunk, state, stream, prefix, label, started=started, name_attr=name_attr)
         return False
 
     return handler
+
+
+# =============================================================================
+# Agent/Team Event Handlers (require custom logic)
+# =============================================================================
 
 
 async def _on_reasoning_started(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
@@ -320,6 +336,11 @@ async def _on_run_paused(chunk: BaseRunOutputEvent, state: StreamState, stream: 
     return True
 
 
+# =============================================================================
+# Workflow Event Handlers (require custom logic)
+# =============================================================================
+
+
 async def _on_step_output(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     # StepOutput is workflow-only (agents/teams never emit it).
     # Capture but don't stream — WorkflowCompleted uses this as fallback.
@@ -372,6 +393,11 @@ async def _on_step_error(chunk: BaseRunOutputEvent, state: StreamState, stream: 
     return False
 
 
+# =============================================================================
+# Loop Event Handlers (custom logic for iteration tracking)
+# =============================================================================
+
+
 async def _on_loop_execution_started(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     step_name = getattr(chunk, "step_name", None) or "loop"
     loop_key = getattr(chunk, "step_id", None) or step_name
@@ -412,8 +438,16 @@ async def _on_loop_execution_completed(chunk: BaseRunOutputEvent, state: StreamS
     return False
 
 
-# Keys are normalized (no "Team" prefix) so agent + team events share handlers
+# =============================================================================
+# Dispatch Table
+# =============================================================================
+
+# Single dispatch table — keys are normalized (no "Team" prefix).
+# Workflow event names never start with "Team" so normalization is a no-op for them.
 HANDLERS: Dict[str, _EventHandler] = {
+    # -------------------------------------------------------------------------
+    # Agent/Team Events (normalized - use RunEvent values)
+    # -------------------------------------------------------------------------
     RunEvent.reasoning_started.value: _on_reasoning_started,
     RunEvent.reasoning_completed.value: _on_reasoning_completed,
     RunEvent.tool_call_started.value: _on_tool_call_started,
@@ -425,27 +459,34 @@ HANDLERS: Dict[str, _EventHandler] = {
     RunEvent.memory_update_completed.value: _on_memory_update_completed,
     RunEvent.run_completed.value: _on_run_completed,
     RunEvent.run_error.value: _on_run_error,
-    # Cancelled runs are terminal errors — user sees error status, not silent stop
-    RunEvent.run_cancelled.value: _on_run_error,
+    RunEvent.run_cancelled.value: _on_run_error,  # Treat cancellation as terminal error
     # HITL pause — stream ends, router posts Block Kit approval card separately
     RunEvent.run_paused.value: _on_run_paused,
     TeamRunEvent.run_paused.value: _on_run_paused,
+    # -------------------------------------------------------------------------
     # Workflow Lifecycle Events
+    # -------------------------------------------------------------------------
     WorkflowRunEvent.step_output.value: _on_step_output,
     WorkflowRunEvent.workflow_started.value: _on_workflow_started,
     WorkflowRunEvent.workflow_completed.value: _on_workflow_completed,
     WorkflowRunEvent.workflow_error.value: _on_workflow_error,
     WorkflowRunEvent.workflow_cancelled.value: _on_workflow_error,
+    # -------------------------------------------------------------------------
     # Workflow Step Events
+    # -------------------------------------------------------------------------
     WorkflowRunEvent.step_started.value: _make_wf_handler("step", "", started=True),
     WorkflowRunEvent.step_completed.value: _make_wf_handler("step", "", started=False),
     WorkflowRunEvent.step_error.value: _on_step_error,
+    # -------------------------------------------------------------------------
     # Workflow Loop Events
+    # -------------------------------------------------------------------------
     WorkflowRunEvent.loop_execution_started.value: _on_loop_execution_started,
     WorkflowRunEvent.loop_iteration_started.value: _on_loop_iteration_started,
     WorkflowRunEvent.loop_iteration_completed.value: _on_loop_iteration_completed,
     WorkflowRunEvent.loop_execution_completed.value: _on_loop_execution_completed,
+    # -------------------------------------------------------------------------
     # Workflow Structural Events (factory-generated)
+    # -------------------------------------------------------------------------
     WorkflowRunEvent.parallel_execution_started.value: _make_wf_handler("parallel", "Parallel", started=True),
     WorkflowRunEvent.parallel_execution_completed.value: _make_wf_handler("parallel", "Parallel", started=False),
     WorkflowRunEvent.condition_execution_started.value: _make_wf_handler("cond", "Condition", started=True),
@@ -464,13 +505,19 @@ HANDLERS: Dict[str, _EventHandler] = {
 
 
 async def process_event(ev_raw: str, chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
-    import logging
+    """
+    Process a streaming event and update Slack accordingly.
 
-    logging.basicConfig(filename="/tmp/slack_events_debug.log", level=logging.DEBUG, force=True)
-    logger = logging.getLogger("slack_events")
-    # Strip "Team" prefix so agent + team events share handlers
-    ev = ev_raw.removeprefix("Team")
-    logger.warning(f"[DEBUG] process_event: {ev_raw} -> {ev}")
+    Args:
+        ev_raw: Raw event name (e.g., "ToolCallStarted", "TeamRunContent")
+        chunk: Stream chunk containing event data
+        state: StreamState tracking session state
+        stream: Slack chat_stream for sending updates
+
+    Returns:
+        True if this is a terminal event and the stream loop should break.
+    """
+    ev = _normalize_event(ev_raw)
 
     # Suppress nested agent internals in workflow mode
     if state.entity_type == "workflow" and ev in _SUPPRESSED_IN_WORKFLOW:
@@ -478,12 +525,6 @@ async def process_event(ev_raw: str, chunk: BaseRunOutputEvent, state: StreamSta
 
     handler = HANDLERS.get(ev)
     if handler:
-        result = await handler(chunk, state, stream)
-        if ev == "RunPaused":
-            print(
-                f"[DEBUG] RunPaused handler returned: {result}, paused_event set: {state.paused_event is not None}",
-                flush=True,
-            )
-        return result
+        return await handler(chunk, state, stream)
 
     return False
