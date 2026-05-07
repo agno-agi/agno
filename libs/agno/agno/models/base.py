@@ -2084,7 +2084,7 @@ class Model(ABC):
             files = function_execution_result.files
 
         # Prefix delegate_task_to_member results with member_id for history readability
-        content: Optional[Union[List[Any], str]] = output if success else function_call.error
+        content = output if success else function_call.error
         if (
             success
             and function_call.function.name == "delegate_task_to_member"
