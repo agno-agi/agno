@@ -45,7 +45,7 @@ from typing import Any, List, Optional, Tuple, Union, cast
 
 from agno.tools import Toolkit
 from agno.tools.google.auth import google_authenticate
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_warning
 
 try:
     from google.auth.transport.requests import Request
@@ -485,7 +485,9 @@ class GoogleDriveTools(Toolkit):
             page_token (str): Token from a previous response to fetch the next page
 
         Returns:
-            str: JSON string containing matching files and metadata or error message
+            str: JSON string with keys files, count, nextPageToken, and
+                 incompleteSearch (True when Drive could not search every drive,
+                 typical with corpora="allDrives"). Returns {"error": ...} on failure.
         """
         if max_results < 1:
             return json.dumps({"error": "max_results must be greater than 0"})
@@ -513,13 +515,20 @@ class GoogleDriveTools(Toolkit):
                 list_kwargs["pageToken"] = page_token
             results = service.files().list(**list_kwargs).execute()
             files = results.get("files", [])
+            incomplete = results.get("incompleteSearch", False)
+            if incomplete:
+                log_warning(
+                    f"Google Drive returned incomplete search results for query "
+                    f"{effective_query!r} (corpora={self.corpora!r}); some drives "
+                    f"could not be searched."
+                )
             return json.dumps(
                 {
                     "query": effective_query,
                     "files": files,
                     "count": len(files),
                     "nextPageToken": results.get("nextPageToken"),
-                    "incompleteSearch": results.get("incompleteSearch", False),
+                    "incompleteSearch": incomplete,
                 }
             )
         except HttpError as e:
