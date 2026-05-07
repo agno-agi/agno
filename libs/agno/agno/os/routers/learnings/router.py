@@ -226,6 +226,12 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         if not updates:
             return LearningResponse.model_validate(existing)
 
+        if "content" in updates and updates["content"] is None:
+            raise HTTPException(
+                status_code=422,
+                detail="content cannot be null; omit the field to leave it unchanged",
+            )
+
         new_content = updates["content"] if "content" in updates else existing.get("content") or {}
         new_metadata = updates["metadata"] if "metadata" in updates else existing.get("metadata")
 

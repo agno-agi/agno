@@ -161,6 +161,24 @@ class TestUpdateLearning:
         assert resp.status_code == 200
         mock_db.upsert_learning.assert_not_called()
 
+    def test_update_rejects_null_content(self, client, mock_db):
+        # content is NOT NULL in the underlying schema; explicit null would silently
+        # fail at the DB level (the upsert swallows exceptions), so the router must reject it.
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning())
+        resp = client.patch("/learnings/lrn-1", json={"content": None})
+        assert resp.status_code == 422
+        mock_db.upsert_learning.assert_not_called()
+
+    def test_update_metadata_only_preserves_content(self, client, mock_db):
+        existing = _make_learning(content={"keep": "this"})
+        updated = _make_learning(content={"keep": "this"}, metadata={"new": "meta"})
+        mock_db.get_learning_by_id = MagicMock(side_effect=[existing, updated])
+        resp = client.patch("/learnings/lrn-1", json={"metadata": {"new": "meta"}})
+        assert resp.status_code == 200
+        upsert_kwargs = mock_db.upsert_learning.call_args[1]
+        assert upsert_kwargs["content"] == {"keep": "this"}
+        assert upsert_kwargs["metadata"] == {"new": "meta"}
+
 
 class TestDeleteLearning:
     def test_delete_success(self, client, mock_db):
