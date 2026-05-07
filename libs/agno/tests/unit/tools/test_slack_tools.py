@@ -44,6 +44,44 @@ def test_init_all_flag_enables_all():
             assert len(tools.functions) == 12
 
 
+def test_explicit_flags_expose_expected_surfaces():
+    with patch.dict("os.environ", {"SLACK_TOKEN": "test"}):
+        with patch("agno.tools.slack.WebClient"):
+            read = SlackTools(
+                enable_send_message=False,
+                enable_send_message_thread=False,
+                enable_upload_file=False,
+                enable_download_file=False,
+                enable_list_channels=True,
+                enable_get_channel_history=True,
+                enable_search_workspace=True,
+                enable_get_thread=True,
+                enable_list_users=True,
+                enable_get_user_info=True,
+                enable_get_channel_info=True,
+            )
+            write = SlackTools(
+                enable_send_message=True,
+                enable_send_message_thread=True,
+                enable_upload_file=False,
+                enable_download_file=False,
+                enable_list_channels=True,
+                enable_get_channel_history=False,
+                enable_search_workspace=False,
+                enable_get_thread=False,
+                enable_list_users=True,
+                enable_get_user_info=True,
+                enable_get_channel_info=True,
+            )
+
+    assert "search_workspace" in read.functions
+    assert "get_channel_history" in read.functions
+    assert "get_thread" in read.functions
+    assert "send_message" not in read.functions
+    assert "send_message" in write.functions
+    assert "get_channel_history" not in write.functions
+
+
 # === Core Tools ===
 
 
@@ -69,7 +107,7 @@ def test_send_message_thread(slack_tools):
 def test_list_channels(slack_tools):
     slack_tools.client.conversations_list.return_value = {"channels": [{"id": "C1", "name": "general"}]}
     result = slack_tools.list_channels()
-    assert json.loads(result) == [{"id": "C1", "name": "general"}]
+    assert json.loads(result) == [{"id": "C1", "name": "general", "is_private": False}]
 
 
 def test_get_channel_history(slack_tools):
@@ -79,6 +117,38 @@ def test_get_channel_history(slack_tools):
     messages = json.loads(result)
     assert messages[0]["text"] == "hi"
     assert messages[0]["user"] == "User One"
+
+
+def test_get_channel_history_resolves_channel_name(slack_tools):
+    slack_tools.client.conversations_list.return_value = {
+        "channels": [{"id": "C1", "name": "engineering"}],
+        "response_metadata": {"next_cursor": ""},
+    }
+    slack_tools.client.conversations_history.return_value = {"messages": [{"text": "hi", "user": "U1", "ts": "1.0"}]}
+    slack_tools.client.users_info.return_value = {"user": {"profile": {"display_name": "User One"}}}
+
+    result = slack_tools.get_channel_history("#engineering")
+
+    assert json.loads(result)[0]["text"] == "hi"
+    slack_tools.client.conversations_history.assert_called_with(channel="C1", limit=100)
+
+
+def test_channel_resolution_cache_reuses_resolved_names(slack_tools):
+    slack_tools.client.conversations_list.return_value = {
+        "channels": [{"id": "C1", "name": "agents"}],
+        "response_metadata": {"next_cursor": ""},
+    }
+    slack_tools.client.conversations_history.return_value = {"messages": [{"text": "hi", "user": "U1", "ts": "1.0"}]}
+    slack_tools.client.conversations_replies.return_value = {
+        "messages": [{"text": "parent", "user": "U1", "ts": "2.0"}]
+    }
+    slack_tools.client.users_info.return_value = {"user": {"profile": {"display_name": "User One"}}}
+
+    slack_tools.get_channel_history("#agents")
+    slack_tools.get_thread("#agents", "2.0")
+
+    assert slack_tools.client.conversations_list.call_count == 1
+    slack_tools.client.conversations_replies.assert_called_with(channel="C1", ts="2.0", limit=20)
 
 
 def test_upload_file(slack_tools):
@@ -125,6 +195,20 @@ def test_get_thread(slack_tools):
     assert data["messages"][0]["user"] == "User One"
 
 
+def test_get_thread_resolves_channel_name(slack_tools):
+    slack_tools.client.conversations_list.return_value = {
+        "channels": [{"id": "C1", "name": "agents"}],
+        "response_metadata": {"next_cursor": ""},
+    }
+    slack_tools.client.conversations_replies.return_value = {"messages": [{"text": "parent", "user": "U1", "ts": "1"}]}
+    slack_tools.client.users_info.return_value = {"user": {"profile": {"display_name": "User One"}}}
+
+    result = slack_tools.get_thread("#agents", "1")
+
+    assert json.loads(result)["messages"][0]["text"] == "parent"
+    slack_tools.client.conversations_replies.assert_called_with(channel="C1", ts="1", limit=20)
+
+
 def test_list_users(slack_tools):
     slack_tools.client.users_list.return_value = {
         "members": [{"id": "U1", "name": "user", "deleted": False, "is_bot": False, "profile": {}}]
@@ -140,6 +224,10 @@ def test_get_user_info(slack_tools):
 
 
 def test_get_channel_info(slack_tools):
+    slack_tools.client.conversations_list.return_value = {
+        "channels": [{"id": "C1", "name": "general"}],
+        "response_metadata": {"next_cursor": ""},
+    }
     slack_tools.client.conversations_info.return_value = {
         "channel": {
             "id": "C1",
@@ -153,11 +241,12 @@ def test_get_channel_info(slack_tools):
             "creator": "U1",
         }
     }
-    result = slack_tools.get_channel_info("C1")
+    result = slack_tools.get_channel_info("#general")
     data = json.loads(result)
     assert data["name"] == "general"
     assert data["num_members"] == 5
     assert data["topic"] == "General chat"
+    slack_tools.client.conversations_info.assert_called_with(channel="C1", include_num_members=True)
 
 
 # === Workspace Search ===
