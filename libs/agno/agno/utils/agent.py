@@ -638,11 +638,13 @@ def get_last_run_output_util(
     # an id from the name during initialization; do the same on reads so a
     # fresh Agent(name="x") (id=None) still matches its persisted runs.
     if entity.__class__.__name__ == "Team":
-        from agno.team._init import set_id
-    else:
-        from agno.agent._init import set_id
+        from agno.team._init import set_id as _set_team_id
 
-    set_id(entity)  # type: ignore[arg-type]
+        _set_team_id(entity)  # type: ignore[arg-type]
+    else:
+        from agno.agent._init import set_id as _set_agent_id
+
+        _set_agent_id(entity)  # type: ignore[arg-type]
 
     if session_id is not None:
         if _has_async_db(entity):
@@ -691,11 +693,13 @@ async def aget_last_run_output_util(
     # an id from the name during initialization; do the same on reads so a
     # fresh Agent(name="x") (id=None) still matches its persisted runs.
     if entity.__class__.__name__ == "Team":
-        from agno.team._init import set_id
-    else:
-        from agno.agent._init import set_id
+        from agno.team._init import set_id as _set_team_id
 
-    set_id(entity)  # type: ignore[arg-type]
+        _set_team_id(entity)  # type: ignore[arg-type]
+    else:
+        from agno.agent._init import set_id as _set_agent_id
+
+        _set_agent_id(entity)  # type: ignore[arg-type]
 
     if session_id is not None:
         session = await entity.aget_session(session_id=session_id)
