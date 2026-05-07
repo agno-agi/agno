@@ -52,6 +52,8 @@ class BaseExternalAgent:
     framework: str = "external"
     markdown: bool = True
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
+    store_events: bool = False
+    events_to_skip: Optional[List[RunEvent]] = None
 
     def __post_init__(self) -> None:
         from agno.utils.string import generate_id_from_name
@@ -622,6 +624,14 @@ class BaseExternalAgent:
         run_id = str(uuid4())
         session_id = kwargs.get("session_id") or str(uuid4())
         user_id = kwargs.get("user_id")
+        stored_events: Optional[List[RunOutputEvent]] = [] if self.store_events else None
+
+        def _store_event(event: RunOutputEvent) -> None:
+            if stored_events is None:
+                return
+            events_to_skip = [event.value for event in self.events_to_skip] if self.events_to_skip else []
+            if event.event not in events_to_skip:
+                stored_events.append(event)
 
         # Load session and extract history for the adapter
         session = None
@@ -630,12 +640,14 @@ class BaseExternalAgent:
             session = await self.aread_or_create_session(session_id, user_id)
             history = self._get_history_from_session(session)
 
-        yield RunStartedEvent(
+        started_event = RunStartedEvent(
             run_id=run_id,
             agent_id=self.get_id(),
             agent_name=self.name or "",
             session_id=session_id,
         )
+        _store_event(started_event)
+        yield started_event
 
         accumulated_content = ""
         accumulated_tools: List[ToolExecution] = []
@@ -663,10 +675,29 @@ class BaseExternalAgent:
                         existing.result = event.tool.result
                     else:
                         accumulated_tools.append(event.tool)
+                _store_event(event)
                 yield event
         except Exception as e:
             log_exception(f"Error in {self.framework} agent '{self.id}': {e}")
             run_error = e
+
+        if run_error is not None:
+            terminal_event: RunOutputEvent = RunErrorEvent(
+                run_id=run_id,
+                agent_id=self.get_id(),
+                agent_name=self.name or "",
+                session_id=session_id,
+                content=str(run_error),
+            )
+        else:
+            terminal_event = RunCompletedEvent(
+                run_id=run_id,
+                agent_id=self.get_id(),
+                agent_name=self.name or "",
+                session_id=session_id,
+                content=accumulated_content,
+            )
+        _store_event(terminal_event)
 
         # Persist the run to the session. Swallow DB failures so the consumer
         # still receives the terminal RunCompletedEvent / RunErrorEvent below.
@@ -680,6 +711,7 @@ class BaseExternalAgent:
                 status=RunStatus.error if run_error is not None else RunStatus.completed,
                 tools=accumulated_tools if accumulated_tools else None,
             )
+            run_output.events = stored_events
             if session.runs is None:
                 session.runs = []
             session.runs.append(run_output)
@@ -688,22 +720,7 @@ class BaseExternalAgent:
             except Exception as upsert_err:
                 log_warning(f"Failed to persist run for {self.framework} agent '{self.id}': {upsert_err}")
 
-        if run_error is not None:
-            yield RunErrorEvent(
-                run_id=run_id,
-                agent_id=self.get_id(),
-                agent_name=self.name or "",
-                session_id=session_id,
-                content=str(run_error),
-            )
-        else:
-            yield RunCompletedEvent(
-                run_id=run_id,
-                agent_id=self.get_id(),
-                agent_name=self.name or "",
-                session_id=session_id,
-                content=accumulated_content,
-            )
+        yield terminal_event
 
     def _run_stream(self, input: Any, **kwargs: Any) -> Iterator[RunOutputEvent]:
         """Sync streaming wrapper. Runs the async stream on a background thread."""
