@@ -139,6 +139,20 @@ class Message(BaseModel):
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Message":
+        # If content was serialised as a JSON string (e.g. stored in Postgres as TEXT
+        # when it was originally a list of content-part dicts), parse it back to a list.
+        # This prevents "Invalid type for messages[N].content[0]: expected an object,
+        # but got a string instead" errors from OpenAI models. (#4184)
+        if "content" in data and isinstance(data["content"], str):
+            raw = data["content"].strip()
+            if raw.startswith("[") or raw.startswith("{"):
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, (list, dict)):
+                        data["content"] = parsed
+                except (json.JSONDecodeError, ValueError):
+                    pass  # keep as-is if it's a plain text string
+
         # Handle image reconstruction properly
         if "images" in data and data["images"]:
             reconstructed_images = []
