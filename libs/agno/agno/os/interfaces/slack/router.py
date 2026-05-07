@@ -9,10 +9,10 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.slack.events import process_event
 from agno.os.interfaces.slack.helpers import (
+    BotNameResolver,
     build_run_metadata,
     download_event_files_async,
     extract_event_context,
-    BotNameResolver,
     resolve_channel_name,
     resolve_slack_user,
     send_slack_message_async,
