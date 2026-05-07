@@ -862,6 +862,14 @@ def from_dict(
     #     from agno.compression.manager import CompressionManager
     #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
 
+    if "search_session_history" in config:
+        log_debug("'search_session_history' has been deprecated. Use 'search_past_sessions' instead.")
+        config.pop("search_session_history", None)
+
+    if "num_history_sessions" in config:
+        log_debug("'num_history_sessions' has been deprecated. Use 'num_past_sessions_to_search' instead.")
+        config.pop("num_history_sessions", None)
+
     team = cast(
         "Team",
         cls(
