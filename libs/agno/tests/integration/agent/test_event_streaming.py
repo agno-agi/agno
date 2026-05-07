@@ -1250,7 +1250,7 @@ def test_memory_update_completed_contains_memories(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
         user_id="test_memory_user",
-        enable_user_memories=True,
+        update_memory_on_run=True,
         telemetry=False,
     )
 
@@ -1288,7 +1288,7 @@ async def test_async_memory_update_completed_contains_memories(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
         user_id="test_async_memory_user",
-        enable_user_memories=True,
+        update_memory_on_run=True,
         telemetry=False,
     )
 

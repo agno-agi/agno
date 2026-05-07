@@ -146,7 +146,6 @@ def __init__(
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     enable_agentic_memory: bool = False,
     update_memory_on_run: bool = False,
-    enable_user_memories: Optional[bool] = None,  # Soon to be deprecated. Use update_memory_on_run
     add_memories_to_context: Optional[bool] = None,
     memory_manager: Optional[MemoryManager] = None,
     enable_session_summaries: bool = False,
@@ -329,12 +328,7 @@ def __init__(
     team.db = db
 
     team.enable_agentic_memory = enable_agentic_memory
-
-    if enable_user_memories is not None:
-        team.update_memory_on_run = enable_user_memories
-    else:
-        team.update_memory_on_run = update_memory_on_run
-    team.enable_user_memories = team.update_memory_on_run  # Soon to be deprecated. Use update_memory_on_run
+    team.update_memory_on_run = update_memory_on_run
 
     team.add_memories_to_context = add_memories_to_context
     team.memory_manager = memory_manager

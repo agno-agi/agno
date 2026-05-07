@@ -484,8 +484,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # config["memory_manager"] = agent.memory_manager.to_dict()
     if agent.enable_agentic_memory:
         config["enable_agentic_memory"] = agent.enable_agentic_memory
-    if agent.enable_user_memories:
-        config["enable_user_memories"] = agent.enable_user_memories
+    if agent.update_memory_on_run:
+        config["update_memory_on_run"] = agent.update_memory_on_run
     if agent.add_memories_to_context is not None:
         config["add_memories_to_context"] = agent.add_memories_to_context
 
@@ -881,7 +881,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         # --- Agentic Memory settings ---
         # memory_manager=config.get("memory_manager"),  # TODO
         enable_agentic_memory=config.get("enable_agentic_memory", False),
-        enable_user_memories=config.get("enable_user_memories", False),
+        update_memory_on_run=config.get("update_memory_on_run", False),
         add_memories_to_context=config.get("add_memories_to_context"),
         # --- Learning settings ---
         learning=config.get("learning"),

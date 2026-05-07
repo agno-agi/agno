@@ -598,8 +598,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     #     config["memory_manager"] = team.memory_manager.to_dict()
     if team.enable_agentic_memory:
         config["enable_agentic_memory"] = team.enable_agentic_memory
-    if team.enable_user_memories:
-        config["enable_user_memories"] = team.enable_user_memories
+    if team.update_memory_on_run:
+        config["update_memory_on_run"] = team.update_memory_on_run
     if team.add_memories_to_context is not None:
         config["add_memories_to_context"] = team.add_memories_to_context
     if team.enable_session_summaries:
@@ -946,7 +946,7 @@ def from_dict(
             # --- Memory settings ---
             # memory_manager=config.get("memory_manager"),  # TODO
             enable_agentic_memory=config.get("enable_agentic_memory", False),
-            enable_user_memories=config.get("enable_user_memories"),
+            update_memory_on_run=config.get("update_memory_on_run", False),
             add_memories_to_context=config.get("add_memories_to_context"),
             enable_session_summaries=config.get("enable_session_summaries", False),
             add_session_summary_to_context=config.get("add_session_summary_to_context"),
