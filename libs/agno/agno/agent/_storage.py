@@ -862,9 +862,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         config.pop("num_history_sessions", None)
 
     if "enable_user_memories" in config:
-        log_debug(
-            "'enable_user_memories' has been deprecated. Use 'update_memory_on_run' instead."
-        )
+        log_debug("'enable_user_memories' has been deprecated. Use 'update_memory_on_run' instead.")
         config.pop("enable_user_memories", None)
 
     return cls(
