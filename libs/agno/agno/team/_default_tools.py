@@ -563,7 +563,7 @@ def _get_delegate_task_function(
         if stream:
             member_agent_run_response_stream = member_agent.run(
                 input=member_agent_task if not history else history,
-                user_id=user_id,
+                user_id=user_id or run_context.user_id,
                 # All members have the same session_id
                 session_id=session.session_id,
                 session_state=member_session_state_copy,  # Send a copy to the agent
@@ -601,7 +601,7 @@ def _get_delegate_task_function(
         else:
             member_agent_run_response = member_agent.run(  # type: ignore
                 input=member_agent_task if not history else history,  # type: ignore
-                user_id=user_id,
+                user_id=user_id or run_context.user_id,
                 # All members have the same session_id
                 session_id=session.session_id,
                 session_state=member_session_state_copy,  # Send a copy to the agent
@@ -703,7 +703,7 @@ def _get_delegate_task_function(
         if stream:
             member_agent_run_response_stream = member_agent.arun(  # type: ignore
                 input=member_agent_task if not history else history,
-                user_id=user_id,
+                user_id=user_id or run_context.user_id,
                 # All members have the same session_id
                 session_id=session.session_id,
                 session_state=member_session_state_copy,  # Send a copy to the agent
@@ -741,7 +741,7 @@ def _get_delegate_task_function(
         else:
             member_agent_run_response = await member_agent.arun(  # type: ignore
                 input=member_agent_task if not history else history,
-                user_id=user_id,
+                user_id=user_id or run_context.user_id,
                 # All members have the same session_id
                 session_id=session.session_id,
                 session_state=member_session_state_copy,  # Send a copy to the agent
@@ -832,7 +832,7 @@ def _get_delegate_task_function(
             if stream:
                 member_agent_run_response_stream = member_agent.run(
                     input=member_agent_task if not history else history,
-                    user_id=user_id,
+                    user_id=user_id or run_context.user_id,
                     # All members have the same session_id
                     session_id=session.session_id,
                     session_state=member_session_state_copy,  # Send a copy to the agent
@@ -871,7 +871,7 @@ def _get_delegate_task_function(
             else:
                 member_agent_run_response = member_agent.run(  # type: ignore
                     input=member_agent_task if not history else history,
-                    user_id=user_id,
+                    user_id=user_id or run_context.user_id,
                     # All members have the same session_id
                     session_id=session.session_id,
                     session_state=member_session_state_copy,  # Send a copy to the agent
@@ -962,7 +962,7 @@ def _get_delegate_task_function(
 
                 member_stream = agent.arun(  # type: ignore
                     input=member_agent_task if not history else history,
-                    user_id=user_id,
+                    user_id=user_id or run_context.user_id,
                     session_id=session.session_id,
                     session_state=member_session_state_copy,  # Send a copy to the agent
                     images=images,
@@ -1059,7 +1059,7 @@ def _get_delegate_task_function(
 
                     member_agent_run_response = await member_agent.arun(
                         input=member_agent_task if not history else history,
-                        user_id=user_id,
+                        user_id=user_id or run_context.user_id,
                         # All members have the same session_id
                         session_id=session.session_id,
                         session_state=member_session_state_copy,  # Send a copy to the agent
