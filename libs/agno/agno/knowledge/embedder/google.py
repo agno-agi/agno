@@ -52,6 +52,16 @@ class GeminiEmbedder(Embedder):
         if self.client_params:
             _client_params.update(self.client_params)
 
+        http_options = _client_params.get("http_options", {})
+        if isinstance(http_options, dict):
+            headers = http_options.get("headers", {})
+            if isinstance(headers, dict):
+                from agno import __version__ as agno_version
+
+                headers["x-goog-api-client"] = f"agno/{agno_version}"
+                http_options["headers"] = headers
+                _client_params["http_options"] = http_options
+
         self.gemini_client = genai.Client(**_client_params)
 
         return self.gemini_client

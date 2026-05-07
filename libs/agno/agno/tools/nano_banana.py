@@ -69,7 +69,12 @@ class NanoBananaTools(Toolkit):
     def create_image(self, prompt: str) -> ToolResult:
         """Generate an image from a text prompt."""
         try:
-            client = genai.Client(api_key=self.api_key)
+            from agno import __version__ as agno_version
+
+            client = genai.Client(
+                api_key=self.api_key,
+                http_options={"headers": {"x-goog-api-client": f"agno/{agno_version}"}},
+            )
             log_debug(f"NanoBanana generating image with prompt: {prompt}")
 
             cfg = types.GenerateContentConfig(
