@@ -689,6 +689,9 @@ class BaseExternalAgent:
                 session_id=session_id,
                 content=str(run_error),
             )
+            if stored_events is None:
+                stored_events = []
+            stored_events.append(terminal_event)
         else:
             terminal_event = RunCompletedEvent(
                 run_id=run_id,
@@ -697,7 +700,7 @@ class BaseExternalAgent:
                 session_id=session_id,
                 content=accumulated_content,
             )
-        _store_event(terminal_event)
+            _store_event(terminal_event)
 
         # Persist the run to the session. Swallow DB failures so the consumer
         # still receives the terminal RunCompletedEvent / RunErrorEvent below.
