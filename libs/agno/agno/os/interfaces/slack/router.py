@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from ssl import SSLContext
 from typing import Any, Dict, List, Literal, Optional, Union
 
@@ -21,14 +22,17 @@ from agno.os.interfaces.slack.helpers import (
     upload_response_media_async,
 )
 from agno.os.interfaces.slack.security import verify_slack_signature
-from agno.os.interfaces.slack.state import StreamState
+from agno.os.interfaces.slack.state import StreamState, TaskStatus
+from agno.os.interfaces.slack.types import decode_row_button_value, decode_submit_button_value
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_info
 from agno.workflow import RemoteWorkflow, Workflow
 
 # Slack sends lifecycle events for bots with these subtypes. Without this
 # filter the router would try to process its own messages, causing infinite loops.
+# bot_message = bot posts; bot_add/remove/enable/disable = workspace config changes
+# message_changed/deleted = edits and retractions (would re-trigger on our own updates)
 _IGNORED_SUBTYPES = frozenset(
     {
         "bot_message",
@@ -44,9 +48,23 @@ _IGNORED_SUBTYPES = frozenset(
 # User-facing error message for failed requests
 _ERROR_MESSAGE = "Sorry, there was an error processing your message."
 
-# Slack caps streamed messages at ~40K total payload (text + task card blocks)
+# Slack caps streamed messages at ~40K total payload (text + task card blocks).
+# Beyond these limits Slack rejects append() with msg_too_long — we rotate to a
+# fresh stream bubble before hitting the wall rather than failing mid-response.
 _STREAM_CHAR_LIMIT = 39000
 _STREAM_CARD_LIMIT = 45
+
+
+def _slack_err_code(exc: BaseException) -> Optional[str]:
+    # Used in HITL logging to distinguish message_not_in_streaming_state (expired
+    # stream) from other failures that need different handling
+    resp = getattr(exc, "response", None)
+    data = getattr(resp, "data", None) if resp is not None else None
+    if isinstance(data, dict):
+        code = data.get("error")
+        if isinstance(code, str):
+            return code
+    return None
 
 
 class SlackEventResponse(BaseModel):
@@ -79,6 +97,10 @@ def attach_routes(
     entity = agent or team or workflow
     # entity_type drives event dispatch (agent vs team vs workflow events)
     entity_type: Literal["agent", "team", "workflow"] = "agent" if agent else "team" if team else "workflow"
+    # Member HITL needs member runs embedded on Team run (member_responses).
+    # Without this, continue_run cannot reliably reload member tool state from DB.
+    if team is not None and not isinstance(team, RemoteTeam):
+        team.store_member_responses = True
     raw_name = getattr(entity, "name", None)
     # entity_name labels task cards; entity_id namespaces session IDs
     entity_name = raw_name if isinstance(raw_name, str) else entity_type
@@ -116,10 +138,12 @@ def attach_routes(
         if not verify_slack_signature(body, timestamp, slack_signature, signing_secret=signing_secret):
             raise HTTPException(status_code=403, detail="Invalid signature")
 
-        # Slack retries after ~3s if it doesn't get a 200. Since we ACK
-        # immediately and process in background, retries are always duplicates.
-        # Trade-off: if the server crashes mid-processing, the retried event
-        # carrying the same payload won't be reprocessed — acceptable for chat.
+        # Slack retries with X-Slack-Retry-Num header after ~3s if it doesn't
+        # get a 200. Since we ACK immediately and process in background, retries
+        # are always duplicates. Trade-off: if the server crashes mid-processing,
+        # the retried event carrying the same payload won't be reprocessed — but
+        # idempotency keys in Slack state would require external storage anyway,
+        # and for chat UX occasional lost messages beat duplicate responses.
         if request.headers.get("X-Slack-Retry-Num"):
             return SlackEventResponse(status="ok")
 
@@ -134,9 +158,11 @@ def attach_routes(
             # setSuggestedPrompts requires "Agents & AI Apps" mode (streaming UX only)
             if event_type == "assistant_thread_started" and streaming:
                 background_tasks.add_task(_handle_thread_started, event)
-            # Bot self-loop prevention: check bot_id at both the top-level event
-            # and inside message_changed's nested "message" object. Without the
-            # nested check, edited bot messages would be reprocessed as new events.
+            # Bot self-loop prevention: check bot_id at BOTH the top-level event
+            # AND inside message_changed's nested "message" object. Slack puts
+            # bot_id at different nesting levels depending on event shape — the
+            # nested check catches edited bot messages that would otherwise be
+            # reprocessed as new user events.
             elif (
                 event.get("bot_id")
                 or (event.get("message") or {}).get("bot_id")
@@ -149,6 +175,738 @@ def attach_routes(
                 background_tasks.add_task(_process_slack_event, data)
 
         return SlackEventResponse(status="ok")
+
+    @router.post(
+        "/interactions",
+        operation_id=f"slack_interactions_{op_suffix}",
+        name="slack_interactions",
+        description="Handle Slack interactive components (HITL buttons / form submit)",
+        response_model=SlackEventResponse,
+        response_model_exclude_none=True,
+        responses={
+            200: {"description": "Interaction accepted"},
+            400: {"description": "Malformed interaction payload"},
+            403: {"description": "Invalid Slack signature"},
+        },
+    )
+    async def slack_interactions(request: Request, background_tasks: BackgroundTasks):
+        body = await request.body()
+        timestamp = request.headers.get("X-Slack-Request-Timestamp")
+        slack_signature = request.headers.get("X-Slack-Signature", "")
+        if not timestamp or not slack_signature:
+            raise HTTPException(status_code=400, detail="Missing Slack headers")
+        if not verify_slack_signature(body, timestamp, slack_signature, signing_secret=signing_secret):
+            raise HTTPException(status_code=403, detail="Invalid signature")
+
+        # Pre-ack retry drop — Slack retries after ~3s if we don't ack. We ACK
+        # below; any retry arriving before that gets the same 200 response.
+        if request.headers.get("X-Slack-Retry-Num"):
+            return SlackEventResponse(status="ok")
+
+        # Slack sends interactive payloads as application/x-www-form-urlencoded
+        # with a single form field `payload=<URL-encoded JSON>`.
+        form = await request.form()
+        payload_raw = form.get("payload")
+        if not isinstance(payload_raw, str) or not payload_raw:
+            raise HTTPException(status_code=400, detail="Missing payload")
+        try:
+            payload = json.loads(payload_raw)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Malformed payload JSON")
+
+        # Dispatch by action_id — only block_actions payloads carry HITL clicks.
+        if payload.get("type") != "block_actions":
+            return SlackEventResponse(status="ok")
+        actions = payload.get("actions") or []
+        if not actions:
+            return SlackEventResponse(status="ok")
+        action_id = actions[0].get("action_id", "")
+
+        if action_id == "row_approve":
+            background_tasks.add_task(_handle_row_approve, payload)
+        elif action_id == "row_reject":
+            background_tasks.add_task(_handle_row_reject_start, payload)
+        elif action_id == "reject_confirm":
+            background_tasks.add_task(_handle_reject_confirm, payload)
+        elif action_id == "reject_cancel":
+            background_tasks.add_task(_handle_reject_cancel, payload)
+        elif action_id == "submit_pause":
+            background_tasks.add_task(_handle_submit, payload)
+        # Silently ignore unknown action_ids — a non-HITL Slack app sharing
+        # the same endpoint might also post interactions here.
+
+        return SlackEventResponse(status="ok")
+
+    async def _handle_row_approve(payload: Dict[str, Any]) -> None:
+        # Toggle confirmation row to "approved" state, preserve all other rows.
+        # If there's a global Submit button, don't auto-submit — user clicks Submit.
+        # If there's NO global Submit (only confirmation rows), auto-submit when all decided.
+        from slack_sdk.web.async_client import AsyncWebClient
+
+        from agno.os.interfaces.slack.builders import build_confirmation_toggle_card
+        from agno.os.interfaces.slack.types import encode_submit_button_value
+
+        actions = payload.get("actions") or []
+        if not actions:
+            return
+        button_value = actions[0].get("value") or ""
+        if "|" not in button_value:
+            return
+        req_id, run_id, awaiting_ts = decode_row_button_value(button_value)
+
+        channel = (payload.get("channel") or {}).get("id")
+        message = payload.get("message") or {}
+        card_ts = message.get("ts")
+        if not channel or not card_ts:
+            return
+
+        original_blocks = list(message.get("blocks") or [])
+
+        def to_dict(b: Any) -> Dict[str, Any]:
+            if hasattr(b, "to_dict"):
+                return b.to_dict()
+            if hasattr(b, "model_dump"):
+                return b.model_dump(exclude_none=True, mode="json")
+            from dataclasses import asdict, is_dataclass
+
+            if is_dataclass(b) and not isinstance(b, type):
+                return asdict(b)
+            return b if isinstance(b, dict) else {}
+
+        # Build updated blocks: toggle clicked row to "approved", preserve others
+        updated_blocks: List[Dict[str, Any]] = []
+        pending_confirmation_rows: set[str] = set()
+        has_global_submit = False
+
+        for blk in original_blocks:
+            block_id = blk.get("block_id", "")
+            blk_type = blk.get("type", "")
+
+            # Match clicked row by block_id prefix (handles both fresh and toggled states)
+            if block_id.startswith(f"rowact:{req_id}:confirmation"):
+                # Extract tool_name and body from current card
+                tool_name = (blk.get("title") or {}).get("text", "*tool*").replace("*", "")
+                body_text = (blk.get("body") or {}).get("text", "")
+                # Build toggle card with "approve" selected
+                toggle_blocks = build_confirmation_toggle_card(
+                    req_id=req_id,
+                    run_id=run_id,
+                    awaiting_ts=awaiting_ts,
+                    tool_name=tool_name,
+                    body_text=body_text,
+                    selected="approve",
+                )
+                for tb in toggle_blocks:
+                    updated_blocks.append(to_dict(tb))
+                # Add decision marker for parse_submit_payload
+                updated_blocks.append(
+                    {
+                        "type": "section",
+                        "block_id": f"row:{req_id}:confirmation:decided:approve",
+                        "text": {"type": "plain_text", "text": " "},
+                    }
+                )
+            # Skip existing decision markers for this row (will be replaced above)
+            elif block_id.startswith(f"row:{req_id}:confirmation:decided:"):
+                continue
+            # Skip any existing rejection reason input for this row (user toggled from Deny to Approve)
+            elif block_id == f"reject_reason:{req_id}":
+                continue
+            # Global Submit button
+            elif blk_type == "actions" and block_id.startswith("pause:"):
+                updated_blocks.append(blk)
+                has_global_submit = True
+            # Another confirmation row (not this one)
+            elif block_id.startswith("rowact:") and "confirmation" in block_id:
+                updated_blocks.append(blk)
+                parts = block_id.split(":")
+                # Track as pending unless it's already in a "selected" state
+                if len(parts) >= 2 and ":selected:" not in block_id:
+                    pending_confirmation_rows.add(parts[1])
+            # All other blocks: preserve
+            else:
+                updated_blocks.append(blk)
+
+        client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
+        try:
+            await client.chat_update(channel=channel, ts=card_ts, text="Approval pending", blocks=updated_blocks)
+        except Exception as exc:
+            log_error(f"[HITL] chat_update (row approve) failed for card {card_ts}: {exc}")
+
+        if not run_id:
+            return
+
+        # Auto-submit only when: all confirmation rows decided AND no global Submit button
+        if not pending_confirmation_rows and not has_global_submit:
+            synthetic_payload = dict(payload)
+            synthetic_payload["actions"] = [
+                {
+                    "action_id": "submit_pause",
+                    "block_id": f"pause:{run_id}",
+                    "value": encode_submit_button_value(run_id, awaiting_ts),
+                }
+            ]
+            synthetic_payload["message"] = {
+                **(payload.get("message") or {}),
+                "blocks": updated_blocks,
+            }
+            await _handle_submit(synthetic_payload)
+
+    async def _handle_row_reject_start(payload: Dict[str, Any]) -> None:
+        # Toggle confirmation row to "denied" state + add reason input, preserve all other rows
+        from slack_sdk.models.blocks import InputBlock
+        from slack_sdk.models.blocks import PlainTextInputElement as PlainTextInput
+        from slack_sdk.models.blocks.basic_components import PlainTextObject as PlainText
+        from slack_sdk.web.async_client import AsyncWebClient
+
+        from agno.os.interfaces.slack.builders import build_confirmation_toggle_card
+        from agno.os.interfaces.slack.types import ACTION_REJECT_REASON
+
+        actions = payload.get("actions") or []
+        if not actions:
+            return
+        button_value = actions[0].get("value") or ""
+        if "|" not in button_value:
+            return
+        req_id, run_id, awaiting_ts = decode_row_button_value(button_value)
+
+        channel = (payload.get("channel") or {}).get("id")
+        message = payload.get("message") or {}
+        card_ts = message.get("ts")
+        if not channel or not card_ts:
+            return
+
+        original_blocks = list(message.get("blocks") or [])
+
+        def to_dict(b: Any) -> Dict[str, Any]:
+            if hasattr(b, "to_dict"):
+                return b.to_dict()
+            if hasattr(b, "model_dump"):
+                return b.model_dump(exclude_none=True, mode="json")
+            from dataclasses import asdict, is_dataclass
+
+            if is_dataclass(b) and not isinstance(b, type):
+                return asdict(b)
+            return b if isinstance(b, dict) else {}
+
+        # Build updated blocks: toggle clicked row to "deny" + add reason input
+        updated_blocks: List[Dict[str, Any]] = []
+
+        for blk in original_blocks:
+            block_id = blk.get("block_id", "")
+
+            # Match clicked row by block_id prefix (handles both fresh and toggled states)
+            if block_id.startswith(f"rowact:{req_id}:confirmation"):
+                tool_name = (blk.get("title") or {}).get("text", "*tool*").replace("*", "")
+                body_text = (blk.get("body") or {}).get("text", "")
+                # Build toggle card with "deny" selected
+                toggle_blocks = build_confirmation_toggle_card(
+                    req_id=req_id,
+                    run_id=run_id,
+                    awaiting_ts=awaiting_ts,
+                    tool_name=tool_name,
+                    body_text=body_text,
+                    selected="deny",
+                )
+                for tb in toggle_blocks:
+                    updated_blocks.append(to_dict(tb))
+                # Add inline reason input right after the card
+                reason_input = InputBlock(
+                    block_id=f"reject_reason:{req_id}",
+                    label=PlainText(text="Reason (optional)"),
+                    element=PlainTextInput(
+                        action_id=ACTION_REJECT_REASON,
+                        placeholder=PlainText(text="Why are you rejecting this action?"),
+                        multiline=True,
+                    ),
+                    optional=True,
+                )
+                updated_blocks.append(to_dict(reason_input))
+                # Add decision marker for parse_submit_payload
+                updated_blocks.append(
+                    {
+                        "type": "section",
+                        "block_id": f"row:{req_id}:confirmation:decided:deny",
+                        "text": {"type": "plain_text", "text": " "},
+                    }
+                )
+            # Skip existing decision markers for this row (will be replaced above)
+            elif block_id.startswith(f"row:{req_id}:confirmation:decided:"):
+                continue
+            # Skip existing rejection reason input for this row (will be re-added above)
+            elif block_id == f"reject_reason:{req_id}":
+                continue
+            # Preserve all other blocks
+            else:
+                updated_blocks.append(blk)
+
+        # Check if we need to add a Submit button for confirmation-only cards
+        # (cards with no global Submit button and all rows now decided)
+        has_global_submit = any(
+            (blk.get("type") == "actions" and blk.get("block_id", "").startswith("pause:"))
+            for blk in updated_blocks
+        )
+        pending_confirmation_rows: set[str] = set()
+        for blk in updated_blocks:
+            block_id = blk.get("block_id", "")
+            # Fresh confirmation row not yet decided
+            if block_id.startswith("rowact:") and ":confirmation" in block_id and ":decided:" not in block_id:
+                parts = block_id.split(":")
+                if len(parts) >= 2:
+                    pending_confirmation_rows.add(parts[1])
+            # Decision marker removes from pending
+            if block_id.startswith("row:") and ":confirmation:decided:" in block_id:
+                parts = block_id.split(":")
+                if len(parts) >= 2:
+                    pending_confirmation_rows.discard(parts[1])
+
+        # Add Submit button if all rows decided and no global submit exists
+        if not pending_confirmation_rows and not has_global_submit and run_id:
+            from slack_sdk.models.blocks import ActionsBlock
+            from slack_sdk.models.blocks.block_elements import ButtonElement
+            from slack_sdk.models.blocks.basic_components import PlainTextObject
+
+            from agno.os.interfaces.slack.types import encode_submit_button_value
+
+            submit_btn = ButtonElement(
+                action_id="submit_pause",
+                text=PlainTextObject(text="Submit", emoji=True),
+                style="primary",
+                value=encode_submit_button_value(run_id, awaiting_ts),
+            )
+            submit_block = ActionsBlock(block_id=f"pause:{run_id}", elements=[submit_btn])
+            updated_blocks.append(submit_block.to_dict())
+
+        client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
+        try:
+            await client.chat_update(
+                channel=channel,
+                ts=card_ts,
+                text="Rejection pending",
+                blocks=updated_blocks,
+            )
+        except Exception as exc:
+            log_error(f"[HITL] chat_update (row reject) failed for card {card_ts}: {exc}")
+
+    async def _handle_reject_confirm(payload: Dict[str, Any]) -> None:
+        # Mark this row as rejected, preserve all other rows.
+        # Auto-submit when ALL rows are decided.
+        from slack_sdk.web.async_client import AsyncWebClient
+
+        from agno.os.interfaces.slack.types import decode_reject_card_value, encode_submit_button_value
+
+        actions = payload.get("actions") or []
+        if not actions:
+            return
+        button_value = actions[0].get("value") or ""
+        req_id, run_id, awaiting_ts, _, _, original_pause_type = decode_reject_card_value(button_value)
+        if not req_id:
+            return
+
+        channel = (payload.get("channel") or {}).get("id")
+        message = payload.get("message") or {}
+        card_ts = message.get("ts")
+        if not channel or not card_ts:
+            return
+
+        # Extract rejection reason from state
+        state_values = (payload.get("state") or {}).get("values") or {}
+        reason_block_id = f"reject_reason:{req_id}"
+        reason_state = state_values.get(reason_block_id, {}).get("reject_reason", {})
+        rejected_note = (reason_state.get("value") or "").strip() or None
+
+        original_blocks = list(message.get("blocks") or [])
+
+        # Build updated blocks: mark clicked row as rejected, preserve others
+        updated_blocks: List[Dict[str, Any]] = []
+        pending_rows: set[str] = set()
+
+        for blk in original_blocks:
+            block_id = blk.get("block_id", "")
+
+            # Check if this is the rejection input card for our req_id
+            if block_id == f"rowact:{req_id}:rejection_input":
+                original_title = (blk.get("title") or {}).get("text", "")
+                tool_name = original_title.replace("*Deny: ", "").replace("*", "").strip() or "tool"
+                # Mark as decided with the original pause type
+                decided_card: Dict[str, Any] = {
+                    "type": "card",
+                    "block_id": f"rowact:{req_id}:{original_pause_type}:decided:deny",
+                    "title": {"type": "mrkdwn", "text": f"*Denied: {tool_name}*"},
+                }
+                if rejected_note:
+                    decided_card["subtitle"] = {"type": "mrkdwn", "text": f"_{rejected_note}_"}
+                updated_blocks.append(decided_card)
+                # Add decision marker for parse_submit_payload (confirmation needs this)
+                if original_pause_type == "confirmation":
+                    updated_blocks.append(
+                        {
+                            "type": "section",
+                            "block_id": f"row:{req_id}:confirmation:decided:deny",
+                            "text": {"type": "plain_text", "text": " "},
+                        }
+                    )
+                    updated_blocks.append(
+                        {
+                            "type": "context",
+                            "block_id": f"reject_note:{req_id}",
+                            "elements": [{"type": "plain_text", "text": rejected_note or ""}],
+                        }
+                    )
+            # Skip the rejection reason input block (already processed above)
+            elif block_id == f"reject_reason:{req_id}":
+                continue
+            # Check if this is another undecided row header card (has actions = buttons)
+            elif block_id.startswith("rowact:") and blk.get("actions"):
+                updated_blocks.append(blk)
+                parts = block_id.split(":")
+                if len(parts) >= 2:
+                    pending_rows.add(parts[1])
+            # Already-decided cards or non-card blocks: preserve
+            else:
+                updated_blocks.append(blk)
+
+        client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
+        try:
+            await client.chat_update(channel=channel, ts=card_ts, text="Rejection pending", blocks=updated_blocks)
+        except Exception as exc:
+            log_error(f"[HITL] chat_update (reject confirm) failed for card {card_ts}: {exc}")
+
+        if not run_id:
+            return
+
+        # Auto-submit when all rows are decided
+        if not pending_rows:
+            synthetic_payload = dict(payload)
+            synthetic_payload["actions"] = [
+                {
+                    "action_id": "submit_pause",
+                    "block_id": f"pause:{run_id}",
+                    "value": encode_submit_button_value(run_id, awaiting_ts),
+                }
+            ]
+            synthetic_payload["message"] = {
+                **(payload.get("message") or {}),
+                "blocks": updated_blocks,
+            }
+            await _handle_submit(synthetic_payload)
+
+    async def _handle_reject_cancel(payload: Dict[str, Any]) -> None:
+        # Restore original Approve/Deny card, preserve all other rows
+        from slack_sdk.web.async_client import AsyncWebClient
+
+        from agno.os.interfaces.slack.builders import build_original_row_card
+        from agno.os.interfaces.slack.types import decode_reject_card_value
+
+        actions = payload.get("actions") or []
+        if not actions:
+            return
+        button_value = actions[0].get("value") or ""
+        req_id, run_id, awaiting_ts, original_title, original_body, original_pause_type = decode_reject_card_value(
+            button_value
+        )
+        if not req_id:
+            return
+
+        channel = (payload.get("channel") or {}).get("id")
+        message = payload.get("message") or {}
+        card_ts = message.get("ts")
+        if not channel or not card_ts:
+            return
+
+        def to_dict(b: Any) -> Dict[str, Any]:
+            if hasattr(b, "to_dict"):
+                return b.to_dict()
+            if hasattr(b, "model_dump"):
+                return b.model_dump(exclude_none=True, mode="json")
+            from dataclasses import asdict, is_dataclass
+
+            if is_dataclass(b) and not isinstance(b, type):
+                return asdict(b)
+            raise TypeError(f"Cannot serialize block of type {type(b).__name__}")
+
+        original_blocks = list(message.get("blocks") or [])
+
+        # Build updated blocks: replace rejection input with restored card, preserve others
+        updated_blocks: List[Dict[str, Any]] = []
+
+        for blk in original_blocks:
+            block_id = blk.get("block_id", "")
+
+            # Check if this is the rejection input card for our req_id
+            if block_id == f"rowact:{req_id}:rejection_input":
+                # Replace with restored card (correct pause type)
+                restored_blocks = build_original_row_card(
+                    req_id=req_id,
+                    run_id=run_id,
+                    awaiting_ts=awaiting_ts,
+                    original_title=original_title,
+                    original_body=original_body,
+                    pause_type=original_pause_type,
+                )
+                for rb in restored_blocks:
+                    updated_blocks.append(to_dict(rb))
+            # Skip the rejection reason input block (replaced above)
+            elif block_id == f"reject_reason:{req_id}":
+                continue
+            else:
+                # Preserve all other blocks unchanged
+                updated_blocks.append(blk)
+
+        client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
+        try:
+            await client.chat_update(
+                channel=channel,
+                ts=card_ts,
+                text="Pending approval",
+                blocks=updated_blocks,
+            )
+        except Exception as exc:
+            log_error(f"[HITL] chat_update (reject cancel) failed for card {card_ts}: {exc}")
+
+    async def _handle_submit(payload: Dict[str, Any]) -> None:
+        # Always opens a new stream rather than resuming the pre-pause ts. Slack
+        # enforces a ~5-min wall-clock timeout on chat_stream regardless of keep-
+        # alive pings, and human deliberation routinely exceeds that. A fresh
+        # bubble is the only reliable continuation path.
+        from slack_sdk.web.async_client import AsyncWebClient
+
+        from agno.os.interfaces.slack.builders import approval_task_id
+        from agno.os.interfaces.slack.interactions import (
+            apply_decisions,
+            format_decision_title,
+            parse_submit_payload,
+        )
+
+        actions = payload.get("actions") or []
+        if not actions:
+            return
+        submit_block_id = actions[0].get("block_id") or ""
+        if not submit_block_id.startswith("pause:"):
+            return
+        run_id = submit_block_id.removeprefix("pause:")
+        channel = (payload.get("channel") or {}).get("id")
+        message = payload.get("message") or {}
+        msg_ts = message.get("ts")
+        if not (run_id and channel and msg_ts):
+            return
+        log_info(f"[HITL] submit received: run_id={run_id} channel={channel}")
+
+        thread_ts = message.get("thread_ts") or msg_ts
+        session_id = f"{entity_id}:{thread_ts}"
+
+        # Extract awaiting_ts from button value (stateless)
+        button_value = actions[0].get("value") or ""
+        _, awaiting_ts = decode_submit_button_value(button_value)
+
+        # Extract user/team from payload for streaming
+        recipient_user_id = (payload.get("user") or {}).get("id")
+        recipient_team_id = (payload.get("team") or {}).get("id")
+
+        client = AsyncWebClient(token=slack_tools.token, ssl=ssl)
+
+        # Delete the standalone "⏸ Awaiting …" indicator posted at pause time.
+        # Silently ignore message_not_found — retries hit this after first success.
+        if awaiting_ts:
+            try:
+                await client.chat_delete(channel=channel, ts=awaiting_ts)
+            except Exception as exc:
+                if "message_not_found" not in str(exc):
+                    log_error(f"[HITL] chat_delete (awaiting indicator) failed for ts={awaiting_ts}: {exc}")
+
+        try:
+            run_output = await entity.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
+        except Exception as exc:
+            log_error(f"[HITL] aget_run_output failed for run={run_id}: {exc}")
+            run_output = None
+
+        requirements = list(getattr(run_output, "active_requirements", None) or []) if run_output else []
+        if not requirements:
+            await _post_ephemeral(
+                client,
+                channel=channel,
+                user=(payload.get("user") or {}).get("id", ""),
+                text="This approval is no longer active.",
+            )
+            return
+
+        decisions, errors = parse_submit_payload(payload, requirements)
+        if errors:
+            detail = "\n".join(f"• {e.field}: {e.message}" for e in errors)
+            await _post_ephemeral(
+                client,
+                channel=channel,
+                user=(payload.get("user") or {}).get("id", ""),
+                text=f"Please fix the following and submit again:\n{detail}",
+            )
+            return
+
+        apply_decisions(decisions, requirements)
+
+        # Lock the form: convert interactive inputs/cards to readonly display
+        original_blocks = list((payload.get("message") or {}).get("blocks") or [])
+        has_inputs = any(b.get("type") == "input" for b in original_blocks)
+        # Check for cards with actions (buttons) — matches what response_blocks strips
+        has_interactive_cards = any(
+            b.get("type") == "card" and b.get("actions")
+            for b in original_blocks
+        )
+        if has_inputs or has_interactive_cards:
+            from agno.os.interfaces.slack.builders import response_blocks
+
+            state_values = (payload.get("state") or {}).get("values") or {}
+            readonly_blocks = response_blocks(original_blocks, state_values, requirements)
+            try:
+                await client.chat_update(
+                    channel=channel,
+                    ts=msg_ts,
+                    text="Submitted",
+                    blocks=readonly_blocks,
+                )
+            except Exception as exc:
+                log_error(f"[HITL] chat_update (submit readonly) failed for {msg_ts}: {exc}")
+
+        # Resume always opens a fresh continuation stream — we intentionally
+        # do not try to reuse the pre-pause ts. Slack enforces a ~5-min wall
+        # clock on chat_stream regardless of pings, and human deliberation
+        # routinely exceeds that. A new bubble is the predictable fallback.
+        # All context reconstructed from Slack payload + config closure.
+        stream = await client.chat_stream(
+            channel=channel,
+            thread_ts=thread_ts,
+            recipient_team_id=recipient_team_id,
+            recipient_user_id=recipient_user_id,
+            task_display_mode=task_display_mode,
+            buffer_size=buffer_size,
+        )
+
+        # Emit decision task cards for DENIED confirmations only
+        requirements_by_id = {r.id: r for r in requirements if r.id}
+        for decision in decisions:
+            req = requirements_by_id.get(decision.requirement_id)
+            if req is None:
+                continue
+            # Skip the decision task card entirely except for DENIED
+            # confirmations. Approved confirmations let the tool's own
+            # call card carry the story. For user_input / user_feedback /
+            # external_execution, the readonly Card in the thread above
+            # already shows the submission — repeating "Submitted: tool(...)"
+            # in the continuation's plan block is redundant noise.
+            if decision.pause_type != "confirmation":
+                continue
+            if decision.approved is True:
+                continue
+            title = format_decision_title(decision, req)
+            decision_chunk = {
+                "type": "task_update",
+                "id": approval_task_id(decision.requirement_id),
+                "title": title,
+                "status": "complete",
+            }
+            try:
+                await stream.append(markdown_text="", chunks=[decision_chunk])
+            except Exception as exc:
+                log_error(
+                    f"[HITL] decision_update append failed: run_id={run_id} "
+                    f"slack_error={_slack_err_code(exc)!r} | {exc}"
+                )
+
+        # Now stream the continuation. We reuse the same process_event
+        # pipeline that the initial run used so cards, reasoning, tool
+        # call events, and content all render identically.
+        state = StreamState(entity_name=entity_name, entity_type=entity_type)
+        try:
+            # requirements= is load-bearing: apply_decisions mutated our
+            # local list, but the agent's own stored state still sees them
+            # as pending. Passing the mutated list forwards the user's
+            # confirmations into the resumed run.
+            # Annotated Any because acontinue_run's overload resolution can't
+            # narrow through entity's Union and the tool-ignore comment on
+            # the call disables mypy's AsyncIterator vs Coroutine discrimination.
+            response_stream: Any = entity.acontinue_run(  # type: ignore[union-attr, call-arg, call-overload]
+                run_id=run_id,
+                requirements=requirements,
+                session_id=session_id,
+                stream=True,
+                stream_events=True,
+            )
+        except Exception as exc:
+            log_error(f"[HITL] acontinue_run (stream) failed for run={run_id}: {exc}")
+            await send_slack_message_async(client, channel=channel, message=_ERROR_MESSAGE, thread_ts=thread_ts)
+            return
+
+        paused_again: bool = False
+        try:
+            async for chunk in response_stream:
+                state.collect_media(chunk)
+                ev = getattr(chunk, "event", None)
+                if ev:
+                    if await process_event(ev, chunk, state, stream):
+                        break
+                if state.has_content():
+                    content = state.flush()
+                    if content and state.stream_chars_sent + len(content) <= _STREAM_CHAR_LIMIT:
+                        await stream.append(markdown_text=content)
+                        state.stream_chars_sent += len(content)
+        except Exception as exc:
+            log_error(
+                f"[HITL] continuation append failed: run_id={run_id} slack_error={_slack_err_code(exc)!r} | {exc}"
+            )
+
+        # If the continuation paused again, finalize the pre-pause bubble
+        # and post the awaiting indicator + Card. This mirrors the main-run
+        # pause path — without stream.stop() here Slack keeps the bubble in
+        # a streaming state and the appended "_Reviewing…_" placeholder
+        # never lands as a rendered rich_text block.
+        if state.paused_event is not None:
+            requirements2 = list(getattr(state.paused_event, "active_requirements", None) or [])
+            if requirements2:
+                from agno.os.interfaces.slack.pause import finalize_pause, post_pause_card
+
+                new_awaiting_ts = await finalize_pause(
+                    client=client,
+                    stream=stream,
+                    state=state,
+                    run_id=run_id,
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    requirements=requirements2,
+                    log_prefix="re-",
+                )
+                try:
+                    await post_pause_card(client, state.paused_event, channel, thread_ts, new_awaiting_ts)
+                except Exception as exc:
+                    log_error(f"[HITL] Failed to post Card block (re-pause): {exc}")
+                paused_again = True
+
+        if not paused_again:
+            stop_kwargs: Dict[str, Any] = {}
+            if state.has_content():
+                stop_kwargs["markdown_text"] = state.flush()
+            if state.task_cards:
+                final_status: TaskStatus = state.terminal_status or "complete"
+                completion_chunks = state.resolve_all_pending(final_status)
+                if completion_chunks:
+                    stop_kwargs["chunks"] = completion_chunks
+            try:
+                await stream.stop(**stop_kwargs)
+            except Exception as exc:
+                log_error(
+                    f"[HITL] stream.stop after resume failed: run_id={run_id} "
+                    f"slack_error={_slack_err_code(exc)!r} | {exc}"
+                )
+
+    async def _post_ephemeral(
+        client: Any,
+        *,
+        channel: str,
+        user: str,
+        text: str,
+    ) -> None:
+        try:
+            await client.chat_postEphemeral(channel=channel, user=user, text=text)
+        except Exception as exc:
+            log_error(f"[HITL] chat_postEphemeral failed: {exc}")
 
     async def _process_slack_event(data: dict):
         event = data["event"]
@@ -176,7 +934,7 @@ def attach_routes(
                 status=loading_text,
             )
         except Exception:
-            pass
+            pass  # Best-effort UX — typing indicator failure doesn't block response
 
         try:
             # Resolve Slack user ID to email + display name when opted in
@@ -224,6 +982,48 @@ def attach_routes(
                     )
                     return
 
+                # HITL: Handle paused status in non-streaming mode
+                if response.status == "PAUSED":
+                    requirements = list(getattr(response, "active_requirements", None) or [])
+                    run_id = getattr(response, "run_id", None)
+                    if run_id and requirements:
+                        from agno.os.interfaces.slack.pause import _PAUSE_LABELS, post_pause_card
+                        from agno.os.interfaces.slack.types import _tool_name
+
+                        # Send the paused content message
+                        content = str(response.content) if response.content else ""
+                        if content:
+                            await send_slack_message_async(
+                                async_client,
+                                channel=ctx["channel_id"],
+                                message=content,
+                                thread_ts=ctx["thread_id"],
+                            )
+
+                        # Post awaiting indicator
+                        pause_labels = [_PAUSE_LABELS[r.pause_type].format(tool=_tool_name(r)) for r in requirements]
+                        awaiting_ts = None
+                        if pause_labels:
+                            try:
+                                awaiting_resp = await async_client.chat_postMessage(
+                                    channel=ctx["channel_id"],
+                                    thread_ts=ctx["thread_id"],
+                                    text="\n".join(pause_labels),
+                                    mrkdwn=True,
+                                )
+                                awaiting_ts = awaiting_resp.get("ts")
+                            except Exception as exc:
+                                log_error(f"[HITL] Non-streaming awaiting indicator failed: {exc}")
+
+                        # Post the HITL card with approve/reject buttons
+                        try:
+                            await post_pause_card(
+                                async_client, response, ctx["channel_id"], ctx["thread_id"], awaiting_ts
+                            )
+                        except Exception as exc:
+                            log_error(f"[HITL] Non-streaming pause card failed: {exc}")
+                        return
+
                 if hasattr(response, "reasoning_content") and response.reasoning_content:
                     rc = str(response.reasoning_content)
                     formatted = "*Reasoning:*\n> " + rc.replace("\n", "\n> ")
@@ -258,7 +1058,7 @@ def attach_routes(
                     channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], status=""
                 )
             except Exception:
-                pass
+                pass  # Best-effort UX — clearing status indicator is cosmetic
 
     async def _stream_slack_response(data: dict):
         from slack_sdk.web.async_client import AsyncWebClient
@@ -300,7 +1100,7 @@ def attach_routes(
                     status_kwargs["loading_messages"] = loading_messages
                 await async_client.assistant_threads_setStatus(**status_kwargs)
             except Exception:
-                pass
+                pass  # Best-effort UX — typing indicator failure doesn't block response
 
             # Resolve Slack user ID to email + display name when opted in
             resolved_user_id = ctx["user"]
@@ -345,7 +1145,7 @@ def attach_routes(
                         channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], status=""
                     )
                 except Exception:
-                    pass
+                    pass  # Best-effort UX — clearing status indicator is cosmetic
                 return
 
             # Deferred so "Thinking..." indicator stays visible during file
@@ -360,7 +1160,9 @@ def attach_routes(
             )
 
             async def _rotate_stream(pending_text: str = ""):
-                """Close current stream and open a new one, carrying over in-progress cards."""
+                # Close current bubble at Slack's payload limit, open a fresh one.
+                # Preserves in_progress task cards across the rotation so the user
+                # sees continuity rather than orphaned open cards in the old bubble.
                 nonlocal stream
                 assert stream is not None  # Caller only invokes after stream is opened
                 in_progress = [(k, v.title) for k, v in state.task_cards.items() if v.status == "in_progress"]
@@ -413,7 +1215,7 @@ def attach_routes(
                                 channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], title=title
                             )
                         except Exception:
-                            pass
+                            pass  # Best-effort UX — title update failure doesn't block response
 
                     content = state.flush()
                     content_len = len(content)
@@ -423,13 +1225,44 @@ def attach_routes(
                     else:
                         await _rotate_stream(content)
             # Default to complete when no terminal error/cancel event arrived
-            final_status: Literal["in_progress", "complete", "error"] = state.terminal_status or "complete"
+            final_status: TaskStatus = state.terminal_status or "complete"
             completion_chunks = state.resolve_all_pending(final_status) if state.task_cards else []
             stop_kwargs: Dict[str, Any] = {}
             if state.has_content():
                 stop_kwargs["markdown_text"] = state.flush()
             if completion_chunks:
                 stop_kwargs["chunks"] = completion_chunks
+
+            # HITL pause: stop the pre-pause stream cleanly and post the
+            # approval Card as a separate message. In-progress task cards
+            # flip to "pending" — Slack renders these as neutral waiting
+            # indicators (not the red errored state it would otherwise
+            # assign to in_progress cards whose stream has ended). The
+            # resume handler opens a fresh chat_stream for the continuation
+            # in a new bubble when the human clicks.
+            if state.paused_event is not None:
+                pause_run_id = getattr(state.paused_event, "run_id", None)
+                requirements = list(getattr(state.paused_event, "active_requirements", None) or [])
+                if pause_run_id and requirements:
+                    from agno.os.interfaces.slack.pause import finalize_pause, post_pause_card
+
+                    awaiting_ts = await finalize_pause(
+                        client=async_client,
+                        stream=stream,
+                        state=state,
+                        run_id=pause_run_id,
+                        channel=ctx["channel_id"],
+                        thread_ts=ctx["thread_id"],
+                        requirements=requirements,
+                    )
+                    try:
+                        await post_pause_card(
+                            async_client, state.paused_event, ctx["channel_id"], ctx["thread_id"], awaiting_ts
+                        )
+                    except Exception as exc:
+                        log_error(f"[HITL] Failed to post Card block (pause): {exc}")
+                    return
+
             await stream.stop(**stop_kwargs)
 
             await upload_response_media_async(async_client, state, ctx["channel_id"], ctx["thread_id"])
@@ -444,14 +1277,14 @@ def attach_routes(
                 is_msg_too_long = "msg_too_long" in str(e)
             if not is_msg_too_long:
                 log_error(
-                    f"Error streaming slack response [channel={ctx['channel_id']}, thread={ctx['thread_id']}, user={user_id}]"
+                    f"Error streaming slack response [channel={ctx['channel_id']}, thread={ctx['thread_id']}, user={user_id}]: {e}"
                 )
             try:
                 await async_client.assistant_threads_setStatus(
                     channel_id=ctx["channel_id"], thread_ts=ctx["thread_id"], status=""
                 )
             except Exception:
-                pass
+                pass  # Best-effort UX — clearing status indicator is cosmetic
             # Clean up open stream so Slack doesn't show stuck progress indicators
             if stream is not None:
                 try:
@@ -462,7 +1295,7 @@ def attach_routes(
                         )
                     await stream.stop(**stop_kwargs_err)
                 except Exception:
-                    pass
+                    pass  # Best-effort cleanup — stream may already be closed
             if not is_msg_too_long:
                 await send_slack_message_async(
                     async_client,
