@@ -6,6 +6,7 @@ import asyncio
 import time
 import warnings
 from collections import deque
+from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -25,6 +26,7 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
+    from agno.agent._run_options import ResolvedRunOptions
 
 from agno.agent._init import _initialize_session_state
 from agno.agent._run_options import resolve_run_options
@@ -66,6 +68,7 @@ from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
 from agno.run.messages import RunMessages
+from agno.run.prepared import PreparedAgentModelRequest
 from agno.run.requirement import RunRequirement
 from agno.session import AgentSession
 from agno.tools.function import Function
@@ -110,6 +113,357 @@ from agno.utils.response import get_paused_content
 # Strong references to background tasks so they aren't garbage-collected mid-execution.
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
 _background_tasks: set[asyncio.Task[None]] = set()
+
+
+@dataclass
+class _AgentRunSetup:
+    session_id: str
+    user_id: Optional[str]
+    run_context: RunContext
+    run_response: RunOutput
+    options: "ResolvedRunOptions"
+    response_format: Optional[Union[Dict[str, Any], Type[BaseModel]]]
+    background_tasks: Optional[Any]
+    session: Optional[AgentSession]
+
+
+def _prepare_agent_run_setup(
+    agent: Agent,
+    input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+    *,
+    async_mode: bool,
+    start_metrics: bool,
+    stream: Optional[bool] = None,
+    stream_events: Optional[bool] = None,
+    yield_run_output: Optional[bool] = None,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+    run_id: Optional[str] = None,
+    audio: Optional[Sequence[Audio]] = None,
+    images: Optional[Sequence[Image]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    files: Optional[Sequence[File]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+    debug_mode: Optional[bool] = None,
+    kwargs: Optional[Dict[str, Any]] = None,
+) -> _AgentRunSetup:
+    from agno.agent._init import has_async_db
+    from agno.agent._response import get_response_format
+    from agno.agent._storage import read_or_create_session, update_metadata
+
+    run_id = run_id or str(uuid4())
+
+    if (add_history_to_context or agent.add_history_to_context) and not agent.db and not agent.team_id:
+        log_warning(
+            "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
+        )
+
+    kwargs = kwargs if kwargs is not None else {}
+    background_tasks = kwargs.pop("background_tasks", None)
+    if background_tasks is not None:
+        from fastapi import BackgroundTasks
+
+        background_tasks: BackgroundTasks = background_tasks  # type: ignore
+
+    validated_input = validate_input(input, agent.input_schema)
+
+    if not agent._hooks_normalised:
+        if agent.pre_hooks:
+            agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks, async_mode=async_mode)  # type: ignore
+        if agent.post_hooks:
+            agent.post_hooks = normalize_post_hooks(agent.post_hooks, async_mode=async_mode)  # type: ignore
+        agent._hooks_normalised = True
+
+    session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
+    agent.initialize_agent(debug_mode=debug_mode)
+
+    image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
+        images=images, videos=videos, audios=audio, files=files
+    )
+    run_input = RunInput(
+        input_content=validated_input,
+        images=image_artifacts,
+        videos=video_artifacts,
+        audios=audio_artifacts,
+        files=file_artifacts,
+    )
+
+    agent_session: Optional[AgentSession] = None
+    if not (async_mode and has_async_db(agent)):
+        agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        update_metadata(agent, session=agent_session)
+
+    opts = resolve_run_options(
+        agent,
+        stream=stream,
+        stream_events=stream_events,
+        yield_run_output=yield_run_output,
+        add_history_to_context=add_history_to_context,
+        add_dependencies_to_context=add_dependencies_to_context,
+        add_session_state_to_context=add_session_state_to_context,
+        dependencies=dependencies,
+        knowledge_filters=knowledge_filters,
+        metadata=metadata,
+        output_schema=output_schema,
+    )
+
+    agent.model = cast(Model, agent.model)
+    run_context = run_context or RunContext(
+        run_id=run_id,
+        session_id=session_id,
+        user_id=user_id,
+        session_state=session_state,
+        dependencies=opts.dependencies,
+        knowledge_filters=opts.knowledge_filters,
+        metadata=opts.metadata,
+        output_schema=opts.output_schema,
+    )
+    opts.apply_to_context(
+        run_context,
+        dependencies_provided=dependencies is not None,
+        knowledge_filters_provided=knowledge_filters is not None,
+        metadata_provided=metadata is not None,
+    )
+
+    response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
+    run_response = RunOutput(
+        run_id=run_id,
+        session_id=session_id,
+        agent_id=agent.id,
+        user_id=user_id,
+        agent_name=agent.name,
+        metadata=run_context.metadata,
+        session_state=run_context.session_state,
+        input=run_input,
+    )
+    run_response.model = agent.model.id if agent.model is not None else None
+    run_response.model_provider = agent.model.provider if agent.model is not None else None
+
+    if start_metrics:
+        run_response.metrics = RunMetrics()
+        run_response.metrics.start_timer()
+
+    return _AgentRunSetup(
+        session_id=session_id,
+        user_id=user_id,
+        run_context=run_context,
+        run_response=run_response,
+        options=opts,
+        response_format=response_format,
+        background_tasks=background_tasks,
+        session=agent_session,
+    )
+
+
+def _prepare_agent_model_request(
+    agent: Agent,
+    *,
+    run_response: RunOutput,
+    run_context: RunContext,
+    session_id: str,
+    user_id: Optional[str],
+    options: "ResolvedRunOptions",
+    response_format: Optional[Union[Dict[str, Any], Type[BaseModel]]],
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    session: Optional[AgentSession] = None,
+    **kwargs: Any,
+) -> PreparedAgentModelRequest:
+    from agno.agent._hooks import execute_pre_hooks
+    from agno.agent._messages import get_run_messages
+    from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
+    from agno.agent._tools import determine_tools_for_model
+
+    agent_session = session or read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    if session is None:
+        update_metadata(agent, session=agent_session)
+
+    run_context.session_state = load_session_state(
+        agent,
+        session=agent_session,
+        session_state=run_context.session_state if run_context.session_state is not None else {},
+    )
+    _initialize_session_state(
+        run_context.session_state,
+        user_id=user_id,
+        session_id=session_id,
+        run_id=run_context.run_id,
+    )
+
+    if run_context.dependencies is not None:
+        resolve_run_dependencies(agent, run_context=run_context)
+
+    run_input = cast(RunInput, run_response.input)
+    agent.model = cast(Model, agent.model)
+    if agent.pre_hooks is not None:
+        pre_hook_iterator = execute_pre_hooks(
+            agent,
+            hooks=agent.pre_hooks,  # type: ignore
+            run_response=run_response,
+            run_input=run_input,
+            run_context=run_context,
+            session=agent_session,
+            user_id=user_id,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+        deque(pre_hook_iterator, maxlen=0)
+
+    processed_tools = agent.get_tools(
+        run_response=run_response,
+        run_context=run_context,
+        session=agent_session,
+        user_id=user_id,
+    )
+    tools = determine_tools_for_model(
+        agent,
+        model=agent.model,
+        processed_tools=processed_tools,
+        run_response=run_response,
+        session=agent_session,
+        run_context=run_context,
+    )
+    run_messages = get_run_messages(
+        agent,
+        run_response=run_response,
+        run_context=run_context,
+        input=run_input.input_content,
+        session=agent_session,
+        user_id=user_id,
+        audio=run_input.audios,
+        images=run_input.images,
+        videos=run_input.videos,
+        files=run_input.files,
+        add_history_to_context=options.add_history_to_context,
+        add_dependencies_to_context=options.add_dependencies_to_context,
+        add_session_state_to_context=options.add_session_state_to_context,
+        tools=tools,
+        **kwargs,
+    )
+    if len(run_messages.messages) == 0:
+        log_error("No messages to be sent to the model.")
+
+    return PreparedAgentModelRequest(
+        run_response=run_response,
+        run_context=run_context,
+        session=agent_session,
+        run_messages=run_messages,
+        tools=tools,
+        tool_instructions=list(agent._tool_instructions or []),
+        response_format=response_format,
+    )
+
+
+async def _aprepare_agent_model_request(
+    agent: Agent,
+    *,
+    run_response: RunOutput,
+    run_context: RunContext,
+    session_id: str,
+    user_id: Optional[str],
+    options: "ResolvedRunOptions",
+    response_format: Optional[Union[Dict[str, Any], Type[BaseModel]]],
+    debug_mode: Optional[bool] = None,
+    background_tasks: Optional[Any] = None,
+    session: Optional[AgentSession] = None,
+    **kwargs: Any,
+) -> PreparedAgentModelRequest:
+    from agno.agent._hooks import aexecute_pre_hooks
+    from agno.agent._messages import aget_run_messages
+    from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
+    from agno.agent._tools import determine_tools_for_model
+
+    agent_session = session or await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+    if session is None:
+        update_metadata(agent, session=agent_session)
+
+    run_context.session_state = load_session_state(
+        agent,
+        session=agent_session,
+        session_state=run_context.session_state if run_context.session_state is not None else {},
+    )
+    _initialize_session_state(
+        run_context.session_state,
+        user_id=user_id,
+        session_id=session_id,
+        run_id=run_context.run_id,
+    )
+
+    if run_context.dependencies is not None:
+        await aresolve_run_dependencies(agent, run_context=run_context)
+
+    run_input = cast(RunInput, run_response.input)
+    agent.model = cast(Model, agent.model)
+    if agent.pre_hooks is not None:
+        pre_hook_iterator = aexecute_pre_hooks(
+            agent,
+            hooks=agent.pre_hooks,  # type: ignore
+            run_response=run_response,
+            run_context=run_context,
+            run_input=run_input,
+            session=agent_session,
+            user_id=user_id,
+            debug_mode=debug_mode,
+            background_tasks=background_tasks,
+            **kwargs,
+        )
+        async for _ in pre_hook_iterator:
+            pass
+
+    processed_tools = await agent.aget_tools(
+        run_response=run_response,
+        run_context=run_context,
+        session=agent_session,
+        user_id=user_id,
+    )
+    tools = determine_tools_for_model(
+        agent,
+        model=agent.model,
+        processed_tools=processed_tools,
+        run_response=run_response,
+        run_context=run_context,
+        session=agent_session,
+        async_mode=True,
+    )
+    run_messages = await aget_run_messages(
+        agent,
+        run_response=run_response,
+        run_context=run_context,
+        input=run_input.input_content,
+        session=agent_session,
+        user_id=user_id,
+        audio=run_input.audios,
+        images=run_input.images,
+        videos=run_input.videos,
+        files=run_input.files,
+        add_history_to_context=options.add_history_to_context,
+        add_dependencies_to_context=options.add_dependencies_to_context,
+        add_session_state_to_context=options.add_session_state_to_context,
+        tools=tools,
+        **kwargs,
+    )
+    if len(run_messages.messages) == 0:
+        log_error("No messages to be sent to the model.")
+
+    return PreparedAgentModelRequest(
+        run_response=run_response,
+        run_context=run_context,
+        session=agent_session,
+        run_messages=run_messages,
+        tools=tools,
+        tool_instructions=list(agent._tool_instructions or []),
+        response_format=response_format,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Run dependency resolution
@@ -327,9 +681,7 @@ def _run(
     run_context: RunContext,
     session_id: str,
     user_id: Optional[str] = None,
-    add_history_to_context: Optional[bool] = None,
-    add_dependencies_to_context: Optional[bool] = None,
-    add_session_state_to_context: Optional[bool] = None,
+    options: Optional["ResolvedRunOptions"] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
@@ -356,9 +708,8 @@ def _run(
     15. Create session summary
     16. Cleanup and store the run response and session
     """
-    from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
+    from agno.agent._hooks import execute_post_hooks
     from agno.agent._init import disconnect_connectable_tools
-    from agno.agent._messages import get_run_messages
     from agno.agent._response import (
         convert_response_to_structured_format,
         generate_followups,
@@ -367,9 +718,7 @@ def _run(
         parse_response_with_parser_model,
         update_run_response,
     )
-    from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
     from agno.agent._telemetry import log_agent_telemetry
-    from agno.agent._tools import determine_tools_for_model
 
     register_run(run_context.run_id)
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
@@ -380,95 +729,29 @@ def _run(
     agent_session: Optional[AgentSession] = None
 
     try:
+        options = options or resolve_run_options(agent)
         # Set up retry logic
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
             if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
             try:
-                # 1. Read or create session. Reuse pre-read session on first attempt.
-                if attempt == 0 and pre_session is not None:
-                    agent_session = pre_session
-                else:
-                    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
-
-                # 2. Update metadata and session state
-                if not (attempt == 0 and pre_session is not None):
-                    update_metadata(agent, session=agent_session)
-
-                # Initialize session state. Get it from DB if relevant.
-                run_context.session_state = load_session_state(
+                prepared_request = _prepare_agent_model_request(
                     agent,
-                    session=agent_session,
-                    session_state=run_context.session_state if run_context.session_state is not None else {},
-                )
-                _initialize_session_state(
-                    run_context.session_state,
+                    run_response=run_response,
+                    run_context=run_context,
                     user_id=user_id,
                     session_id=session_id,
-                    run_id=run_context.run_id,
-                )
-
-                # 3. Resolve dependencies
-                if run_context.dependencies is not None:
-                    resolve_run_dependencies(agent, run_context=run_context)
-
-                # 4. Execute pre-hooks
-                run_input = cast(RunInput, run_response.input)
-                agent.model = cast(Model, agent.model)
-                if agent.pre_hooks is not None:
-                    # Can modify the run input
-                    pre_hook_iterator = execute_pre_hooks(
-                        agent,
-                        hooks=agent.pre_hooks,  # type: ignore
-                        run_response=run_response,
-                        run_input=run_input,
-                        run_context=run_context,
-                        session=agent_session,
-                        user_id=user_id,
-                        debug_mode=debug_mode,
-                        background_tasks=background_tasks,
-                        **kwargs,
-                    )
-                    # Consume the generator without yielding
-                    deque(pre_hook_iterator, maxlen=0)
-
-                # 5. Determine tools for model
-                processed_tools = agent.get_tools(
-                    run_response=run_response,
-                    run_context=run_context,
-                    session=agent_session,
-                    user_id=user_id,
-                )
-                _tools = determine_tools_for_model(
-                    agent,
-                    model=agent.model,
-                    processed_tools=processed_tools,
-                    run_response=run_response,
-                    session=agent_session,
-                    run_context=run_context,
-                )
-
-                # 6. Prepare run messages
-                run_messages: RunMessages = get_run_messages(
-                    agent,
-                    run_response=run_response,
-                    run_context=run_context,
-                    input=run_input.input_content,
-                    session=agent_session,
-                    user_id=user_id,
-                    audio=run_input.audios,
-                    images=run_input.images,
-                    videos=run_input.videos,
-                    files=run_input.files,
-                    add_history_to_context=add_history_to_context,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    tools=_tools,
+                    options=options,
+                    response_format=response_format,
+                    debug_mode=debug_mode,
+                    background_tasks=background_tasks,
+                    session=pre_session if attempt == 0 else None,
                     **kwargs,
                 )
-                if len(run_messages.messages) == 0:
-                    log_error("No messages to be sent to the model.")
+                agent_session = prepared_request.session
+                run_messages = prepared_request.run_messages
+                _tools = prepared_request.tools
 
                 # Start memory creation in background thread
                 from agno.agent import _managers
@@ -1218,6 +1501,151 @@ def _run_stream(
         cleanup_run(run_response.run_id)  # type: ignore
 
 
+def prepare_model_request(
+    agent: Agent,
+    input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+    *,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+    run_id: Optional[str] = None,
+    audio: Optional[Sequence[Audio]] = None,
+    images: Optional[Sequence[Image]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    files: Optional[Sequence[File]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+    debug_mode: Optional[bool] = None,
+    **kwargs: Any,
+) -> PreparedAgentModelRequest:
+    """Prepare the model request for an Agent without invoking the model."""
+    from agno.agent._init import disconnect_connectable_tools, has_async_db
+
+    if has_async_db(agent):
+        raise RuntimeError(
+            "`prepare_model_request` is not supported with an async database. "
+            "Please use `aprepare_model_request` instead."
+        )
+
+    setup = _prepare_agent_run_setup(
+        agent,
+        input,
+        async_mode=False,
+        start_metrics=False,
+        user_id=user_id,
+        session_id=session_id,
+        session_state=session_state,
+        run_context=run_context,
+        run_id=run_id,
+        audio=audio,
+        images=images,
+        videos=videos,
+        files=files,
+        knowledge_filters=knowledge_filters,
+        add_history_to_context=add_history_to_context,
+        add_dependencies_to_context=add_dependencies_to_context,
+        add_session_state_to_context=add_session_state_to_context,
+        dependencies=dependencies,
+        metadata=metadata,
+        output_schema=output_schema,
+        debug_mode=debug_mode,
+        kwargs=kwargs,
+    )
+
+    try:
+        return _prepare_agent_model_request(
+            agent,
+            run_response=setup.run_response,
+            run_context=setup.run_context,
+            user_id=setup.user_id,
+            session_id=setup.session_id,
+            options=setup.options,
+            response_format=setup.response_format,
+            debug_mode=debug_mode,
+            background_tasks=setup.background_tasks,
+            session=setup.session,
+            **kwargs,
+        )
+    finally:
+        disconnect_connectable_tools(agent)
+
+
+async def aprepare_model_request(
+    agent: Agent,
+    input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+    *,
+    user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    session_state: Optional[Dict[str, Any]] = None,
+    run_context: Optional[RunContext] = None,
+    run_id: Optional[str] = None,
+    audio: Optional[Sequence[Audio]] = None,
+    images: Optional[Sequence[Image]] = None,
+    videos: Optional[Sequence[Video]] = None,
+    files: Optional[Sequence[File]] = None,
+    knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+    add_history_to_context: Optional[bool] = None,
+    add_dependencies_to_context: Optional[bool] = None,
+    add_session_state_to_context: Optional[bool] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+    debug_mode: Optional[bool] = None,
+    **kwargs: Any,
+) -> PreparedAgentModelRequest:
+    """Prepare the model request for an Agent without invoking the model."""
+    from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
+
+    setup = _prepare_agent_run_setup(
+        agent,
+        input,
+        async_mode=True,
+        start_metrics=False,
+        user_id=user_id,
+        session_id=session_id,
+        session_state=session_state,
+        run_context=run_context,
+        run_id=run_id,
+        audio=audio,
+        images=images,
+        videos=videos,
+        files=files,
+        knowledge_filters=knowledge_filters,
+        add_history_to_context=add_history_to_context,
+        add_dependencies_to_context=add_dependencies_to_context,
+        add_session_state_to_context=add_session_state_to_context,
+        dependencies=dependencies,
+        metadata=metadata,
+        output_schema=output_schema,
+        debug_mode=debug_mode,
+        kwargs=kwargs,
+    )
+
+    try:
+        return await _aprepare_agent_model_request(
+            agent,
+            run_response=setup.run_response,
+            run_context=setup.run_context,
+            user_id=setup.user_id,
+            session_id=setup.session_id,
+            options=setup.options,
+            response_format=setup.response_format,
+            debug_mode=debug_mode,
+            background_tasks=setup.background_tasks,
+            session=setup.session,
+            **kwargs,
+        )
+    finally:
+        disconnect_connectable_tools(agent)
+        await disconnect_mcp_tools(agent)
+
+
 def run_dispatch(
     agent: Agent,
     input: Union[str, List, Dict, Message, BaseModel, List[Message]],
@@ -1246,153 +1674,69 @@ def run_dispatch(
 ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
     """Run the Agent and return the response."""
     from agno.agent._init import has_async_db
-    from agno.agent._response import get_response_format
 
     if has_async_db(agent):
         raise RuntimeError("`run` method is not supported with an async database. Please use `arun` method instead.")
 
-    # Set the id for the run and register it immediately for cancellation tracking
-    run_id = run_id or str(uuid4())
-
-    if (add_history_to_context or agent.add_history_to_context) and not agent.db and not agent.team_id:
-        log_warning(
-            "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
-        )
-
-    background_tasks = kwargs.pop("background_tasks", None)
-    if background_tasks is not None:
-        from fastapi import BackgroundTasks
-
-        background_tasks: BackgroundTasks = background_tasks  # type: ignore
-
-    # Validate input against input_schema if provided
-    validated_input = validate_input(input, agent.input_schema)
-
-    # Normalise hook & guardails
-    if not agent._hooks_normalised:
-        if agent.pre_hooks:
-            agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks)  # type: ignore
-        if agent.post_hooks:
-            agent.post_hooks = normalize_post_hooks(agent.post_hooks)  # type: ignore
-        agent._hooks_normalised = True
-
-    # Initialize session
-    session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
-
-    # Initialize the Agent
-    agent.initialize_agent(debug_mode=debug_mode)
-
-    image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
-        images=images, videos=videos, audios=audio, files=files
-    )
-
-    # Create RunInput to capture the original user input
-    run_input = RunInput(
-        input_content=validated_input,
-        images=image_artifacts,
-        videos=video_artifacts,
-        audios=audio_artifacts,
-        files=file_artifacts,
-    )
-
-    # Read existing session and update metadata BEFORE resolving run options,
-    # so that session-stored metadata is visible to resolve_run_options.
-    from agno.agent._storage import read_or_create_session, update_metadata
-
-    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
-    update_metadata(agent, session=agent_session)
-
-    # Resolve all run options centrally
-    opts = resolve_run_options(
+    setup = _prepare_agent_run_setup(
         agent,
+        input,
+        async_mode=False,
+        start_metrics=True,
         stream=stream,
         stream_events=stream_events,
         yield_run_output=yield_run_output,
+        user_id=user_id,
+        session_id=session_id,
+        session_state=session_state,
+        run_context=run_context,
+        run_id=run_id,
+        audio=audio,
+        images=images,
+        videos=videos,
+        files=files,
+        knowledge_filters=knowledge_filters,
         add_history_to_context=add_history_to_context,
         add_dependencies_to_context=add_dependencies_to_context,
         add_session_state_to_context=add_session_state_to_context,
         dependencies=dependencies,
-        knowledge_filters=knowledge_filters,
         metadata=metadata,
         output_schema=output_schema,
+        debug_mode=debug_mode,
+        kwargs=kwargs,
     )
 
-    agent.model = cast(Model, agent.model)
-
-    # Initialize run context
-    run_context = run_context or RunContext(
-        run_id=run_id,
-        session_id=session_id,
-        user_id=user_id,
-        session_state=session_state,
-        dependencies=opts.dependencies,
-        knowledge_filters=opts.knowledge_filters,
-        metadata=opts.metadata,
-        output_schema=opts.output_schema,
-    )
-    # Apply options with precedence: explicit args > existing run_context > resolved defaults.
-    opts.apply_to_context(
-        run_context,
-        dependencies_provided=dependencies is not None,
-        knowledge_filters_provided=knowledge_filters is not None,
-        metadata_provided=metadata is not None,
-    )
-
-    # Prepare arguments for the model (must be after run_context is fully initialized)
-    response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
-
-    # Create a new run_response for this attempt
-    run_response = RunOutput(
-        run_id=run_id,
-        session_id=session_id,
-        agent_id=agent.id,
-        user_id=user_id,
-        agent_name=agent.name,
-        metadata=run_context.metadata,
-        session_state=run_context.session_state,
-        input=run_input,
-    )
-
-    run_response.model = agent.model.id if agent.model is not None else None
-    run_response.model_provider = agent.model.provider if agent.model is not None else None
-
-    # Start the run metrics timer, to calculate the run duration
-    run_response.metrics = RunMetrics()
-    run_response.metrics.start_timer()
-
-    if opts.stream:
+    if setup.options.stream:
         response_iterator = _run_stream(
             agent,
-            run_response=run_response,
-            run_context=run_context,
-            session_id=session_id,
-            user_id=user_id,
-            add_history_to_context=opts.add_history_to_context,
-            add_dependencies_to_context=opts.add_dependencies_to_context,
-            add_session_state_to_context=opts.add_session_state_to_context,
-            response_format=response_format,
-            stream_events=opts.stream_events,
-            yield_run_output=opts.yield_run_output,
+            run_response=setup.run_response,
+            run_context=setup.run_context,
+            session_id=setup.session_id,
+            user_id=setup.user_id,
+            add_history_to_context=setup.options.add_history_to_context,
+            add_dependencies_to_context=setup.options.add_dependencies_to_context,
+            add_session_state_to_context=setup.options.add_session_state_to_context,
+            response_format=setup.response_format,
+            stream_events=setup.options.stream_events,
+            yield_run_output=setup.options.yield_run_output,
             debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            pre_session=agent_session,
+            background_tasks=setup.background_tasks,
+            pre_session=setup.session,
             **kwargs,
         )
         return response_iterator
     else:
         response = _run(
             agent,
-            run_response=run_response,
-            run_context=run_context,
-            session_id=session_id,
-            user_id=user_id,
-            add_history_to_context=opts.add_history_to_context,
-            add_dependencies_to_context=opts.add_dependencies_to_context,
-            add_session_state_to_context=opts.add_session_state_to_context,
-            response_format=response_format,
+            run_response=setup.run_response,
+            run_context=setup.run_context,
+            session_id=setup.session_id,
+            user_id=setup.user_id,
+            options=setup.options,
+            response_format=setup.response_format,
             debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            pre_session=agent_session,
+            background_tasks=setup.background_tasks,
+            pre_session=setup.session,
             **kwargs,
         )
         return response
@@ -1404,9 +1748,7 @@ async def _arun(
     run_context: RunContext,
     session_id: str,
     user_id: Optional[str] = None,
-    add_history_to_context: Optional[bool] = None,
-    add_dependencies_to_context: Optional[bool] = None,
-    add_session_state_to_context: Optional[bool] = None,
+    options: Optional["ResolvedRunOptions"] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
@@ -1433,9 +1775,8 @@ async def _arun(
     15. Create session summary
     16. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
-    from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
+    from agno.agent._hooks import aexecute_post_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
-    from agno.agent._messages import aget_run_messages
     from agno.agent._response import (
         agenerate_followups,
         agenerate_response_with_output_model,
@@ -1444,9 +1785,7 @@ async def _arun(
         convert_response_to_structured_format,
         update_run_response,
     )
-    from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
     from agno.agent._telemetry import alog_agent_telemetry
-    from agno.agent._tools import determine_tools_for_model
 
     await aregister_run(run_context.run_id)
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
@@ -1460,98 +1799,28 @@ async def _arun(
     num_attempts = agent.retries + 1
 
     try:
+        options = options or resolve_run_options(agent)
         for attempt in range(num_attempts):
             if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
             try:
-                # 1. Read or create session. Reuse pre-read session on first attempt.
-                if attempt == 0 and pre_session is not None:
-                    agent_session = pre_session
-                else:
-                    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-
-                # 2. Update metadata and session state
-                if not (attempt == 0 and pre_session is not None):
-                    update_metadata(agent, session=agent_session)
-
-                # Initialize session state. Get it from DB if relevant.
-                run_context.session_state = load_session_state(
+                prepared_request = await _aprepare_agent_model_request(
                     agent,
-                    session=agent_session,
-                    session_state=run_context.session_state if run_context.session_state is not None else {},
-                )
-                _initialize_session_state(
-                    run_context.session_state,
+                    run_response=run_response,
+                    run_context=run_context,
                     user_id=user_id,
                     session_id=session_id,
-                    run_id=run_context.run_id,
-                )
-
-                # 3. Resolve dependencies
-                if run_context.dependencies is not None:
-                    await aresolve_run_dependencies(agent, run_context=run_context)
-
-                # 4. Execute pre-hooks
-                run_input = cast(RunInput, run_response.input)
-                agent.model = cast(Model, agent.model)
-                if agent.pre_hooks is not None:
-                    # Can modify the run input
-                    pre_hook_iterator = aexecute_pre_hooks(
-                        agent,
-                        hooks=agent.pre_hooks,  # type: ignore
-                        run_response=run_response,
-                        run_context=run_context,
-                        run_input=run_input,
-                        session=agent_session,
-                        user_id=user_id,
-                        debug_mode=debug_mode,
-                        background_tasks=background_tasks,
-                        **kwargs,
-                    )
-                    # Consume the async iterator without yielding
-                    async for _ in pre_hook_iterator:
-                        pass
-
-                # 5. Determine tools for model
-                agent.model = cast(Model, agent.model)
-                processed_tools = await agent.aget_tools(
-                    run_response=run_response,
-                    run_context=run_context,
-                    session=agent_session,
-                    user_id=user_id,
-                )
-
-                _tools = determine_tools_for_model(
-                    agent,
-                    model=agent.model,
-                    processed_tools=processed_tools,
-                    run_response=run_response,
-                    run_context=run_context,
-                    session=agent_session,
-                    async_mode=True,
-                )
-
-                # 6. Prepare run messages
-                run_messages: RunMessages = await aget_run_messages(
-                    agent,
-                    run_response=run_response,
-                    run_context=run_context,
-                    input=run_input.input_content,
-                    session=agent_session,
-                    user_id=user_id,
-                    audio=run_input.audios,
-                    images=run_input.images,
-                    videos=run_input.videos,
-                    files=run_input.files,
-                    add_history_to_context=add_history_to_context,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    tools=_tools,
+                    options=options,
+                    response_format=response_format,
+                    debug_mode=debug_mode,
+                    background_tasks=background_tasks,
+                    session=pre_session if attempt == 0 else None,
                     **kwargs,
                 )
-                if len(run_messages.messages) == 0:
-                    log_error("No messages to be sent to the model.")
+                agent_session = prepared_request.session
+                run_messages = prepared_request.run_messages
+                _tools = prepared_request.tools
 
                 # 7. Start memory creation as a background task (runs concurrently with the main execution)
                 from agno.agent import _managers
@@ -1591,6 +1860,7 @@ async def _arun(
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 9. Generate a response from the Model (includes running function calls)
+                agent.model = cast(Model, agent.model)
                 model_response: ModelResponse = await acall_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
@@ -1828,9 +2098,7 @@ async def _arun_background(
     run_context: RunContext,
     session_id: str,
     user_id: Optional[str] = None,
-    add_history_to_context: Optional[bool] = None,
-    add_dependencies_to_context: Optional[bool] = None,
-    add_session_state_to_context: Optional[bool] = None,
+    options: Optional["ResolvedRunOptions"] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
@@ -1845,6 +2113,8 @@ async def _arun_background(
     """
     from agno.agent._session import asave_session
     from agno.agent._storage import aread_or_create_session, update_metadata
+
+    options = options or resolve_run_options(agent)
 
     # 1. Register the run for cancellation tracking (before spawning the task)
     await aregister_run(run_context.run_id)
@@ -1877,9 +2147,7 @@ async def _arun_background(
                 user_id=user_id,
                 response_format=response_format,
                 session_id=session_id,
-                add_history_to_context=add_history_to_context,
-                add_dependencies_to_context=add_dependencies_to_context,
-                add_session_state_to_context=add_session_state_to_context,
+                options=options,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
                 **kwargs,
@@ -2622,123 +2890,33 @@ def arun_dispatch(  # type: ignore
 ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
     """Async Run the Agent and return the response."""
 
-    # Set the id for the run and register it immediately for cancellation tracking
-    from agno.agent._response import get_response_format
-
-    run_id = run_id or str(uuid4())
-
-    if (add_history_to_context or agent.add_history_to_context) and not agent.db and not agent.team_id:
-        log_warning(
-            "add_history_to_context is True, but no database has been assigned to the agent. History will not be added to the context."
-        )
-
-    background_tasks = kwargs.pop("background_tasks", None)
-    if background_tasks is not None:
-        from fastapi import BackgroundTasks
-
-        background_tasks: BackgroundTasks = background_tasks  # type: ignore
-
-    # 2. Validate input against input_schema if provided
-    validated_input = validate_input(input, agent.input_schema)
-
-    # Normalise hooks & guardails
-    if not agent._hooks_normalised:
-        if agent.pre_hooks:
-            agent.pre_hooks = normalize_pre_hooks(agent.pre_hooks, async_mode=True)  # type: ignore
-        if agent.post_hooks:
-            agent.post_hooks = normalize_post_hooks(agent.post_hooks, async_mode=True)  # type: ignore
-        agent._hooks_normalised = True
-
-    # Initialize session
-    session_id, user_id = initialize_session(agent, session_id=session_id, user_id=user_id)
-
-    # Initialize the Agent
-    agent.initialize_agent(debug_mode=debug_mode)
-
-    image_artifacts, video_artifacts, audio_artifacts, file_artifacts = validate_media_object_id(
-        images=images, videos=videos, audios=audio, files=files
-    )
-
-    # Create RunInput to capture the original user input
-    run_input = RunInput(
-        input_content=validated_input,
-        images=image_artifacts,
-        videos=video_artifacts,
-        audios=audio_artifacts,
-        files=file_artifacts,
-    )
-
-    # Read existing session and update metadata BEFORE resolving run options,
-    # so that session-stored metadata is visible to resolve_run_options.
-    # Note: arun_dispatch is NOT async, so we can only pre-read with a sync DB.
-    # For async DB, _arun/_arun_stream will handle the session read themselves.
-    from agno.agent._init import has_async_db
-    from agno.agent._storage import update_metadata
-
-    _pre_session: Optional[AgentSession] = None
-    if not has_async_db(agent):
-        from agno.agent._storage import read_or_create_session
-
-        _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
-        update_metadata(agent, session=_pre_session)
-
-    # Resolve all run options centrally
-    opts = resolve_run_options(
+    setup = _prepare_agent_run_setup(
         agent,
+        input,
+        async_mode=True,
+        start_metrics=True,
         stream=stream,
         stream_events=stream_events,
         yield_run_output=yield_run_output,
+        user_id=user_id,
+        session_id=session_id,
+        session_state=session_state,
+        run_context=run_context,
+        run_id=run_id,
+        audio=audio,
+        images=images,
+        videos=videos,
+        files=files,
+        knowledge_filters=knowledge_filters,
         add_history_to_context=add_history_to_context,
         add_dependencies_to_context=add_dependencies_to_context,
         add_session_state_to_context=add_session_state_to_context,
         dependencies=dependencies,
-        knowledge_filters=knowledge_filters,
         metadata=metadata,
         output_schema=output_schema,
+        debug_mode=debug_mode,
+        kwargs=kwargs,
     )
-
-    agent.model = cast(Model, agent.model)
-
-    # Initialize run context
-    run_context = run_context or RunContext(
-        run_id=run_id,
-        session_id=session_id,
-        user_id=user_id,
-        session_state=session_state,
-        dependencies=opts.dependencies,
-        knowledge_filters=opts.knowledge_filters,
-        metadata=opts.metadata,
-        output_schema=opts.output_schema,
-    )
-    # Apply options with precedence: explicit args > existing run_context > resolved defaults.
-    opts.apply_to_context(
-        run_context,
-        dependencies_provided=dependencies is not None,
-        knowledge_filters_provided=knowledge_filters is not None,
-        metadata_provided=metadata is not None,
-    )
-
-    # Prepare arguments for the model (must be after run_context is fully initialized)
-    response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
-
-    # Create a new run_response for this attempt
-    run_response = RunOutput(
-        run_id=run_id,
-        session_id=session_id,
-        agent_id=agent.id,
-        user_id=user_id,
-        agent_name=agent.name,
-        metadata=run_context.metadata,
-        session_state=run_context.session_state,
-        input=run_input,
-    )
-
-    run_response.model = agent.model.id if agent.model is not None else None
-    run_response.model_provider = agent.model.provider if agent.model is not None else None
-
-    # Start the run metrics timer, to calculate the run duration
-    run_response.metrics = RunMetrics()
-    run_response.metrics.start_timer()
 
     # Background execution
     if background:
@@ -2746,72 +2924,68 @@ def arun_dispatch(  # type: ignore
             raise ValueError(
                 "Background execution requires a database to be configured on the agent for run persistence."
             )
-        if opts.stream:
+        if setup.options.stream:
             # background=True, stream=True: run in background task, stream events via queue
             return _arun_background_stream(  # type: ignore[return-value]
                 agent,
-                run_response=run_response,
-                run_context=run_context,
-                user_id=user_id,
-                response_format=response_format,
-                stream_events=opts.stream_events,
-                yield_run_output=opts.yield_run_output,
-                session_id=session_id,
-                add_history_to_context=opts.add_history_to_context,
-                add_dependencies_to_context=opts.add_dependencies_to_context,
-                add_session_state_to_context=opts.add_session_state_to_context,
+                run_response=setup.run_response,
+                run_context=setup.run_context,
+                user_id=setup.user_id,
+                response_format=setup.response_format,
+                stream_events=setup.options.stream_events,
+                yield_run_output=setup.options.yield_run_output,
+                session_id=setup.session_id,
+                add_history_to_context=setup.options.add_history_to_context,
+                add_dependencies_to_context=setup.options.add_dependencies_to_context,
+                add_session_state_to_context=setup.options.add_session_state_to_context,
                 debug_mode=debug_mode,
-                background_tasks=background_tasks,
+                background_tasks=setup.background_tasks,
                 **kwargs,
             )
         return _arun_background(  # type: ignore[return-value]
             agent,
-            run_response=run_response,
-            run_context=run_context,
-            user_id=user_id,
-            response_format=response_format,
-            session_id=session_id,
-            add_history_to_context=opts.add_history_to_context,
-            add_dependencies_to_context=opts.add_dependencies_to_context,
-            add_session_state_to_context=opts.add_session_state_to_context,
+            run_response=setup.run_response,
+            run_context=setup.run_context,
+            user_id=setup.user_id,
+            response_format=setup.response_format,
+            session_id=setup.session_id,
+            options=setup.options,
             debug_mode=debug_mode,
-            background_tasks=background_tasks,
+            background_tasks=setup.background_tasks,
             **kwargs,
         )
 
     # Pass the new run_response to _arun
-    if opts.stream:
+    if setup.options.stream:
         return _arun_stream(  # type: ignore
             agent,
-            run_response=run_response,
-            run_context=run_context,
-            user_id=user_id,
-            response_format=response_format,
-            stream_events=opts.stream_events,
-            yield_run_output=opts.yield_run_output,
-            session_id=session_id,
-            add_history_to_context=opts.add_history_to_context,
-            add_dependencies_to_context=opts.add_dependencies_to_context,
-            add_session_state_to_context=opts.add_session_state_to_context,
+            run_response=setup.run_response,
+            run_context=setup.run_context,
+            user_id=setup.user_id,
+            response_format=setup.response_format,
+            stream_events=setup.options.stream_events,
+            yield_run_output=setup.options.yield_run_output,
+            session_id=setup.session_id,
+            add_history_to_context=setup.options.add_history_to_context,
+            add_dependencies_to_context=setup.options.add_dependencies_to_context,
+            add_session_state_to_context=setup.options.add_session_state_to_context,
             debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            pre_session=_pre_session,
+            background_tasks=setup.background_tasks,
+            pre_session=setup.session,
             **kwargs,
         )  # type: ignore[assignment]
     else:
         return _arun(  # type: ignore
             agent,
-            run_response=run_response,
-            run_context=run_context,
-            user_id=user_id,
-            response_format=response_format,
-            session_id=session_id,
-            add_history_to_context=opts.add_history_to_context,
-            add_dependencies_to_context=opts.add_dependencies_to_context,
-            add_session_state_to_context=opts.add_session_state_to_context,
+            run_response=setup.run_response,
+            run_context=setup.run_context,
+            user_id=setup.user_id,
+            response_format=setup.response_format,
+            session_id=setup.session_id,
+            options=setup.options,
             debug_mode=debug_mode,
-            background_tasks=background_tasks,
-            pre_session=_pre_session,
+            background_tasks=setup.background_tasks,
+            pre_session=setup.session,
             **kwargs,
         )
 

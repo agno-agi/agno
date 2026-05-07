@@ -55,6 +55,7 @@ from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
 )
+from agno.run.prepared import PreparedAgentModelRequest
 from agno.run.requirement import RunRequirement
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
@@ -1273,6 +1274,98 @@ class Agent:
     # ---------------------------------------------------------------
     # _run module delegates
     # ---------------------------------------------------------------
+
+    def prepare_model_request(
+        self,
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+        *,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> PreparedAgentModelRequest:
+        return _run.prepare_model_request(
+            self,
+            input=input,
+            user_id=user_id,
+            session_id=session_id,
+            session_state=session_state,
+            run_context=run_context,
+            run_id=run_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            dependencies=dependencies,
+            metadata=metadata,
+            output_schema=output_schema,
+            debug_mode=debug_mode,
+            **kwargs,
+        )
+
+    async def aprepare_model_request(
+        self,
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
+        *,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
+        run_id: Optional[str] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> PreparedAgentModelRequest:
+        return await _run.aprepare_model_request(
+            self,
+            input=input,
+            user_id=user_id,
+            session_id=session_id,
+            session_state=session_state,
+            run_context=run_context,
+            run_id=run_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            add_dependencies_to_context=add_dependencies_to_context,
+            add_session_state_to_context=add_session_state_to_context,
+            dependencies=dependencies,
+            metadata=metadata,
+            output_schema=output_schema,
+            debug_mode=debug_mode,
+            **kwargs,
+        )
 
     @overload
     def run(
