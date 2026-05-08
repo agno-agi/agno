@@ -8,7 +8,7 @@ Tests cover:
 - Store combinations and edge cases
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
