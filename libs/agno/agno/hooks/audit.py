@@ -65,6 +65,10 @@ class ToolAuditHook:
         fail_on_log_error: If True, raise an exception when audit logging fails instead of
             silently continuing. Use this for compliance-critical scenarios where every tool
             call must be audited. Default False.
+        extract_subject: Optional callable that extracts a resource/subject identifier from
+            the tool name and arguments. Signature: (tool_name: str, arguments: dict) -> str.
+            When provided, the returned value is added as a "subject" field in the audit record.
+            Example: lambda name, args: args.get("record_id") or args.get("sobject")
     """
 
     def __init__(
@@ -77,6 +81,7 @@ class ToolAuditHook:
         include_tools: Optional[List[str]] = None,
         exclude_tools: Optional[List[str]] = None,
         fail_on_log_error: bool = False,
+        extract_subject: Optional[Callable[[str, Dict[str, Any]], Optional[str]]] = None,
     ):
         if not log_file and not callback:
             raise ValueError("ToolAuditHook requires at least one of log_file or callback.")
@@ -89,6 +94,7 @@ class ToolAuditHook:
         self.include_tools = set(include_tools) if include_tools else None
         self.exclude_tools = set(exclude_tools) if exclude_tools else None
         self.fail_on_log_error = fail_on_log_error
+        self.extract_subject = extract_subject
 
         # Ensure log directory exists
         if self.log_file:
@@ -125,6 +131,13 @@ class ToolAuditHook:
             "tool_name": tool_name,
             "status": "error" if error else "success",
         }
+        if self.extract_subject:
+            try:
+                subject = self.extract_subject(tool_name, arguments)
+                if subject:
+                    record["subject"] = subject
+            except Exception:
+                pass  # Don't let subject extraction break audit
         if self.log_arguments:
             record["arguments"] = arguments
         if duration_ms is not None:

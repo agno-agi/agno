@@ -403,3 +403,89 @@ class TestFailOnLogError:
         # Should NOT raise
         result = hook("tool", mock_tool, {})
         assert result == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Extract Subject Tests
+# ---------------------------------------------------------------------------
+
+
+class TestExtractSubject:
+    def test_subject_added_to_record(self):
+        cb = MagicMock()
+        hook = ToolAuditHook(
+            callback=cb,
+            extract_subject=lambda name, args: args.get("sobject"),
+        )
+
+        def mock_tool(**kwargs):
+            return "ok"
+
+        hook("create_record", mock_tool, {"sobject": "Account", "data": "{}"})
+
+        record = cb.call_args[0][0]
+        assert record["subject"] == "Account"
+
+    def test_subject_not_added_when_none(self):
+        cb = MagicMock()
+        hook = ToolAuditHook(
+            callback=cb,
+            extract_subject=lambda name, args: args.get("record_id"),
+        )
+
+        def mock_tool(**kwargs):
+            return "ok"
+
+        hook("list_objects", mock_tool, {})
+
+        record = cb.call_args[0][0]
+        assert "subject" not in record
+
+    def test_subject_not_added_without_callback(self):
+        cb = MagicMock()
+        hook = ToolAuditHook(callback=cb)
+
+        def mock_tool(**kwargs):
+            return "ok"
+
+        hook("tool", mock_tool, {"record_id": "123"})
+
+        record = cb.call_args[0][0]
+        assert "subject" not in record
+
+    def test_subject_extraction_error_does_not_break(self):
+        cb = MagicMock()
+
+        def bad_extractor(name, args):
+            raise KeyError("boom")
+
+        hook = ToolAuditHook(callback=cb, extract_subject=bad_extractor)
+
+        def mock_tool(**kwargs):
+            return "ok"
+
+        # Should not raise
+        result = hook("tool", mock_tool, {})
+        assert result == "ok"
+        assert cb.call_count == 1
+        assert "subject" not in cb.call_args[0][0]
+
+
+# ---------------------------------------------------------------------------
+# Fixture Validation Tests
+# ---------------------------------------------------------------------------
+
+
+class TestFixture:
+    def test_sample_fixture_is_valid_jsonl(self):
+        fixture_path = os.path.join(os.path.dirname(__file__), "..", "..", "fixtures", "tool_audit_sample.jsonl")
+        with open(fixture_path) as f:
+            lines = f.readlines()
+
+        assert len(lines) >= 3
+        for line in lines:
+            record = json.loads(line)
+            assert "timestamp" in record
+            assert "tool_name" in record
+            assert "status" in record
+            assert record["status"] in ("success", "error")
