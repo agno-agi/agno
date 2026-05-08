@@ -9,7 +9,7 @@
 </div>
 
 <p align="center">
-  Build, run, and manage your agent platform.<br/>
+  Build, run, and manage agent platforms.<br/>
 </p>
 
 ## Introduction
