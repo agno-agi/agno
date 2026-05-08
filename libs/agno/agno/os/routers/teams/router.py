@@ -394,13 +394,18 @@ async def team_continue_response_streamer(
         if auth_token and isinstance(team, RemoteTeam):
             kwargs["auth_token"] = auth_token
 
+        if "stream_events" in kwargs:
+            stream_events = kwargs.pop("stream_events")
+        else:
+            stream_events = True
+
         continue_response = team.acontinue_run(
             run_id=run_id,
             requirements=requirements or [],
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_events=True,
+            stream_events=stream_events,
             background_tasks=background_tasks,
             **kwargs,
         )
@@ -452,6 +457,11 @@ async def team_resumable_continue_response_streamer(
     if background_tasks is not None:
         kwargs["background_tasks"] = background_tasks
 
+    if "stream_events" in kwargs:
+        stream_events = kwargs.pop("stream_events")
+    else:
+        stream_events = True
+
     try:
         async for sse_data in team.acontinue_run(
             run_id=run_id,
@@ -459,7 +469,7 @@ async def team_resumable_continue_response_streamer(
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_events=True,
+            stream_events=stream_events,
             background=True,
             **kwargs,
         ):

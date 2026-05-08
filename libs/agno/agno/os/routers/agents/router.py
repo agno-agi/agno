@@ -210,13 +210,18 @@ async def agent_continue_response_streamer(
         if auth_token and isinstance(agent, RemoteAgent):
             kwargs["auth_token"] = auth_token
 
+        if "stream_events" in kwargs:
+            stream_events = kwargs.pop("stream_events")
+        else:
+            stream_events = True
+
         continue_response = agent.acontinue_run(  # type: ignore[union-attr]
             run_id=run_id,
             updated_tools=updated_tools,
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_events=True,
+            stream_events=stream_events,
             background_tasks=background_tasks,
             **kwargs,
         )
@@ -269,6 +274,11 @@ async def agent_resumable_continue_response_streamer(
     if background_tasks is not None:
         kwargs["background_tasks"] = background_tasks
 
+    if "stream_events" in kwargs:
+        stream_events = kwargs.pop("stream_events")
+    else:
+        stream_events = True
+
     try:
         async for sse_data in agent.acontinue_run(
             run_id=run_id,
@@ -276,7 +286,7 @@ async def agent_resumable_continue_response_streamer(
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_events=True,
+            stream_events=stream_events,
             background=True,
             **kwargs,
         ):
