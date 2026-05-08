@@ -169,6 +169,17 @@ class TestUpdateLearning:
         assert resp.status_code == 422
         mock_db.upsert_learning.assert_not_called()
 
+    def test_update_detects_concurrent_delete_and_rolls_back(self, client, mock_db):
+        # Simulate: fetch returns existing, DELETE happens elsewhere, upsert re-inserts
+        # the row (created_at advances because the INSERT branch ran), follow-up fetch
+        # returns the freshly-created row. Router must detect this and 404 + clean up.
+        existing = _make_learning(created_at=1000)
+        recreated = _make_learning(created_at=5000)
+        mock_db.get_learning_by_id = MagicMock(side_effect=[existing, recreated])
+        resp = client.patch("/learnings/lrn-1", json={"content": {"x": 1}})
+        assert resp.status_code == 404
+        mock_db.delete_learning.assert_called_once_with("lrn-1")
+
     def test_update_metadata_only_preserves_content(self, client, mock_db):
         existing = _make_learning(content={"keep": "this"})
         updated = _make_learning(content={"keep": "this"}, metadata={"new": "meta"})

@@ -284,6 +284,22 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
 
         if updated is None:
             raise HTTPException(status_code=500, detail="Failed to update learning")
+
+        # TOCTOU guard: if the row was deleted between our fetch and the upsert,
+        # the upsert silently re-created it via INSERT instead of UPDATE. The SQL
+        # adapters preserve created_at on ON CONFLICT DO UPDATE (only content/
+        # metadata/updated_at are set), so a created_at delta is the signature of
+        # an unintended re-creation. Roll it back and report 404.
+        if existing.get("created_at") is not None and updated.get("created_at") != existing.get("created_at"):
+            try:
+                if isinstance(db, AsyncBaseDb):
+                    await db.delete_learning(learning_id)
+                else:
+                    cast(BaseDb, db).delete_learning(learning_id)
+            except Exception:
+                pass
+            raise HTTPException(status_code=404, detail="Learning not found")
+
         return LearningResponse.model_validate(updated)
 
     @router.delete(
