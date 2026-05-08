@@ -1,7 +1,6 @@
 """Minimal example for AgentOS."""
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team import Team
@@ -13,12 +12,9 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 
 # Setup the database
-db = PostgresDb(id="basic-db", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
-
 # Setup basic agents, teams and workflows
 basic_agent = Agent(
     name="Basic Agent",
-    db=db,
     enable_session_summaries=True,
     update_memory_on_run=True,
     add_history_to_context=True,
@@ -30,7 +26,6 @@ basic_team = Team(
     id="basic-team",
     name="Basic Team",
     model=OpenAIChat(id="gpt-4o"),
-    db=db,
     members=[basic_agent],
     update_memory_on_run=True,
 )
@@ -38,7 +33,6 @@ basic_workflow = Workflow(
     id="basic-workflow",
     name="Basic Workflow",
     description="Just a simple workflow",
-    db=db,
     steps=[
         Step(
             name="step1",
