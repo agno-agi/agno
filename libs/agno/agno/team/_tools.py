@@ -54,7 +54,7 @@ from agno.utils.team import (
 
 
 async def _aresolve_callable_resources(team: "Team", run_context: "RunContext") -> None:
-    """Resolve all callable factories (tools, knowledge, members) asynchronously."""
+    """Resolve callable factories (tools, knowledge, members)."""
     from agno.utils.callables import aresolve_callable_knowledge, aresolve_callable_members, aresolve_callable_tools
 
     await aresolve_callable_tools(team, run_context)
@@ -126,6 +126,7 @@ def _determine_tools_for_model(
         _search_past_sessions_function,
         _update_session_state_tool,
         create_knowledge_search_tool,
+        get_add_to_knowledge_function,
     )
     from agno.team._init import _connect_connectable_tools
     from agno.team._messages import _get_user_message
@@ -150,6 +151,7 @@ def _determine_tools_for_model(
 
     _connect_connectable_tools(
         team,
+        resolved_tools=resolved_tools,
     )
 
     # Prepare tools
@@ -220,7 +222,7 @@ def _determine_tools_for_model(
         )
 
     if resolved_knowledge is not None and team.update_knowledge:
-        _tools.append(team.add_to_knowledge)
+        _tools.append(get_add_to_knowledge_function(team, run_context=run_context))
 
     # Add tools for accessing skills
     if team.skills is not None:
@@ -494,6 +496,19 @@ def _determine_team_member_interactions(
     return team_member_interactions_str
 
 
+def _build_subteam_run_context(subteam: "Team", parent_run_context: Optional["RunContext"]) -> Optional["RunContext"]:
+    """Return a sub-team-scoped RunContext with the sub-team's own members factory resolved."""
+    if parent_run_context is None:
+        return None
+    from dataclasses import replace
+
+    from agno.utils.callables import resolve_callable_members
+
+    subteam_run_context = replace(parent_run_context, members=None, tools=None, knowledge=None)
+    resolve_callable_members(subteam, subteam_run_context)
+    return subteam_run_context
+
+
 def _find_member_by_id(
     team: "Team", member_id: str, run_context: Optional["RunContext"] = None
 ) -> Optional[Tuple[int, Union[Agent, "Team"]]]:
@@ -522,9 +537,10 @@ def _find_member_by_id(
         if url_safe_member_id == member_id:
             return i, member
 
-        # If this member is a team, search its members recursively
+        # Recurse in a sub-team-scoped run_context so the sub-team resolves its own members.
         if isinstance(member, Team):
-            result = member._find_member_by_id(member_id, run_context=run_context)
+            subteam_run_context = _build_subteam_run_context(member, run_context)
+            result = member._find_member_by_id(member_id, run_context=subteam_run_context)
             if result is not None:
                 return result
 
@@ -560,8 +576,10 @@ def _find_member_route_by_id(
         if url_safe_member_id == member_id:
             return i, member
 
+        # Recurse in a sub-team-scoped run_context so the sub-team resolves its own members.
         if isinstance(member, Team):
-            result = member._find_member_by_id(member_id, run_context=run_context)
+            subteam_run_context = _build_subteam_run_context(member, run_context)
+            result = member._find_member_by_id(member_id, run_context=subteam_run_context)
             if result is not None:
                 return i, member
 

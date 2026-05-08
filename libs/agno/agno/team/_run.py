@@ -2034,6 +2034,9 @@ async def _arun_tasks(
 
         # 2. Determine tools for model (includes task management tools)
         team_run_context: Dict[str, Any] = {}
+        from agno.team._tools import _aresolve_callable_resources
+
+        await _aresolve_callable_resources(team, run_context=run_context)
         await _check_and_refresh_mcp_tools(team)
         _tools = _determine_tools_for_model(
             team,
@@ -2371,6 +2374,9 @@ async def _arun_tasks_stream(
 
         # 2. Determine tools for model (includes task management tools)
         team_run_context: Dict[str, Any] = {}
+        from agno.team._tools import _aresolve_callable_resources
+
+        await _aresolve_callable_resources(team, run_context=run_context)
         await _check_and_refresh_mcp_tools(team)
         _tools = _determine_tools_for_model(
             team,
@@ -6586,6 +6592,9 @@ async def _acontinue_run(
                         )
 
                     team.model = cast(Model, team.model)
+                    from agno.team._tools import _aresolve_callable_resources
+
+                    await _aresolve_callable_resources(team, run_context=run_context)
                     await _check_and_refresh_mcp_tools(team)
 
                     team_run_context: Dict[str, Any] = {}
@@ -6923,6 +6932,9 @@ async def _acontinue_run_stream(
                         return
 
                     team.model = cast(Model, team.model)
+                    from agno.team._tools import _aresolve_callable_resources
+
+                    await _aresolve_callable_resources(team, run_context=run_context)
                     await _check_and_refresh_mcp_tools(team)
 
                     team_run_context: Dict[str, Any] = {}

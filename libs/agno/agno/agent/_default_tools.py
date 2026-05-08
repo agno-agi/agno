@@ -408,6 +408,40 @@ def add_to_knowledge(agent: Agent, query: str, result: str) -> str:
     return "Successfully added to knowledge base"
 
 
+def get_add_to_knowledge_function(agent: Agent, run_context: Optional[RunContext] = None) -> Function:
+    """Build an add_to_knowledge tool that reaches factory-resolved knowledge via a run_context closure."""
+    from agno.utils.callables import get_resolved_knowledge
+
+    def add_to_knowledge(query: str, result: str) -> str:
+        """Use this function to add information to the knowledge base for future use.
+
+        Args:
+            query (str): The query or topic to add.
+            result (str): The actual content or information to store.
+        Returns:
+            str: A string indicating the status of the addition.
+        """
+        import json
+
+        knowledge = get_resolved_knowledge(agent, run_context)
+        if knowledge is None:
+            return "Knowledge not available"
+
+        insert_fn = getattr(knowledge, "insert", None)
+        if not callable(insert_fn):
+            return "Knowledge does not support insert"
+
+        document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
+        document_content = json.dumps({"query": query, "result": result})
+        log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
+        from agno.knowledge.reader.text_reader import TextReader
+
+        insert_fn(name=document_name, text_content=document_content, reader=TextReader())
+        return "Successfully added to knowledge base"
+
+    return Function.from_callable(add_to_knowledge, name="add_to_knowledge")
+
+
 def _get_message_text(msg: Message) -> Optional[str]:
     """Safely extract text content from a Message."""
     if isinstance(msg.content, str):

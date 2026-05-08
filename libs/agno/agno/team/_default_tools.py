@@ -1182,6 +1182,7 @@ def add_to_knowledge(team: "Team", query: str, result: str) -> str:
     Returns:
         str: A string indicating the status of the addition.
     """
+    # Direct (non-factory) path. The factory-aware path lives in get_add_to_knowledge_function.
     from agno.utils.callables import get_resolved_knowledge
 
     knowledge = get_resolved_knowledge(team, None)
@@ -1201,6 +1202,41 @@ def add_to_knowledge(team: "Team", query: str, result: str) -> str:
 
     insert_method(name=document_name, text_content=document_content, reader=TextReader())
     return "Successfully added to knowledge base"
+
+
+def get_add_to_knowledge_function(team: "Team", run_context: Optional[RunContext] = None) -> Function:
+    """Build an add_to_knowledge tool that reaches factory-resolved knowledge via a run_context closure."""
+    from agno.utils.callables import get_resolved_knowledge
+
+    def add_to_knowledge(query: str, result: str) -> str:
+        """Use this function to add information to the knowledge base for future use.
+
+        Args:
+            query (str): The query or topic to add.
+            result (str): The actual content or information to store.
+
+        Returns:
+            str: A string indicating the status of the addition.
+        """
+        knowledge = get_resolved_knowledge(team, run_context)
+        if knowledge is None:
+            log_warning("Knowledge is not set, cannot add to knowledge")
+            return "Knowledge is not set, cannot add to knowledge"
+
+        insert_method = getattr(knowledge, "insert", None)
+        if not callable(insert_method):
+            log_warning("Knowledge base does not support adding content")
+            return "Knowledge base does not support adding content"
+
+        document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
+        document_content = json.dumps({"query": query, "result": result})
+        log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
+        from agno.knowledge.reader.text_reader import TextReader
+
+        insert_method(name=document_name, text_content=document_content, reader=TextReader())
+        return "Successfully added to knowledge base"
+
+    return Function.from_callable(add_to_knowledge, name="add_to_knowledge")
 
 
 def create_knowledge_search_tool(
