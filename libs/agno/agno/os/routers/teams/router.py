@@ -661,6 +661,8 @@ def get_team_router(
                     "text/csv",
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     "application/vnd.ms-outlook",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
                     "text/plain",
                     "application/json",
                 ]:

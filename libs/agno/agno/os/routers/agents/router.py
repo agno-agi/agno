@@ -673,6 +673,8 @@ def get_agent_router(
                     "application/x-javascript",
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     "application/vnd.ms-outlook",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
                     "text/javascript",
                     "application/x-python",
                     "text/x-python",
