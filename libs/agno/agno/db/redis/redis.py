@@ -2222,6 +2222,7 @@ class RedisDb(BaseDb):
         namespace: Optional[str] = None,
         entity_id: Optional[str] = None,
         entity_type: Optional[str] = None,
+        include_global: bool = False,
         limit: int = 100,
         page: int = 1,
     ) -> Tuple[List[Dict[str, Any]], int]:

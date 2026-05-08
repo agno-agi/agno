@@ -194,7 +194,16 @@ class TestDeleteLearning:
 
 
 class TestIDORScoping:
-    """When a JWT subject is present on request.state, results are scoped to that user_id."""
+    """When a JWT subject is present on request.state, the router enforces ownership-based scoping.
+
+    Rules:
+      - LIST: bind user_id filter to JWT subject; include records with user_id IS NULL
+        (global / non-user-scoped); reject explicit user_id query that mismatches with 403.
+      - CREATE: allow body.user_id to be null (global record) or match the JWT subject;
+        reject mismatch with 403.
+      - GET/PATCH/DELETE single record: allow if record.user_id is None (global); 404 on
+        cross-user access (no 403 — avoids leaking existence).
+    """
 
     @pytest.fixture
     def jwt_app(self, mock_db, settings):
@@ -213,19 +222,70 @@ class TestIDORScoping:
     def jwt_client(self, jwt_app):
         return TestClient(jwt_app)
 
-    def test_list_overrides_user_id(self, jwt_client, mock_db):
-        jwt_client.get("/learnings?user_id=user-B")
+    def test_list_no_filter_binds_subject_with_global(self, jwt_client, mock_db):
+        jwt_client.get("/learnings")
         kwargs = mock_db.list_learnings.call_args[1]
         assert kwargs["user_id"] == "user-A"
+        assert kwargs["include_global"] is True
 
-    def test_create_overrides_user_id(self, jwt_client, mock_db):
+    def test_list_matching_user_id_allowed(self, jwt_client, mock_db):
+        resp = jwt_client.get("/learnings?user_id=user-A")
+        assert resp.status_code == 200
+        kwargs = mock_db.list_learnings.call_args[1]
+        assert kwargs["user_id"] == "user-A"
+        assert kwargs["include_global"] is True
+
+    def test_list_mismatched_user_id_rejected(self, jwt_client, mock_db):
+        resp = jwt_client.get("/learnings?user_id=user-B")
+        assert resp.status_code == 403
+        mock_db.list_learnings.assert_not_called()
+
+    def test_create_null_user_id_creates_global(self, jwt_client, mock_db):
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None))
+        resp = jwt_client.post(
+            "/learnings",
+            json={"learning_type": "agent_memory", "content": {"hello": "world"}, "agent_id": "ag-1"},
+        )
+        assert resp.status_code == 201
+        kwargs = mock_db.upsert_learning.call_args[1]
+        assert kwargs["user_id"] is None
+        assert kwargs["agent_id"] == "ag-1"
+
+    def test_create_matching_user_id_allowed(self, jwt_client, mock_db):
         mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id="user-A"))
-        jwt_client.post(
+        resp = jwt_client.post(
+            "/learnings",
+            json={"learning_type": "user_profile", "content": {}, "user_id": "user-A"},
+        )
+        assert resp.status_code == 201
+        kwargs = mock_db.upsert_learning.call_args[1]
+        assert kwargs["user_id"] == "user-A"
+
+    def test_create_mismatched_user_id_rejected(self, jwt_client, mock_db):
+        resp = jwt_client.post(
             "/learnings",
             json={"learning_type": "user_profile", "content": {}, "user_id": "user-B"},
         )
-        kwargs = mock_db.upsert_learning.call_args[1]
-        assert kwargs["user_id"] == "user-A"
+        assert resp.status_code == 403
+        mock_db.upsert_learning.assert_not_called()
+
+    def test_get_global_record_accessible(self, jwt_client, mock_db):
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None, agent_id="ag-1"))
+        resp = jwt_client.get("/learnings/lrn-1")
+        assert resp.status_code == 200
+        assert resp.json()["user_id"] is None
+
+    def test_patch_global_record_accessible(self, jwt_client, mock_db):
+        existing = _make_learning(user_id=None, agent_id="ag-1")
+        updated = _make_learning(user_id=None, agent_id="ag-1", content={"new": True})
+        mock_db.get_learning_by_id = MagicMock(side_effect=[existing, updated])
+        resp = jwt_client.patch("/learnings/lrn-1", json={"content": {"new": True}})
+        assert resp.status_code == 200
+
+    def test_delete_global_record_accessible(self, jwt_client, mock_db):
+        mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id=None))
+        resp = jwt_client.delete("/learnings/lrn-1")
+        assert resp.status_code == 204
 
     def test_get_other_users_record_returns_404(self, jwt_client, mock_db):
         mock_db.get_learning_by_id = MagicMock(return_value=_make_learning(user_id="user-B"))

@@ -29,7 +29,13 @@ class LearningCreate(BaseModel):
     learning_type: str = Field(..., description="Type of learning (e.g. 'user_profile', 'entity_memory')")
     content: Dict[str, Any] = Field(..., description="The learning content payload")
     namespace: Optional[str] = Field(None, description="Namespace for scoping ('user', 'global', or custom)")
-    user_id: Optional[str] = Field(None, description="Associated user ID. Bound to the JWT subject when authenticated.")
+    user_id: Optional[str] = Field(
+        None,
+        description=(
+            "Associated user ID. When the request is authenticated, must match the JWT "
+            "subject or be omitted/null (which creates a global / non-user-scoped record)."
+        ),
+    )
     agent_id: Optional[str] = Field(None, description="Associated agent ID")
     team_id: Optional[str] = Field(None, description="Associated team ID")
     session_id: Optional[str] = Field(None, description="Associated session ID")

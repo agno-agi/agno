@@ -54,7 +54,10 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         summary="List Learnings",
         description=(
             "List learning records with pagination and optional filters. When the request is "
-            "authenticated with a JWT, results are scoped to the JWT subject's user_id."
+            "authenticated with a JWT and no `user_id` query is provided, results are scoped to the "
+            "JWT subject and also include records with no owner (`user_id IS NULL`) — this covers "
+            "global, agent, team, session, and entity-scoped learnings. Passing a `user_id` that "
+            "differs from the JWT subject is rejected with 403."
         ),
     )
     async def list_learnings(
@@ -71,8 +74,13 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         page: int = Query(1, ge=1, description="1-indexed page number"),
         db_id: Optional[str] = Query(None, description="Database ID to query"),
     ) -> PaginatedResponse[LearningResponse]:
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
+        include_global = False
+        jwt_user_id = getattr(request.state, "user_id", None)
+        if jwt_user_id is not None:
+            if user_id is not None and user_id != jwt_user_id:
+                raise HTTPException(status_code=403, detail="Cannot list learnings for another user")
+            user_id = jwt_user_id
+            include_global = True
 
         db = await get_db(dbs, db_id)
 
@@ -90,6 +98,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                     namespace=namespace,
                     entity_id=entity_id,
                     entity_type=entity_type,
+                    include_global=include_global,
                     limit=limit,
                     page=page,
                 )
@@ -103,6 +112,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                     namespace=namespace,
                     entity_id=entity_id,
                     entity_type=entity_type,
+                    include_global=include_global,
                     limit=limit,
                     page=page,
                 )
@@ -127,8 +137,9 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         operation_id="create_learning",
         summary="Create Learning",
         description=(
-            "Create a new learning record. When the request is authenticated with a JWT, "
-            "the user_id field is bound to the JWT subject and any provided value is overridden."
+            "Create a new learning record. When the request is authenticated with a JWT, the body's "
+            "`user_id` must either be omitted/null (creates a global / non-user-scoped record) or "
+            "match the JWT subject. A mismatch is rejected with 403."
         ),
     )
     async def create_learning(
@@ -136,8 +147,9 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         body: LearningCreate,
         db_id: Optional[str] = Query(None, description="Database ID to use"),
     ) -> LearningResponse:
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            body.user_id = request.state.user_id
+        jwt_user_id = getattr(request.state, "user_id", None)
+        if jwt_user_id is not None and body.user_id is not None and body.user_id != jwt_user_id:
+            raise HTTPException(status_code=403, detail="Cannot create learnings for another user")
 
         db = await get_db(dbs, db_id)
 
@@ -320,8 +332,18 @@ async def _fetch_learning(db: Union[BaseDb, AsyncBaseDb, RemoteDb], learning_id:
 
 
 def _enforce_user_scope(request: Request, record: dict) -> None:
-    """Return 404 (not 403) if the JWT subject doesn't own the record, to avoid leaking existence."""
-    if not hasattr(request.state, "user_id") or request.state.user_id is None:
+    """Block cross-user access without leaking existence.
+
+    Records with ``user_id IS NULL`` are global / non-user-scoped (e.g. agent, team,
+    session, or entity learnings) and remain accessible to any authenticated caller.
+    Returns 404 (not 403) when the record is owned by a different user, to avoid
+    leaking which IDs exist.
+    """
+    jwt_user_id = getattr(request.state, "user_id", None)
+    if jwt_user_id is None:
         return
-    if record.get("user_id") != request.state.user_id:
+    record_user_id = record.get("user_id")
+    if record_user_id is None:
+        return
+    if record_user_id != jwt_user_id:
         raise HTTPException(status_code=404, detail="Learning not found")

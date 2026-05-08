@@ -992,6 +992,7 @@ class BaseDb(ABC):
         namespace: Optional[str] = None,
         entity_id: Optional[str] = None,
         entity_type: Optional[str] = None,
+        include_global: bool = False,
         limit: int = 100,
         page: int = 1,
     ) -> Tuple[List[Dict[str, Any]], int]:
@@ -1006,6 +1007,9 @@ class BaseDb(ABC):
             namespace: Filter by namespace.
             entity_id: Filter by entity ID.
             entity_type: Filter by entity type.
+            include_global: When True and ``user_id`` is set, also include records where
+                ``user_id IS NULL`` (global / non-user-scoped). Has no effect when
+                ``user_id`` is None.
             limit: Page size.
             page: 1-indexed page number.
 
@@ -1664,6 +1668,7 @@ class AsyncBaseDb(ABC):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
         session_id: Optional[str] = None,
         namespace: Optional[str] = None,
         entity_id: Optional[str] = None,
@@ -1679,6 +1684,7 @@ class AsyncBaseDb(ABC):
             user_id: Associated user ID.
             agent_id: Associated agent ID.
             team_id: Associated team ID.
+            workflow_id: Associated workflow ID.
             session_id: Associated session ID.
             namespace: Namespace for scoping ('user', 'global', or custom).
             entity_id: Associated entity ID (for entity-specific learnings).
@@ -1751,6 +1757,7 @@ class AsyncBaseDb(ABC):
         namespace: Optional[str] = None,
         entity_id: Optional[str] = None,
         entity_type: Optional[str] = None,
+        include_global: bool = False,
         limit: int = 100,
         page: int = 1,
     ) -> Tuple[List[Dict[str, Any]], int]:
@@ -1765,6 +1772,9 @@ class AsyncBaseDb(ABC):
             namespace: Filter by namespace.
             entity_id: Filter by entity ID.
             entity_type: Filter by entity type.
+            include_global: When True and ``user_id`` is set, also include records where
+                ``user_id IS NULL`` (global / non-user-scoped). Has no effect when
+                ``user_id`` is None.
             limit: Page size.
             page: 1-indexed page number.
 

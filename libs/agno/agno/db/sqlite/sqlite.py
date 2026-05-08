@@ -4449,6 +4449,7 @@ class SqliteDb(BaseDb):
         namespace: Optional[str] = None,
         entity_id: Optional[str] = None,
         entity_type: Optional[str] = None,
+        include_global: bool = False,
         limit: int = 100,
         page: int = 1,
     ) -> Tuple[List[Dict[str, Any]], int]:
@@ -4462,7 +4463,10 @@ class SqliteDb(BaseDb):
                 if learning_type is not None:
                     stmt = stmt.where(table.c.learning_type == learning_type)
                 if user_id is not None:
-                    stmt = stmt.where(table.c.user_id == user_id)
+                    if include_global:
+                        stmt = stmt.where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
+                    else:
+                        stmt = stmt.where(table.c.user_id == user_id)
                 if agent_id is not None:
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:

@@ -3311,6 +3311,7 @@ class AsyncMongoDb(AsyncBaseDb):
         namespace: Optional[str] = None,
         entity_id: Optional[str] = None,
         entity_type: Optional[str] = None,
+        include_global: bool = False,
         limit: int = 100,
         page: int = 1,
     ) -> Tuple[List[Dict[str, Any]], int]:
@@ -3323,7 +3324,10 @@ class AsyncMongoDb(AsyncBaseDb):
             if learning_type is not None:
                 query["learning_type"] = learning_type
             if user_id is not None:
-                query["user_id"] = user_id
+                if include_global:
+                    query["$or"] = [{"user_id": user_id}, {"user_id": None}]
+                else:
+                    query["user_id"] = user_id
             if agent_id is not None:
                 query["agent_id"] = agent_id
             if team_id is not None:

@@ -37,16 +37,26 @@ In another, run the REST client:
 
 ## Auth and IDOR
 
-When an authenticated request carries a JWT, the `user_id` filter on list/create
-is bound to the JWT subject (any client-supplied value is overridden), and
-single-record fetches/updates/deletes return `404` if the record belongs to a
-different user. Without a JWT, the request is unrestricted (legacy bearer-token
-mode).
+When an authenticated request carries a JWT:
+
+- **List**: results are scoped to the JWT subject AND records with no owner
+  (`user_id IS NULL`) — this covers global, agent, team, session, and
+  entity-scoped learnings. An explicit `user_id` query that doesn't match the
+  JWT subject is rejected with `403`.
+- **Create**: the body's `user_id` must either be omitted/null (creates a
+  global / non-user-scoped record) or match the JWT subject. A mismatch is
+  rejected with `403`.
+- **Single record GET / PATCH / DELETE**: records with `user_id IS NULL`
+  remain accessible. Records owned by a different user return `404` (not
+  `403`) to avoid leaking which IDs exist.
+
+Without a JWT (legacy bearer-token mode) the request passes through.
 
 ## Identity field rules
 
 - `user_id`, `agent_id`, `team_id`, `session_id`, `entity_id`, `entity_type`,
   `namespace`, and `learning_type` are immutable after creation. PATCH only
   modifies `content` and `metadata`.
-- `workflow_id` is not exposed: the framework does not currently produce
-  workflow-scoped learnings.
+- `workflow_id` is not exposed: workflows don't produce learnings directly —
+  they go through their constituent agents/teams, which write `agent_id` or
+  `team_id`.
