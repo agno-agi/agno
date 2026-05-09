@@ -798,8 +798,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
                     )
                     stmt = stmt.returning(*table.columns)  # type: ignore
-                    result = await sess.execute(stmt)
-                    row = result.fetchone()
+                    row = (await sess.execute(stmt)).first()
 
                     session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
                     if session_raw is None or not deserialize:
@@ -837,8 +836,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
                     )
                     stmt = stmt.returning(*table.columns)  # type: ignore
-                    result = await sess.execute(stmt)
-                    row = result.fetchone()
+                    row = (await sess.execute(stmt)).first()
 
                     session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
                     if session_raw is None or not deserialize:
@@ -875,8 +873,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
                     )
                     stmt = stmt.returning(*table.columns)  # type: ignore
-                    result = await sess.execute(stmt)
-                    row = result.fetchone()
+                    row = (await sess.execute(stmt)).first()
 
                     session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
                     if session_raw is None or not deserialize:
@@ -1458,8 +1455,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         ),
                     ).returning(table)
 
-                    result = await sess.execute(stmt)
-                    row = result.fetchone()
+                    row = (await sess.execute(stmt)).first()
 
                 if row is None:
                     return None
@@ -2475,8 +2471,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     ),
                 ).returning(table)
 
-                result = await sess.execute(stmt)
-                row = result.fetchone()
+                row = (await sess.execute(stmt)).first()
 
                 if row is None:
                     return None
