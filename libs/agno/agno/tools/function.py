@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 from functools import partial
 from importlib.metadata import version
@@ -772,6 +773,51 @@ class FunctionCall(BaseModel):
     # Error while parsing arguments or running the function.
     error: Optional[str] = None
 
+    class _ReentrantAsyncLock:
+        """Task-reentrant async lock for nested async tool hooks."""
+
+        def __init__(self) -> None:
+            self._lock = asyncio.Lock()
+            self._owner: Optional[asyncio.Task[Any]] = None
+            self._depth = 0
+
+        async def acquire(self) -> None:
+            current_task = asyncio.current_task()
+            if current_task is None:
+                await self._lock.acquire()
+                self._owner = None
+                self._depth = 1
+                return
+
+            if self._owner is current_task:
+                self._depth += 1
+                return
+
+            await self._lock.acquire()
+            self._owner = current_task
+            self._depth = 1
+
+        def release(self) -> None:
+            current_task = asyncio.current_task()
+            if self._owner is not None and self._owner is not current_task:
+                raise RuntimeError("ReentrantAsyncLock released by non-owner task")
+
+            if self._depth <= 0:
+                raise RuntimeError("ReentrantAsyncLock released too many times")
+
+            self._depth -= 1
+            if self._depth == 0:
+                self._owner = None
+                self._lock.release()
+
+    @staticmethod
+    def _get_or_create_async_messages_lock(run_context: RunContext) -> "_ReentrantAsyncLock":
+        lock = getattr(run_context, "_messages_swap_lock", None)
+        if lock is None:
+            lock = FunctionCall._ReentrantAsyncLock()
+            setattr(run_context, "_messages_swap_lock", lock)
+        return lock
+
     def get_call_str(self) -> str:
         """Returns a string representation of the function call."""
         import shutil
@@ -822,12 +868,17 @@ class FunctionCall(BaseModel):
         """Async variant of _safe_hook_call."""
         rc = self.function._run_context
         if rc is not None and rc.messages is not None:
-            live_ref = rc.messages
-            rc.messages = list(live_ref)
+            lock = self._get_or_create_async_messages_lock(rc)
+            await lock.acquire()
             try:
-                return await hook(**hook_args)
+                live_ref = rc.messages
+                rc.messages = list(live_ref)
+                try:
+                    return await hook(**hook_args)
+                finally:
+                    rc.messages = live_ref
             finally:
-                rc.messages = live_ref
+                lock.release()
         else:
             return await hook(**hook_args)
 
