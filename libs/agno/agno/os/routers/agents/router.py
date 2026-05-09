@@ -203,12 +203,17 @@ async def agent_continue_response_streamer(
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    **kwargs: Any,
 ) -> AsyncGenerator:
     """Default SSE generator for continue_run. Agent runs inline — client disconnect cancels agent."""
     try:
-        extra_kwargs: dict = {}
         if auth_token and isinstance(agent, RemoteAgent):
-            extra_kwargs["auth_token"] = auth_token
+            kwargs["auth_token"] = auth_token
+
+        if "stream_events" in kwargs:
+            stream_events = kwargs.pop("stream_events")
+        else:
+            stream_events = True
 
         continue_response = agent.acontinue_run(  # type: ignore[union-attr]
             run_id=run_id,
@@ -216,9 +221,9 @@ async def agent_continue_response_streamer(
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_events=True,
+            stream_events=stream_events,
             background_tasks=background_tasks,
-            **extra_kwargs,
+            **kwargs,
         )
         async for run_response_chunk in continue_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
@@ -253,6 +258,7 @@ async def agent_resumable_continue_response_streamer(
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    **kwargs: Any,
 ) -> AsyncGenerator:
     """Resumable SSE generator for continue_run with background=True, stream=True.
 
@@ -262,12 +268,16 @@ async def agent_resumable_continue_response_streamer(
     - Publishing to SSE subscribers for resumed clients
     - Yielding SSE-formatted strings via a queue
     """
-    extra_kwargs: dict = {}
     if auth_token and isinstance(agent, RemoteAgent):
-        extra_kwargs["auth_token"] = auth_token
+        kwargs["auth_token"] = auth_token
 
     if background_tasks is not None:
-        extra_kwargs["background_tasks"] = background_tasks
+        kwargs["background_tasks"] = background_tasks
+
+    if "stream_events" in kwargs:
+        stream_events = kwargs.pop("stream_events")
+    else:
+        stream_events = True
 
     try:
         async for sse_data in agent.acontinue_run(
@@ -276,9 +286,9 @@ async def agent_resumable_continue_response_streamer(
             session_id=session_id,
             user_id=user_id,
             stream=True,
-            stream_events=True,
+            stream_events=stream_events,
             background=True,
-            **extra_kwargs,
+            **kwargs,
         ):
             yield sse_data
     except (InputCheckError, OutputCheckError) as e:
@@ -896,10 +906,22 @@ def get_agent_router(
             description="Run continue in background (survives client disconnect). Requires database. Use /resume to reconnect.",
         ),
     ):
+        kwargs = await get_request_kwargs(request, continue_agent_run)
+
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             session_id = request.state.session_id
+        if hasattr(request.state, "dependencies") and request.state.dependencies is not None:
+            dependencies = request.state.dependencies
+            if "dependencies" in kwargs:
+                log_warning("Dependencies parameter passed in both request state and kwargs, using request state")
+            kwargs["dependencies"] = dependencies
+        if hasattr(request.state, "metadata") and request.state.metadata is not None:
+            metadata = request.state.metadata
+            if "metadata" in kwargs:
+                log_warning("Metadata parameter passed in both request state and kwargs, using request state")
+            kwargs["metadata"] = metadata
 
         # Parse the JSON string manually
         try:
@@ -993,6 +1015,7 @@ def get_agent_router(
                     user_id=user_id,
                     background_tasks=background_tasks,
                     auth_token=auth_token,
+                    **kwargs,
                 ),
                 media_type="text/event-stream",
             )
@@ -1006,6 +1029,7 @@ def get_agent_router(
                     user_id=user_id,
                     background_tasks=background_tasks,
                     auth_token=auth_token,
+                    **kwargs,
                 ),
                 media_type="text/event-stream",
             )
@@ -1026,6 +1050,7 @@ def get_agent_router(
                         stream=False,
                         background_tasks=background_tasks,
                         **extra_kwargs,
+                        **kwargs,
                     ),
                 )
                 return run_response_obj.to_dict()
