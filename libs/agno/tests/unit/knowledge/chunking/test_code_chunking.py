@@ -4,16 +4,18 @@ from typing import Sequence
 
 import pytest
 
-from agno.knowledge.chunking.code import CodeChunking
 from agno.knowledge.document.base import Document
 
-# Skip all tests in this module if tree-sitter is not installed
+# Skip all tests in this module if tree-sitter-language-pack is missing or incompatible
+# (chonkie's CodeChunker requires SupportedLanguage which was removed in newer versions)
 try:
-    import tree_sitter_language_pack  # noqa: F401
-except ImportError:
-    pytestmark = pytest.mark.skip(reason="tree-sitter-language-pack not installed")
+    from tree_sitter_language_pack import SupportedLanguage  # noqa: F401
 
-
+    from agno.knowledge.chunking.code import CodeChunking
+except (ImportError, AttributeError):
+    pytestmark = pytest.mark.skip(
+        reason="tree-sitter-language-pack missing or incompatible (SupportedLanguage removed)"
+    )
 @pytest.fixture
 def sample_python_code():
     """Sample Python code for testing."""
