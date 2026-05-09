@@ -145,6 +145,7 @@ class TestLogging:
 
         record = cb.call_args[0][0]
         assert "arguments" not in record
+        assert record["arguments_redacted"] is True
 
     def test_no_result_when_disabled(self):
         cb = MagicMock()
@@ -157,6 +158,7 @@ class TestLogging:
 
         record = cb.call_args[0][0]
         assert "result" not in record
+        assert record["result_redacted"] is True
 
     def test_result_truncation(self):
         cb = MagicMock()

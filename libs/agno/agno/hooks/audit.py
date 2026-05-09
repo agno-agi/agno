@@ -140,12 +140,16 @@ class ToolAuditHook:
                 pass  # Don't let subject extraction break audit
         if self.log_arguments:
             record["arguments"] = arguments
+        else:
+            record["arguments_redacted"] = True
         if duration_ms is not None:
             record["duration_ms"] = round(duration_ms, 2)
         if error:
             record["error"] = str(error)
         elif self.log_results and result is not None:
             record["result"] = self._truncate_result(result)
+        elif not self.log_results and not error:
+            record["result_redacted"] = True
         return record
 
     def _write_record(self, record: Dict[str, Any]) -> None:

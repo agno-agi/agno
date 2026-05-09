@@ -2,3 +2,4 @@
 {"timestamp": "2026-05-03T22:45:01.456789+00:00", "tool_name": "create_record", "status": "success", "subject": "Account", "arguments": {"sobject": "Account", "record_data": "{\"Name\": \"Acme\"}"}, "duration_ms": 1205.33, "result": "{\"id\": \"001ABC\", \"success\": true}"}
 {"timestamp": "2026-05-03T22:45:02.789012+00:00", "tool_name": "query", "status": "error", "arguments": {"soql": "SELECT Id FROM InvalidObject"}, "duration_ms": 89.7, "error": "sObject type 'InvalidObject' is not supported"}
 {"timestamp": "2026-05-03T22:45:03.012345+00:00", "tool_name": "send_email", "status": "success", "subject": "customer:123", "duration_ms": 567.89}
+{"timestamp": "2026-05-03T22:45:04.345678+00:00", "tool_name": "create_record", "status": "success", "subject": "Lead", "duration_ms": 890.12, "arguments_redacted": true, "result_redacted": true}
