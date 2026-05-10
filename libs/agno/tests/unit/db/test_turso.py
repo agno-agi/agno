@@ -115,3 +115,11 @@ def test_extract_host_rejects_empty():
 def test_normalize_remote_url():
     assert _normalize_remote_url("https://my-db.turso.io") == "libsql://my-db.turso.io"
     assert _normalize_remote_url("libsql://my-db.turso.io") == "libsql://my-db.turso.io"
+
+
+def test_async_turso_db_import_raises():
+    """Async is intentionally not supported yet; surface a clear error."""
+    import agno.db.turso as turso_pkg
+
+    with pytest.raises(ImportError, match="not yet supported"):
+        _ = turso_pkg.AsyncTursoDb

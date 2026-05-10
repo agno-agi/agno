@@ -57,7 +57,6 @@ class TursoDb(SqliteDb):
 
         self.turso_url: Optional[str] = url
         self.turso_sync_url: Optional[str] = sync_url
-        self._auth_token: Optional[str] = auth_token
 
         engine = db_engine
         resolved_db_url: Optional[str] = None
