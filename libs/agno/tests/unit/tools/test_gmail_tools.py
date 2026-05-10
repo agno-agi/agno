@@ -1551,3 +1551,34 @@ def test_temp_dir_reused_across_downloads(gmail_tools_all, mock_gmail_service):
 
     # TemporaryDirectory created only once, reused for second download
     mock_td_cls.assert_called_once()
+
+
+def test_instructions_include_compose_when_enabled(mock_credentials):
+    with patch("agno.tools.google.gmail.build"):
+        tools = GmailTools(creds=mock_credentials, create_draft_email=True)
+        assert "Composing Emails" in tools.instructions
+        assert "thread_id" in tools.instructions
+
+
+def test_instructions_exclude_compose_when_disabled(mock_credentials):
+    with patch("agno.tools.google.gmail.build"):
+        tools = GmailTools(
+            creds=mock_credentials,
+            # Disable all compose tools
+            create_draft_email=False,
+            send_email=False,
+            send_email_reply=False,
+            send_draft=False,
+            update_draft=False,
+            # Disable modify tools that require gmail.modify scope
+            mark_email_as_read=False,
+            mark_email_as_unread=False,
+            star_email=False,
+            unstar_email=False,
+            apply_label=False,
+            remove_label=False,
+            delete_custom_label=False,
+            scopes=["https://www.googleapis.com/auth/gmail.readonly"],
+        )
+        assert "Composing Emails" not in tools.instructions
+        assert "Gmail Query Syntax" in tools.instructions

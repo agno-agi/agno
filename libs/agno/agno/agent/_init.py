@@ -64,18 +64,18 @@ def set_telemetry(agent: Agent) -> None:
 
 
 def set_default_model(agent: Agent) -> None:
-    # Use the default Model (OpenAIChat) if no model is provided
+    # Use the default Model (OpenAIResponses) if no model is provided
     if agent.model is None:
         try:
-            from agno.models.openai import OpenAIChat
+            from agno.models.openai import OpenAIResponses
         except ModuleNotFoundError as e:
             log_exception(e)
             raise ImportError(
                 "Agno agents use `openai` as the default model provider. Please provide a `model` or install `openai`."
             ) from e
 
-        log_info("Setting default model to OpenAI Chat")
-        agent.model = OpenAIChat(id="gpt-4o")
+        log_info("Setting default model to OpenAI Responses")
+        agent.model = OpenAIResponses(id="gpt-5.4")
 
 
 def set_culture_manager(agent: Agent) -> None:

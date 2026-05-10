@@ -22,6 +22,7 @@ from agno.knowledge.remote_content.remote_content import (
     RemoteContent,
 )
 from agno.knowledge.remote_knowledge import RemoteKnowledge
+from agno.knowledge.types import ContentType
 from agno.knowledge.utils import merge_user_metadata, set_agno_metadata, strip_agno_metadata
 from agno.utils.http import async_fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -1564,7 +1565,14 @@ class Knowledge(RemoteKnowledge):
         file_extension = url_path.suffix.lower()
 
         bytes_content = None
-        if file_extension:
+        # Skip pre-download when a custom URL-based reader is provided —
+        # it handles the URL directly (e.g. LLMsTxtReader fetches linked pages)
+        skip_download = (
+            content.reader is not None
+            and hasattr(content.reader, "get_supported_content_types")
+            and ContentType.URL in content.reader.get_supported_content_types()
+        )
+        if file_extension and not skip_download:
             async with AsyncClient() as client:
                 response = await async_fetch_with_retry(content.url, client=client)
             bytes_content = BytesIO(response.content)
@@ -1716,7 +1724,14 @@ class Knowledge(RemoteKnowledge):
         file_extension = url_path.suffix.lower()
 
         bytes_content = None
-        if file_extension:
+        # Skip pre-download when a custom URL-based reader is provided —
+        # it handles the URL directly (e.g. LLMsTxtReader fetches linked pages)
+        skip_download = (
+            content.reader is not None
+            and hasattr(content.reader, "get_supported_content_types")
+            and ContentType.URL in content.reader.get_supported_content_types()
+        )
+        if file_extension and not skip_download:
             response = fetch_with_retry(content.url)
             bytes_content = BytesIO(response.content)
 
@@ -2137,6 +2152,60 @@ class Knowledge(RemoteKnowledge):
     # PRIVATE - CONVERSION & DATA METHODS
     # ==========================================
 
+    @staticmethod
+    def _build_remote_content_identity(remote_content: Optional["RemoteContent"]) -> Optional[str]:
+        """Return a stable identity string for a remote content reference.
+
+        The reference's source scope (bucket, repo, site, container) plus its
+        in-scope path must be included in the content hash so that the same
+        filename pulled from two different sources does not collide.
+        """
+        if remote_content is None:
+            return None
+
+        from agno.knowledge.remote_content.remote_content import (
+            AzureBlobContent,
+            GCSContent,
+            GitHubContent,
+            S3Content,
+            SharePointContent,
+        )
+
+        if isinstance(remote_content, GitHubContent):
+            scope = remote_content.repo or ""
+            in_scope = remote_content.file_path or remote_content.folder_path or ""
+            branch = remote_content.branch or ""
+            return f"github:{scope}@{branch}:{in_scope}"
+
+        elif isinstance(remote_content, S3Content):
+            scope = remote_content.bucket_name or (
+                remote_content.bucket.name if remote_content.bucket is not None else ""
+            )
+            in_scope = (
+                remote_content.key
+                or remote_content.prefix
+                or (remote_content.object.name if remote_content.object is not None else "")
+            )
+            return f"s3:{scope}:{in_scope}"
+
+        elif isinstance(remote_content, GCSContent):
+            scope = remote_content.bucket_name or (
+                remote_content.bucket.name if remote_content.bucket is not None else ""
+            )
+            in_scope = remote_content.blob_name or remote_content.prefix or ""
+            return f"gcs:{scope}:{in_scope}"
+
+        elif isinstance(remote_content, SharePointContent):
+            scope = f"{remote_content.site_path or ''}/{remote_content.drive_id or ''}"
+            in_scope = remote_content.file_path or remote_content.folder_path or ""
+            return f"sharepoint:{remote_content.config_id}:{scope}:{in_scope}"
+
+        elif isinstance(remote_content, AzureBlobContent):
+            in_scope = remote_content.blob_name or remote_content.prefix or ""
+            return f"azureblob:{remote_content.config_id}:{in_scope}"
+
+        return None
+
     def _build_content_hash(self, content: Content) -> str:
         """
         Build the content hash from the content.
@@ -2157,6 +2226,10 @@ class Knowledge(RemoteKnowledge):
             hash_parts.append(content.name)
         if content.description:
             hash_parts.append(content.description)
+
+        remote_identity = self._build_remote_content_identity(content.remote_content)
+        if remote_identity:
+            hash_parts.append(remote_identity)
 
         if content.path:
             hash_parts.append(str(content.path))
