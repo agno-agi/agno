@@ -109,11 +109,21 @@ class SubAgentConfig(BaseModel):
     model_tiers: Optional[Dict[str, Any]] = None
     """Map of tier label → model ID string **or** pre-instantiated ``Model``.
 
-    * A **string** is passed through ``agno.models.utils.get_model`` which
-      currently defaults to OpenAI — so plain strings work only when
-      ``OPENAI_API_KEY`` is available. For non-OpenAI providers (Azure,
-      Anthropic, Bedrock, Vertex, …) pass a fully-constructed ``Model``
-      instance instead.
+    * A **string** is passed through ``agno.models.utils.get_model``. Two
+      forms are accepted:
+
+      - Explicit ``"<provider>:<model_id>"`` (e.g. ``"anthropic:claude-sonnet-4-5"``)
+        works for every supported provider.
+      - A bare model ID whose prefix is unambiguous (``gpt-*``, ``claude-*``,
+        ``gemini-*``, ``mistral-*``, ``deepseek-*``, ``command-*``, ``grok-*``,
+        ``o1``/``o3``/``o4`` and their ``-*`` variants) is auto-resolved to
+        the canonical direct provider.
+
+      For wrapped providers — AWS Bedrock, Azure OpenAI/Foundry, Vertex —
+      use either the explicit form (``"azure-openai:gpt-4o"``) or pass a
+      pre-constructed ``Model`` instance. Sniffing intentionally never
+      routes to a wrapped provider because that choice depends on the
+      user's auth/region setup.
 
     * A **``Model`` instance** is returned as-is, skipping ``get_model``.
 
@@ -662,7 +672,8 @@ class SubAgentToolkit(Toolkit):
         1. ``model_tier`` → looked up in ``config.model_tiers``:
            * pre-instantiated ``Model`` → returned as-is (any provider)
            * string → passed through ``agno.models.utils.get_model``
-             (OpenAI-only by default)
+             (accepts both ``"<provider>:<id>"`` and bare IDs with a
+             sniffable prefix such as ``claude-*`` or ``gemini-*``)
         2. Template model
         3. Parent model
         """
