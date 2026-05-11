@@ -132,6 +132,40 @@ class TestResolveWsJwtConfigManualSetupPath:
         payload = cfg["validator"].validate_token(token)
         assert payload["sub"] == "user-1"
 
+    def test_falls_back_to_deprecated_secret_key(self):
+        """JWTMiddleware still supports the legacy secret_key kwarg; the WS
+        resolver must include it in verification_keys when no other keys are
+        provided. Otherwise the FIRST WS connection on a manual setup using
+        secret_key cannot validate tokens."""
+        from datetime import UTC, datetime, timedelta
+
+        import jwt
+
+        entry = SimpleNamespace(
+            cls=JWTMiddleware,
+            kwargs={
+                # No verification_keys, only the deprecated secret_key.
+                "secret_key": "legacy-shared-secret",
+                "algorithm": "HS256",
+            },
+        )
+        app = _make_fake_app(middleware_entries=[entry])
+
+        cfg = resolve_ws_jwt_config(app)
+        assert cfg["validator"] is not None
+
+        token = jwt.encode(
+            {
+                "sub": "u",
+                "exp": datetime.now(UTC) + timedelta(minutes=5),
+                "iat": datetime.now(UTC),
+            },
+            "legacy-shared-secret",
+            algorithm="HS256",
+        )
+        payload = cfg["validator"].validate_token(token)
+        assert payload["sub"] == "u"
+
     def test_does_not_cache_admin_scope_when_kwargs_omits_it(self):
         entry = SimpleNamespace(
             cls=JWTMiddleware,

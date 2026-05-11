@@ -298,6 +298,10 @@ class TestAsyncDbDispatch:
     def async_client(self, tmp_path):
         import uuid
 
+        # AsyncSqliteDb depends on aiosqlite; skip cleanly when the extra isn't
+        # installed (the SDK ships it as an optional dependency, not a test dep).
+        pytest.importorskip("aiosqlite")
+
         from agno.db.sqlite.async_sqlite import AsyncSqliteDb
 
         db = AsyncSqliteDb(
