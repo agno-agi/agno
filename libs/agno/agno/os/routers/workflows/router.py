@@ -39,10 +39,12 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     find_factory_by_id,
     format_sse_event,
+    format_sse_event_with_index,
     get_request_kwargs,
     get_workflow_by_id,
     get_workflow_by_id_async,
     resolve_workflow,
+    sanitize_sse_event,
 )
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowErrorEvent
@@ -54,6 +56,22 @@ from agno.workflow.workflow import Workflow
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
+
+
+def _component_events_to_skip(component: Any) -> Optional[List[Any]]:
+    return getattr(component, "events_to_skip", None)
+
+
+def _safe_workflow_response(response: WorkflowResponse) -> WorkflowResponse:
+    return WorkflowResponse(
+        id=response.id,
+        name=response.name,
+        description=response.description,
+        workflow_agent=response.workflow_agent,
+        is_component=response.is_component,
+        current_version=response.current_version,
+        stage=response.stage,
+    )
 
 
 async def handle_workflow_via_websocket(
@@ -461,6 +479,7 @@ async def workflow_response_streamer(
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    stream_tool_payloads: bool = False,
     **kwargs: Any,
 ) -> AsyncGenerator:
     try:
@@ -468,10 +487,7 @@ async def workflow_response_streamer(
         if background_tasks is not None:
             kwargs["background_tasks"] = background_tasks
 
-        if "stream_events" in kwargs:
-            stream_events = kwargs.pop("stream_events")
-        else:
-            stream_events = True
+        stream_events = kwargs.pop("stream_events", True)
 
         # Pass auth_token for remote workflows
         if auth_token and isinstance(workflow, RemoteWorkflow):
@@ -487,7 +503,13 @@ async def workflow_response_streamer(
         )
 
         async for run_response_chunk in run_response:
-            yield format_sse_event(run_response_chunk)  # type: ignore
+            sse_event = format_sse_event(
+                run_response_chunk,  # type: ignore[arg-type]
+                stream_tool_payloads=stream_tool_payloads,
+                events_to_skip=_component_events_to_skip(workflow),
+            )
+            if sse_event:
+                yield sse_event
 
         # If the workflow paused, yield the full WorkflowRunOutput as a final SSE event
         # so the FE has step_requirements for the /continue request.
@@ -532,6 +554,7 @@ async def workflow_resumable_response_streamer(
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    stream_tool_payloads: bool = False,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Resumable SSE generator for background=True, stream=True.
@@ -546,10 +569,7 @@ async def workflow_resumable_response_streamer(
     if background_tasks is not None:
         kwargs["background_tasks"] = background_tasks
 
-    if "stream_events" in kwargs:
-        stream_events = kwargs.pop("stream_events")
-    else:
-        stream_events = True
+    stream_events = kwargs.pop("stream_events", True)
 
     if auth_token and isinstance(workflow, RemoteWorkflow):
         kwargs["auth_token"] = auth_token
@@ -564,7 +584,13 @@ async def workflow_resumable_response_streamer(
             background=True,
             **kwargs,
         ):
-            yield sse_data
+            sse_event = sanitize_sse_event(
+                sse_data,
+                stream_tool_payloads=stream_tool_payloads,
+                events_to_skip=_component_events_to_skip(workflow),
+            )
+            if sse_event:
+                yield sse_event
     except (InputCheckError, OutputCheckError) as e:
         error_response = WorkflowErrorEvent(
             error=str(e),
@@ -595,23 +621,31 @@ async def workflow_continue_response_streamer(
     user_id: Optional[str] = None,
     step_requirements: Optional[List[Any]] = None,
     background_tasks: Optional[BackgroundTasks] = None,
+    stream_tool_payloads: bool = False,
     **kwargs: Any,
 ) -> AsyncGenerator:
     try:
         if background_tasks is not None:
             kwargs["background_tasks"] = background_tasks
+        stream_events = kwargs.pop("stream_events", True)
 
         run_response = await workflow.acontinue_run(  # type: ignore
             run_id=run_id,
             session_id=session_id,
             step_requirements=step_requirements,
             stream=True,
-            stream_events=True,
+            stream_events=stream_events,
             **kwargs,
         )
 
         async for run_response_chunk in run_response:
-            yield format_sse_event(run_response_chunk)  # type: ignore
+            sse_event = format_sse_event(
+                run_response_chunk,  # type: ignore[arg-type]
+                stream_tool_payloads=stream_tool_payloads,
+                events_to_skip=_component_events_to_skip(workflow),
+            )
+            if sse_event:
+                yield sse_event
 
         # If the workflow re-paused, yield the full WorkflowRunOutput as a final SSE event
         _session = workflow.get_session(session_id=session_id)
@@ -650,6 +684,7 @@ async def _resume_stream_generator(
     run_id: str,
     last_event_index: Optional[int],
     session_id: Optional[str],
+    stream_tool_payloads: bool = False,
 ) -> AsyncGenerator:
     """SSE generator for the /resume endpoint.
 
@@ -682,12 +717,15 @@ async def _resume_stream_generator(
                 yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
 
                 for idx, event in enumerate(run_output.events):
-                    event_dict = event.to_dict()
-                    event_dict["event_index"] = idx
-                    if "run_id" not in event_dict:
-                        event_dict["run_id"] = run_id
-                    event_type = event_dict.get("event", "message")
-                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                    sse_event = format_sse_event_with_index(
+                        event,
+                        event_index=idx,
+                        run_id=run_id,
+                        stream_tool_payloads=stream_tool_payloads,
+                        events_to_skip=_component_events_to_skip(workflow),
+                    )
+                    if sse_event:
+                        yield sse_event
                 return
             elif run_output:
                 meta = {
@@ -727,12 +765,15 @@ async def _resume_stream_generator(
         yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
 
         for ev_index, buffered_event in missed_events:
-            event_dict = buffered_event.to_dict()
-            event_dict["event_index"] = ev_index
-            if "run_id" not in event_dict:
-                event_dict["run_id"] = run_id
-            event_type = event_dict.get("event", "message")
-            yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+            sse_event = format_sse_event_with_index(
+                buffered_event,
+                event_index=ev_index,
+                run_id=run_id,
+                stream_tool_payloads=stream_tool_payloads,
+                events_to_skip=_component_events_to_skip(workflow),
+            )
+            if sse_event:
+                yield sse_event
         return
 
     # PATH 1: Run still active -- subscribe FIRST (to avoid race condition), then replay missed events
@@ -757,12 +798,15 @@ async def _resume_stream_generator(
             yield f"event: catch_up\ndata: {json.dumps(meta)}\n\n"
 
             for ev_index, buffered_event in missed_events:
-                event_dict = buffered_event.to_dict()
-                event_dict["event_index"] = ev_index
-                if "run_id" not in event_dict:
-                    event_dict["run_id"] = run_id
-                event_type = event_dict.get("event", "message")
-                yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                sse_event = format_sse_event_with_index(
+                    buffered_event,
+                    event_index=ev_index,
+                    run_id=run_id,
+                    stream_tool_payloads=stream_tool_payloads,
+                    events_to_skip=_component_events_to_skip(workflow),
+                )
+                if sse_event:
+                    yield sse_event
                 last_replayed_index = ev_index
 
         # Re-check buffer status after subscribing
@@ -771,12 +815,15 @@ async def _resume_stream_generator(
             remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
             if remaining:
                 for ev_index, buffered_event in remaining:
-                    event_dict = buffered_event.to_dict()
-                    event_dict["event_index"] = ev_index
-                    if "run_id" not in event_dict:
-                        event_dict["run_id"] = run_id
-                    event_type = event_dict.get("event", "message")
-                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                    sse_event = format_sse_event_with_index(
+                        buffered_event,
+                        event_index=ev_index,
+                        run_id=run_id,
+                        stream_tool_payloads=stream_tool_payloads,
+                        events_to_skip=_component_events_to_skip(workflow),
+                    )
+                    if sse_event:
+                        yield sse_event
             return
 
         # Stream live events from queue (dedup by event_index)
@@ -790,12 +837,15 @@ async def _resume_stream_generator(
                     # Run ended - replay any remaining events from buffer
                     remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
                     for ev_index, buffered_event in remaining:
-                        event_dict = buffered_event.to_dict()
-                        event_dict["event_index"] = ev_index
-                        if "run_id" not in event_dict:
-                            event_dict["run_id"] = run_id
-                        event_type = event_dict.get("event", "message")
-                        yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                        sse_event = format_sse_event_with_index(
+                            buffered_event,
+                            event_index=ev_index,
+                            run_id=run_id,
+                            stream_tool_payloads=stream_tool_payloads,
+                            events_to_skip=_component_events_to_skip(workflow),
+                        )
+                        if sse_event:
+                            yield sse_event
                     break
                 # Still running - send heartbeat to keep connection alive
                 yield ": heartbeat\n\n"
@@ -806,7 +856,13 @@ async def _resume_stream_generator(
             if event_index <= last_replayed_index:
                 continue
             last_replayed_index = event_index
-            yield sse_data
+            sse_event = sanitize_sse_event(
+                sse_data,
+                stream_tool_payloads=stream_tool_payloads,
+                events_to_skip=_component_events_to_skip(workflow),
+            )
+            if sse_event:
+                yield sse_event
 
     finally:
         sse_subscriber_manager.unsubscribe(run_id, queue)
@@ -1089,9 +1145,10 @@ def get_workflow_router(
             raise HTTPException(status_code=404, detail="Workflow not found")
 
         if isinstance(workflow, RemoteWorkflow):
-            return await workflow.get_workflow_config()
+            remote_response = await workflow.get_workflow_config()
+            return remote_response if os.expose_agent_config else _safe_workflow_response(remote_response)
         else:
-            return await WorkflowResponse.from_workflow(workflow=workflow)
+            return await WorkflowResponse.from_workflow(workflow=workflow, expose_config=os.expose_agent_config)
 
     @router.post(
         "/workflows/{workflow_id}/runs",
@@ -1149,6 +1206,7 @@ def get_workflow_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, create_workflow_run)
+        kwargs.pop("stream_tool_payloads", None)
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             if user_id and user_id != request.state.user_id:
@@ -1215,6 +1273,7 @@ def get_workflow_router(
                         user_id=user_id,
                         background_tasks=background_tasks,
                         auth_token=auth_token,
+                        stream_tool_payloads=os.stream_tool_payloads,
                         **kwargs,
                     ),
                     media_type="text/event-stream",
@@ -1256,6 +1315,7 @@ def get_workflow_router(
                         user_id=user_id,
                         background_tasks=background_tasks,
                         auth_token=auth_token,
+                        stream_tool_payloads=os.stream_tool_payloads,
                         **kwargs,
                     ),
                     media_type="text/event-stream",
@@ -1389,6 +1449,7 @@ def get_workflow_router(
                     user_id=user_id,
                     step_requirements=parsed_requirements,
                     background_tasks=background_tasks,
+                    stream_tool_payloads=os.stream_tool_payloads,
                 ),
                 media_type="text/event-stream",
             )
@@ -1489,7 +1550,9 @@ def get_workflow_router(
             raise HTTPException(status_code=400, detail="Stream resumption is not supported for remote workflows")
 
         return StreamingResponse(
-            _resume_stream_generator(workflow, run_id, last_event_index, session_id),
+            _resume_stream_generator(
+                workflow, run_id, last_event_index, session_id, stream_tool_payloads=os.stream_tool_payloads
+            ),
             media_type="text/event-stream",
         )
 
