@@ -990,9 +990,16 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
     for entry in user_middleware:
         if getattr(entry, "cls", None) is JWTMiddleware:
             kwargs = getattr(entry, "kwargs", {}) or {}
+            # Mirror JWTMiddleware.__init__ deprecated secret_key handling:
+            # append to verification_keys so manual setups using secret_key
+            # still get a working WebSocket validator.
+            verification_keys = list(kwargs.get("verification_keys") or [])
+            legacy_secret = kwargs.get("secret_key")
+            if legacy_secret and legacy_secret not in verification_keys:
+                verification_keys.append(legacy_secret)
             try:
                 lazy_validator = JWTValidator(
-                    verification_keys=kwargs.get("verification_keys"),
+                    verification_keys=verification_keys or None,
                     jwks_file=kwargs.get("jwks_file"),
                     algorithm=kwargs.get("algorithm", "RS256"),
                     validate=kwargs.get("validate", True),
