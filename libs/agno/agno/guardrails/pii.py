@@ -1,5 +1,4 @@
 import re
-from re import Pattern
 from typing import Dict, Optional, Union
 
 from agno.exceptions import CheckTrigger, InputCheckError
@@ -27,7 +26,7 @@ class PIIDetectionGuardrail(BaseGuardrail):
         enable_credit_card_check: bool = True,
         enable_email_check: bool = True,
         enable_phone_check: bool = True,
-        custom_patterns: Optional[Dict[str, Union[str, Pattern[str]]]] = None,
+        custom_patterns: Optional[Dict[str, Union[str, re.Pattern[str]]]] = None,
     ):
         self.mask_pii = mask_pii
         self.pii_patterns = {}
@@ -42,6 +41,8 @@ class PIIDetectionGuardrail(BaseGuardrail):
             self.pii_patterns["Phone"] = re.compile(r"\b\d{3}[\s.-]?\d{3}[\s.-]?\d{4}\b")
 
         if custom_patterns:
+            # Strings are compiled once here; invalid regex raises re.error
+            # immediately at configuration time (fail-fast, not at check() call).
             for name, pattern in custom_patterns.items():
                 if isinstance(pattern, str):
                     self.pii_patterns[name] = re.compile(pattern)
