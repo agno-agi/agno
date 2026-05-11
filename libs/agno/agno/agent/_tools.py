@@ -44,69 +44,59 @@ from agno.utils.log import log_debug, log_warning
 
 
 def _wire_google_auth(
+    agent: Agent,
     tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]],
 ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
-    """Consolidate OAuth scopes across Google toolkits and wire GoogleOAuthTools.
+    """Wire Google OAuth across the agent's tool list.
 
-    Two modes:
-    1. Cookbook mode: No auth= passed — auto-create GoogleAuth behind the scenes
-       for scope consolidation. Auth uses default file-based credentials.
-    2. Custom OAuth: User passes auth=GoogleAuth(...) with enterprise params —
-       register each toolkit's scopes with that coordinator.
+    Resolves a single shared ``GoogleAuth`` coordinator and threads it through:
 
-    Also wires GoogleOAuthTools if present, so user can just do:
-        tools=[GoogleOAuthTools(), GmailTools()]
-    without explicitly passing auth= to either.
+    1. **Coordinator selection.** Prefer ``agent.google_auth`` (first-class param,
+       analogous to ``agent.knowledge``). Otherwise auto-create a default one
+       for cookbook/file-based flows.
+    2. **Toolkit injection.** Set the coordinator on every ``GoogleToolkit`` and
+       register each toolkit's scopes into the shared scope registry.
+    3. **LLM tool registration.** If ``agent.google_auth`` is explicitly set and
+       any Google toolkit is present, auto-append an ``oauth_google`` Function so
+       the model can surface an OAuth URL on auth failure — without the user
+       having to add a separate toolkit to ``tools=[...]``.
     """
     if tools is None:
         return tools
 
     # Lazy import to avoid circular dependency
     try:
-        from agno.tools.google.auth import GoogleAuth
+        from agno.tools.google.auth import GoogleAuth, make_oauth_google_function
         from agno.tools.google.base import GoogleToolkit
-        from agno.tools.google.oauth_tools import GoogleOAuthTools
     except ImportError:
         return tools
 
-    # Find Google toolkits and OAuth tools
     google_toolkits = [t for t in tools if isinstance(t, GoogleToolkit)]
-    oauth_tools = [t for t in tools if isinstance(t, GoogleOAuthTools)]
-
-    # Nothing to wire if no Google toolkits
-    if not google_toolkits and not oauth_tools:
+    if not google_toolkits and agent.google_auth is None:
         return tools
 
-    # Check if any toolkit/oauth_tool has a custom GoogleAuth configured
-    shared_auth = None
-    for t in google_toolkits + oauth_tools:
-        ga = getattr(t, "auth", None)
-        if ga is not None:
-            shared_auth = ga
-            break
-
-    # Auto-create GoogleAuth if none provided (cookbook mode)
+    # Coordinator selection: explicit agent param wins, else auto-create.
+    shared_auth = agent.google_auth
     if shared_auth is None:
         shared_auth = GoogleAuth()
         log_debug("Auto-created GoogleAuth for scope consolidation (cookbook mode)")
 
-    # Wire GoogleAuth to each Google toolkit and register scopes
+    # Inject coordinator into each Google toolkit and union scopes.
     for t in google_toolkits:
-        if getattr(t, "auth", None) is None:
-            t.auth = shared_auth
-
-        ga = t.auth
+        t.auth = shared_auth
         service_name = getattr(t, "google_service_name", None)
         scopes = getattr(t, "scopes", None)
-        if ga is not None and service_name and scopes:
-            ga.register_service(service_name, scopes)
-            log_debug(f"Registered {service_name} scopes with GoogleAuth")
+        if service_name and scopes:
+            shared_auth.register_service(service_name, scopes)
 
-    # Wire GoogleAuth to GoogleOAuthTools if not already set
-    for t in oauth_tools:
-        if getattr(t, "auth", None) is None:
-            t.auth = shared_auth
-            log_debug("Wired GoogleAuth to GoogleOAuthTools")
+    # Auto-register oauth_google as an LLM tool when the agent has an explicit
+    # google_auth (i.e. multi-user / interface mode). In cookbook mode we skip
+    # this — the file-based flow doesn't need an LLM-initiated URL.
+    if agent.google_auth is not None and google_toolkits:
+        already_registered = any(isinstance(t, Function) and t.name == "oauth_google" for t in tools)
+        if not already_registered:
+            tools.append(make_oauth_google_function(shared_auth))
+            log_debug("Auto-registered oauth_google tool from agent.google_auth")
 
     return tools
 
@@ -195,7 +185,7 @@ def get_tools(
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
 
     # Auto-register oauth_google when Google toolkits have client-side OAuth enabled
-    resolved_tools = _wire_google_auth(resolved_tools)
+    resolved_tools = _wire_google_auth(agent, resolved_tools)
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
@@ -302,7 +292,7 @@ async def aget_tools(
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
 
     # Auto-register oauth_google when Google toolkits have client-side OAuth enabled
-    resolved_tools = _wire_google_auth(resolved_tools)
+    resolved_tools = _wire_google_auth(agent, resolved_tools)
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)

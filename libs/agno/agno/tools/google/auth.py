@@ -302,12 +302,17 @@ class GoogleAuth:
 
     Usage (cookbook — file-based, zero config):
         gmail = GmailTools()
+        agent = Agent(tools=[gmail])
 
-    Usage (interface — client-side OAuth, opt-in):
-        google_auth = GoogleAuth(client_id="...")
-        gmail = GmailTools(google_auth=google_auth)
-        agent = Agent(db=PgDb(...), tools=[gmail])
-        # Framework auto-registers oauth_google tool for error-recovery
+    Usage (interface — client-side OAuth, multi-user):
+        agent = Agent(
+            db=PgDb(...),
+            google_auth=GoogleAuth(client_id="...", state_secret="..."),
+            tools=[GmailTools()],
+        )
+        # Framework auto-injects the coordinator into every GoogleToolkit and
+        # auto-registers `oauth_google` as a tool so the model can surface an
+        # OAuth URL on authentication failure.
     """
 
     def __init__(
@@ -358,6 +363,113 @@ class GoogleAuth:
         # Union scopes if service already registered (multiple toolkits, different scopes)
         existing = self._services.get(service, [])
         self._services[service] = list(set(existing) | set(scopes))
+
+    def build_oauth_url(
+        self,
+        user_id: Optional[str],
+        db: Any,
+    ) -> Dict[str, Any]:
+        """Mint a PKCE-bearing OAuth URL and persist the pending row.
+
+        The model surfaces this URL (or the framework embeds it in an auth-failure
+        result) so the end user can click through Google's consent screen. The
+        returned dict has the same shape regardless of caller — see ``oauth_google``
+        for the LLM-facing Function wrapper.
+
+        Args:
+            user_id: User identifier from run_context (None in single-user mode).
+            db: Database with auth-token support. Required for PKCE state.
+
+        Returns:
+            Dict with one of:
+              - ``oauth_url`` + ``services`` + ``slack_link`` + ``message`` on success
+              - ``error`` on misconfiguration
+        """
+        from urllib.parse import urlencode
+
+        if not self._services:
+            return {"error": "No Google services registered. Add GmailTools, GoogleCalendarTools, etc. to your agent."}
+
+        if not self._state_secret:
+            return {
+                "error": "GoogleAuth requires a state signing secret. Set "
+                "state_secret= or the GOOGLE_OAUTH_STATE_SECRET env var."
+            }
+
+        valid_db = _valid_auth_token_db(db) or _valid_auth_token_db(self._db)
+        if valid_db is None:
+            return {
+                "error": "GoogleAuth requires a database for PKCE state storage. "
+                "Pass db= to GoogleAuth or set agent.db."
+            }
+
+        services = list(self._services.keys())
+        scopes: set = set()
+        for service_scopes in self._services.values():
+            scopes.update(service_scopes)
+
+        code_verifier, code_challenge = _generate_pkce_pair()
+        state_id = secrets.token_urlsafe(16)
+
+        try:
+            from agno.utils.oauth_state import sign_state
+
+            state = sign_state(
+                {"user_id": user_id, "services": services, "state_id": state_id},
+                secret=self._state_secret,
+                ttl_seconds=self._state_ttl_seconds,
+            )
+        except ImportError:
+            return {
+                "error": "PyJWT is required for OAuth state signing. "
+                "Install with `pip install PyJWT` or `pip install agno[os]`."
+            }
+
+        try:
+            valid_db.upsert_auth_token(
+                {
+                    "provider": "google",
+                    "user_id": user_id,
+                    "service": "google",
+                    "token_data": {
+                        "pkce_verifier": code_verifier,
+                        "pkce_state_id": state_id,
+                        "pending": True,
+                    },
+                    "granted_scopes": list(scopes),
+                }
+            )
+        except Exception as e:
+            log_error(f"Failed to store PKCE state: {e}")
+            return {"error": f"Failed to initialize OAuth flow: {e}"}
+
+        params: Dict[str, str] = {
+            "client_id": self.client_id or "",
+            "redirect_uri": self.redirect_uri or "",
+            "scope": " ".join(scopes),
+            "response_type": "code",
+            "access_type": self._access_type,
+            "prompt": self._prompt,
+            "include_granted_scopes": "true" if self._include_granted_scopes else "false",
+            "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+        }
+        if self._hosted_domain:
+            params["hd"] = self._hosted_domain
+        if self._login_hint:
+            params["login_hint"] = self._login_hint
+
+        url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
+        log_debug(f"Generated PKCE OAuth URL for user={user_id}, state_id={state_id}")
+
+        link_text = f"Connect {', '.join(services)}"
+        return {
+            "oauth_url": url,
+            "services": services,
+            "slack_link": f"<{url}|{link_text}>",
+            "message": f"Please authenticate with Google to access {', '.join(services)}.",
+        }
 
     def handle_oauth_callback(self, code: str, state: str, db: Any) -> Dict[str, Any]:
         """Exchange an OAuth authorization code for credentials and store in DB.
@@ -552,3 +664,45 @@ class GoogleAuth:
             )
 
         return router
+
+
+def make_oauth_google_function(google_auth: "GoogleAuth") -> Any:
+    """Build the LLM-callable ``oauth_google`` Function for an ``Agent``.
+
+    Used by the framework when ``Agent(google_auth=...)`` is set — never invoked
+    by user code directly. The returned Function is keyword-only with hidden
+    ``run_context`` and ``agent`` params injected by the framework.
+
+    Args:
+        google_auth: The coordinator instance to bind into the closure.
+
+    Returns:
+        Function: registered tool that mints an OAuth URL on demand.
+    """
+    from agno.tools.function import Function
+
+    def oauth_google(
+        run_context: Optional[Any] = None,
+        agent: Optional[Any] = None,
+    ) -> str:
+        """Get the Google OAuth URL to authenticate the user's Google account.
+
+        Automatically requests scopes for all registered Google toolkits so the
+        user only needs to authenticate once.
+
+        Returns:
+            str: JSON with ``oauth_url``, ``services``, ``slack_link``, ``message``,
+            or ``error``.
+        """
+        user_id = getattr(run_context, "user_id", None) if run_context else None
+        db = getattr(agent, "db", None) if agent else None
+        result = google_auth.build_oauth_url(user_id=user_id, db=db)
+        return json.dumps(result)
+
+    fn = Function.from_callable(oauth_google)
+    fn.name = "oauth_google"
+    fn.description = (
+        "When any Google tool (Gmail, Calendar, Drive, Sheets) returns an "
+        "authentication error, call oauth_google to get the OAuth URL for the user."
+    )
+    return fn

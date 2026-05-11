@@ -23,10 +23,11 @@ Setup:
    screen with ALL three toolkits' scopes bundled into one consent flow.
    After you click through, the token is saved to tmp/google_workspace_db.db
    and reused on subsequent runs.
-6. For Slack/AgentOS deployments, mount the OAuth callback router instead:
-       app.include_router(google_auth.get_oauth_router())
-   The act of mounting the router switches GoogleAuth into interface mode,
-   where the agent returns an OAuth URL (via the oauth_google tool)
+6. For Slack/AgentOS deployments, set `google_auth=GoogleAuth(...)` on the
+   Agent and mount the OAuth callback router on the same FastAPI app:
+       app.include_router(agent.google_auth.get_oauth_router(db=db))
+   Mounting the router switches GoogleAuth into interface mode, where the
+   agent returns an OAuth URL (via the auto-registered oauth_google tool)
    instead of opening a local browser. See cookbook/05_agent_os/ for hosted
    examples.
 """
@@ -41,30 +42,16 @@ from agno.tools.google.gmail import GmailTools
 
 # Multi-toolkit scope carry-over: Google skips re-consent for tools the user already
 # approved under this OAuth client. Per-scope revocation moves to account settings.
-google_auth = GoogleAuth(include_granted_scopes=True)
-
-gmail = GmailTools(
-    auth=google_auth,
-    include_tools=["get_latest_emails", "search_emails"],
-)
-
-calendar = GoogleCalendarTools(
-    auth=google_auth,
-    create_event=False,
-    update_event=False,
-    delete_event=False,
-)
-
-drive = GoogleDriveTools(
-    auth=google_auth,
-    include_tools=["list_files", "search_files"],
-)
-
 agent = Agent(
     name="Workspace Agent",
     model=OpenAIResponses(id="gpt-5.4"),
-    tools=[google_auth, gmail, calendar, drive],
     db=SqliteDb(db_file="tmp/google_workspace_db.db"),
+    google_auth=GoogleAuth(include_granted_scopes=True),
+    tools=[
+        GmailTools(include_tools=["get_latest_emails", "search_emails"]),
+        GoogleCalendarTools(create_event=False, update_event=False, delete_event=False),
+        GoogleDriveTools(include_tools=["list_files", "search_files"]),
+    ],
     instructions=[
         "You are a Google Workspace assistant with access to Gmail, Calendar, and Drive.",
         "When any Google tool returns an authentication error, immediately call",

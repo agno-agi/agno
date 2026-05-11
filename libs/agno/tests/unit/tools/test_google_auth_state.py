@@ -6,8 +6,7 @@ import jwt
 import pytest
 
 from agno.db.sqlite.sqlite import SqliteDb
-from agno.tools.google.auth import GoogleAuth
-from agno.tools.google.oauth_tools import GoogleOAuthTools
+from agno.tools.google.auth import GoogleAuth, make_oauth_google_function
 from agno.utils.oauth_state import sign_state, verify_state
 
 
@@ -41,9 +40,13 @@ def _state_from_url(url: str) -> str:
     return url.split("state=")[1].split("&")[0]
 
 
-def test_authenticate_google_produces_verifiable_state(google_auth):
-    oauth_tools = GoogleOAuthTools(auth=google_auth)
-    resp = json.loads(oauth_tools.oauth_google(run_context=_fake_run_context("alice")))
+def _call_oauth_google(ga, run_context=None, agent=None):
+    fn = make_oauth_google_function(ga)
+    return fn.entrypoint(run_context=run_context, agent=agent)
+
+
+def test_oauth_google_produces_verifiable_state(google_auth):
+    resp = json.loads(_call_oauth_google(google_auth, run_context=_fake_run_context("alice")))
     state = _state_from_url(resp["oauth_url"])
     payload = verify_state(state, secret="test-state-secret-32-bytes-or-longer")
     assert payload["user_id"] == "alice"
@@ -55,8 +58,7 @@ def test_env_var_fallback(monkeypatch, test_db):
     monkeypatch.setenv("GOOGLE_OAUTH_STATE_SECRET", "env-secret")
     ga = GoogleAuth(client_id="x", db=test_db)
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
-    oauth_tools = GoogleOAuthTools(auth=ga)
-    resp = json.loads(oauth_tools.oauth_google(run_context=_fake_run_context("alice")))
+    resp = json.loads(_call_oauth_google(ga, run_context=_fake_run_context("alice")))
     state = _state_from_url(resp["oauth_url"])
     payload = verify_state(state, secret="env-secret")
     assert payload["user_id"] == "alice"
@@ -66,8 +68,7 @@ def test_kwarg_overrides_env_var(monkeypatch, test_db):
     monkeypatch.setenv("GOOGLE_OAUTH_STATE_SECRET", "env-value")
     ga = GoogleAuth(client_id="x", state_secret="kwarg-wins", db=test_db)
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
-    oauth_tools = GoogleOAuthTools(auth=ga)
-    resp = json.loads(oauth_tools.oauth_google(run_context=_fake_run_context("alice")))
+    resp = json.loads(_call_oauth_google(ga, run_context=_fake_run_context("alice")))
     state = _state_from_url(resp["oauth_url"])
     # Decodes with kwarg secret; raises with env secret
     assert verify_state(state, secret="kwarg-wins")["user_id"] == "alice"
@@ -84,8 +85,7 @@ def test_fabricated_state_rejected(google_auth):
 
 
 def test_tampered_state_rejected(google_auth):
-    oauth_tools = GoogleOAuthTools(auth=google_auth)
-    resp = json.loads(oauth_tools.oauth_google(run_context=_fake_run_context("alice")))
+    resp = json.loads(_call_oauth_google(google_auth, run_context=_fake_run_context("alice")))
     state = _state_from_url(resp["oauth_url"])
     tampered = state[:-3] + ("A" if state[-3] != "A" else "B") + state[-2:]
     mock_db = Mock()
@@ -117,11 +117,10 @@ def test_get_oauth_router_requires_state_secret(monkeypatch):
         ga.get_oauth_router()
 
 
-def test_authenticate_google_without_state_secret_errors(monkeypatch):
+def test_oauth_google_without_state_secret_errors(monkeypatch, test_db):
     monkeypatch.delenv("GOOGLE_OAUTH_STATE_SECRET", raising=False)
-    ga = GoogleAuth(client_id="id")
+    ga = GoogleAuth(client_id="id", db=test_db)
     ga.register_service("gmail", ["https://www.googleapis.com/auth/gmail.readonly"])
-    oauth_tools = GoogleOAuthTools(auth=ga)
-    resp = json.loads(oauth_tools.oauth_google())
+    resp = json.loads(_call_oauth_google(ga))
     assert "error" in resp
     assert "state signing secret" in resp["error"].lower()

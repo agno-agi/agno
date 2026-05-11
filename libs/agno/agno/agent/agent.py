@@ -159,6 +159,13 @@ class Agent:
     # Skills provide structured instructions, reference docs, and scripts for agents
     skills: Optional[Skills] = None
 
+    # --- Google OAuth ---
+    # Coordinator for Google OAuth flows (Gmail, Calendar, Drive, Sheets, Slides).
+    # When set, the framework auto-registers `oauth_google` as a tool the model
+    # can call to surface an OAuth URL on authentication failure, and auto-wires
+    # the coordinator into any GoogleToolkit instances in tools=[...].
+    google_auth: Optional[Any] = None
+
     # --- Agent Tools ---
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
@@ -421,6 +428,7 @@ class Agent:
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         skills: Optional[Skills] = None,
+        google_auth: Optional[Any] = None,
         metadata: Optional[Dict[str, Any]] = None,
         tools: Optional[Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
         tool_call_limit: Optional[int] = None,
@@ -576,6 +584,8 @@ class Agent:
         self.references_format = references_format
 
         self.skills = skills
+
+        self.google_auth = google_auth
 
         self.metadata = metadata
 

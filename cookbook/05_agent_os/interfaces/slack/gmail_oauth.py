@@ -26,7 +26,6 @@ from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
 from agno.tools.google.auth import GoogleAuth
 from agno.tools.google.gmail import GmailTools
-from agno.tools.google.oauth_tools import GoogleOAuthTools
 
 db = SqliteDb(db_file="tmp/slack_gmail_oauth.db")
 
@@ -38,10 +37,8 @@ agent = Agent(
     name="Gmail Slack Agent",
     model=OpenAIResponses(id="gpt-5.4"),
     db=db,
-    tools=[
-        GoogleOAuthTools(auth=google_auth),
-        GmailTools(auth=google_auth, include_tools=["get_latest_emails", "search_emails"]),
-    ],
+    google_auth=google_auth,
+    tools=[GmailTools(include_tools=["get_latest_emails", "search_emails"])],
     instructions=(
         "You are a Gmail assistant in Slack. If any Gmail tool returns an authentication error, "
         "IMMEDIATELY call `oauth_google` with services=['gmail']. "

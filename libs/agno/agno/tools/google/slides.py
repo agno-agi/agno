@@ -88,7 +88,6 @@ class GoogleSlidesTools(GoogleToolkit):
 
     def __init__(
         self,
-        auth: Optional[Any] = None,
         store_token_in_db: bool = False,
         scopes: Optional[List[str]] = None,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
@@ -173,7 +172,6 @@ class GoogleSlidesTools(GoogleToolkit):
             credentials_path=credentials_path,
             service_account_path=service_account_path,
             delegated_user=delegated_user,
-            auth=auth,
             store_token_in_db=store_token_in_db,
             oauth_port=oauth_port,
             login_hint=login_hint,

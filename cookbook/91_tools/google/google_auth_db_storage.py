@@ -22,19 +22,12 @@ from agno.tools.google.gmail import GmailTools
 # Create Agent
 # ---------------------------------------------------------------------------
 
-google_auth = GoogleAuth()
-
 agent = Agent(
     name="Gmail Agent",
     model=OpenAIResponses(id="gpt-5.4"),
-    tools=[
-        google_auth,
-        GmailTools(
-            auth=google_auth,
-            include_tools=["get_latest_emails", "search_emails"],
-        ),
-    ],
     db=SqliteDb(db_file="tmp/google_auth.db"),
+    google_auth=GoogleAuth(),
+    tools=[GmailTools(include_tools=["get_latest_emails", "search_emails"])],
     markdown=True,
 )
 

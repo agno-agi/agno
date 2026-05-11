@@ -49,7 +49,6 @@ class GoogleToolkit(Toolkit):
         credentials_path: Optional[str] = None,
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
-        auth: Optional["GoogleAuth"] = None,
         store_token_in_db: bool = False,
         oauth_port: Optional[int] = 0,
         login_hint: Optional[str] = None,
@@ -62,14 +61,14 @@ class GoogleToolkit(Toolkit):
         self.credentials_path = credentials_path
         self.service_account_path = service_account_path
         self.delegated_user = delegated_user
-        self.auth = auth
+        # Populated by the framework at parse_tools time from agent.google_auth
+        # (or an auto-created default for cookbook/file-based flows). Tests
+        # may assign directly via gtool.auth = GoogleAuth(...).
+        self.auth: Optional["GoogleAuth"] = None
         self.store_token_in_db = store_token_in_db
         self._db: Optional[Any] = None
         self.oauth_port = oauth_port
         self.login_hint = login_hint
-
-        if self.auth and self.google_service_name:
-            self.auth.register_service(self.google_service_name, self.scopes)
 
     @property
     def service(self) -> Any:
@@ -175,8 +174,7 @@ class GoogleToolkit(Toolkit):
             # Server mode: don't fall through to browser OAuth
             if self.auth and self.auth._callback_configured:
                 raise PermissionError(
-                    f"{self.google_service_name.title()} not authenticated — "
-                    "user must complete OAuth via oauth_google"
+                    f"{self.google_service_name.title()} not authenticated — user must complete OAuth via oauth_google"
                 )
 
         # 4. File fallback (local mode)

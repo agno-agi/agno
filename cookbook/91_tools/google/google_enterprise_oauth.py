@@ -11,7 +11,7 @@ Demonstrates enterprise-grade Google OAuth features:
 
 Two modes:
 1. Bot/Service Account (default): Use pre-configured credentials, no OAuth needed
-2. Client-Side OAuth (opt-in): Pass auth= to enable per-user authentication
+2. Client-Side OAuth (opt-in): Pass `google_auth=` on the Agent to enable per-user authentication
 
 Setup:
   1. Google Cloud Console -> OAuth consent screen -> Add your domain
@@ -30,8 +30,6 @@ from agno.models.openai import OpenAIResponses
 from agno.tools.google.auth import GoogleAuth
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
-from agno.tools.google.oauth_tools import GoogleOAuthTools
-
 
 # Mode 1: Bot/Service Account (default credentials, no OAuth)
 # Use when you have pre-configured credentials (like Coda's bot token)
@@ -68,12 +66,12 @@ oauth_agent = Agent(
     name="Enterprise OAuth Agent",
     model=OpenAIResponses(id="gpt-5.4"),
     db=SqliteDb(db_file="tmp/enterprise_oauth.db"),
+    # First-class agent param — framework injects the coordinator into every
+    # GoogleToolkit and auto-registers `oauth_google` as a model-callable tool.
+    google_auth=google_auth,
     tools=[
-        # Explicit opt-in: add GoogleOAuthTools to expose oauth_google to LLM
-        GoogleOAuthTools(auth=google_auth),
-        # Pass auth= to enable client-side OAuth + scope consolidation
-        GmailTools(auth=google_auth, include_tools=["get_latest_emails", "search_emails"]),
-        GoogleCalendarTools(auth=google_auth, include_tools=["list_events", "create_event"]),
+        GmailTools(include_tools=["get_latest_emails", "search_emails"]),
+        GoogleCalendarTools(include_tools=["list_events", "create_event"]),
     ],
     instructions=(
         "You are an enterprise assistant with access to Gmail and Calendar. "
@@ -97,5 +95,5 @@ if __name__ == "__main__":
     print(f"Access type: {google_auth._access_type}")
     print(f"Prompt mode: {google_auth._prompt}")
     print(f"Token encryption: {google_auth._encrypt_tokens}")
-    print("\nGoogleOAuthTools explicitly added — oauth_google callable by LLM.")
+    print("\noauth_google auto-registered via agent.google_auth.")
     oauth_agent.print_response("What tools do you have access to?")
