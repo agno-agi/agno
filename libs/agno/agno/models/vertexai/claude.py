@@ -38,7 +38,7 @@ class Claude(AnthropicClaude):
     def __post_init__(self):
         """Validate model configuration after initialization."""
         super().__post_init__()
-        # Parent's startswith() fails on model@date format IDs
+        # Parent's alias list uses - separator; VertexAI uses @ (model@date)
         self.supports_native_structured_outputs = self._supports_structured_outputs()
         self.supports_json_schema_outputs = False
 
