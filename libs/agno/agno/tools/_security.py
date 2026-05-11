@@ -302,3 +302,122 @@ def unwrap_secret(value: object) -> Optional[str]:
     if callable(get_secret):
         return get_secret()
     return str(value)
+
+
+# --- Python exec sandbox -------------------------------------------------
+
+# Names from ``builtins`` that are pure or near-pure and cannot escape
+# the interpreter. Deliberately excludes:
+#   * ``__import__`` / ``import`` machinery (arbitrary module load)
+#   * ``open``, ``input``, ``print`` (I/O escape hatches; ``print`` is
+#     also a side-effect that bypasses return-variable capture)
+#   * ``exec``, ``eval``, ``compile`` (re-entrant code execution)
+#   * ``globals``, ``locals``, ``vars``, ``dir`` (introspection paths
+#     that lead back to the frame / module scope)
+#   * ``getattr`` with dotted traversal, ``setattr``, ``delattr``
+#     (mutate arbitrary objects)
+#   * ``type`` called with three args (dynamic class construction),
+#     ``object.__subclasses__`` (classic sandbox escape via
+#     ``().__class__.__mro__[-1].__subclasses__()``)
+#   * ``help``, ``copyright``, ``credits``, ``license`` (site builtins
+#     that import modules on access)
+#
+# The allowlist is intentionally conservative. Callers that need richer
+# semantics should construct :class:`PythonTools` with ``unsafe_exec=
+# True`` and accept the documented RCE surface, or run the interpreter
+# out-of-process in a sandbox the operator controls.
+SAFE_BUILTIN_NAMES: FrozenSet[str] = frozenset(
+    {
+        # Numeric
+        "abs",
+        "divmod",
+        "max",
+        "min",
+        "pow",
+        "round",
+        "sum",
+        # Type constructors that are pure
+        "bool",
+        "bytes",
+        "complex",
+        "dict",
+        "float",
+        "frozenset",
+        "int",
+        "list",
+        "set",
+        "slice",
+        "str",
+        "tuple",
+        # Iteration helpers
+        "all",
+        "any",
+        "enumerate",
+        "filter",
+        "iter",
+        "len",
+        "map",
+        "next",
+        "range",
+        "reversed",
+        "sorted",
+        "zip",
+        # Introspection that does not escalate
+        "isinstance",
+        "issubclass",
+        "callable",
+        "hash",
+        "id",
+        "repr",
+        # String / encoding
+        "ascii",
+        "bin",
+        "chr",
+        "format",
+        "hex",
+        "oct",
+        "ord",
+        # Exceptions — agents need these to write try/except
+        "ArithmeticError",
+        "AssertionError",
+        "AttributeError",
+        "BaseException",
+        "Exception",
+        "IndexError",
+        "KeyError",
+        "LookupError",
+        "NotImplementedError",
+        "RuntimeError",
+        "StopIteration",
+        "TypeError",
+        "ValueError",
+        "ZeroDivisionError",
+        # Constants
+        "True",
+        "False",
+        "None",
+        "NotImplemented",
+        "Ellipsis",
+    }
+)
+
+
+def build_safe_builtins() -> dict:
+    """Build the restricted ``__builtins__`` dict for in-process exec.
+
+    The returned dict maps each name in :data:`SAFE_BUILTIN_NAMES` to
+    its real ``builtins`` attribute. Injecting this as the
+    ``"__builtins__"`` key of the globals passed to :func:`exec` or
+    :func:`runpy.run_path` prevents CPython from auto-populating the
+    full ``builtins`` module, which is what otherwise leaves
+    ``__import__``, ``open``, ``eval`` and the object-subclass
+    traversal path reachable.
+
+    Returns:
+        A fresh ``dict`` containing only the allowlisted builtins.
+        The dict is freshly constructed on every call so callers may
+        mutate it without affecting other invocations.
+    """
+    import builtins
+
+    return {name: getattr(builtins, name) for name in SAFE_BUILTIN_NAMES if hasattr(builtins, name)}

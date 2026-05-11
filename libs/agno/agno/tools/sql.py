@@ -11,7 +11,7 @@ from agno.tools._security import (
 from agno.utils.log import log_debug, log_warning, logger
 
 try:
-    from sqlalchemy import Engine, create_engine
+    from sqlalchemy import Engine, create_engine, event
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session, sessionmaker
     from sqlalchemy.sql.expression import text
@@ -22,16 +22,98 @@ if TYPE_CHECKING:
     from pydantic import SecretStr
 
 
+def _apply_engine_read_only(engine: "Engine") -> None:
+    """Best-effort engine-level read-only enforcement.
+
+    This is defense-in-depth on top of the regex check in
+    :func:`assert_read_only_sql`: even if an attacker smuggles a
+    DML/DDL statement past the regex, the database refuses to
+    execute it because the connection is read-only at the engine
+    level.
+
+    Strategies per dialect:
+
+    * ``postgresql``: ``SET SESSION CHARACTERISTICS AS TRANSACTION
+      READ ONLY`` + ``default_transaction_read_only = on`` on every
+      new connection.
+    * ``sqlite``: ``PRAGMA query_only = ON`` on every new connection.
+    * ``mysql`` / ``mariadb``: ``SET SESSION TRANSACTION READ ONLY``
+      on every new connection.
+    * Other dialects: logged as unsupported; the regex check remains
+      the only line of defense. Operators should route through a
+      read-only database user for full protection.
+    """
+    dialect_name = (engine.dialect.name or "").lower()
+
+    if dialect_name == "postgresql":
+
+        @event.listens_for(engine, "connect")
+        def _pg_ro(dbapi_connection, _conn_record):  # pragma: no cover - runtime hook
+            cur = dbapi_connection.cursor()
+            try:
+                cur.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
+                cur.execute("SET default_transaction_read_only = on")
+            finally:
+                cur.close()
+
+        return
+
+    if dialect_name == "sqlite":
+
+        @event.listens_for(engine, "connect")
+        def _sqlite_ro(dbapi_connection, _conn_record):  # pragma: no cover
+            cur = dbapi_connection.cursor()
+            try:
+                cur.execute("PRAGMA query_only = ON")
+            finally:
+                cur.close()
+
+        return
+
+    if dialect_name in ("mysql", "mariadb"):
+
+        @event.listens_for(engine, "connect")
+        def _mysql_ro(dbapi_connection, _conn_record):  # pragma: no cover
+            cur = dbapi_connection.cursor()
+            try:
+                cur.execute("SET SESSION TRANSACTION READ ONLY")
+            finally:
+                cur.close()
+
+        return
+
+    log_warning(
+        "SQLTools: engine-level read-only enforcement is not "
+        f"implemented for dialect {dialect_name!r}. The regex check "
+        "on run_sql_query remains active; for full protection route "
+        "through a read-only database role."
+    )
+
+
 class SQLTools(Toolkit):
     """SQL toolkit (SQLAlchemy).
 
     Security notes (hardened build):
 
-    * ``read_only`` defaults to ``True``. :meth:`run_sql_query`
-      rejects anything that is not a single ``SELECT`` / ``WITH``
-      statement. The lower-level :meth:`run_sql` remains unchecked
-      and is intended for trusted callers only — never expose it as
-      an LLM tool.
+    * ``read_only`` defaults to ``True`` and is enforced at two
+      layers:
+
+        1. A regex rejects anything that is not a single ``SELECT``
+           / ``WITH`` in :meth:`run_sql_query`.
+        2. The engine is configured so that every new connection
+           is put into read-only mode at the database level
+           (Postgres ``default_transaction_read_only``, SQLite
+           ``PRAGMA query_only``, MySQL/MariaDB
+           ``SET SESSION TRANSACTION READ ONLY``).
+
+      Even if a DML statement slips past the regex, the database
+      refuses to execute it. For dialects we cannot auto-configure
+      the regex remains the only line of defense; operators should
+      route through a read-only database role.
+
+      The lower-level :meth:`run_sql` remains unchecked (but still
+      inherits the engine-level read-only) and is intended for
+      trusted callers only — never expose it as an LLM tool.
     * ``password`` accepts either ``pydantic.SecretStr`` or a plain
       string. It is URL-encoded before being interpolated into a
       connection URL and is always redacted from ``__repr__``.
@@ -99,6 +181,16 @@ class SQLTools(Toolkit):
         self._host: Optional[str] = host
         self._port: Optional[int] = port
         self._has_password: bool = password_plain is not None
+
+        if self.read_only:
+            try:
+                _apply_engine_read_only(self.db_engine)
+            except Exception:  # pragma: no cover - never crash init
+                logger.exception(
+                    "SQLTools: failed to apply engine-level "
+                    "read-only enforcement; the regex check on "
+                    "run_sql_query is still active."
+                )
 
         tools: List[Any] = []
         if enable_list_tables or all:

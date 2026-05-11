@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, FrozenSet, Iterable, List, Optional
 
 from agno.tools import Toolkit
+from agno.tools._security import build_safe_builtins
 from agno.utils.log import log_debug, log_error, log_info, logger
 
 _PACKAGE_NAME_BAD_CHARS: FrozenSet[str] = frozenset(" ;|&`\n\r\\\"'<>$")
@@ -21,15 +22,36 @@ class PythonTools(Toolkit):
 
     Security notes (hardened build):
 
+    * **In-process Python exec cannot be safely sandboxed.** The three
+      code-execution tools (:meth:`save_to_file_and_run`,
+      :meth:`run_python_code`, :meth:`run_python_file_return_variable`)
+      are **not registered as LLM-callable tools** unless the caller
+      passes ``unsafe_exec=True`` at construction time. CPython offers
+      no primitive for truly safe in-process execution: even with a
+      restricted ``__builtins__``, the subclass-traversal pattern
+      ``().__class__.__mro__[-1].__subclasses__()`` reaches every
+      loaded class (including ``subprocess.Popen`` and
+      ``os._wrap_close``) and escapes any Python-level sandbox. Treat
+      ``unsafe_exec=True`` as "I have an out-of-process sandbox
+      (nsjail / firejail / seccomp-bpf / ephemeral container with no
+      host mounts and a read-only rootfs), and I am accepting the
+      in-process RCE surface inside that sandbox".
+    * When ``unsafe_exec=True`` is set, a restricted ``__builtins__``
+      is still injected as defence-in-depth: it omits ``__import__``,
+      ``open``, ``exec``, ``eval``, ``compile``, ``getattr`` /
+      ``setattr`` / ``delattr``, ``globals`` / ``locals`` / ``vars`` /
+      ``dir``, and the runtime-introspection helpers used by classic
+      Python sandbox escapes. This raises the bar for casual abuse
+      but does **not** close the subclass-traversal path. Pass
+      ``unsafe_exec_full_builtins=True`` to also restore the full
+      builtins module when the out-of-process sandbox makes that
+      acceptable.
     * ``restrict_to_base_dir`` defaults to ``True`` and cannot be
       disabled without also setting ``unsafe_unrestricted=True``;
       constructing the toolkit with neither flag set raises
-      :class:`ValueError`.
-    * ``safe_globals`` defaults to an empty dict, so code executed via
-      :meth:`run_python_code` and :meth:`save_to_file_and_run` does
-      *not* inherit the hosting process's globals. ``runpy`` and
-      ``exec`` are fed a fresh copy on every call so LLM code cannot
-      mutate the toolkit's scope between invocations.
+      :class:`ValueError`. This applies to :meth:`read_file` and
+      :meth:`list_files`, which remain LLM-callable by default
+      because they are bounded filesystem reads, not code execution.
     * :meth:`pip_install_package` and :meth:`uv_pip_install_package`
       are not registered as tools unless ``enable_pip_install=True``
       is set explicitly. When they are registered, an optional
@@ -40,7 +62,9 @@ class PythonTools(Toolkit):
         base_dir: Base directory for all file operations. Defaults to
             the current working directory.
         safe_globals: Optional globals dict to seed code execution.
-            Defaults to an empty dict.
+            Defaults to an empty dict. The restricted ``__builtins__``
+            is injected unless the caller already supplied one or sets
+            ``unsafe_exec_full_builtins=True``.
         safe_locals: Optional locals dict to seed code execution.
             Defaults to an empty dict.
         restrict_to_base_dir: When True (default), every path is
@@ -48,6 +72,13 @@ class PythonTools(Toolkit):
         unsafe_unrestricted: Must be True to combine with
             ``restrict_to_base_dir=False``. Intended as an opt-in
             foot-gun.
+        unsafe_exec: Must be True to register the three code-execution
+            tools as LLM-callable. Defaults to False so a hardened
+            deployment does not accidentally ship arbitrary Python
+            execution to the LLM.
+        unsafe_exec_full_builtins: When True, expose the full
+            ``builtins`` module to executed code. Requires
+            ``unsafe_exec=True``. Defaults to False.
         enable_pip_install: When True, register ``pip_install_package``
             and ``uv_pip_install_package`` as agent tools.
         pip_install_allowlist: Optional iterable of package names that
@@ -62,6 +93,8 @@ class PythonTools(Toolkit):
         safe_locals: Optional[dict] = None,
         restrict_to_base_dir: bool = True,
         unsafe_unrestricted: bool = False,
+        unsafe_exec: bool = False,
+        unsafe_exec_full_builtins: bool = False,
         enable_pip_install: bool = False,
         pip_install_allowlist: Optional[Iterable[str]] = None,
         **kwargs,
@@ -72,27 +105,56 @@ class PythonTools(Toolkit):
                 "unsafe_unrestricted=True; refusing to construct "
                 "PythonTools with unrestricted filesystem access."
             )
+        if unsafe_exec_full_builtins and not unsafe_exec:
+            raise ValueError(
+                "unsafe_exec_full_builtins=True requires "
+                "unsafe_exec=True; refusing to expose full builtins "
+                "while the code-execution tools are disabled."
+            )
 
         self.base_dir: Path = (base_dir or Path.cwd()).resolve()
         self.restrict_to_base_dir: bool = restrict_to_base_dir
-        self.safe_globals: dict = safe_globals if safe_globals is not None else {}
+        self.unsafe_exec: bool = bool(unsafe_exec)
+        self.unsafe_exec_full_builtins: bool = bool(unsafe_exec_full_builtins)
+
+        base_globals: dict = dict(safe_globals) if safe_globals is not None else {}
+        if "__builtins__" not in base_globals and not self.unsafe_exec_full_builtins:
+            base_globals["__builtins__"] = build_safe_builtins()
+        self.safe_globals: dict = base_globals
         self.safe_locals: dict = safe_locals if safe_locals is not None else {}
         self._pip_allowlist: Optional[FrozenSet[str]] = (
             frozenset(p.strip() for p in pip_install_allowlist) if pip_install_allowlist else None
         )
 
         tools: List[Any] = [
-            self.save_to_file_and_run,
-            self.run_python_code,
-            self.run_python_file_return_variable,
             self.read_file,
             self.list_files,
         ]
+        if self.unsafe_exec:
+            tools.insert(0, self.save_to_file_and_run)
+            tools.insert(1, self.run_python_code)
+            tools.insert(2, self.run_python_file_return_variable)
         if enable_pip_install:
             tools.append(self.pip_install_package)
             tools.append(self.uv_pip_install_package)
 
         super().__init__(name="python_tools", tools=tools, **kwargs)
+
+    def _fresh_exec_globals(self) -> dict:
+        """Return a fresh globals dict for a single exec / runpy call.
+
+        Copies the outer mapping and, when a restricted ``__builtins__``
+        dict is present, copies that too. Without the inner copy, LLM
+        code could mutate the shared dict across calls (e.g.
+        ``__builtins__['x'] = something_nasty``) and persist state
+        between invocations. ``unsafe_exec=True`` bypasses this path
+        entirely — the caller has opted into the full builtins module.
+        """
+        globals_copy = dict(self.safe_globals)
+        builtins_entry = globals_copy.get("__builtins__")
+        if isinstance(builtins_entry, dict):
+            globals_copy["__builtins__"] = dict(builtins_entry)
+        return globals_copy
 
     def _check_install_allowed(self, package_name: str) -> Optional[str]:
         """Validate ``package_name`` against the install policy.
@@ -152,7 +214,7 @@ class PythonTools(Toolkit):
             log_info(f"Running {file_path}")
             globals_after_run = runpy.run_path(
                 str(file_path),
-                init_globals=dict(self.safe_globals),
+                init_globals=self._fresh_exec_globals(),
                 run_name="__main__",
             )
 
@@ -183,7 +245,7 @@ class PythonTools(Toolkit):
             log_info(f"Running {file_path}")
             globals_after_run = runpy.run_path(
                 str(file_path),
-                init_globals=dict(self.safe_globals),
+                init_globals=self._fresh_exec_globals(),
                 run_name="__main__",
             )
             if variable_to_return:
@@ -237,7 +299,7 @@ class PythonTools(Toolkit):
             warn()
             log_debug(f"Running code:\n\n{code}\n\n")
             # Fresh copies so LLM code cannot mutate the toolkit's scope.
-            exec_globals = dict(self.safe_globals)
+            exec_globals = self._fresh_exec_globals()
             exec_locals = dict(self.safe_locals)
             exec(code, exec_globals, exec_locals)
 
