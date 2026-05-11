@@ -46,8 +46,8 @@ from agno.os.utils import (
     process_document,
     process_image,
     process_video,
-    resolve_team,
     resolve_stream_events,
+    resolve_team,
     sanitize_sse_event,
 )
 from agno.registry import Registry
@@ -62,8 +62,8 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
-def _component_events_to_skip(component: Any) -> Optional[List[Any]]:
-    return getattr(component, "events_to_skip", None)
+def _component_events_to_skip(component: Any) -> List[Any]:
+    return list(getattr(component, "events_to_skip", None) or [])
 
 
 def _safe_team_response(response: TeamResponse) -> TeamResponse:

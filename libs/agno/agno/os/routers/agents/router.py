@@ -69,8 +69,8 @@ def _require_capability(agent: Any, method: str, feature: str) -> None:
         raise HTTPException(status_code=501, detail=f"This agent does not support {feature}")
 
 
-def _component_events_to_skip(component: Any) -> Optional[List[Any]]:
-    return getattr(component, "events_to_skip", None)
+def _component_events_to_skip(component: Any) -> List[Any]:
+    return list(getattr(component, "events_to_skip", None) or [])
 
 
 def _safe_agent_response(response: AgentResponse) -> AgentResponse:
@@ -1382,8 +1382,12 @@ def get_agent_router(
 
         return StreamingResponse(
             _resume_stream_generator(
-                agent, run_id, last_event_index, session_id, stream_tool_payloads=os.stream_tool_payloads
-            ),  # type: ignore[arg-type]
+                cast(Agent, agent),
+                run_id,
+                last_event_index,
+                session_id,
+                stream_tool_payloads=os.stream_tool_payloads,
+            ),
             media_type="text/event-stream",
         )
 

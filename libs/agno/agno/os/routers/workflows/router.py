@@ -58,8 +58,8 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
-def _component_events_to_skip(component: Any) -> Optional[List[Any]]:
-    return getattr(component, "events_to_skip", None)
+def _component_events_to_skip(component: Any) -> List[Any]:
+    return list(getattr(component, "events_to_skip", None) or [])
 
 
 def _safe_workflow_response(response: WorkflowResponse) -> WorkflowResponse:

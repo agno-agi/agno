@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Union, overload
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.routing import APIRoute, APIRouter
@@ -251,6 +251,24 @@ def _format_sse_event_dict(event_type: str, event_dict: Dict[str, Any]) -> str:
     return f"event: {event_type or 'message'}\ndata: {clean_json}\n\n"
 
 
+@overload
+def format_sse_event(
+    event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
+    *,
+    stream_tool_payloads: bool = True,
+    events_to_skip: None = None,
+) -> str: ...
+
+
+@overload
+def format_sse_event(
+    event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
+    *,
+    stream_tool_payloads: bool = True,
+    events_to_skip: Sequence[Any],
+) -> Optional[str]: ...
+
+
 def format_sse_event(
     event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
     *,
@@ -289,6 +307,28 @@ def format_sse_event(
     except Exception:
         clean_json = event.to_json(separators=(",", ":"), indent=None)
         return f"event: message\ndata: {clean_json}\n\n"
+
+
+@overload
+def format_sse_event_with_index(
+    event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
+    event_index: Optional[int] = None,
+    run_id: Optional[str] = None,
+    *,
+    stream_tool_payloads: bool = True,
+    events_to_skip: None = None,
+) -> str: ...
+
+
+@overload
+def format_sse_event_with_index(
+    event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
+    event_index: Optional[int] = None,
+    run_id: Optional[str] = None,
+    *,
+    stream_tool_payloads: bool = True,
+    events_to_skip: Sequence[Any],
+) -> Optional[str]: ...
 
 
 def format_sse_event_with_index(
@@ -334,12 +374,19 @@ def format_sse_event_with_index(
 
 
 def sanitize_sse_event(
-    sse_data: str,
+    sse_data: Any,
     *,
     stream_tool_payloads: bool = True,
     events_to_skip: Optional[Sequence[Any]] = None,
 ) -> Optional[str]:
     """Apply AgentOS stream filtering/redaction to an already formatted SSE payload."""
+    if not isinstance(sse_data, str):
+        return format_sse_event(
+            sse_data,
+            stream_tool_payloads=stream_tool_payloads,
+            events_to_skip=events_to_skip,
+        )
+
     if not sse_data or sse_data.startswith(":"):
         return sse_data
 
