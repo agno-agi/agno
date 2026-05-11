@@ -184,7 +184,12 @@ text = ["aiofiles"]
 csv = ["aiofiles"]
 excel = ["openpyxl", "xlrd"]
 markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
-chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
+chonkie = [
+    "chonkie[semantic]",
+    "chonkie[code]",
+    "chonkie",
+    "tree-sitter-language-pack<1.8.0",  # 1.8.0 removed SupportedLanguage; unblock when chonkie migrates to v1.8 API
+]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol"]
