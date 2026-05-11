@@ -14,7 +14,10 @@ from agno.agent.protocol import AgentProtocol
 from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.managers import websocket_manager
-from agno.os.middleware.user_scope import WORKFLOW_ID_REQUIRED_RECONNECT
+from agno.os.middleware.user_scope import (
+    INSUFFICIENT_PERMISSIONS_WS_RECONNECT,
+    WORKFLOW_ID_REQUIRED_RECONNECT,
+)
 from agno.os.routers.workflows.router import (
     WebSocketAuthContext,
     handle_workflow_subscription,
@@ -456,7 +459,7 @@ def get_websocket_router(
                                 json.dumps(
                                     {
                                         "event": "error",
-                                        "error": "Insufficient permissions to reconnect to this workflow",
+                                        "error": INSUFFICIENT_PERMISSIONS_WS_RECONNECT,
                                     }
                                 )
                             )

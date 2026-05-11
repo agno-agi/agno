@@ -571,11 +571,15 @@ class TestWebSocketReconnectRBAC:
     # hanging on a buggy server.
     _MAX_FRAMES = 8
 
-    # Stable substrings from the error messages we expect the server to emit.
-    # These mirror the constants defined in agno.os.middleware.user_scope so a
-    # rename there breaks the test.
-    _ERR_PERMISSION = "Insufficient permissions to reconnect to this workflow"
-    _ERR_WORKFLOW_ID_REQUIRED = "workflow_id is required to reconnect to a workflow run"
+    # Pull the expected error strings from the same constants the server uses
+    # so a rename in agno.os.middleware.user_scope breaks the test loudly
+    # instead of letting it silently match the wrong frame.
+    from agno.os.middleware.user_scope import (
+        INSUFFICIENT_PERMISSIONS_WS_RECONNECT as _ERR_PERMISSION,
+    )
+    from agno.os.middleware.user_scope import (
+        WORKFLOW_ID_REQUIRED_RECONNECT as _ERR_WORKFLOW_ID_REQUIRED,
+    )
 
     def _drain_until(self, ws, predicate):
         """Read frames until ``predicate(frame)`` returns True. Fails fast

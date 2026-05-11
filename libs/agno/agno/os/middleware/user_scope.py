@@ -45,6 +45,7 @@ ComponentType = Literal["agents", "teams", "workflows"]
 SESSION_ID_REQUIRED = "session_id is required for this action"
 WORKFLOW_ID_REQUIRED_RECONNECT = "workflow_id is required to reconnect to a workflow run"
 SESSION_ID_REQUIRED_RECONNECT = "session_id is required to reconnect to a workflow run"
+INSUFFICIENT_PERMISSIONS_WS_RECONNECT = "Insufficient permissions to reconnect to this workflow"
 
 
 def _has_admin_scope(scopes: List[str], admin_scope: Optional[str] = None) -> bool:
