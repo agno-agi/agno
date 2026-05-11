@@ -206,6 +206,22 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
                     )
                 )
                 return
+            # workflow_id is required so the session/run component check has
+            # something to validate against. Defense-in-depth: the WS dispatch
+            # in router.py already rejects missing workflow_id at reconnect
+            # for JWT callers, but the handler must not silently fall back to
+            # an unconstrained check if a future caller skips that path.
+            if not workflow_id:
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "event": "error",
+                            "error": "workflow_id is required to reconnect to a workflow run",
+                        }
+                    )
+                )
+                return
+
             from agno.os.middleware.user_scope import _verify_run_in_session_via_db
 
             try:

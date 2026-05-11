@@ -417,6 +417,46 @@ def get_websocket_router(
                             message.setdefault("user_id", jwt_user_id)
                         else:
                             message["user_id"] = jwt_user_id
+
+                    # Enforce workflow-level RBAC at reconnect just like
+                    # start-workflow does. Without this, a token with no
+                    # workflows:run could subscribe to a buffered run by
+                    # guessing its run_id, and the downstream ownership check
+                    # would silently skip the workflow component check when
+                    # workflow_id is omitted.
+                    if jwt_auth_enabled and not is_admin:
+                        workflow_id_for_reconnect = message.get("workflow_id")
+                        if not workflow_id_for_reconnect:
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "event": "error",
+                                        "error": "workflow_id is required to reconnect to a workflow run",
+                                    }
+                                )
+                            )
+                            continue
+
+                        from agno.os.scopes import has_required_scopes
+
+                        user_scopes = websocket_user_context.get("scopes", [])
+                        if not has_required_scopes(
+                            user_scopes,
+                            ["workflows:run"],
+                            resource_type="workflows",
+                            resource_id=workflow_id_for_reconnect,
+                            admin_scope=ws_admin_scope,
+                        ):
+                            await websocket.send_text(
+                                json.dumps(
+                                    {
+                                        "event": "error",
+                                        "error": "Insufficient permissions to reconnect to this workflow",
+                                    }
+                                )
+                            )
+                            continue
+
                     # Pass admin flag so the subscription handler can skip
                     # ownership verification for admins. The JWT validator is
                     # passed through so the handler can re-derive context.

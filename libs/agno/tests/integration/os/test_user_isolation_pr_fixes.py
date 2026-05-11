@@ -557,6 +557,131 @@ class TestCrossComponentRbacBypass:
         assert resp.status_code == 404, resp.text
 
 
+class TestWebSocketReconnectRBAC:
+    """WebSocket reconnect must enforce workflows:run scope and require a
+    workflow_id, matching the contract of start-workflow.
+
+    Without these guards a token with no workflow scope could subscribe to a
+    buffered run by guessing its run_id, and even with a scope the missing
+    workflow_id would cause the session/run component check to silently skip.
+    """
+
+    def _authenticate(self, ws, token):
+        """Run the auth handshake and consume all of its frames.
+
+        On JWT auth the server emits "connected" (on accept), then
+        "authenticated" twice (one from WebSocketManager, one from the route
+        with the user_id). Drain frames until we see the user_id-bearing
+        confirmation so subsequent reads return the test's reply, not auth
+        leftovers.
+        """
+        import json as _json
+
+        # Discard the initial "connected" frame the server emits on accept.
+        for _ in range(5):
+            frame = _json.loads(ws.receive_text())
+            if frame.get("event") == "connected":
+                break
+        ws.send_text(_json.dumps({"action": "authenticate", "token": token}))
+        # Drain auth frames until we see the second "authenticated" with user_id.
+        for _ in range(5):
+            frame = _json.loads(ws.receive_text())
+            if frame.get("event") == "authenticated" and frame.get("user_id"):
+                return
+        raise AssertionError("WS auth did not complete with user_id frame")
+
+    def test_reconnect_rejected_without_workflow_scope(self, client):
+        import json as _json
+
+        # Token with no workflow scopes.
+        token = make_token("user-a", scopes=["agents:read"])
+        with client.websocket_connect("/workflows/ws") as ws:
+            self._authenticate(ws, token)
+            ws.send_text(
+                _json.dumps(
+                    {
+                        "action": "reconnect",
+                        "run_id": "some-run",
+                        "session_id": "some-session",
+                        "workflow_id": "test-workflow",
+                    }
+                )
+            )
+            event = _json.loads(ws.receive_text())
+        assert event.get("event") == "error", event
+        assert "permission" in event.get("error", "").lower(), event
+
+    def test_reconnect_rejected_when_workflow_id_missing(self, client):
+        import json as _json
+
+        token = make_token("user-a")  # full scopes (including workflows:run)
+        with client.websocket_connect("/workflows/ws") as ws:
+            self._authenticate(ws, token)
+            ws.send_text(
+                _json.dumps(
+                    {
+                        "action": "reconnect",
+                        "run_id": "some-run",
+                        "session_id": "some-session",
+                        # workflow_id deliberately omitted
+                    }
+                )
+            )
+            event = _json.loads(ws.receive_text())
+        assert event.get("event") == "error", event
+        assert "workflow_id" in event.get("error", "").lower(), event
+
+    def test_reconnect_with_scope_proceeds_to_ownership_check(self, client):
+        """A non-admin with workflows:run gets past the RBAC gate and reaches
+        the ownership check, which 404s here because the run doesn't exist."""
+        import json as _json
+
+        token = make_token("user-a", scopes=["workflows:test-workflow:run"])
+        with client.websocket_connect("/workflows/ws") as ws:
+            self._authenticate(ws, token)
+            ws.send_text(
+                _json.dumps(
+                    {
+                        "action": "reconnect",
+                        "run_id": "nonexistent-run",
+                        "session_id": "nonexistent-session",
+                        "workflow_id": "test-workflow",
+                    }
+                )
+            )
+            event = _json.loads(ws.receive_text())
+        # The RBAC + workflow_id checks pass; the downstream ownership check
+        # 404s the run. Either error wording is acceptable.
+        assert event.get("event") == "error", event
+        error = event.get("error", "").lower()
+        assert "permission" not in error and "workflow_id is required" not in error, event
+
+    def test_admin_reconnect_does_not_require_workflow_id(self, client):
+        """Admins bypass scope/workflow_id requirements; the handler still
+        runs but won't reject pre-ownership for admin."""
+        import json as _json
+
+        admin_token = make_token("admin-x", scopes=["agent_os:admin"])
+        with client.websocket_connect("/workflows/ws") as ws:
+            self._authenticate(ws, admin_token)
+            ws.send_text(
+                _json.dumps(
+                    {
+                        "action": "reconnect",
+                        "run_id": "nonexistent-run",
+                        "session_id": "nonexistent-session",
+                        # No workflow_id — admin bypass.
+                    }
+                )
+            )
+            event = _json.loads(ws.receive_text())
+        # Admin passes the dispatch-layer gates. Whatever the handler returns
+        # (likely 'Run not found') must not be a permission/workflow_id error.
+        error = event.get("error", "").lower() if event.get("event") == "error" else ""
+        assert "permission" not in error, event
+        assert "workflow_id is required" not in error, event
+
+
 class TestWorkflowSessionLeakViaAgentRoute:
     """A WorkflowSession containing a nested agent run must NOT be reachable
     through /agents/{agent_id}/... routes. Even though the nested run has a
