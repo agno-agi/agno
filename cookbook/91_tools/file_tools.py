@@ -9,7 +9,34 @@ Shows enable_ flag patterns for selective function access.
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.tools.file import FileTools
+from agno.models.openai import OpenAIResponses
+from agno.tools.file import DEFAULT_EXCLUDE_PATTERNS, FileTools
+
+EXCLUSION_SANDBOX = Path("tmp/file_tools_exclusions")
+
+
+def setup_exclusion_sandbox() -> None:
+    EXCLUSION_SANDBOX.mkdir(parents=True, exist_ok=True)
+
+    (EXCLUSION_SANDBOX / "main.py").write_text("def hello():\n    return 'world'\n")
+    (EXCLUSION_SANDBOX / "README.md").write_text("# My Project\n\nDoes a thing.\n")
+
+    site_pkg = (
+        EXCLUSION_SANDBOX
+        / ".venv"
+        / "lib"
+        / "python3.12"
+        / "site-packages"
+        / "requests"
+    )
+    site_pkg.mkdir(parents=True, exist_ok=True)
+    (site_pkg / "__init__.py").write_text("__version__ = '2.31.0'\n")
+    (site_pkg / "api.py").write_text("def get(url):\n    pass\n")
+
+    git_dir = EXCLUSION_SANDBOX / ".git"
+    git_dir.mkdir(exist_ok=True)
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n")
+
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -107,6 +134,70 @@ agent_content_search = Agent(
     markdown=True,
 )
 
+# Example 6: Default exclusions skip noise directories (.venv, .git, __pycache__,
+# node_modules, build artifacts, etc.) so agents don't waste context on installed
+# packages or VCS metadata. See DEFAULT_EXCLUDE_PATTERNS for the full list.
+agent_default_exclusions = Agent(
+    model=OpenAIResponses(id="gpt-5.4"),
+    tools=[
+        FileTools(
+            base_dir=EXCLUSION_SANDBOX,
+            enable_list_files=True,
+            enable_search_files=True,
+            enable_search_content=True,
+        )
+    ],
+    description="You help users explore a project, skipping build and dependency noise.",
+    instructions=[
+        "Use list_files and search_content to answer questions about the project",
+    ],
+    markdown=True,
+)
+
+# Example 7: Custom exclusions - start from DEFAULT_EXCLUDE_PATTERNS and remove
+# the entries you want visible. Future additions to the default list apply
+# automatically. Here we keep the defaults but unhide .venv so the agent can
+# inspect installed packages.
+exclude_without_venv = [p for p in DEFAULT_EXCLUDE_PATTERNS if p != ".venv"]
+
+agent_can_read_venv = Agent(
+    model=OpenAIResponses(id="gpt-5.4"),
+    tools=[
+        FileTools(
+            base_dir=EXCLUSION_SANDBOX,
+            exclude_patterns=exclude_without_venv,
+            enable_list_files=True,
+            enable_search_files=True,
+            enable_search_content=True,
+        )
+    ],
+    description="You inspect installed Python packages to answer version and source questions.",
+    instructions=[
+        "Use search_content and search_files to look inside .venv when asked",
+        "Report package versions and the file path where you found them",
+    ],
+    markdown=True,
+)
+
+# Example 8: Full opt-out with exclude_patterns=[]. Every file becomes visible,
+# including .git internals. Use only when you need forensic access to the tree.
+agent_sees_everything = Agent(
+    model=OpenAIResponses(id="gpt-5.4"),
+    tools=[
+        FileTools(
+            base_dir=EXCLUSION_SANDBOX,
+            exclude_patterns=[],
+            enable_list_files=True,
+            enable_search_files=True,
+        )
+    ],
+    description="You audit the full project tree, including hidden and ignored directories.",
+    instructions=[
+        "Return the complete file inventory when asked",
+    ],
+    markdown=True,
+)
+
 # Example usage
 
 # ---------------------------------------------------------------------------
@@ -140,5 +231,26 @@ if __name__ == "__main__":
     print("\n=== Content Search Example ===")
     agent_content_search.print_response(
         "Search inside all files for the word 'Python' and summarize what you find",
+        markdown=True,
+    )
+
+    setup_exclusion_sandbox()
+
+    print("\n=== Default Exclusions Example (hides .venv, .git, etc.) ===")
+    agent_default_exclusions.print_response(
+        "List every file in this project and tell me what the project does.",
+        markdown=True,
+    )
+
+    print("\n=== Custom Exclusions Example (inspect .venv) ===")
+    agent_can_read_venv.print_response(
+        "Find the version of the `requests` package installed in this project. "
+        "Show the file path where you found the version string.",
+        markdown=True,
+    )
+
+    print("\n=== No Exclusions Example (see .git internals) ===")
+    agent_sees_everything.print_response(
+        "List every single file in the project, including git internals.",
         markdown=True,
     )

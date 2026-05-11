@@ -1,9 +1,11 @@
 import base64
 import json
+import re
+from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
 from ssl import SSLContext
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union, cast
 
 import httpx
 
@@ -16,6 +18,15 @@ try:
     from slack_sdk.errors import SlackApiError
 except ImportError:
     raise ImportError("Slack tools require the `slack_sdk` package. Run `pip install slack-sdk` to install it.")
+
+
+_CHANNEL_ID_RE = re.compile(r"^[CGD][A-Z0-9]+$")
+
+
+@dataclass(frozen=True)
+class _ResolvedChannel:
+    id: str
+    name: str | None = None
 
 
 class SlackTools(Toolkit):
@@ -172,6 +183,7 @@ class SlackTools(Toolkit):
         self.max_file_size = max_file_size
         self.thread_message_limit = thread_message_limit
         self.output_directory = Path(output_directory) if output_directory else None
+        self._channel_cache: Dict[str, _ResolvedChannel] = {}
 
         if self.output_directory:
             self.output_directory.mkdir(parents=True, exist_ok=True)
@@ -225,15 +237,18 @@ class SlackTools(Toolkit):
         names: Dict[str, str] = {}
         for uid in user_ids:
             try:
-                resp = self.client.users_info(user=uid)
-                profile = resp.get("user", {}).get("profile", {})
+                resp = cast(Dict[str, Any], self.client.users_info(user=uid))
+                user = cast(Dict[str, Any], resp.get("user") or {})
+                profile = cast(Dict[str, Any], user.get("profile") or {})
                 # Prefer display_name (chosen by user), fall back to real_name
                 names[uid] = profile.get("display_name") or profile.get("real_name") or uid
             except SlackApiError:
                 names[uid] = uid
         return names
 
-    def _build_message_entry(self, msg: Dict[str, Any], user_names: Dict[str, str]) -> Dict[str, Any]:
+    def _build_message_entry(
+        self, msg: Dict[str, Any], user_names: Dict[str, str], channel: _ResolvedChannel | None = None
+    ) -> Dict[str, Any]:
         user_id = msg.get("user", "")
         user_label = msg.get("username") or user_names.get(user_id, user_id) or "unknown"
         entry: Dict[str, Any] = {
@@ -241,6 +256,10 @@ class SlackTools(Toolkit):
             "user": user_label,
             "ts": msg.get("ts", ""),
         }
+        if channel is not None:
+            entry["channel_id"] = channel.id
+            if channel.name:
+                entry["channel_name"] = channel.name
         if msg.get("attachments"):
             entry["attachments"] = msg["attachments"]
         return entry
@@ -258,6 +277,101 @@ class SlackTools(Toolkit):
         except OSError as e:
             log_warning(f"Failed to save file locally: {str(e)}")
             return None
+
+    @staticmethod
+    def _channel_cache_key(channel: str) -> str:
+        raw = channel.strip()
+        if _CHANNEL_ID_RE.match(raw):
+            return raw
+        return raw.removeprefix("#").lower()
+
+    def _cache_channel(self, channel: _ResolvedChannel) -> None:
+        self._channel_cache[channel.id] = channel
+        if channel.name:
+            self._channel_cache[channel.name.lower()] = channel
+            self._channel_cache[f"#{channel.name.lower()}"] = channel
+
+    def _slack_error_payload(
+        self,
+        exc: SlackApiError,
+        *,
+        operation: str,
+        channel: str | None = None,
+        hint: str | None = None,
+    ) -> Dict[str, Any]:
+        error = exc.response.get("error", str(exc)) if getattr(exc, "response", None) else str(exc)
+        payload: Dict[str, Any] = {"error": error, "operation": operation}
+        if channel:
+            payload["channel"] = channel
+        if hint:
+            payload["hint"] = hint
+        return payload
+
+    def _resolve_channel(self, channel: str) -> tuple[_ResolvedChannel | None, Dict[str, Any] | None]:
+        """Resolve a channel ID/name to an ID for conversations.* APIs."""
+        raw = channel.strip()
+        if not raw:
+            return None, {"error": "channel_required", "channel": channel}
+
+        cached = self._channel_cache.get(self._channel_cache_key(raw))
+        if cached:
+            return cached, None
+
+        if _CHANNEL_ID_RE.match(raw):
+            resolved = _ResolvedChannel(id=raw)
+            self._cache_channel(resolved)
+            return resolved, None
+
+        name = raw.removeprefix("#").lower()
+        cursor: Optional[str] = None
+        # Try public+private first; fall back to public-only if groups:read is missing
+        channel_types = "public_channel,private_channel"
+
+        while True:
+            try:
+                response = self.client.conversations_list(
+                    types=channel_types,
+                    limit=1000,
+                    cursor=cursor,
+                    exclude_archived=True,
+                )
+            except SlackApiError as e:
+                if e.response.get("error") == "missing_scope" and "private" in channel_types:
+                    # Bot lacks groups:read - retry with public channels only
+                    channel_types = "public_channel"
+                    cursor = None
+                    continue
+                return None, self._slack_error_payload(
+                    e,
+                    operation="conversations.list",
+                    channel=channel,
+                    hint=(
+                        "If this is a private channel, add groups:read, reinstall the app, "
+                        "invite the bot to the channel, or pass the channel ID directly."
+                    ),
+                )
+
+            for ch in response.get("channels") or []:
+                ch_id, ch_name = ch.get("id"), ch.get("name")
+                if not (ch_id and ch_name):
+                    continue
+                resolved = _ResolvedChannel(id=ch_id, name=ch_name)
+                self._cache_channel(resolved)
+                if ch_name.lower() == name:
+                    return resolved, None
+
+            cursor = (response.get("response_metadata") or {}).get("next_cursor")
+            if not cursor:
+                break
+
+        return None, {
+            "error": "channel_not_found",
+            "channel": channel,
+            "hint": (
+                "If this is a private channel, add groups:read, reinstall the app, "
+                "invite the bot to the channel, or pass the channel ID directly."
+            ),
+        }
 
     def _format_search_results(self, results: Dict[str, Any], include_context: bool) -> Dict[str, Any]:
         """Shape raw assistant.search.context results for LLM consumption.
@@ -391,40 +505,71 @@ class SlackTools(Toolkit):
             logger.exception("Error sending message")
             return json.dumps({"error": str(e)})
 
-    def list_channels(self) -> str:
+    def list_channels(self, include_private: bool = False) -> str:
         """List all channels in the Slack workspace.
+
+        Args:
+            include_private: Whether to include private channels visible to the bot.
 
         Returns:
             str: A JSON string containing a list of channels with their IDs and names.
         """
+        types = "public_channel,private_channel" if include_private else "public_channel"
+        channels: List[Dict[str, Any]] = []
+        cursor: Optional[str] = None
+
         try:
-            response = self.client.conversations_list()
-            channels = [{"id": channel["id"], "name": channel["name"]} for channel in response["channels"]]
+            while True:
+                response = self.client.conversations_list(
+                    types=types,
+                    limit=1000,
+                    cursor=cursor,
+                    exclude_archived=True,
+                )
+                for ch in response.get("channels") or []:
+                    ch_id, ch_name = ch.get("id"), ch.get("name")
+                    if not (ch_id and ch_name):
+                        continue
+                    self._cache_channel(_ResolvedChannel(id=ch_id, name=ch_name))
+                    channels.append(
+                        {
+                            "id": ch_id,
+                            "name": ch_name,
+                            "is_private": ch.get("is_private", False),
+                        }
+                    )
+                cursor = (response.get("response_metadata") or {}).get("next_cursor")
+                if not cursor:
+                    break
             return json.dumps(channels)
         except SlackApiError as e:
-            logger.exception("Error listing channels")
-            return json.dumps({"error": str(e)})
+            return json.dumps(self._slack_error_payload(e, operation="conversations.list"))
 
     def get_channel_history(self, channel: str, limit: int = 100) -> str:
         """Get the message history of a Slack channel.
 
         Args:
-            channel (str): The channel ID to fetch history from.
+            channel (str): The channel ID or name (for example, C123... or #general).
             limit (int): The maximum number of messages to fetch. Defaults to 100.
 
         Returns:
             str: A JSON string containing the channel's message history.
         """
-        try:
-            response = self.client.conversations_history(channel=channel, limit=limit)
+        resolved, error = self._resolve_channel(channel)
+        if error:
+            return json.dumps(error)
+        assert resolved is not None
 
-            raw_messages = response.get("messages", [])
+        try:
+            response = self.client.conversations_history(channel=resolved.id, limit=limit)
+
+            raw_messages: List[Dict[str, Any]] = cast(List[Dict[str, Any]], response.get("messages") or [])
             human_msgs = [m for m in raw_messages if m.get("subtype") != "bot_message" and m.get("user")]
             user_names = self._resolve_user_names(list({m["user"] for m in human_msgs}))
 
             messages: List[Dict[str, Any]] = []
             for msg in raw_messages:
-                entry = self._build_message_entry(msg, user_names)
+                entry = self._build_message_entry(msg, user_names, resolved)
                 # Thread metadata lets the agent discover and expand threads
                 thread_ts = msg.get("thread_ts")
                 if thread_ts:
@@ -433,8 +578,14 @@ class SlackTools(Toolkit):
                 messages.append(entry)
             return json.dumps(messages)
         except SlackApiError as e:
-            logger.exception("Error getting channel history")
-            return json.dumps({"error": str(e)})
+            return json.dumps(
+                self._slack_error_payload(
+                    e,
+                    operation="conversations.history",
+                    channel=channel,
+                    hint="Invite the bot to the channel, or pass a channel ID the bot can read.",
+                )
+            )
 
     def upload_file(
         self,
@@ -483,7 +634,7 @@ class SlackTools(Toolkit):
             )
 
             # Copy to avoid mutating the SDK's response object
-            result = dict(response.data)
+            result: Dict[str, Any] = dict(cast(Dict[str, Any], response.data))
             if file_path:
                 result["local_path"] = file_path
 
@@ -599,7 +750,8 @@ class SlackTools(Toolkit):
         """
         try:
             response = self.client.search_messages(query=query, count=min(limit, 100))
-            matches = response.get("messages", {}).get("matches", [])
+            message_results = cast(Dict[str, Any], response.get("messages") or {})
+            matches = cast(List[Dict[str, Any]], message_results.get("matches") or [])
             messages = [
                 {
                     "text": msg.get("text", ""),
@@ -674,36 +826,49 @@ class SlackTools(Toolkit):
         """Get all messages in a thread by the parent message's timestamp.
 
         Args:
-            channel (str): The channel ID where the thread exists.
+            channel (str): The channel ID or name where the thread exists.
             thread_ts (str): The timestamp of the parent message.
             limit (int): The maximum number of replies to fetch. Defaults to 20. Capped by thread_message_limit.
 
         Returns:
             str: A JSON string containing the thread timestamp, reply count, and list of messages.
         """
+        resolved, error = self._resolve_channel(channel)
+        if error:
+            return json.dumps(error)
+        assert resolved is not None
+
         try:
             response = self.client.conversations_replies(
-                channel=channel,
+                channel=resolved.id,
                 ts=thread_ts,
                 limit=min(limit, self.thread_message_limit),
             )
-            raw_messages = response.get("messages", [])
+            raw_messages: List[Dict[str, Any]] = cast(List[Dict[str, Any]], response.get("messages") or [])
             human_msgs = [m for m in raw_messages if m.get("subtype") != "bot_message" and m.get("user")]
             user_names = self._resolve_user_names(list({m["user"] for m in human_msgs}))
 
             messages: List[Dict[str, Any]] = []
             for msg in raw_messages:
-                messages.append(self._build_message_entry(msg, user_names))
+                messages.append(self._build_message_entry(msg, user_names, resolved))
             return json.dumps(
                 {
+                    "channel_id": resolved.id,
+                    "channel_name": resolved.name,
                     "thread_ts": thread_ts,
                     "reply_count": len(messages) - 1,
                     "messages": messages,
                 }
             )
         except SlackApiError as e:
-            logger.exception("Error getting thread")
-            return json.dumps({"error": str(e)})
+            return json.dumps(
+                self._slack_error_payload(
+                    e,
+                    operation="conversations.replies",
+                    channel=channel,
+                    hint="Invite the bot to the channel, or pass a channel ID the bot can read.",
+                )
+            )
 
     def list_users(self, limit: int = 100) -> str:
         """List all users in the Slack workspace.
@@ -716,6 +881,7 @@ class SlackTools(Toolkit):
         """
         try:
             response = self.client.users_list(limit=limit)
+            members = cast(List[Dict[str, Any]], response.get("members") or [])
             users = [
                 {
                     "id": member.get("id", ""),
@@ -724,7 +890,7 @@ class SlackTools(Toolkit):
                     "title": member.get("profile", {}).get("title", ""),
                     "is_bot": member.get("is_bot", False),
                 }
-                for member in response.get("members", [])
+                for member in members
                 if not member.get("deleted", False)
             ]
             return json.dumps({"count": len(users), "users": users})
@@ -742,9 +908,9 @@ class SlackTools(Toolkit):
             str: A JSON string containing the user's ID, name, real name, email, title, timezone, and bot status.
         """
         try:
-            response = self.client.users_info(user=user_id)
-            user = response.get("user", {})
-            profile = user.get("profile", {})
+            response = cast(Dict[str, Any], self.client.users_info(user=user_id))
+            user = cast(Dict[str, Any], response.get("user") or {})
+            profile = cast(Dict[str, Any], user.get("profile") or {})
             return json.dumps(
                 {
                     "id": user.get("id", ""),
@@ -761,23 +927,30 @@ class SlackTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def get_channel_info(self, channel: str) -> str:
-        """Get detailed information about a Slack channel by its ID.
+        """Get detailed information about a Slack channel by its ID or name.
 
         Args:
-            channel (str): The Slack channel ID to look up.
+            channel (str): The Slack channel ID or name to look up.
 
         Returns:
             str: A JSON string containing the channel's name, topic, purpose, member count, creation date, and visibility.
         """
+        resolved, error = self._resolve_channel(channel)
+        if error:
+            return json.dumps(error)
+        assert resolved is not None
+
         try:
-            response = self.client.conversations_info(channel=channel, include_num_members=True)
-            ch = response.get("channel", {})
+            response = self.client.conversations_info(channel=resolved.id, include_num_members=True)
+            ch = cast(Dict[str, Any], response.get("channel") or {})
+            if ch.get("id") and ch.get("name"):
+                self._cache_channel(_ResolvedChannel(id=ch["id"], name=ch["name"]))
             return json.dumps(
                 {
                     "id": ch.get("id", ""),
                     "name": ch.get("name", ""),
-                    "topic": ch.get("topic", {}).get("value", ""),
-                    "purpose": ch.get("purpose", {}).get("value", ""),
+                    "topic": cast(Dict[str, Any], ch.get("topic") or {}).get("value", ""),
+                    "purpose": cast(Dict[str, Any], ch.get("purpose") or {}).get("value", ""),
                     "num_members": ch.get("num_members", 0),
                     "is_private": ch.get("is_private", False),
                     "is_archived": ch.get("is_archived", False),
@@ -786,5 +959,11 @@ class SlackTools(Toolkit):
                 }
             )
         except SlackApiError as e:
-            logger.exception("Error getting channel info")
-            return json.dumps({"error": str(e)})
+            return json.dumps(
+                self._slack_error_payload(
+                    e,
+                    operation="conversations.info",
+                    channel=channel,
+                    hint="Invite the bot to the channel, or pass a channel ID the bot can read.",
+                )
+            )

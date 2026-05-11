@@ -175,6 +175,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
         return Ollama(id=model_id)
 
     elif model_provider == "openai":
+        from agno.models.openai import OpenAIResponses
+
+        return OpenAIResponses(id=model_id)
+
+    elif model_provider == "openai-chat":
         from agno.models.openai import OpenAIChat
 
         return OpenAIChat(id=model_id)

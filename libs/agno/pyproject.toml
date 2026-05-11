@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.5.17"
+version = "2.6.5"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -111,7 +111,7 @@ ddg = ["ddgs"]
 duckdb = ["duckdb"]
 elevenlabs = ["elevenlabs"]
 evm = ["web3"]
-exa = ["exa_py"]
+exa = ["exa_py>=2.0.0"]
 seltz = ["seltz>=0.2.0"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py==3.4.0"]
@@ -135,7 +135,7 @@ psycopg = ["psycopg-binary", "psycopg"]
 redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
 salesforce = ["simple-salesforce"]
-scrapegraph = ["scrapegraph-py"]
+scrapegraph = ["scrapegraph-py>=2.0.0"]
 todoist = ["todoist-api-python"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
@@ -184,13 +184,18 @@ text = ["aiofiles"]
 csv = ["aiofiles"]
 excel = ["openpyxl", "xlrd"]
 markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
-chonkie = ["chonkie[semantic]", "chonkie[code]", "chonkie"]
+chonkie = [
+    "chonkie[semantic]",
+    "chonkie[code]",
+    "chonkie",
+    "tree-sitter-language-pack<1.8.0",  # 1.8.0 removed SupportedLanguage; unblock when chonkie migrates to v1.8 API
+]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol"]
 
 # Dependencies for A2A integration
-a2a = ["a2a-sdk"]
+a2a = ["a2a-sdk>=0.3.0,<1.0"]
 
 # Dependencies for Slack integration
 slack = ["slack_sdk>=3.40.0"]
@@ -355,7 +360,7 @@ tests = [
 
 # Models integration test dependencies
 integration-tests = [
-    "exa_py",
+    "exa_py>=2.0.0",
     "ddgs",
     "yfinance",
     "sqlalchemy",
@@ -371,7 +376,7 @@ demo = [
     "chromadb",
     "ddgs",
     "duckdb",
-    "exa-py",
+    "exa-py>=2.0.0",
     "fastapi[standard]",
     "google-genai",
     "matplotlib",
@@ -390,6 +395,10 @@ demo = [
     "sqlalchemy",
     "yfinance",
     "youtube-transcript-api",
+    "claude-agent-sdk",
+    "langgraph",
+    "langchain-openai",
+    "dspy",
 ]
 
 [project.urls]
@@ -454,6 +463,7 @@ module = [
   "cerebras_cloud_sdk.*",
   "chonkie.*",
   "chromadb.*",
+  "claude_agent_sdk.*",
   "clickhouse_connect.*",
   "clip.*",
   "cohere.*",
@@ -463,6 +473,7 @@ module = [
   "discord.*",
   "docker.*",
   "docling.*",
+  "dspy.*",
   "docx.*",
   "duckdb.*",
   "ddgs.*",
