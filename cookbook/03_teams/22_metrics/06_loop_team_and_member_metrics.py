@@ -24,7 +24,6 @@ from agno.run.team import TeamRunOutput
 from agno.team import Team
 from rich.pretty import pprint
 
-
 endpoint = getenv("AZURE_OPENAI_ENDPOINT")
 api_key = getenv("AZURE_OPENAI_API_KEY")
 

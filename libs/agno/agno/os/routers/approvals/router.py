@@ -4,7 +4,7 @@ import asyncio
 import time
 from typing import Any, Dict, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agno.os.routers.approvals.schema import (
     ApprovalCountResponse,
@@ -51,6 +51,7 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
 
     @router.get("/approvals", response_model=PaginatedResponse[ApprovalResponse])
     async def list_approvals(
+        request: Request,
         status: Optional[Literal["pending", "approved", "rejected", "expired", "cancelled"]] = Query(None),
         source_type: Optional[str] = Query(None),
         approval_type: Optional[Literal["required", "audit"]] = Query(None),
@@ -65,6 +66,9 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         page: int = Query(1, ge=1),
         _: bool = Depends(auth_dependency),
     ) -> PaginatedResponse[ApprovalResponse]:
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
         approvals, total_count = await _db_call(
             "get_approvals",
             status=status,
@@ -93,9 +97,13 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
 
     @router.get("/approvals/count", response_model=ApprovalCountResponse)
     async def get_approval_count(
+        request: Request,
         user_id: Optional[str] = Query(None),
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, int]:
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
         count = await _db_call("get_pending_approval_count", user_id=user_id)
         return {"count": count}
 
