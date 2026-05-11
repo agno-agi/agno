@@ -1,6 +1,8 @@
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Dict, Iterator, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
@@ -10,6 +12,23 @@ from agno.models.message import Citations, Message, MessageReferences
 from agno.models.metrics import RunMetrics
 from agno.reasoning.step import ReasoningStep
 from agno.utils.log import log_error
+
+# Per-task override for RunContext.messages, set by _safe_hook_call(_async).
+# Task-local via ContextVar, so concurrent hooks under asyncio.gather don't
+# clobber each other's view. None outside hooks; reads fall through to the field.
+_run_context_messages_view: ContextVar[Optional[List[Message]]] = ContextVar(
+    "agno_run_context_messages_view", default=None
+)
+
+
+@contextmanager
+def _protect_messages_view(messages: List[Message]) -> Iterator[None]:
+    """Install a task-local override for RunContext.messages reads."""
+    token = _run_context_messages_view.set(messages)
+    try:
+        yield
+    finally:
+        _run_context_messages_view.reset(token)
 
 
 @dataclass
@@ -27,16 +46,24 @@ class RunContext:
     session_state: Optional[Dict[str, Any]] = None
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
 
-    # Live reference to the current run's message list. Available in tool hooks
-    # via run_context.messages. Hooks receive a shallow copy (via _safe_hook_call)
-    # so accidental list mutations (.clear(), .append()) won't corrupt the run.
-    # Individual Message objects are shared references — do not mutate them.
+    # Live reference to the run's message list. Inside a hook, reads of
+    # rc.messages are redirected to a per-task shallow-copy view so list
+    # mutations (.clear()/.append()) don't corrupt the live list. Writes
+    # (rc.messages = ...) always go to the underlying field. Individual
+    # Message objects are shared references — do not mutate them.
     messages: Optional[List[Message]] = None
 
     # Runtime-resolved callable factory results
     tools: Optional[List[Any]] = None
     knowledge: Optional[Any] = None
     members: Optional[List[Any]] = None
+
+    def __getattribute__(self, name: str) -> Any:
+        if name == "messages":
+            override = _run_context_messages_view.get()
+            if override is not None:
+                return override
+        return object.__getattribute__(self, name)
 
 
 @dataclass

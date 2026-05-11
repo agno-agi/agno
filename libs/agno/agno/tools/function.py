@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, validate_call
 from agno.exceptions import AgentRunException
 from agno.media import Audio, File, Image, Video
 from agno.run import RunContext
+from agno.run.base import _protect_messages_view
 from agno.utils.log import log_debug, log_exception, log_warning
 
 T = TypeVar("T")
@@ -801,34 +802,24 @@ class FunctionCall(BaseModel):
     def _safe_hook_call(self, hook: Callable, hook_args: Dict[str, Any]) -> Any:
         """Call a hook with list-structure-safe messages.
 
-        Temporarily replaces run_context.messages with a shallow copy so the
-        hook cannot corrupt the live message list (e.g. .clear(), .append()).
-        Individual Message objects are still shared references — this protects
-        list structure only, not message contents. The live reference is
-        restored after the hook returns (or raises).
+        Installs a task-local override so reads of run_context.messages from
+        the hook see a shallow copy — list mutations (.clear(), .append())
+        can't corrupt the live list, and parallel hooks under asyncio.gather
+        don't race on a shared attribute. Individual Message objects are still
+        shared references — this protects list structure only, not contents.
         """
         rc = self.function._run_context
-        if rc is not None and rc.messages is not None:
-            live_ref = rc.messages
-            rc.messages = list(live_ref)
-            try:
-                return hook(**hook_args)
-            finally:
-                rc.messages = live_ref
-        else:
+        if rc is None or rc.messages is None:
+            return hook(**hook_args)
+        with _protect_messages_view(list(rc.messages)):
             return hook(**hook_args)
 
     async def _safe_hook_call_async(self, hook: Callable, hook_args: Dict[str, Any]) -> Any:
-        """Async variant of _safe_hook_call."""
+        """Async variant of _safe_hook_call. See _safe_hook_call for the contract."""
         rc = self.function._run_context
-        if rc is not None and rc.messages is not None:
-            live_ref = rc.messages
-            rc.messages = list(live_ref)
-            try:
-                return await hook(**hook_args)
-            finally:
-                rc.messages = live_ref
-        else:
+        if rc is None or rc.messages is None:
+            return await hook(**hook_args)
+        with _protect_messages_view(list(rc.messages)):
             return await hook(**hook_args)
 
     def _handle_pre_hook(self):

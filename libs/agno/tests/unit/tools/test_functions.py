@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Callable, Dict, List, Optional
 
 import pytest
@@ -1121,3 +1122,45 @@ def test_tool_hook_receives_messages_via_run_context():
     # Verify it's a copy (not the same reference), so hook mutations don't affect the run
     assert captured_messages is not run_context.messages
     assert captured_messages == run_context.messages
+
+
+@pytest.mark.asyncio
+async def test_async_pre_hook_does_not_pin_run_context_messages_under_gather():
+    """Regression: under asyncio.gather over parallel FunctionCalls sharing a
+    RunContext, _safe_hook_call_async previously left rc.messages pinned to a
+    stale shallow copy taken mid-batch — so a follow-up hook (e.g. a retry)
+    saw stale messages forever. The ContextVar-backed protected view is
+    task-local, so the live rc.messages list is never mutated."""
+    live_messages = [Message(role="user", content="hi")]
+    run_context = RunContext(run_id="test-run", session_id="test-session")
+    run_context.messages = live_messages
+
+    seen_lengths: List[int] = []
+
+    async def reading_pre_hook(run_context: RunContext) -> None:
+        # Yield so sibling hooks can interleave inside the wrapper.
+        await asyncio.sleep(0)
+        seen_lengths.append(len(run_context.messages))
+
+    @tool(pre_hook=reading_pre_hook)
+    async def test_func(param1: int) -> int:
+        return param1
+
+    test_func.process_entrypoint()
+    test_func._run_context = run_context
+
+    batch = [FunctionCall(function=test_func, arguments={"param1": i}) for i in range(3)]
+    await asyncio.gather(*(c.aexecute() for c in batch))
+
+    # The live list must not have been clobbered by the wrapper.
+    assert run_context.messages is live_messages
+
+    # Simulate the run loop appending a new message between hook batches.
+    live_messages.append(Message(role="assistant", content="response"))
+
+    # A retried hook must see the updated list (len=2). On the broken code,
+    # rc.messages was pinned to a stale len=1 copy and this stayed 1.
+    retry = FunctionCall(function=test_func, arguments={"param1": 99})
+    await retry.aexecute()
+
+    assert seen_lengths == [1, 1, 1, 2]
