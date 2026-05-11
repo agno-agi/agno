@@ -137,6 +137,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         """Get list of traces with optional filters and pagination"""
         import time as time_module
 
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
         # Get database using db_id or default to first available
         db = await get_db(dbs, db_id)
 
@@ -483,6 +486,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
     ):
         """Get trace statistics grouped by session"""
         import time as time_module
+
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
 
         # Get database using db_id or default to first available
         db = await get_db(dbs, db_id)
