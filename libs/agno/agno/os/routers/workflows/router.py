@@ -1731,6 +1731,14 @@ def get_workflow_router(
         from agno.os.middleware.user_scope import get_scoped_user_id
 
         user_id = get_scoped_user_id(request)
+
+        # Verify session belongs to this workflow BEFORE loading the run.
+        # See get_agent_run for the cross-component bypass this blocks.
+        if hasattr(workflow, "aget_session"):
+            session = await workflow.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+            if session is None or getattr(session, "workflow_id", None) != workflow_id:
+                raise HTTPException(status_code=404, detail="Run not found")
+
         run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
@@ -1802,9 +1810,10 @@ def get_workflow_router(
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        # Per-resource RBAC: the session must belong to this workflow.
-        session_workflow_id = getattr(session, "workflow_id", None)
-        if session_workflow_id is not None and session_workflow_id != workflow_id:
+        # Per-resource RBAC: the session must explicitly belong to this workflow.
+        # Fail closed when workflow_id is missing — an agent/team session
+        # must not be reachable through a workflow route.
+        if getattr(session, "workflow_id", None) != workflow_id:
             raise HTTPException(status_code=404, detail="Session not found")
 
         runs = session.runs or []

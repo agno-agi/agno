@@ -161,7 +161,13 @@ def _run_matches_component(run, component_type: Optional[str], component_id: Opt
 
 
 def _session_matches_component(session, component_type: Optional[str], component_id: Optional[str]) -> bool:
-    """Return True if ``session`` belongs to the given path component, or no check requested."""
+    """Return True if ``session`` explicitly belongs to the given path component.
+
+    Fails closed: a session that lacks the relevant component field is
+    rejected. This prevents bypasses where a workflow/team session contains
+    nested agent runs that would otherwise be reachable through an agent
+    route the session does not belong to.
+    """
     if not component_type or not component_id:
         return True
     field = _RUN_COMPONENT_FIELDS.get(component_type)
@@ -181,13 +187,20 @@ async def _verify_run_in_session(
 ) -> None:
     """Raise 404 if ``run_id`` isn't in a session owned by ``user_id``.
 
-    When ``component_type`` and ``component_id`` are provided, also verifies
-    the loaded run belongs to that path component. This blocks bypasses where
-    a user reuses a session/run from one component on another component's
-    route (e.g. POST /agents/agent-a/runs/run-from-agent-b/cancel).
+    When ``component_type`` and ``component_id`` are provided, also verifies:
+      1. The loaded session belongs to that path component (a WorkflowSession
+         cannot be reached through /agents/... even if a nested agent run
+         lives inside it).
+      2. The loaded run belongs to the same path component.
+
+    Both checks fail closed when the component field is missing on the
+    session/run.
     """
     session = await entity.aget_session(session_id=session_id, user_id=user_id)
     if session is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    # Session must belong to the path component before we even look at runs.
+    if not _session_matches_component(session, component_type, component_id):
         raise HTTPException(status_code=404, detail="Run not found")
     run = session.get_run(run_id=run_id)
     if run is None:
@@ -211,7 +224,7 @@ async def _verify_run_in_session_via_db(
     Used by factory cancel routes that don't resolve an entity but still need
     to verify run ownership before applying a global cancellation intent.
 
-    See ``_verify_run_in_session`` for the component_type/id behaviour.
+    See ``_verify_run_in_session`` for the session/run component checks.
     """
     if db is None:
         # No DB to verify against — fail closed.
@@ -223,6 +236,9 @@ async def _verify_run_in_session_via_db(
         session = db.get_session(session_id=session_id, user_id=user_id)
 
     if session is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    if not _session_matches_component(session, component_type, component_id):
         raise HTTPException(status_code=404, detail="Run not found")
 
     get_run = getattr(session, "get_run", None)

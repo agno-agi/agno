@@ -1332,6 +1332,16 @@ def get_agent_router(
         from agno.os.middleware.user_scope import get_scoped_user_id
 
         user_id = get_scoped_user_id(request)
+
+        # Verify session belongs to this agent BEFORE loading the run.
+        # Without this, a WorkflowSession or TeamSession containing a nested
+        # agent run would be reachable through /agents/{agent_id}/... even
+        # though the session itself doesn't belong to that agent.
+        if hasattr(agent, "aget_session"):
+            session = await agent.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+            if session is None or getattr(session, "agent_id", None) != agent_id:
+                raise HTTPException(status_code=404, detail="Run not found")
+
         run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
@@ -1498,11 +1508,11 @@ def get_agent_router(
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        # Per-resource RBAC: the session must belong to this agent. If the
-        # session was created under another agent (or no agent at all), reject
-        # without leaking which.
-        session_agent_id = getattr(session, "agent_id", None)
-        if session_agent_id is not None and session_agent_id != agent_id:
+        # Per-resource RBAC: the session must explicitly belong to this agent.
+        # Fail closed when agent_id is missing — a WorkflowSession or
+        # TeamSession can contain nested agent runs but doesn't have its own
+        # agent_id, and must not be reachable through an agent route.
+        if getattr(session, "agent_id", None) != agent_id:
             raise HTTPException(status_code=404, detail="Session not found")
 
         runs = session.runs or []

@@ -1419,6 +1419,14 @@ def get_team_router(
         from agno.os.middleware.user_scope import get_scoped_user_id
 
         user_id = get_scoped_user_id(request)
+
+        # Verify session belongs to this team BEFORE loading the run. See
+        # get_agent_run for the cross-component bypass this blocks.
+        if hasattr(team, "aget_session"):
+            session = await team.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+            if session is None or getattr(session, "team_id", None) != team_id:
+                raise HTTPException(status_code=404, detail="Run not found")
+
         run_output = await team.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
@@ -1485,9 +1493,10 @@ def get_team_router(
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        # Per-resource RBAC: the session must belong to this team.
-        session_team_id = getattr(session, "team_id", None)
-        if session_team_id is not None and session_team_id != team_id:
+        # Per-resource RBAC: the session must explicitly belong to this team.
+        # Fail closed when team_id is missing — an agent/workflow session
+        # must not be reachable through a team route.
+        if getattr(session, "team_id", None) != team_id:
             raise HTTPException(status_code=404, detail="Session not found")
 
         runs = session.runs or []

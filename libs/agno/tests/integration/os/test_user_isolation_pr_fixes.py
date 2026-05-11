@@ -557,6 +557,95 @@ class TestCrossComponentRbacBypass:
         assert resp.status_code == 404, resp.text
 
 
+class TestWorkflowSessionLeakViaAgentRoute:
+    """A WorkflowSession containing a nested agent run must NOT be reachable
+    through /agents/{agent_id}/... routes. Even though the nested run has a
+    valid agent_id, the session itself belongs to a workflow, not an agent.
+    """
+
+    @pytest.fixture
+    def seeded_client(self, shared_db, test_agent, test_workflow):
+        """OS with one agent + one workflow, plus a WorkflowSession seeded
+        directly into the shared db that contains a nested agent run."""
+        from agno.run.agent import RunOutput
+        from agno.session.workflow import WorkflowSession
+
+        agent_run = RunOutput(
+            run_id="nested-agent-run",
+            agent_id="test-agent",
+            session_id="wf-sess-with-nested-run",
+            user_id="user-x",
+            content="secret nested content",
+        )
+        wf_session = WorkflowSession(
+            session_id="wf-sess-with-nested-run",
+            workflow_id="test-workflow",
+            user_id="user-x",
+            runs=[agent_run],
+            created_at=1,
+        )
+        shared_db.upsert_session(wf_session)
+
+        agent_os = AgentOS(
+            id=TEST_OS_ID,
+            agents=[test_agent],
+            workflows=[test_workflow],
+            authorization=True,
+            authorization_config=AuthorizationConfig(
+                verification_keys=[JWT_SECRET],
+                algorithm="HS256",
+            ),
+        )
+        return TestClient(agent_os.get_app())
+
+    def test_list_agent_runs_rejects_workflow_session(self, seeded_client):
+        """GET /agents/test-agent/runs?session_id=<workflow-session> must 404."""
+        token = make_token("user-x", scopes=["agents:test-agent:read", "agents:test-agent:run"])
+        resp = seeded_client.get(
+            "/agents/test-agent/runs?session_id=wf-sess-with-nested-run",
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 404, resp.text
+
+    def test_get_agent_run_rejects_workflow_session(self, seeded_client):
+        """GET /agents/test-agent/runs/<nested>?session_id=<workflow-session> must 404."""
+        token = make_token("user-x", scopes=["agents:test-agent:read", "agents:test-agent:run"])
+        resp = seeded_client.get(
+            "/agents/test-agent/runs/nested-agent-run?session_id=wf-sess-with-nested-run",
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 404, resp.text
+
+    def test_cancel_agent_run_rejects_workflow_session(self, seeded_client):
+        """POST /agents/test-agent/runs/<nested>/cancel?session_id=<workflow-session> must 404."""
+        token = make_token("user-x", scopes=["agents:test-agent:run"])
+        resp = seeded_client.post(
+            "/agents/test-agent/runs/nested-agent-run/cancel?session_id=wf-sess-with-nested-run",
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 404, resp.text
+
+    def test_resume_agent_run_rejects_workflow_session(self, seeded_client):
+        """POST /agents/test-agent/runs/<nested>/resume with workflow session must 404."""
+        token = make_token("user-x", scopes=["agents:test-agent:read", "agents:test-agent:run"])
+        resp = seeded_client.post(
+            "/agents/test-agent/runs/nested-agent-run/resume",
+            data={"session_id": "wf-sess-with-nested-run"},
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 404, resp.text
+
+    def test_continue_agent_run_rejects_workflow_session(self, seeded_client):
+        """POST /agents/test-agent/runs/<nested>/continue with workflow session must 404."""
+        token = make_token("user-x", scopes=["agents:test-agent:run"])
+        resp = seeded_client.post(
+            "/agents/test-agent/runs/nested-agent-run/continue",
+            data={"tools": "", "session_id": "wf-sess-with-nested-run"},
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 404, resp.text
+
+
 # ---------------------------------------------------------------------------
 # Re-review finding 3 — Custom admin_scope on list endpoints
 # ---------------------------------------------------------------------------
