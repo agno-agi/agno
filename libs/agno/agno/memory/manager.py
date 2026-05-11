@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from os import getenv
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Type, Union
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -45,6 +46,11 @@ class MemorySearchResponse(BaseModel):
 class MemoryManager:
     """Memory Manager"""
 
+    # Unique identifier for this manager. Auto-generated if not provided.
+    id: Optional[str] = None
+    # Optional human-readable name for this manager.
+    name: Optional[str] = None
+
     # Model used for memory management
     model: Optional[Model] = None
 
@@ -85,7 +91,11 @@ class MemoryManager:
         add_memories: bool = True,
         clear_memories: bool = False,
         debug_mode: bool = False,
+        id: Optional[str] = None,
+        name: Optional[str] = None,
     ):
+        self.id = id if id is not None else f"memory_manager_{uuid4().hex[:8]}"
+        self.name = name
         self.model = model  # type: ignore[assignment]
         self.system_message = system_message
         self.memory_capture_instructions = memory_capture_instructions

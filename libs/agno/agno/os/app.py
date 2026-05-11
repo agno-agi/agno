@@ -670,15 +670,12 @@ class AgentOS:
 
         def _register(owner: Any, owner_type: str) -> None:
             owner_id = getattr(owner, "id", None)
-            if owner_id is None:
-                return
 
             mm = getattr(owner, "memory_manager", None)
             if mm is not None:
-                mm_id = f"{owner_id}__memory_manager"
-                if mm_id not in memory_ids:
+                mm_id = getattr(mm, "id", None)
+                if mm_id is not None and mm_id not in memory_ids:
                     try:
-                        setattr(mm, "_registry_id", mm_id)
                         setattr(mm, "_registry_owner_id", owner_id)
                         setattr(mm, "_registry_owner_type", owner_type)
                     except (AttributeError, TypeError):
@@ -688,10 +685,9 @@ class AgentOS:
 
             sm = getattr(owner, "session_summary_manager", None)
             if sm is not None:
-                sm_id = f"{owner_id}__session_summary_manager"
-                if sm_id not in summary_ids:
+                sm_id = getattr(sm, "id", None)
+                if sm_id is not None and sm_id not in summary_ids:
                     try:
-                        setattr(sm, "_registry_id", sm_id)
                         setattr(sm, "_registry_owner_id", owner_id)
                         setattr(sm, "_registry_owner_type", owner_type)
                     except (AttributeError, TypeError):

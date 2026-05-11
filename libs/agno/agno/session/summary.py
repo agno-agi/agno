@@ -1,7 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -62,6 +63,12 @@ class SessionSummaryResponse(BaseModel):
 class SessionSummaryManager:
     """Session Summary Manager"""
 
+    # Unique identifier for this manager. Auto-generated if not provided.
+    id: Optional[str] = field(default=None)
+
+    # Optional human-readable name for this manager.
+    name: Optional[str] = None
+
     # Model used for session summary generation
     model: Optional[Model] = None
 
@@ -81,6 +88,8 @@ class SessionSummaryManager:
     conversation_limit: Optional[int] = None
 
     def __post_init__(self) -> None:
+        if self.id is None:
+            self.id = f"session_summary_manager_{uuid4().hex[:8]}"
         if self.last_n_runs is not None and self.last_n_runs <= 0:
             raise ValueError(f"last_n_runs must be a positive integer, got {self.last_n_runs}")
         if self.conversation_limit is not None and self.conversation_limit <= 0:

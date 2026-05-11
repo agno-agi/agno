@@ -501,7 +501,8 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         # Memory managers
         if resource_type is None or resource_type == RegistryResourceType.MEMORY_MANAGER:
             for mm in getattr(registry, "memory_managers", []) or []:
-                mm_id = _safe_str(getattr(mm, "_registry_id", None)) or mm.__class__.__name__
+                mm_id = _safe_str(getattr(mm, "id", None)) or mm.__class__.__name__
+                mm_name = _safe_str(getattr(mm, "name", None)) or mm_id
                 model = getattr(mm, "model", None)
                 db = getattr(mm, "db", None)
                 mm_metadata = MemoryManagerMetadata(
@@ -518,7 +519,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 )
                 resources.append(
                     RegistryContentResponse(
-                        name=mm_id,
+                        name=mm_name,
                         id=mm_id,
                         type=RegistryResourceType.MEMORY_MANAGER,
                         metadata=mm_metadata.model_dump(exclude_none=True),
@@ -528,7 +529,8 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
         # Session summary managers
         if resource_type is None or resource_type == RegistryResourceType.SESSION_SUMMARY_MANAGER:
             for sm in getattr(registry, "session_summary_managers", []) or []:
-                sm_id = _safe_str(getattr(sm, "_registry_id", None)) or sm.__class__.__name__
+                sm_id = _safe_str(getattr(sm, "id", None)) or sm.__class__.__name__
+                sm_name = _safe_str(getattr(sm, "name", None)) or sm_id
                 model = getattr(sm, "model", None)
                 sm_metadata = SessionSummaryManagerMetadata(
                     class_path=_class_path(sm),
@@ -541,7 +543,7 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 )
                 resources.append(
                     RegistryContentResponse(
-                        name=sm_id,
+                        name=sm_name,
                         id=sm_id,
                         type=RegistryResourceType.SESSION_SUMMARY_MANAGER,
                         metadata=sm_metadata.model_dump(exclude_none=True),

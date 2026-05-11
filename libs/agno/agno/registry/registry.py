@@ -121,33 +121,33 @@ class Registry:
         return set()
 
     def get_memory_manager(self, manager_id: str) -> Optional[Any]:
-        """Get a memory manager by registry id."""
+        """Get a memory manager by id."""
         if self.memory_managers:
             return next(
-                (m for m in self.memory_managers if getattr(m, "_registry_id", None) == manager_id),
+                (m for m in self.memory_managers if getattr(m, "id", None) == manager_id),
                 None,
             )
         return None
 
     def get_session_summary_manager(self, manager_id: str) -> Optional[Any]:
-        """Get a session summary manager by registry id."""
+        """Get a session summary manager by id."""
         if self.session_summary_managers:
             return next(
-                (m for m in self.session_summary_managers if getattr(m, "_registry_id", None) == manager_id),
+                (m for m in self.session_summary_managers if getattr(m, "id", None) == manager_id),
                 None,
             )
         return None
 
     def get_memory_manager_ids(self) -> Set[str]:
-        """Get the set of all memory manager registry ids."""
+        """Get the set of all memory manager ids."""
         if self.memory_managers:
-            return {mid for m in self.memory_managers if (mid := getattr(m, "_registry_id", None)) is not None}
+            return {mid for m in self.memory_managers if (mid := getattr(m, "id", None)) is not None}
         return set()
 
     def get_session_summary_manager_ids(self) -> Set[str]:
-        """Get the set of all session summary manager registry ids."""
+        """Get the set of all session summary manager ids."""
         if self.session_summary_managers:
-            return {mid for m in self.session_summary_managers if (mid := getattr(m, "_registry_id", None)) is not None}
+            return {mid for m in self.session_summary_managers if (mid := getattr(m, "id", None)) is not None}
         return set()
 
     def get_all_component_ids(self) -> Set[str]:
