@@ -8,9 +8,14 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RemoteAgent
-from agno.os.interfaces.slack.event_handler import SlackEventHandler
-from agno.os.interfaces.slack.helpers import BotNameResolver
-from agno.os.interfaces.slack.hitl import HITLHandler
+
+try:
+    from agno.os.interfaces.slack.event_handler import SlackEventHandler
+    from agno.os.interfaces.slack.helpers import BotNameResolver
+    from agno.os.interfaces.slack.hitl import HITLHandler
+except ImportError as e:
+    raise ImportError("Slack dependencies not installed. Please install using `pip install 'agno[slack]'`") from e
+
 from agno.os.interfaces.slack.security import verify_slack_signature
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
