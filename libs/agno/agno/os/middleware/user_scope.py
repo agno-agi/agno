@@ -137,10 +137,62 @@ async def get_user_scoped_db(
 # ----------------------------------------------------------------------------
 
 
-async def _verify_run_in_session(entity, session_id: str, run_id: str, user_id: str) -> None:
-    """Raise 404 if ``run_id`` isn't in a session owned by ``user_id``."""
+_RUN_COMPONENT_FIELDS = {
+    "agents": "agent_id",
+    "teams": "team_id",
+    "workflows": "workflow_id",
+}
+
+
+def _run_matches_component(run, component_type: Optional[str], component_id: Optional[str]) -> bool:
+    """Return True if ``run`` belongs to the given path component, or no check requested."""
+    if not component_type or not component_id:
+        return True
+    field = _RUN_COMPONENT_FIELDS.get(component_type)
+    if field is None:
+        return True
+    actual = getattr(run, field, None)
+    # Cross-component runs (e.g. an agent run inside a workflow) carry the
+    # parent workflow_id, so a workflow path accepts agent runs that were
+    # delegated from it. The strict per-resource check still kicks in for the
+    # same component type. Missing field is treated as a mismatch (fail closed).
+    return actual == component_id
+
+
+def _session_matches_component(session, component_type: Optional[str], component_id: Optional[str]) -> bool:
+    """Return True if ``session`` belongs to the given path component, or no check requested."""
+    if not component_type or not component_id:
+        return True
+    field = _RUN_COMPONENT_FIELDS.get(component_type)
+    if field is None:
+        return True
+    return getattr(session, field, None) == component_id
+
+
+async def _verify_run_in_session(
+    entity,
+    session_id: str,
+    run_id: str,
+    user_id: str,
+    *,
+    component_type: Optional[str] = None,
+    component_id: Optional[str] = None,
+) -> None:
+    """Raise 404 if ``run_id`` isn't in a session owned by ``user_id``.
+
+    When ``component_type`` and ``component_id`` are provided, also verifies
+    the loaded run belongs to that path component. This blocks bypasses where
+    a user reuses a session/run from one component on another component's
+    route (e.g. POST /agents/agent-a/runs/run-from-agent-b/cancel).
+    """
     session = await entity.aget_session(session_id=session_id, user_id=user_id)
-    if session is None or session.get_run(run_id=run_id) is None:
+    if session is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    run = session.get_run(run_id=run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if not _run_matches_component(run, component_type, component_id):
+        # Mask existence — don't leak that the run lives under a different component.
         raise HTTPException(status_code=404, detail="Run not found")
 
 
@@ -149,11 +201,16 @@ async def _verify_run_in_session_via_db(
     session_id: str,
     run_id: str,
     user_id: str,
+    *,
+    component_type: Optional[str] = None,
+    component_id: Optional[str] = None,
 ) -> None:
     """Raise 404 if ``run_id`` isn't in a session owned by ``user_id``.
 
     Used by factory cancel routes that don't resolve an entity but still need
     to verify run ownership before applying a global cancellation intent.
+
+    See ``_verify_run_in_session`` for the component_type/id behaviour.
     """
     if db is None:
         # No DB to verify against — fail closed.
@@ -168,7 +225,12 @@ async def _verify_run_in_session_via_db(
         raise HTTPException(status_code=404, detail="Run not found")
 
     get_run = getattr(session, "get_run", None)
-    if get_run is None or get_run(run_id=run_id) is None:
+    if get_run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    run = get_run(run_id=run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if not _run_matches_component(run, component_type, component_id):
         raise HTTPException(status_code=404, detail="Run not found")
 
 
@@ -205,7 +267,14 @@ def resolve_owned_agent(os: "AgentOS") -> Callable:
         if scoped_user_id is not None:
             if not session_id:
                 raise HTTPException(status_code=400, detail="session_id is required for this action")
-            await _verify_run_in_session(agent, session_id, run_id, scoped_user_id)
+            await _verify_run_in_session(
+                agent,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="agents",
+                component_id=agent_id,
+            )
         return agent
 
     return dependency
@@ -241,7 +310,14 @@ def resolve_owned_team(os: "AgentOS") -> Callable:
         if scoped_user_id is not None:
             if not session_id:
                 raise HTTPException(status_code=400, detail="session_id is required for this action")
-            await _verify_run_in_session(team, session_id, run_id, scoped_user_id)
+            await _verify_run_in_session(
+                team,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="teams",
+                component_id=team_id,
+            )
         return team
 
     return dependency
@@ -277,7 +353,14 @@ def resolve_owned_workflow(os: "AgentOS") -> Callable:
         if scoped_user_id is not None:
             if not session_id:
                 raise HTTPException(status_code=400, detail="session_id is required for this action")
-            await _verify_run_in_session(workflow, session_id, run_id, scoped_user_id)
+            await _verify_run_in_session(
+                workflow,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="workflows",
+                component_id=workflow_id,
+            )
         return workflow
 
     return dependency

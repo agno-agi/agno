@@ -813,7 +813,15 @@ def get_team_router(
             if scoped_user_id is not None:
                 if not session_id:
                     raise HTTPException(status_code=400, detail="session_id is required for this action")
-                await _verify_run_in_session_via_db(os.db, session_id, run_id, scoped_user_id)
+                check_db = getattr(factory, "db", None) or os.db
+                await _verify_run_in_session_via_db(
+                    check_db,
+                    session_id,
+                    run_id,
+                    scoped_user_id,
+                    component_type="teams",
+                    component_id=team_id,
+                )
 
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
@@ -834,7 +842,14 @@ def get_team_router(
         if scoped_user_id is not None:
             if not session_id:
                 raise HTTPException(status_code=400, detail="session_id is required for this action")
-            await _verify_run_in_session(team, session_id, run_id, scoped_user_id)
+            await _verify_run_in_session(
+                team,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="teams",
+                component_id=team_id,
+            )
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
@@ -891,7 +906,15 @@ def get_team_router(
         if factory:
             if scoped_user_id is not None:
                 assert session_id is not None
-                await _verify_run_in_session_via_db(os.db, session_id, run_id, scoped_user_id)
+                check_db = getattr(factory, "db", None) or os.db
+                await _verify_run_in_session_via_db(
+                    check_db,
+                    session_id,
+                    run_id,
+                    scoped_user_id,
+                    component_type="teams",
+                    component_id=team_id,
+                )
             raise HTTPException(
                 status_code=400,
                 detail="Stream resumption is not supported for factory teams",
@@ -905,7 +928,14 @@ def get_team_router(
 
         if scoped_user_id is not None:
             assert session_id is not None
-            await _verify_run_in_session(team, session_id, run_id, scoped_user_id)
+            await _verify_run_in_session(
+                team,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="teams",
+                component_id=team_id,
+            )
 
         return StreamingResponse(
             _resume_stream_generator(team, run_id, last_event_index, session_id),
@@ -1015,9 +1045,26 @@ def get_team_router(
                 detail="session_id is required to continue a run",
             )
 
+        # Ownership check before status validation — see continue_agent_run.
+        from agno.os.middleware.user_scope import _verify_run_in_session, get_scoped_user_id
+
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None and not isinstance(team, RemoteTeam):
+            assert session_id
+            await _verify_run_in_session(
+                team,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="teams",
+                component_id=team_id,
+            )
+
         # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
         if session_id and not isinstance(team, RemoteTeam):
-            existing_run = await team.aget_run_output(run_id=run_id, session_id=session_id)
+            existing_run = await team.aget_run_output(
+                run_id=run_id, session_id=session_id, user_id=scoped_user_id or user_id
+            )
             if existing_run is not None:
                 is_paused = getattr(existing_run, "is_paused", False)
                 if not is_paused:
@@ -1374,6 +1421,11 @@ def get_team_router(
         user_id = get_scoped_user_id(request)
         run_output = await team.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
         if run_output is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        # Per-resource RBAC: the run must belong to the path team.
+        run_team_id = getattr(run_output, "team_id", None)
+        if run_team_id and run_team_id != team_id:
             raise HTTPException(status_code=404, detail="Run not found")
 
         return run_output.to_dict()

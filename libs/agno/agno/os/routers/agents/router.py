@@ -845,7 +845,17 @@ def get_agent_router(
             if scoped_user_id is not None:
                 if not session_id:
                     raise HTTPException(status_code=400, detail="session_id is required for this action")
-                await _verify_run_in_session_via_db(os.db, session_id, run_id, scoped_user_id)
+                # Prefer factory.db when present; only fall back to os.db when
+                # the factory shares the OS db.
+                check_db = getattr(factory, "db", None) or os.db
+                await _verify_run_in_session_via_db(
+                    check_db,
+                    session_id,
+                    run_id,
+                    scoped_user_id,
+                    component_type="agents",
+                    component_id=agent_id,
+                )
 
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
@@ -870,7 +880,14 @@ def get_agent_router(
         if scoped_user_id is not None:
             if not session_id:
                 raise HTTPException(status_code=400, detail="session_id is required for this action")
-            await _verify_run_in_session(agent, session_id, run_id, scoped_user_id)
+            await _verify_run_in_session(
+                agent,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="agents",
+                component_id=agent_id,
+            )
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
@@ -984,11 +1001,33 @@ def get_agent_router(
                 detail="session_id is required to continue a run",
             )
 
+        # Ownership check: a non-admin caller must own the session AND the run
+        # must belong to this agent (per-resource RBAC). Without this, status
+        # validation below leaks run existence/state across users and across
+        # agents within the same user.
+        from agno.os.middleware.user_scope import _verify_run_in_session, get_scoped_user_id
+
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None and not isinstance(agent, RemoteAgent):
+            assert session_id  # required above
+            await _verify_run_in_session(
+                agent,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="agents",
+                component_id=agent_id,
+            )
+
         # Fetch existing run once for validation and potential approval resolution
         existing_run = None
         if session_id and not isinstance(agent, RemoteAgent):
             if hasattr(agent, "aget_run_output"):
-                existing_run = await agent.aget_run_output(run_id=run_id, session_id=session_id)
+                existing_run = await agent.aget_run_output(
+                    run_id=run_id,
+                    session_id=session_id,
+                    user_id=scoped_user_id or user_id,
+                )
 
         # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
         if existing_run is not None:
@@ -1297,6 +1336,12 @@ def get_agent_router(
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
 
+        # Per-resource RBAC: the run must belong to the path agent. Without
+        # this check a user could fetch any of their own runs via the wrong
+        # agent's path, bypassing per-resource scopes like agents:agent-x:read.
+        if getattr(run_output, "agent_id", None) and run_output.agent_id != agent_id:
+            raise HTTPException(status_code=404, detail="Run not found")
+
         return run_output.to_dict()
 
     @router.post(
@@ -1355,7 +1400,15 @@ def get_agent_router(
             if scoped_user_id is not None:
                 # session_id required above
                 assert session_id is not None
-                await _verify_run_in_session_via_db(os.db, session_id, run_id, scoped_user_id)
+                check_db = getattr(factory, "db", None) or os.db
+                await _verify_run_in_session_via_db(
+                    check_db,
+                    session_id,
+                    run_id,
+                    scoped_user_id,
+                    component_type="agents",
+                    component_id=agent_id,
+                )
             # Without a concrete agent, we can only serve buffer events for
             # this run; the DB fallback path inside the generator requires an
             # entity, so signal early if the buffer doesn't have it.
@@ -1372,7 +1425,14 @@ def get_agent_router(
 
         if scoped_user_id is not None:
             assert session_id is not None
-            await _verify_run_in_session(agent, session_id, run_id, scoped_user_id)
+            await _verify_run_in_session(
+                agent,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="agents",
+                component_id=agent_id,
+            )
 
         return StreamingResponse(
             _resume_stream_generator(agent, run_id, last_event_index, session_id),  # type: ignore[arg-type]

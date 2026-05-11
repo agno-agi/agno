@@ -209,7 +209,14 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
             from agno.os.middleware.user_scope import _verify_run_in_session_via_db
 
             try:
-                await _verify_run_in_session_via_db(os.db, session_id, run_id, user_id)
+                await _verify_run_in_session_via_db(
+                    os.db,
+                    session_id,
+                    run_id,
+                    user_id,
+                    component_type="workflows",
+                    component_id=workflow_id,
+                )
             except HTTPException:
                 # Mask existence of another user's run.
                 await websocket.send_text(json.dumps({"event": "error", "error": f"Run {run_id} not found"}))
@@ -1411,8 +1418,28 @@ def get_workflow_router(
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Continue is not supported for remote workflows")
 
+        # Ownership check before status validation — see continue_agent_run.
+        # Non-admin callers must own the session AND the run must belong to
+        # this workflow (per-resource RBAC).
+        from agno.os.middleware.user_scope import _verify_run_in_session, get_scoped_user_id
+
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if not session_id:
+                raise HTTPException(status_code=400, detail="session_id is required to continue a run")
+            await _verify_run_in_session(
+                workflow,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="workflows",
+                component_id=workflow_id,
+            )
+
         # Load existing run and validate it's paused
-        existing_run = await workflow.aget_run_output(run_id=run_id, session_id=session_id)
+        existing_run = await workflow.aget_run_output(
+            run_id=run_id, session_id=session_id, user_id=scoped_user_id or user_id
+        )
         if existing_run is None:
             raise HTTPException(status_code=404, detail="Run not found")
 
@@ -1442,13 +1469,17 @@ def get_workflow_router(
                     status_code=400, detail=f"Invalid structure or content for step_requirements: {str(e)}"
                 )
 
+        # Force JWT user_id for non-admin callers so a spoofed user_id cannot
+        # attribute the continued run to another user.
+        effective_user_id = scoped_user_id if scoped_user_id is not None else user_id
+
         if stream:
             return StreamingResponse(
                 workflow_continue_response_streamer(
                     workflow,
                     run_id=run_id,
                     session_id=session_id,
-                    user_id=user_id,
+                    user_id=effective_user_id,
                     step_requirements=parsed_requirements,
                     background_tasks=background_tasks,
                 ),
@@ -1456,6 +1487,8 @@ def get_workflow_router(
             )
         else:
             try:
+                # Ownership already verified above; acontinue_run loads the run
+                # via {session_id, run_id} which we've proven the caller owns.
                 run_response = await workflow.acontinue_run(  # type: ignore[call-overload]
                     run_id=run_id,
                     session_id=session_id,
@@ -1506,7 +1539,15 @@ def get_workflow_router(
             if scoped_user_id is not None:
                 if not session_id:
                     raise HTTPException(status_code=400, detail="session_id is required for this action")
-                await _verify_run_in_session_via_db(os.db, session_id, run_id, scoped_user_id)
+                check_db = getattr(factory, "db", None) or os.db
+                await _verify_run_in_session_via_db(
+                    check_db,
+                    session_id,
+                    run_id,
+                    scoped_user_id,
+                    component_type="workflows",
+                    component_id=workflow_id,
+                )
 
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
@@ -1529,7 +1570,14 @@ def get_workflow_router(
         if scoped_user_id is not None:
             if not session_id:
                 raise HTTPException(status_code=400, detail="session_id is required for this action")
-            await _verify_run_in_session(workflow, session_id, run_id, scoped_user_id)
+            await _verify_run_in_session(
+                workflow,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="workflows",
+                component_id=workflow_id,
+            )
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
@@ -1586,7 +1634,15 @@ def get_workflow_router(
         if factory:
             if scoped_user_id is not None:
                 assert session_id is not None
-                await _verify_run_in_session_via_db(os.db, session_id, run_id, scoped_user_id)
+                check_db = getattr(factory, "db", None) or os.db
+                await _verify_run_in_session_via_db(
+                    check_db,
+                    session_id,
+                    run_id,
+                    scoped_user_id,
+                    component_type="workflows",
+                    component_id=workflow_id,
+                )
             raise HTTPException(
                 status_code=400,
                 detail="Stream resumption is not supported for factory workflows",
@@ -1602,7 +1658,14 @@ def get_workflow_router(
 
         if scoped_user_id is not None:
             assert session_id is not None
-            await _verify_run_in_session(workflow, session_id, run_id, scoped_user_id)
+            await _verify_run_in_session(
+                workflow,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="workflows",
+                component_id=workflow_id,
+            )
 
         return StreamingResponse(
             _resume_stream_generator(workflow, run_id, last_event_index, session_id),
@@ -1670,6 +1733,10 @@ def get_workflow_router(
         user_id = get_scoped_user_id(request)
         run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
         if run_output is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        # Per-resource RBAC: the run must belong to the path workflow.
+        if getattr(run_output, "workflow_id", None) and run_output.workflow_id != workflow_id:
             raise HTTPException(status_code=404, detail="Run not found")
 
         return run_output.to_dict()
