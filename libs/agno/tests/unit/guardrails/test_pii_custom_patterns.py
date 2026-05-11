@@ -70,3 +70,18 @@ class TestPIICustomPatterns:
         assert "employee_id" in guardrail.pii_patterns
         assert hasattr(guardrail.pii_patterns["bank_account"], "search")
         assert hasattr(guardrail.pii_patterns["employee_id"], "search")
+
+    def test_invalid_regex_string_raises_at_init(self):
+        """Malformed regex strings must raise re.error at __init__ time (fail-fast).
+
+        This documents intentional behaviour: bad patterns surface immediately
+        at configuration time rather than silently failing on the first agent input.
+        """
+        with pytest.raises(re.error):
+            PIIDetectionGuardrail(
+                enable_ssn_check=False,
+                enable_credit_card_check=False,
+                enable_email_check=False,
+                enable_phone_check=False,
+                custom_patterns={"broken": r"[unclosed"},
+            )
