@@ -1,48 +1,23 @@
+import pytest
+
 from agno.models.vertexai.claude import Claude
 
 
-class TestSupportsStructuredOutputs:
-    def test_claude_4_5_sonnet_supports(self):
-        model = Claude(id="claude-sonnet-4-5@20250929")
-        assert model._supports_structured_outputs() is True
-        assert model.supports_native_structured_outputs is True
-
-    def test_claude_4_5_haiku_supports(self):
-        model = Claude(id="claude-haiku-4-5@20251001")
-        assert model._supports_structured_outputs() is True
-        assert model.supports_native_structured_outputs is True
-
-    def test_claude_opus_4_5_supports(self):
-        model = Claude(id="claude-opus-4-5@20251101")
-        assert model._supports_structured_outputs() is True
-        assert model.supports_native_structured_outputs is True
-
-    def test_claude_4_6_supports(self):
-        model = Claude(id="claude-sonnet-4-6@20260217")
-        assert model._supports_structured_outputs() is True
-        assert model.supports_native_structured_outputs is True
-
-    def test_claude_3_5_haiku_does_not_support(self):
-        model = Claude(id="claude-3-5-haiku@20241022")
-        assert model._supports_structured_outputs() is False
-        assert model.supports_native_structured_outputs is False
-
-    def test_claude_3_sonnet_does_not_support(self):
-        model = Claude(id="claude-3-sonnet@20240229")
-        assert model._supports_structured_outputs() is False
-        assert model.supports_native_structured_outputs is False
-
-    def test_claude_3_opus_does_not_support(self):
-        model = Claude(id="claude-3-opus@20240229")
-        assert model._supports_structured_outputs() is False
-        assert model.supports_native_structured_outputs is False
-
-    def test_claude_sonnet_4_0_does_not_support(self):
-        model = Claude(id="claude-sonnet-4@20250514")
-        assert model._supports_structured_outputs() is False
-        assert model.supports_native_structured_outputs is False
-
-    def test_claude_opus_4_0_does_not_support(self):
-        model = Claude(id="claude-opus-4@20250514")
-        assert model._supports_structured_outputs() is False
-        assert model.supports_native_structured_outputs is False
+@pytest.mark.parametrize(
+    ("model_id", "expected"),
+    [
+        ("claude-sonnet-4-5@20250929", True),
+        ("claude-haiku-4-5@20251001", True),
+        ("claude-opus-4-5@20251101", True),
+        ("claude-sonnet-4-6@20260217", True),
+        ("claude-3-5-haiku@20241022", False),
+        ("claude-3-sonnet@20240229", False),
+        ("claude-3-opus@20240229", False),
+        ("claude-sonnet-4@20250514", False),
+        ("claude-opus-4@20250514", False),
+    ],
+)
+def test_supports_structured_outputs(model_id: str, expected: bool):
+    model = Claude(id=model_id)
+    assert model._supports_structured_outputs() is expected
+    assert model.supports_native_structured_outputs is expected
