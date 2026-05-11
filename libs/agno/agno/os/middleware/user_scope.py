@@ -20,7 +20,7 @@ Usage in a router:
     # Returns None for admins (no filtering), user_id for regular users
 """
 
-from typing import TYPE_CHECKING, Callable, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Callable, List, Literal, Optional, Union, cast
 
 from fastapi import HTTPException, Query, Request
 
@@ -37,6 +37,14 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
     from agno.team import RemoteTeam, Team
     from agno.workflow import RemoteWorkflow, Workflow
+
+
+ComponentType = Literal["agents", "teams", "workflows"]
+
+# Reused error messages — referenced by route code AND tests.
+SESSION_ID_REQUIRED = "session_id is required for this action"
+WORKFLOW_ID_REQUIRED_RECONNECT = "workflow_id is required to reconnect to a workflow run"
+SESSION_ID_REQUIRED_RECONNECT = "session_id is required to reconnect to a workflow run"
 
 
 def _has_admin_scope(scopes: List[str], admin_scope: Optional[str] = None) -> bool:
@@ -137,43 +145,73 @@ async def get_user_scoped_db(
 # ----------------------------------------------------------------------------
 
 
-_RUN_COMPONENT_FIELDS = {
+_RUN_COMPONENT_FIELDS: dict[ComponentType, str] = {
     "agents": "agent_id",
     "teams": "team_id",
     "workflows": "workflow_id",
 }
 
 
-def _run_matches_component(run, component_type: Optional[str], component_id: Optional[str]) -> bool:
+def _component_field(component_type: Optional[ComponentType]) -> Optional[str]:
+    """Return the session/run attribute name for ``component_type``, or None
+    when no check was requested. An unknown component_type is treated as a
+    programmer error and triggers fail-closed at the call sites.
+    """
+    if component_type is None:
+        return None
+    if component_type not in _RUN_COMPONENT_FIELDS:
+        # Typo (e.g. "workflow" instead of "workflows") — fail closed at the
+        # call site rather than silently skipping validation.
+        raise ValueError(f"Unknown component_type: {component_type!r}")
+    return _RUN_COMPONENT_FIELDS[component_type]
+
+
+def _run_matches_component(run, component_type: Optional[ComponentType], component_id: Optional[str]) -> bool:
     """Return True if ``run`` explicitly belongs to the given path component.
 
     Fails closed: a run that lacks the relevant component field is rejected,
     because nested member runs inside team/workflow sessions can have
     ambiguous attribution and must not be exposed through a sibling
-    component's route.
+    component's route. Unknown component_type values raise (fail-closed at
+    the caller).
     """
     if not component_type or not component_id:
         return True
-    field = _RUN_COMPONENT_FIELDS.get(component_type)
+    field = _component_field(component_type)
     if field is None:
         return True
     return getattr(run, field, None) == component_id
 
 
-def _session_matches_component(session, component_type: Optional[str], component_id: Optional[str]) -> bool:
+def _session_matches_component(session, component_type: Optional[ComponentType], component_id: Optional[str]) -> bool:
     """Return True if ``session`` explicitly belongs to the given path component.
 
-    Fails closed: a session that lacks the relevant component field is
-    rejected. This prevents bypasses where a workflow/team session contains
-    nested agent runs that would otherwise be reachable through an agent
-    route the session does not belong to.
+    Fails closed (see ``_run_matches_component`` for rationale). Unknown
+    component_type values raise.
     """
     if not component_type or not component_id:
         return True
-    field = _RUN_COMPONENT_FIELDS.get(component_type)
+    field = _component_field(component_type)
     if field is None:
         return True
     return getattr(session, field, None) == component_id
+
+
+async def assert_session_matches_component(
+    session,
+    component_type: ComponentType,
+    component_id: str,
+    *,
+    not_found_detail: str = "Session not found",
+) -> None:
+    """404 if ``session`` doesn't belong to the path component.
+
+    Centralises the open-coded ``getattr(session, "<x>_id", None) != path_id``
+    check used across get/list/cancel/resume/continue routes so route code
+    stays declarative and a single helper enforces fail-closed semantics.
+    """
+    if not _session_matches_component(session, component_type, component_id):
+        raise HTTPException(status_code=404, detail=not_found_detail)
 
 
 async def _verify_run_in_session(
@@ -182,7 +220,7 @@ async def _verify_run_in_session(
     run_id: str,
     user_id: str,
     *,
-    component_type: Optional[str] = None,
+    component_type: Optional[ComponentType] = None,
     component_id: Optional[str] = None,
 ) -> None:
     """Raise 404 if ``run_id`` isn't in a session owned by ``user_id``.
@@ -216,7 +254,7 @@ async def _verify_run_in_session_via_db(
     run_id: str,
     user_id: str,
     *,
-    component_type: Optional[str] = None,
+    component_type: Optional[ComponentType] = None,
     component_id: Optional[str] = None,
 ) -> None:
     """Raise 404 if ``run_id`` isn't in a session owned by ``user_id``.
@@ -283,7 +321,7 @@ def resolve_owned_agent(os: "AgentOS") -> Callable:
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             if not session_id:
-                raise HTTPException(status_code=400, detail="session_id is required for this action")
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
             await _verify_run_in_session(
                 agent,
                 session_id,
@@ -326,7 +364,7 @@ def resolve_owned_team(os: "AgentOS") -> Callable:
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             if not session_id:
-                raise HTTPException(status_code=400, detail="session_id is required for this action")
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
             await _verify_run_in_session(
                 team,
                 session_id,
@@ -369,7 +407,7 @@ def resolve_owned_workflow(os: "AgentOS") -> Callable:
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             if not session_id:
-                raise HTTPException(status_code=400, detail="session_id is required for this action")
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
             await _verify_run_in_session(
                 workflow,
                 session_id,

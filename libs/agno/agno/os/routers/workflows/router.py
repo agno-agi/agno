@@ -1,5 +1,6 @@
 import asyncio
 import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union
 from uuid import uuid4
 
@@ -25,6 +26,11 @@ from agno.os.auth import (
     require_resource_access,
 )
 from agno.os.managers import event_buffer, websocket_manager
+from agno.os.middleware.user_scope import (
+    SESSION_ID_REQUIRED,
+    SESSION_ID_REQUIRED_RECONNECT,
+    WORKFLOW_ID_REQUIRED_RECONNECT,
+)
 from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -170,7 +176,24 @@ async def handle_workflow_via_websocket(
         await websocket.send_text(json.dumps(error_payload))
 
 
-async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: "AgentOS"):
+@dataclass
+class WebSocketAuthContext:
+    """Per-connection auth state derived once when the WebSocket opens.
+
+    Passed to handler functions alongside the (untrusted) client message so
+    handlers don't need to read internal flags out of the client payload.
+    """
+
+    jwt_enabled: bool = False
+    is_admin: bool = False
+
+
+async def handle_workflow_subscription(
+    websocket: WebSocket,
+    message: dict,
+    os: "AgentOS",
+    ws_auth: Optional[WebSocketAuthContext] = None,
+):
     """
     Handle subscription/reconnection to an existing workflow run.
 
@@ -182,9 +205,12 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
         session_id = message.get("session_id")
         user_id = message.get("user_id")
         last_event_index = message.get("last_event_index")  # 0-based index of last received event
-        # Set by the WS dispatcher in router.py — see workflow_websocket_endpoint.
-        jwt_enabled = bool(message.get("__ws_jwt_enabled__"))
-        is_admin = bool(message.get("__ws_is_admin__"))
+        # Auth context is set by the WS dispatcher in router.py; default to
+        # "no JWT" for callers that bypass the dispatcher (the handler runs
+        # the same ownership/component checks regardless).
+        ctx = ws_auth or WebSocketAuthContext()
+        jwt_enabled = ctx.jwt_enabled
+        is_admin = ctx.is_admin
 
         if not run_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required for subscription"}))
@@ -200,7 +226,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
                     json.dumps(
                         {
                             "event": "error",
-                            "error": "session_id is required to reconnect to a workflow run",
+                            "error": SESSION_ID_REQUIRED_RECONNECT,
                         }
                     )
                 )
@@ -215,7 +241,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
                     json.dumps(
                         {
                             "event": "error",
-                            "error": "workflow_id is required to reconnect to a workflow run",
+                            "error": WORKFLOW_ID_REQUIRED_RECONNECT,
                         }
                     )
                 )
@@ -1375,7 +1401,7 @@ def get_workflow_router(
             scoped_user_id = get_scoped_user_id(request)
             if scoped_user_id is not None:
                 if not session_id:
-                    raise HTTPException(status_code=400, detail="session_id is required for this action")
+                    raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
                 check_db = getattr(factory, "db", None) or os.db
                 await _verify_run_in_session_via_db(
                     check_db,
@@ -1406,7 +1432,7 @@ def get_workflow_router(
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             if not session_id:
-                raise HTTPException(status_code=400, detail="session_id is required for this action")
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
             await _verify_run_in_session(
                 workflow,
                 session_id,
@@ -1465,7 +1491,7 @@ def get_workflow_router(
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             if not session_id:
-                raise HTTPException(status_code=400, detail="session_id is required for this action")
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
 
         factory = find_factory_by_id(workflow_id, os.workflows)
         if factory:
@@ -1565,7 +1591,11 @@ def get_workflow_router(
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Run polling is not supported for remote workflows")
 
-        from agno.os.middleware.user_scope import get_scoped_user_id
+        from agno.os.middleware.user_scope import (
+            _run_matches_component,
+            assert_session_matches_component,
+            get_scoped_user_id,
+        )
 
         user_id = get_scoped_user_id(request)
 
@@ -1573,8 +1603,9 @@ def get_workflow_router(
         # See get_agent_run for the cross-component bypass this blocks.
         if hasattr(workflow, "aget_session"):
             session = await workflow.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
-            if session is None or getattr(session, "workflow_id", None) != workflow_id:
+            if session is None:
                 raise HTTPException(status_code=404, detail="Run not found")
+            await assert_session_matches_component(session, "workflows", workflow_id, not_found_detail="Run not found")
 
         run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
         if run_output is None:
@@ -1582,7 +1613,7 @@ def get_workflow_router(
 
         # Per-resource RBAC: the run must explicitly belong to the path workflow.
         # Fail closed when workflow_id is missing.
-        if getattr(run_output, "workflow_id", None) != workflow_id:
+        if not _run_matches_component(run_output, "workflows", workflow_id):
             raise HTTPException(status_code=404, detail="Run not found")
 
         return run_output.to_dict()
@@ -1650,8 +1681,9 @@ def get_workflow_router(
         # Per-resource RBAC: the session must explicitly belong to this workflow.
         # Fail closed when workflow_id is missing — an agent/team session
         # must not be reachable through a workflow route.
-        if getattr(session, "workflow_id", None) != workflow_id:
-            raise HTTPException(status_code=404, detail="Session not found")
+        from agno.os.middleware.user_scope import _run_matches_component, assert_session_matches_component
+
+        await assert_session_matches_component(session, "workflows", workflow_id)
 
         runs = session.runs or []
 
@@ -1660,8 +1692,7 @@ def get_workflow_router(
         # rather than leaking those.
         result = []
         for run in runs:
-            run_workflow_id = getattr(run, "workflow_id", None)
-            if run_workflow_id != workflow_id:
+            if not _run_matches_component(run, "workflows", workflow_id):
                 continue
             run_dict = run.to_dict()
             if status and run_dict.get("status") != status:

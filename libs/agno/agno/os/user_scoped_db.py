@@ -63,8 +63,11 @@ class UserScopedDb:
     Methods on tables WITHOUT user_id columns (knowledge, metrics, evals,
     components, schedules, spans, culture) delegate directly without modification.
 
-    Methods on tables WITH user_id columns (sessions, memory, traces, approvals)
-    force the scoped user_id, ignoring any user_id passed by the caller.
+    Methods on tables WITH user_id columns that this wrapper explicitly
+    overrides — sessions, memory, traces — force the scoped user_id and
+    ignore any user_id passed by the caller. Approvals are NOT overridden
+    here; the approval router enforces user_id at the route layer instead,
+    and approval calls fall through ``__getattr__`` to the underlying db.
     """
 
     def __init__(self, db: BaseDb, user_id: str):

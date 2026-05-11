@@ -31,6 +31,7 @@ from agno.os.auth import (
     require_resource_access,
 )
 from agno.os.managers import event_buffer, sse_subscriber_manager
+from agno.os.middleware.user_scope import SESSION_ID_REQUIRED
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -844,7 +845,7 @@ def get_agent_router(
             scoped_user_id = get_scoped_user_id(request)
             if scoped_user_id is not None:
                 if not session_id:
-                    raise HTTPException(status_code=400, detail="session_id is required for this action")
+                    raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
                 # Prefer factory.db when present; only fall back to os.db when
                 # the factory shares the OS db.
                 check_db = getattr(factory, "db", None) or os.db
@@ -879,7 +880,7 @@ def get_agent_router(
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             if not session_id:
-                raise HTTPException(status_code=400, detail="session_id is required for this action")
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
             await _verify_run_in_session(
                 agent,
                 session_id,
@@ -1329,7 +1330,11 @@ def get_agent_router(
             if isinstance(agent, RemoteAgent):
                 raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
 
-        from agno.os.middleware.user_scope import get_scoped_user_id
+        from agno.os.middleware.user_scope import (
+            _run_matches_component,
+            assert_session_matches_component,
+            get_scoped_user_id,
+        )
 
         user_id = get_scoped_user_id(request)
 
@@ -1339,8 +1344,9 @@ def get_agent_router(
         # though the session itself doesn't belong to that agent.
         if hasattr(agent, "aget_session"):
             session = await agent.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
-            if session is None or getattr(session, "agent_id", None) != agent_id:
+            if session is None:
                 raise HTTPException(status_code=404, detail="Run not found")
+            await assert_session_matches_component(session, "agents", agent_id, not_found_detail="Run not found")
 
         run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
         if run_output is None:
@@ -1350,7 +1356,7 @@ def get_agent_router(
         # Fail closed if agent_id is missing — nested member runs inside
         # team/workflow sessions may have ambiguous attribution and should
         # never be returned through an agent route they don't belong to.
-        if getattr(run_output, "agent_id", None) != agent_id:
+        if not _run_matches_component(run_output, "agents", agent_id):
             raise HTTPException(status_code=404, detail="Run not found")
 
         return run_output.to_dict()
@@ -1402,7 +1408,7 @@ def get_agent_router(
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             if not session_id:
-                raise HTTPException(status_code=400, detail="session_id is required for this action")
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
 
         # Factory agents: skip entity resolution (no factory_input on resume)
         # and verify ownership directly via the OS db.
@@ -1512,8 +1518,9 @@ def get_agent_router(
         # Fail closed when agent_id is missing — a WorkflowSession or
         # TeamSession can contain nested agent runs but doesn't have its own
         # agent_id, and must not be reachable through an agent route.
-        if getattr(session, "agent_id", None) != agent_id:
-            raise HTTPException(status_code=404, detail="Session not found")
+        from agno.os.middleware.user_scope import _run_matches_component, assert_session_matches_component
+
+        await assert_session_matches_component(session, "agents", agent_id)
 
         runs = session.runs or []
 
@@ -1523,8 +1530,7 @@ def get_agent_router(
         # runs whose attribution is ambiguous).
         result = []
         for run in runs:
-            run_agent_id = getattr(run, "agent_id", None)
-            if run_agent_id != agent_id:
+            if not _run_matches_component(run, "agents", agent_id):
                 continue
             run_dict = run.to_dict()
             if status and run_dict.get("status") != status:

@@ -14,7 +14,12 @@ from agno.agent.protocol import AgentProtocol
 from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.managers import websocket_manager
-from agno.os.routers.workflows.router import handle_workflow_subscription, handle_workflow_via_websocket
+from agno.os.middleware.user_scope import WORKFLOW_ID_REQUIRED_RECONNECT
+from agno.os.routers.workflows.router import (
+    WebSocketAuthContext,
+    handle_workflow_subscription,
+    handle_workflow_via_websocket,
+)
 from agno.os.schema import (
     AgentSummaryResponse,
     BadRequestResponse,
@@ -431,7 +436,7 @@ def get_websocket_router(
                                 json.dumps(
                                     {
                                         "event": "error",
-                                        "error": "workflow_id is required to reconnect to a workflow run",
+                                        "error": WORKFLOW_ID_REQUIRED_RECONNECT,
                                     }
                                 )
                             )
@@ -457,12 +462,13 @@ def get_websocket_router(
                             )
                             continue
 
-                    # Pass admin flag so the subscription handler can skip
-                    # ownership verification for admins. The JWT validator is
-                    # passed through so the handler can re-derive context.
-                    message["__ws_is_admin__"] = is_admin
-                    message["__ws_jwt_enabled__"] = jwt_auth_enabled
-                    await handle_workflow_subscription(websocket, message, os)
+                    # Pass auth context out-of-band so the handler doesn't
+                    # have to read internal flags out of the client message.
+                    ws_auth = WebSocketAuthContext(
+                        jwt_enabled=jwt_auth_enabled,
+                        is_admin=is_admin,
+                    )
+                    await handle_workflow_subscription(websocket, message, os, ws_auth=ws_auth)
 
                 else:
                     await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))

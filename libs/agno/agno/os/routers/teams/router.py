@@ -27,6 +27,7 @@ from agno.os.auth import (
     require_resource_access,
 )
 from agno.os.managers import event_buffer, sse_subscriber_manager
+from agno.os.middleware.user_scope import SESSION_ID_REQUIRED
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -812,7 +813,7 @@ def get_team_router(
             scoped_user_id = get_scoped_user_id(request)
             if scoped_user_id is not None:
                 if not session_id:
-                    raise HTTPException(status_code=400, detail="session_id is required for this action")
+                    raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
                 check_db = getattr(factory, "db", None) or os.db
                 await _verify_run_in_session_via_db(
                     check_db,
@@ -841,7 +842,7 @@ def get_team_router(
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             if not session_id:
-                raise HTTPException(status_code=400, detail="session_id is required for this action")
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
             await _verify_run_in_session(
                 team,
                 session_id,
@@ -900,7 +901,7 @@ def get_team_router(
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             if not session_id:
-                raise HTTPException(status_code=400, detail="session_id is required for this action")
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
 
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
@@ -1416,7 +1417,11 @@ def get_team_router(
             if isinstance(team, RemoteTeam):
                 raise HTTPException(status_code=400, detail="Run polling is not supported for remote teams")
 
-        from agno.os.middleware.user_scope import get_scoped_user_id
+        from agno.os.middleware.user_scope import (
+            _run_matches_component,
+            assert_session_matches_component,
+            get_scoped_user_id,
+        )
 
         user_id = get_scoped_user_id(request)
 
@@ -1424,8 +1429,9 @@ def get_team_router(
         # get_agent_run for the cross-component bypass this blocks.
         if hasattr(team, "aget_session"):
             session = await team.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
-            if session is None or getattr(session, "team_id", None) != team_id:
+            if session is None:
                 raise HTTPException(status_code=404, detail="Run not found")
+            await assert_session_matches_component(session, "teams", team_id, not_found_detail="Run not found")
 
         run_output = await team.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
         if run_output is None:
@@ -1434,7 +1440,7 @@ def get_team_router(
         # Per-resource RBAC: the run must explicitly belong to the path team.
         # Fail closed when team_id is missing (e.g. a nested agent run within
         # the team's session).
-        if getattr(run_output, "team_id", None) != team_id:
+        if not _run_matches_component(run_output, "teams", team_id):
             raise HTTPException(status_code=404, detail="Run not found")
 
         return run_output.to_dict()
@@ -1496,8 +1502,9 @@ def get_team_router(
         # Per-resource RBAC: the session must explicitly belong to this team.
         # Fail closed when team_id is missing — an agent/workflow session
         # must not be reachable through a team route.
-        if getattr(session, "team_id", None) != team_id:
-            raise HTTPException(status_code=404, detail="Session not found")
+        from agno.os.middleware.user_scope import _run_matches_component, assert_session_matches_component
+
+        await assert_session_matches_component(session, "teams", team_id)
 
         runs = session.runs or []
 
@@ -1506,8 +1513,7 @@ def get_team_router(
         # team_id doesn't explicitly match the path team.
         result = []
         for run in runs:
-            run_team_id = getattr(run, "team_id", None)
-            if run_team_id != team_id:
+            if not _run_matches_component(run, "teams", team_id):
                 continue
             run_dict = run.to_dict()
             if status and run_dict.get("status") != status:

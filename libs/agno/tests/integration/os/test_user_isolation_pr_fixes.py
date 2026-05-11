@@ -566,29 +566,41 @@ class TestWebSocketReconnectRBAC:
     workflow_id would cause the session/run component check to silently skip.
     """
 
+    # Maximum frames to consume waiting for a specific event. Big enough to
+    # cover the auth handshake (connected + 1-2 authenticated frames) without
+    # hanging on a buggy server.
+    _MAX_FRAMES = 8
+
+    # Stable substrings from the error messages we expect the server to emit.
+    # These mirror the constants defined in agno.os.middleware.user_scope so a
+    # rename there breaks the test.
+    _ERR_PERMISSION = "Insufficient permissions to reconnect to this workflow"
+    _ERR_WORKFLOW_ID_REQUIRED = "workflow_id is required to reconnect to a workflow run"
+
+    def _drain_until(self, ws, predicate):
+        """Read frames until ``predicate(frame)`` returns True. Fails fast
+        rather than hanging when the server never emits the expected frame."""
+        import json as _json
+
+        for _ in range(self._MAX_FRAMES):
+            frame = _json.loads(ws.receive_text())
+            if predicate(frame):
+                return frame
+        raise AssertionError(f"Expected frame matching predicate within {self._MAX_FRAMES} messages")
+
     def _authenticate(self, ws, token):
         """Run the auth handshake and consume all of its frames.
 
         On JWT auth the server emits "connected" (on accept), then
         "authenticated" twice (one from WebSocketManager, one from the route
-        with the user_id). Drain frames until we see the user_id-bearing
-        confirmation so subsequent reads return the test's reply, not auth
-        leftovers.
+        with the user_id). Drain until we see the user_id-bearing confirmation
+        so subsequent reads return the test's reply, not auth leftovers.
         """
         import json as _json
 
-        # Discard the initial "connected" frame the server emits on accept.
-        for _ in range(5):
-            frame = _json.loads(ws.receive_text())
-            if frame.get("event") == "connected":
-                break
+        self._drain_until(ws, lambda f: f.get("event") == "connected")
         ws.send_text(_json.dumps({"action": "authenticate", "token": token}))
-        # Drain auth frames until we see the second "authenticated" with user_id.
-        for _ in range(5):
-            frame = _json.loads(ws.receive_text())
-            if frame.get("event") == "authenticated" and frame.get("user_id"):
-                return
-        raise AssertionError("WS auth did not complete with user_id frame")
+        self._drain_until(ws, lambda f: f.get("event") == "authenticated" and f.get("user_id") is not None)
 
     def test_reconnect_rejected_without_workflow_scope(self, client):
         import json as _json
@@ -607,9 +619,8 @@ class TestWebSocketReconnectRBAC:
                     }
                 )
             )
-            event = _json.loads(ws.receive_text())
-        assert event.get("event") == "error", event
-        assert "permission" in event.get("error", "").lower(), event
+            event = self._drain_until(ws, lambda f: f.get("event") == "error")
+        assert event["error"] == self._ERR_PERMISSION, event
 
     def test_reconnect_rejected_when_workflow_id_missing(self, client):
         import json as _json
@@ -627,9 +638,8 @@ class TestWebSocketReconnectRBAC:
                     }
                 )
             )
-            event = _json.loads(ws.receive_text())
-        assert event.get("event") == "error", event
-        assert "workflow_id" in event.get("error", "").lower(), event
+            event = self._drain_until(ws, lambda f: f.get("event") == "error")
+        assert event["error"] == self._ERR_WORKFLOW_ID_REQUIRED, event
 
     def test_reconnect_with_scope_proceeds_to_ownership_check(self, client):
         """A non-admin with workflows:run gets past the RBAC gate and reaches
@@ -649,12 +659,11 @@ class TestWebSocketReconnectRBAC:
                     }
                 )
             )
-            event = _json.loads(ws.receive_text())
+            event = self._drain_until(ws, lambda f: f.get("event") == "error")
         # The RBAC + workflow_id checks pass; the downstream ownership check
-        # 404s the run. Either error wording is acceptable.
-        assert event.get("event") == "error", event
-        error = event.get("error", "").lower()
-        assert "permission" not in error and "workflow_id is required" not in error, event
+        # surfaces a different error (run not found).
+        assert event["error"] != self._ERR_PERMISSION, event
+        assert event["error"] != self._ERR_WORKFLOW_ID_REQUIRED, event
 
     def test_admin_reconnect_does_not_require_workflow_id(self, client):
         """Admins bypass scope/workflow_id requirements; the handler still
@@ -674,12 +683,12 @@ class TestWebSocketReconnectRBAC:
                     }
                 )
             )
-            event = _json.loads(ws.receive_text())
-        # Admin passes the dispatch-layer gates. Whatever the handler returns
-        # (likely 'Run not found') must not be a permission/workflow_id error.
-        error = event.get("error", "").lower() if event.get("event") == "error" else ""
-        assert "permission" not in error, event
-        assert "workflow_id is required" not in error, event
+            event = self._drain_until(ws, lambda f: f.get("event") == "error")
+        # Admin passes the dispatch-layer gates; the only error must come from
+        # the downstream ownership/buffer lookup, never from the RBAC/workflow_id
+        # gates we added.
+        assert event["error"] != self._ERR_PERMISSION, event
+        assert event["error"] != self._ERR_WORKFLOW_ID_REQUIRED, event
 
 
 class TestWorkflowSessionLeakViaAgentRoute:
