@@ -1735,8 +1735,9 @@ def get_workflow_router(
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
 
-        # Per-resource RBAC: the run must belong to the path workflow.
-        if getattr(run_output, "workflow_id", None) and run_output.workflow_id != workflow_id:
+        # Per-resource RBAC: the run must explicitly belong to the path workflow.
+        # Fail closed when workflow_id is missing.
+        if getattr(run_output, "workflow_id", None) != workflow_id:
             raise HTTPException(status_code=404, detail="Run not found")
 
         return run_output.to_dict()
@@ -1800,10 +1801,22 @@ def get_workflow_router(
         session = await workflow.aget_session(session_id=session_id, user_id=lookup_user_id)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
+
+        # Per-resource RBAC: the session must belong to this workflow.
+        session_workflow_id = getattr(session, "workflow_id", None)
+        if session_workflow_id is not None and session_workflow_id != workflow_id:
+            raise HTTPException(status_code=404, detail="Session not found")
+
         runs = session.runs or []
 
+        # Filter to runs that belong to this workflow. Workflow sessions can
+        # carry nested member runs whose workflow_id is unset; fail closed
+        # rather than leaking those.
         result = []
         for run in runs:
+            run_workflow_id = getattr(run, "workflow_id", None)
+            if run_workflow_id != workflow_id:
+                continue
             run_dict = run.to_dict()
             if status and run_dict.get("status") != status:
                 continue

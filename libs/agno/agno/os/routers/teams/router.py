@@ -1423,9 +1423,10 @@ def get_team_router(
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
 
-        # Per-resource RBAC: the run must belong to the path team.
-        run_team_id = getattr(run_output, "team_id", None)
-        if run_team_id and run_team_id != team_id:
+        # Per-resource RBAC: the run must explicitly belong to the path team.
+        # Fail closed when team_id is missing (e.g. a nested agent run within
+        # the team's session).
+        if getattr(run_output, "team_id", None) != team_id:
             raise HTTPException(status_code=404, detail="Run not found")
 
         return run_output.to_dict()
@@ -1452,7 +1453,6 @@ def get_team_router(
         status: Optional[str] = Query(None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR)"),
     ):
         from agno.os.schema import TeamRunSchema
-        from agno.team._storage import _aread_or_create_session
 
         # Factory teams
         factory = find_factory_by_id(team_id, os.teams)
@@ -1476,12 +1476,30 @@ def get_team_router(
 
         from agno.os.middleware.user_scope import get_scoped_user_id
 
+        # Read-only session lookup so we don't manufacture a session for a
+        # user/team that shouldn't own it.
         user_id = get_scoped_user_id(request)
-        session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)  # type: ignore[arg-type]
+        if not hasattr(team, "aget_session"):
+            raise HTTPException(status_code=501, detail="This team does not support run listing")
+        session = await team.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Per-resource RBAC: the session must belong to this team.
+        session_team_id = getattr(session, "team_id", None)
+        if session_team_id is not None and session_team_id != team_id:
+            raise HTTPException(status_code=404, detail="Session not found")
+
         runs = session.runs or []
 
+        # Filter to runs that belong to this team. Team sessions can contain
+        # nested agent runs from members, so fail closed when the run's
+        # team_id doesn't explicitly match the path team.
         result = []
         for run in runs:
+            run_team_id = getattr(run, "team_id", None)
+            if run_team_id != team_id:
+                continue
             run_dict = run.to_dict()
             if status and run_dict.get("status") != status:
                 continue

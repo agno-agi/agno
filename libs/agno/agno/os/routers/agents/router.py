@@ -1336,10 +1336,11 @@ def get_agent_router(
         if run_output is None:
             raise HTTPException(status_code=404, detail="Run not found")
 
-        # Per-resource RBAC: the run must belong to the path agent. Without
-        # this check a user could fetch any of their own runs via the wrong
-        # agent's path, bypassing per-resource scopes like agents:agent-x:read.
-        if getattr(run_output, "agent_id", None) and run_output.agent_id != agent_id:
+        # Per-resource RBAC: the run must explicitly belong to the path agent.
+        # Fail closed if agent_id is missing — nested member runs inside
+        # team/workflow sessions may have ambiguous attribution and should
+        # never be returned through an agent route they don't belong to.
+        if getattr(run_output, "agent_id", None) != agent_id:
             raise HTTPException(status_code=404, detail="Run not found")
 
         return run_output.to_dict()
@@ -1484,23 +1485,37 @@ def get_agent_router(
             if isinstance(agent, RemoteAgent):
                 raise HTTPException(status_code=400, detail="Run listing is not supported for remote agents")
 
-        # Load session: native Agent uses the storage helper, external adapters have their own method.
+        # Read-only session lookup so we don't manufacture a session for a
+        # user/agent that shouldn't own it (the previous read-or-create path
+        # bypassed component-level RBAC for sessions not yet on disk).
         from agno.os.middleware.user_scope import get_scoped_user_id
 
         user_id = get_scoped_user_id(request)
-        if isinstance(agent, Agent):
-            from agno.agent._storage import aread_or_create_session
-
-            session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
-        elif hasattr(agent, "aread_or_create_session"):
-            session = await agent.aread_or_create_session(session_id=session_id, user_id=user_id)
+        if hasattr(agent, "aget_session"):
+            session = await agent.aget_session(session_id=session_id, user_id=user_id)
         else:
             raise HTTPException(status_code=501, detail="This agent does not support run listing")
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Per-resource RBAC: the session must belong to this agent. If the
+        # session was created under another agent (or no agent at all), reject
+        # without leaking which.
+        session_agent_id = getattr(session, "agent_id", None)
+        if session_agent_id is not None and session_agent_id != agent_id:
+            raise HTTPException(status_code=404, detail="Session not found")
+
         runs = session.runs or []
 
-        # Convert to dicts and optionally filter by status
+        # Convert to dicts and optionally filter by status. Filter out any
+        # nested member runs that don't belong to this agent (fail closed when
+        # the run lacks an agent_id — team/workflow sessions can carry nested
+        # runs whose attribution is ambiguous).
         result = []
         for run in runs:
+            run_agent_id = getattr(run, "agent_id", None)
+            if run_agent_id != agent_id:
+                continue
             run_dict = run.to_dict()
             if status and run_dict.get("status") != status:
                 continue

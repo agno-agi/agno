@@ -145,18 +145,19 @@ _RUN_COMPONENT_FIELDS = {
 
 
 def _run_matches_component(run, component_type: Optional[str], component_id: Optional[str]) -> bool:
-    """Return True if ``run`` belongs to the given path component, or no check requested."""
+    """Return True if ``run`` explicitly belongs to the given path component.
+
+    Fails closed: a run that lacks the relevant component field is rejected,
+    because nested member runs inside team/workflow sessions can have
+    ambiguous attribution and must not be exposed through a sibling
+    component's route.
+    """
     if not component_type or not component_id:
         return True
     field = _RUN_COMPONENT_FIELDS.get(component_type)
     if field is None:
         return True
-    actual = getattr(run, field, None)
-    # Cross-component runs (e.g. an agent run inside a workflow) carry the
-    # parent workflow_id, so a workflow path accepts agent runs that were
-    # delegated from it. The strict per-resource check still kicks in for the
-    # same component type. Missing field is treated as a mismatch (fail closed).
-    return actual == component_id
+    return getattr(run, field, None) == component_id
 
 
 def _session_matches_component(session, component_type: Optional[str], component_id: Optional[str]) -> bool:
