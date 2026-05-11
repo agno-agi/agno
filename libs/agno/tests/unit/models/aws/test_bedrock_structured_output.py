@@ -31,6 +31,17 @@ def _make_mock_session():
     return mock_session, mock_client
 
 
+CONVERSE_RESPONSE_TEXT = {
+    "output": {
+        "message": {
+            "role": "assistant",
+            "content": [{"text": '{"name": "Sunset", "genre": "Drama", "characters": ["Alice"]}'}],
+        }
+    },
+    "usage": {"inputTokens": 10, "outputTokens": 5},
+    "stopReason": "end_turn",
+}
+
 CONVERSE_RESPONSE_TOOL = {
     "output": {
         "message": {
@@ -49,6 +60,68 @@ CONVERSE_RESPONSE_TOOL = {
     "usage": {"inputTokens": 10, "outputTokens": 5},
     "stopReason": "tool_use",
 }
+
+
+class TestSupportsNativeStructuredOutputs:
+    def test_claude_4_5_sonnet_supports_native(self):
+        model = AwsBedrock(id="us.anthropic.claude-sonnet-4-5-20250929-v1:0")
+        assert model._supports_native_structured_outputs() is True
+        assert model.supports_native_structured_outputs is True
+
+    def test_claude_4_5_haiku_supports_native(self):
+        model = AwsBedrock(id="anthropic.claude-haiku-4-5-20251001-v1:0")
+        assert model._supports_native_structured_outputs() is True
+
+    def test_claude_4_6_supports_native(self):
+        model = AwsBedrock(id="us.anthropic.claude-sonnet-4-6-20260217-v1:0")
+        assert model._supports_native_structured_outputs() is True
+
+    def test_claude_3_5_does_not_support_native(self):
+        model = AwsBedrock(id="us.anthropic.claude-3-5-haiku-20241022-v1:0")
+        assert model._supports_native_structured_outputs() is False
+        assert model.supports_native_structured_outputs is False
+
+    def test_claude_3_sonnet_does_not_support_native(self):
+        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+        assert model._supports_native_structured_outputs() is False
+
+    def test_mistral_does_not_support_native(self):
+        model = AwsBedrock(id="mistral.mistral-small-2402-v1:0")
+        assert model._supports_native_structured_outputs() is False
+
+
+class TestBuildOutputConfig:
+    def setup_method(self):
+        self.model_native = AwsBedrock(id="us.anthropic.claude-sonnet-4-5-20250929-v1:0")
+        self.model_fallback = AwsBedrock(id="us.anthropic.claude-3-5-haiku-20241022-v1:0")
+
+    def test_returns_none_for_none_input(self):
+        assert self.model_native._build_output_config(None) is None
+
+    def test_returns_none_for_non_pydantic(self):
+        assert self.model_native._build_output_config({"type": "json"}) is None
+
+    def test_returns_none_for_unsupported_model(self):
+        assert self.model_fallback._build_output_config(MovieScript) is None
+
+    def test_returns_config_for_supported_model(self):
+        result = self.model_native._build_output_config(MovieScript)
+        assert result is not None
+        assert "textFormat" in result
+        assert result["textFormat"]["type"] == "json_schema"
+        assert "structure" in result["textFormat"]
+        assert "jsonSchema" in result["textFormat"]["structure"]
+        assert result["textFormat"]["structure"]["jsonSchema"]["name"] == "MovieScript"
+
+    def test_schema_is_json_string(self):
+        result = self.model_native._build_output_config(MovieScript)
+        schema_str = result["textFormat"]["structure"]["jsonSchema"]["schema"]
+        assert isinstance(schema_str, str)
+        import json
+
+        schema = json.loads(schema_str)
+        assert schema["type"] == "object"
+        assert "name" in schema["properties"]
 
 
 class TestEnsureAdditionalPropertiesFalse:
@@ -102,11 +175,28 @@ class TestResponseFormatToTool:
 
 
 class TestInvokeWithStructuredOutput:
-    def test_uses_tool_based_fallback(self):
+    def test_native_path_includes_output_config(self):
+        mock_session, mock_client = _make_mock_session()
+        mock_client.converse.return_value = CONVERSE_RESPONSE_TEXT
+
+        model = AwsBedrock(id="us.anthropic.claude-sonnet-4-5-20250929-v1:0", session=mock_session)
+        model.invoke(
+            messages=[Message(role="user", content="Write a movie script")],
+            assistant_message=Message(role="assistant"),
+            response_format=MovieScript,
+        )
+
+        call_kwargs = mock_client.converse.call_args[1]
+        assert "outputConfig" in call_kwargs
+        assert call_kwargs["outputConfig"]["textFormat"]["type"] == "json_schema"
+        # No toolConfig should be present unless tools were explicitly passed
+        assert "toolConfig" not in call_kwargs
+
+    def test_fallback_path_uses_tool(self):
         mock_session, mock_client = _make_mock_session()
         mock_client.converse.return_value = CONVERSE_RESPONSE_TOOL
 
-        model = AwsBedrock(id="us.anthropic.claude-sonnet-4-5-20250929-v1:0", session=mock_session)
+        model = AwsBedrock(id="us.anthropic.claude-3-5-haiku-20241022-v1:0", session=mock_session)
         response = model.invoke(
             messages=[Message(role="user", content="Write a movie script")],
             assistant_message=Message(role="assistant"),
@@ -114,7 +204,7 @@ class TestInvokeWithStructuredOutput:
         )
 
         call_kwargs = mock_client.converse.call_args[1]
-        # boto3 Converse API doesn't support outputConfig, so we use tool-based fallback
+        # No outputConfig for fallback
         assert "outputConfig" not in call_kwargs
         # Should have toolConfig with forced tool
         assert "toolConfig" in call_kwargs
@@ -122,9 +212,9 @@ class TestInvokeWithStructuredOutput:
         # Response content should be extracted from tool input
         assert '"name": "Sunset"' in response.content
 
-    def test_preserves_existing_tools(self):
+    def test_native_path_preserves_tools(self):
         mock_session, mock_client = _make_mock_session()
-        mock_client.converse.return_value = CONVERSE_RESPONSE_TOOL
+        mock_client.converse.return_value = CONVERSE_RESPONSE_TEXT
 
         tools = [
             {
@@ -145,14 +235,38 @@ class TestInvokeWithStructuredOutput:
         )
 
         call_kwargs = mock_client.converse.call_args[1]
+        assert "outputConfig" in call_kwargs
         assert "toolConfig" in call_kwargs
+        # Should have the weather tool but not the schema tool
         tool_names = [t["toolSpec"]["name"] for t in call_kwargs["toolConfig"]["tools"]]
         assert "get_weather" in tool_names
-        assert "respond_with_MovieScript" in tool_names
+        assert "respond_with_MovieScript" not in tool_names
 
 
 class TestInvokeStreamWithStructuredOutput:
-    def test_streams_tool_input_as_content(self):
+    def test_native_path_includes_output_config(self):
+        mock_session, mock_client = _make_mock_session()
+        mock_client.converse_stream.return_value = {
+            "stream": [
+                {"contentBlockDelta": {"delta": {"text": '{"name": "Test"}'}}},
+                {"metadata": {"usage": {"inputTokens": 10, "outputTokens": 5}}},
+            ]
+        }
+
+        model = AwsBedrock(id="us.anthropic.claude-sonnet-4-5-20250929-v1:0", session=mock_session)
+        list(
+            model.invoke_stream(
+                messages=[Message(role="user", content="hi")],
+                assistant_message=Message(role="assistant"),
+                response_format=MovieScript,
+            )
+        )
+
+        call_kwargs = mock_client.converse_stream.call_args[1]
+        assert "outputConfig" in call_kwargs
+        assert call_kwargs["outputConfig"]["textFormat"]["type"] == "json_schema"
+
+    def test_fallback_streams_tool_input_as_content(self):
         mock_session, mock_client = _make_mock_session()
         mock_client.converse_stream.return_value = {
             "stream": [
@@ -164,7 +278,7 @@ class TestInvokeStreamWithStructuredOutput:
             ]
         }
 
-        model = AwsBedrock(id="us.anthropic.claude-sonnet-4-5-20250929-v1:0", session=mock_session)
+        model = AwsBedrock(id="us.anthropic.claude-3-5-haiku-20241022-v1:0", session=mock_session)
         responses = list(
             model.invoke_stream(
                 messages=[Message(role="user", content="hi")],
@@ -185,7 +299,7 @@ class TestInvokeStreamWithStructuredOutput:
 
 @pytest.mark.asyncio
 class TestAsyncInvokeWithStructuredOutput:
-    async def test_ainvoke_uses_tool_fallback(self):
+    async def test_ainvoke_native_path(self):
         try:
             import aioboto3  # noqa: F401
         except ImportError:
@@ -195,7 +309,7 @@ class TestAsyncInvokeWithStructuredOutput:
 
         mock_session, _ = _make_mock_session()
         mock_async_client = MagicMock()
-        mock_async_client.converse = AsyncMock(return_value=CONVERSE_RESPONSE_TOOL)
+        mock_async_client.converse = AsyncMock(return_value=CONVERSE_RESPONSE_TEXT)
         mock_async_client.__aenter__ = AsyncMock(return_value=mock_async_client)
         mock_async_client.__aexit__ = AsyncMock(return_value=None)
 
@@ -209,11 +323,10 @@ class TestAsyncInvokeWithStructuredOutput:
             )
 
         call_kwargs = mock_async_client.converse.call_args[1]
-        assert "outputConfig" not in call_kwargs
-        assert "toolConfig" in call_kwargs
-        assert call_kwargs["toolConfig"]["toolChoice"] == {"tool": {"name": "respond_with_MovieScript"}}
+        assert "outputConfig" in call_kwargs
+        assert call_kwargs["outputConfig"]["textFormat"]["type"] == "json_schema"
 
-    async def test_ainvoke_stream_uses_tool_fallback(self):
+    async def test_ainvoke_stream_fallback_path(self):
         try:
             import aioboto3  # noqa: F401
         except ImportError:
@@ -234,7 +347,7 @@ class TestAsyncInvokeWithStructuredOutput:
         mock_async_client.__aenter__ = AsyncMock(return_value=mock_async_client)
         mock_async_client.__aexit__ = AsyncMock(return_value=None)
 
-        model = AwsBedrock(id="us.anthropic.claude-sonnet-4-5-20250929-v1:0", session=mock_session)
+        model = AwsBedrock(id="us.anthropic.claude-3-5-haiku-20241022-v1:0", session=mock_session)
 
         with patch.object(model, "get_async_client", return_value=mock_async_client):
             responses = []

@@ -85,10 +85,28 @@ class AwsBedrock(Model):
     async_client: Optional[Any] = None
     async_session: Optional[Any] = None
 
+    # Model ID patterns that support native structured outputs (Claude 4.5+)
+    _STRUCTURED_OUTPUT_PATTERNS: Tuple[str, ...] = (
+        "claude-4-5",
+        "claude-4-6",
+        "claude-4-7",
+        "claude-opus-4-5",
+        "claude-opus-4-6",
+        "claude-opus-4-7",
+        "claude-sonnet-4-5",
+        "claude-sonnet-4-6",
+        "claude-sonnet-4-7",
+        "claude-haiku-4-5",
+        "claude-haiku-4-6",
+        "claude-haiku-4-7",
+    )
+
     def __post_init__(self):
         super().__post_init__()
         if self.append_trailing_user_message is None:
             self.append_trailing_user_message = not supports_prefill(self.id)
+        if self._supports_native_structured_outputs():
+            self.supports_native_structured_outputs = True
 
     def get_client(self) -> AwsClient:
         """
@@ -317,6 +335,35 @@ class AwsBedrock(Model):
                     for item in value:
                         if isinstance(item, dict):
                             self._ensure_additional_properties_false(item)
+
+    def _supports_native_structured_outputs(self) -> bool:
+        """Check if the model supports native structured outputs via outputConfig."""
+        model_id_lower = self.id.lower()
+        return any(pattern in model_id_lower for pattern in self._STRUCTURED_OUTPUT_PATTERNS)
+
+    def _build_output_config(self, response_format: Optional[Union[Dict, Type[BaseModel]]]) -> Optional[Dict[str, Any]]:
+        """Build outputConfig for native structured outputs (boto3 1.42+)."""
+        if response_format is None:
+            return None
+        if not self._supports_native_structured_outputs():
+            return None
+        if not isinstance(response_format, type) or not issubclass(response_format, BaseModel):
+            return None
+
+        schema = response_format.model_json_schema()
+        self._ensure_additional_properties_false(schema)
+
+        return {
+            "textFormat": {
+                "type": "json_schema",
+                "structure": {
+                    "jsonSchema": {
+                        "schema": json.dumps(schema),
+                        "name": response_format.__name__,
+                    }
+                },
+            }
+        }
 
     def _response_format_to_tool(
         self, response_format: Optional[Union[Dict, Type[BaseModel]]]
@@ -595,11 +642,12 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            # Handle structured outputs via tool-based fallback
-            # boto3 Converse API doesn't support outputConfig, so we use forced tool calls
+            # Handle structured outputs: native outputConfig for Claude 4.5+, tool fallback otherwise
+            output_config = self._build_output_config(response_format)
             using_tool_fallback = False
             schema_tool = None
-            if response_format is not None:
+
+            if output_config is None and response_format is not None:
                 schema_tool = self._response_format_to_tool(response_format)
                 if schema_tool is not None:
                     using_tool_fallback = True
@@ -622,6 +670,7 @@ class AwsBedrock(Model):
                 "system": system_message,
                 "toolConfig": tool_config,
                 "inferenceConfig": self._get_inference_config(),
+                "outputConfig": output_config,
             }
             body = {k: v for k, v in body.items() if v is not None}
 
@@ -662,10 +711,12 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            # Handle structured outputs via tool-based fallback
+            # Handle structured outputs: native outputConfig for Claude 4.5+, tool fallback otherwise
+            output_config = self._build_output_config(response_format)
             using_tool_fallback = False
             schema_tool = None
-            if response_format is not None:
+
+            if output_config is None and response_format is not None:
                 schema_tool = self._response_format_to_tool(response_format)
                 if schema_tool is not None:
                     using_tool_fallback = True
@@ -688,6 +739,7 @@ class AwsBedrock(Model):
                 "system": system_message,
                 "toolConfig": tool_config,
                 "inferenceConfig": self._get_inference_config(),
+                "outputConfig": output_config,
             }
             body = {k: v for k, v in body.items() if v is not None}
 
@@ -731,10 +783,12 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            # Handle structured outputs via tool-based fallback
+            # Handle structured outputs: native outputConfig for Claude 4.5+, tool fallback otherwise
+            output_config = self._build_output_config(response_format)
             using_tool_fallback = False
             schema_tool = None
-            if response_format is not None:
+
+            if output_config is None and response_format is not None:
                 schema_tool = self._response_format_to_tool(response_format)
                 if schema_tool is not None:
                     using_tool_fallback = True
@@ -757,6 +811,7 @@ class AwsBedrock(Model):
                 "system": system_message,
                 "toolConfig": tool_config,
                 "inferenceConfig": self._get_inference_config(),
+                "outputConfig": output_config,
             }
             body = {k: v for k, v in body.items() if v is not None}
 
@@ -800,10 +855,12 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            # Handle structured outputs via tool-based fallback
+            # Handle structured outputs: native outputConfig for Claude 4.5+, tool fallback otherwise
+            output_config = self._build_output_config(response_format)
             using_tool_fallback = False
             schema_tool = None
-            if response_format is not None:
+
+            if output_config is None and response_format is not None:
                 schema_tool = self._response_format_to_tool(response_format)
                 if schema_tool is not None:
                     using_tool_fallback = True
@@ -826,6 +883,7 @@ class AwsBedrock(Model):
                 "system": system_message,
                 "toolConfig": tool_config,
                 "inferenceConfig": self._get_inference_config(),
+                "outputConfig": output_config,
             }
             body = {k: v for k, v in body.items() if v is not None}
 
