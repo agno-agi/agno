@@ -371,8 +371,19 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             )
 
         try:
-            # If span_id is provided, return just that span
+            # If span_id is provided, return just that span. Spans are not
+            # user-scoped at the DB layer (no user_id column), so we must first
+            # verify the parent trace via the scoped wrapper — otherwise a
+            # caller with a span_id from another user's trace could read it.
             if span_id:
+                if isinstance(db, AsyncBaseDb):
+                    parent_trace = await db.get_trace(trace_id=trace_id, run_id=run_id)
+                else:
+                    parent_trace = db.get_trace(trace_id=trace_id, run_id=run_id)
+
+                if parent_trace is None:
+                    raise HTTPException(status_code=404, detail="Trace not found")
+
                 if isinstance(db, AsyncBaseDb):
                     span = await db.get_span(span_id)
                 else:

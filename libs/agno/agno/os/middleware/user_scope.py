@@ -144,6 +144,34 @@ async def _verify_run_in_session(entity, session_id: str, run_id: str, user_id: 
         raise HTTPException(status_code=404, detail="Run not found")
 
 
+async def _verify_run_in_session_via_db(
+    db: Union["BaseDb", "AsyncBaseDb", None],
+    session_id: str,
+    run_id: str,
+    user_id: str,
+) -> None:
+    """Raise 404 if ``run_id`` isn't in a session owned by ``user_id``.
+
+    Used by factory cancel routes that don't resolve an entity but still need
+    to verify run ownership before applying a global cancellation intent.
+    """
+    if db is None:
+        # No DB to verify against — fail closed.
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    if isinstance(db, AsyncBaseDb):
+        session = await db.get_session(session_id=session_id, user_id=user_id)
+    else:
+        session = db.get_session(session_id=session_id, user_id=user_id)
+
+    if session is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    get_run = getattr(session, "get_run", None)
+    if get_run is None or get_run(run_id=run_id) is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+
 def resolve_owned_agent(os: "AgentOS") -> Callable:
     """Return a FastAPI dependency yielding the Agent for a run the caller owns.
 

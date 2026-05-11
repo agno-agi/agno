@@ -833,10 +833,19 @@ def get_agent_router(
             description="Session ID the run belongs to. Required for non-admin JWT users.",
         ),
     ):
-        # Factory agents: cancel is static, no agent instance needed
+        # Factory agents: cancel is static, no agent instance needed.
+        # Non-admin callers must still prove session ownership before we apply
+        # a global cancellation intent keyed solely on run_id.
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
             from agno.agent._run import acancel_run
+            from agno.os.middleware.user_scope import _verify_run_in_session_via_db, get_scoped_user_id
+
+            scoped_user_id = get_scoped_user_id(request)
+            if scoped_user_id is not None:
+                if not session_id:
+                    raise HTTPException(status_code=400, detail="session_id is required for this action")
+                await _verify_run_in_session_via_db(os.db, session_id, run_id, scoped_user_id)
 
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
@@ -1318,16 +1327,52 @@ def get_agent_router(
         dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
     )
     async def resume_agent_run_stream(
+        request: Request,
         agent_id: str,
         run_id: str,
         last_event_index: Optional[int] = Form(None, description="Index of last event received by client (0-based)"),
         session_id: Optional[str] = Form(None, description="Session ID for database fallback"),
     ):
+        from agno.os.middleware.user_scope import (
+            _verify_run_in_session,
+            _verify_run_in_session_via_db,
+            get_scoped_user_id,
+        )
+
+        # Ownership check up-front: the buffer and DB fallback paths inside
+        # _resume_stream_generator are both keyed on run_id alone, so a
+        # non-admin with the right scope must prove session ownership before
+        # any events are replayed/streamed.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if not session_id:
+                raise HTTPException(status_code=400, detail="session_id is required for this action")
+
+        # Factory agents: skip entity resolution (no factory_input on resume)
+        # and verify ownership directly via the OS db.
+        factory = find_factory_by_id(agent_id, os.agents)
+        if factory:
+            if scoped_user_id is not None:
+                # session_id required above
+                assert session_id is not None
+                await _verify_run_in_session_via_db(os.db, session_id, run_id, scoped_user_id)
+            # Without a concrete agent, we can only serve buffer events for
+            # this run; the DB fallback path inside the generator requires an
+            # entity, so signal early if the buffer doesn't have it.
+            raise HTTPException(
+                status_code=400,
+                detail="Stream resumption is not supported for factory agents",
+            )
+
         agent = get_agent_by_id(agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
         if isinstance(agent, RemoteAgent):
             raise HTTPException(status_code=400, detail="Stream resumption is not supported for remote agents")
+
+        if scoped_user_id is not None:
+            assert session_id is not None
+            await _verify_run_in_session(agent, session_id, run_id, scoped_user_id)
 
         return StreamingResponse(
             _resume_stream_generator(agent, run_id, last_event_index, session_id),  # type: ignore[arg-type]

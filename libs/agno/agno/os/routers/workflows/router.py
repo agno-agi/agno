@@ -183,10 +183,37 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
         session_id = message.get("session_id")
         user_id = message.get("user_id")
         last_event_index = message.get("last_event_index")  # 0-based index of last received event
+        # Set by the WS dispatcher in router.py — see workflow_websocket_endpoint.
+        jwt_enabled = bool(message.get("__ws_jwt_enabled__"))
+        is_admin = bool(message.get("__ws_is_admin__"))
 
         if not run_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required for subscription"}))
             return
+
+        # Non-admin JWT callers must prove session ownership before any replay or
+        # live-event subscription. The buffer path is keyed solely on run_id, so
+        # without this check a caller with workflows:run could read another
+        # user's run events by guessing the run_id.
+        if jwt_enabled and not is_admin and user_id:
+            if not session_id:
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "event": "error",
+                            "error": "session_id is required to reconnect to a workflow run",
+                        }
+                    )
+                )
+                return
+            from agno.os.middleware.user_scope import _verify_run_in_session_via_db
+
+            try:
+                await _verify_run_in_session_via_db(os.db, session_id, run_id, user_id)
+            except HTTPException:
+                # Mask existence of another user's run.
+                await websocket.send_text(json.dumps({"event": "error", "error": f"Run {run_id} not found"}))
+                return
 
         # Check if run exists in event buffer
         buffer_status = event_buffer.get_run_status(run_id)
@@ -1467,10 +1494,19 @@ def get_workflow_router(
             description="Session ID the run belongs to. Required for non-admin JWT users.",
         ),
     ):
-        # Factory workflows: cancel is static, no workflow instance needed
+        # Factory workflows: cancel is static, no workflow instance needed.
+        # Non-admin callers must still prove session ownership before we apply
+        # a global cancellation intent keyed solely on run_id.
         factory = find_factory_by_id(workflow_id, os.workflows)
         if factory:
+            from agno.os.middleware.user_scope import _verify_run_in_session_via_db, get_scoped_user_id
             from agno.run.cancel import acancel_run
+
+            scoped_user_id = get_scoped_user_id(request)
+            if scoped_user_id is not None:
+                if not session_id:
+                    raise HTTPException(status_code=400, detail="session_id is required for this action")
+                await _verify_run_in_session_via_db(os.db, session_id, run_id, scoped_user_id)
 
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
@@ -1528,11 +1564,34 @@ def get_workflow_router(
         dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
     )
     async def resume_workflow_run_stream(
+        request: Request,
         workflow_id: str,
         run_id: str,
         last_event_index: Optional[int] = Form(None, description="Index of last event received by client (0-based)"),
         session_id: Optional[str] = Form(None, description="Session ID for database fallback"),
     ):
+        from agno.os.middleware.user_scope import (
+            _verify_run_in_session,
+            _verify_run_in_session_via_db,
+            get_scoped_user_id,
+        )
+
+        # Ownership check up-front (see resume_agent_run_stream for rationale).
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if not session_id:
+                raise HTTPException(status_code=400, detail="session_id is required for this action")
+
+        factory = find_factory_by_id(workflow_id, os.workflows)
+        if factory:
+            if scoped_user_id is not None:
+                assert session_id is not None
+                await _verify_run_in_session_via_db(os.db, session_id, run_id, scoped_user_id)
+            raise HTTPException(
+                status_code=400,
+                detail="Stream resumption is not supported for factory workflows",
+            )
+
         workflow = get_workflow_by_id(
             workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
         )
@@ -1540,6 +1599,10 @@ def get_workflow_router(
             raise HTTPException(status_code=404, detail="Workflow not found")
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Stream resumption is not supported for remote workflows")
+
+        if scoped_user_id is not None:
+            assert session_id is not None
+            await _verify_run_in_session(workflow, session_id, run_id, scoped_user_id)
 
         return StreamingResponse(
             _resume_stream_generator(workflow, run_id, last_event_index, session_id),
@@ -1638,9 +1701,13 @@ def get_workflow_router(
             description="JSON object with factory-specific parameters for dynamic workflow reconstruction",
         ),
     ):
+        from agno.os.middleware.user_scope import get_scoped_user_id
         from agno.os.schema import WorkflowRunSchema
 
-        user_id = getattr(request.state, "user_id", None)
+        # Non-admin callers must only see runs from sessions they own. Admins
+        # (scoped_user_id is None) bypass and can list runs for any session.
+        scoped_user_id = get_scoped_user_id(request)
+        user_id = scoped_user_id if scoped_user_id is not None else getattr(request.state, "user_id", None)
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and query params, using request state")
@@ -1659,7 +1726,13 @@ def get_workflow_router(
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Run listing is not supported for remote workflows")
 
-        session = await workflow.aread_or_create_session(session_id=session_id)
+        # Read-only session lookup (no create) so we don't manufacture a session
+        # for a user who shouldn't see it. For non-admins, scope by user_id so
+        # mismatched ownership returns 404, not a leak.
+        lookup_user_id = scoped_user_id if scoped_user_id is not None else None
+        session = await workflow.aget_session(session_id=session_id, user_id=lookup_user_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
         runs = session.runs or []
 
         result = []

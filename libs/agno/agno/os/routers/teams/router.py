@@ -801,10 +801,19 @@ def get_team_router(
             description="Session ID the run belongs to. Required for non-admin JWT users.",
         ),
     ):
-        # Factory teams: cancel is static, no team instance needed
+        # Factory teams: cancel is static, no team instance needed.
+        # Non-admin callers must still prove session ownership before we apply
+        # a global cancellation intent keyed solely on run_id.
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
+            from agno.os.middleware.user_scope import _verify_run_in_session_via_db, get_scoped_user_id
             from agno.team._run import acancel_run
+
+            scoped_user_id = get_scoped_user_id(request)
+            if scoped_user_id is not None:
+                if not session_id:
+                    raise HTTPException(status_code=400, detail="session_id is required for this action")
+                await _verify_run_in_session_via_db(os.db, session_id, run_id, scoped_user_id)
 
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
@@ -860,16 +869,43 @@ def get_team_router(
         dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
     )
     async def resume_team_run_stream(
+        request: Request,
         team_id: str,
         run_id: str,
         last_event_index: Optional[int] = Form(None, description="Index of last event received by client (0-based)"),
         session_id: Optional[str] = Form(None, description="Session ID for database fallback"),
     ):
+        from agno.os.middleware.user_scope import (
+            _verify_run_in_session,
+            _verify_run_in_session_via_db,
+            get_scoped_user_id,
+        )
+
+        # Ownership check up-front (see resume_agent_run_stream for rationale).
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if not session_id:
+                raise HTTPException(status_code=400, detail="session_id is required for this action")
+
+        factory = find_factory_by_id(team_id, os.teams)
+        if factory:
+            if scoped_user_id is not None:
+                assert session_id is not None
+                await _verify_run_in_session_via_db(os.db, session_id, run_id, scoped_user_id)
+            raise HTTPException(
+                status_code=400,
+                detail="Stream resumption is not supported for factory teams",
+            )
+
         team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
         if isinstance(team, RemoteTeam):
             raise HTTPException(status_code=400, detail="Stream resumption is not supported for remote teams")
+
+        if scoped_user_id is not None:
+            assert session_id is not None
+            await _verify_run_in_session(team, session_id, run_id, scoped_user_id)
 
         return StreamingResponse(
             _resume_stream_generator(team, run_id, last_event_index, session_id),
