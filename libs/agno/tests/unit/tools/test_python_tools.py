@@ -15,11 +15,17 @@ def temp_dir():
 
 @pytest.fixture
 def python_tools(temp_dir):
-    # Hardened build: pip/uv installers are only registered when
-    # enable_pip_install=True; opt in here so the upstream tests that
-    # exercise those tools continue to run.
+    # Hardened build: the three code-execution tools are only registered
+    # when unsafe_exec=True (operator explicitly opts in to the
+    # in-process RCE surface inside their own sandbox). The installer
+    # tools are only registered when enable_pip_install=True. These
+    # upstream tests exercise both, so opt into both here. Also pass
+    # unsafe_exec_full_builtins so snippets that use print/import keep
+    # working under the same semantics as upstream.
     return PythonTools(
         base_dir=temp_dir,
+        unsafe_exec=True,
+        unsafe_exec_full_builtins=True,
         enable_pip_install=True,
         include_tools=[
             "save_to_file_and_run",

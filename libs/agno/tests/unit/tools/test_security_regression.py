@@ -330,3 +330,248 @@ class TestDockerConfigWipe:
         text = docker_py.read_text()
         assert 'os.environ["DOCKER_CONFIG"] = ""' not in text
         assert "os.environ['DOCKER_CONFIG'] = ''" not in text
+
+
+# ---------- v2.6.5-hardened.3 additions -----------------------------
+
+
+class TestPythonToolsUnsafeExecGate:
+    """Code-execution tools must be opt-in under ``unsafe_exec``."""
+
+    def test_exec_tools_not_registered_by_default(self, tmp_path: Path):
+        from agno.tools.python import PythonTools
+
+        pt = PythonTools(base_dir=tmp_path)
+        names = {getattr(t, "name", getattr(t, "__name__", "")) for t in pt.tools}
+        assert "run_python_code" not in names
+        assert "save_to_file_and_run" not in names
+        assert "run_python_file_return_variable" not in names
+
+    def test_exec_tools_registered_when_unsafe_exec_true(self, tmp_path: Path):
+        from agno.tools.python import PythonTools
+
+        pt = PythonTools(base_dir=tmp_path, unsafe_exec=True)
+        names = {getattr(t, "name", getattr(t, "__name__", "")) for t in pt.tools}
+        assert "run_python_code" in names
+
+    def test_safe_builtins_applied_by_default(self, tmp_path: Path):
+        from agno.tools.python import PythonTools
+
+        pt = PythonTools(base_dir=tmp_path, unsafe_exec=True)
+        builtins_ns = pt.safe_globals["__builtins__"]
+        assert "open" not in builtins_ns
+        assert "exec" not in builtins_ns
+        assert "__import__" not in builtins_ns
+        assert "len" in builtins_ns
+
+    def test_unsafe_exec_full_builtins_requires_unsafe_exec(self, tmp_path: Path):
+        from agno.tools.python import PythonTools
+
+        with pytest.raises(ValueError):
+            PythonTools(
+                base_dir=tmp_path,
+                unsafe_exec=False,
+                unsafe_exec_full_builtins=True,
+            )
+
+    def test_fresh_exec_globals_is_isolated(self, tmp_path: Path):
+        from agno.tools.python import PythonTools
+
+        pt = PythonTools(base_dir=tmp_path, unsafe_exec=True)
+        g1 = pt._fresh_exec_globals()
+        g1["__builtins__"]["len"] = "mutated"
+        g2 = pt._fresh_exec_globals()
+        assert g2["__builtins__"]["len"] is len
+
+
+class TestDockerRunContainerHardening:
+    def _tools(self, **kw):
+        from unittest.mock import patch
+
+        with patch("agno.tools.docker.docker.DockerClient") as mc:
+            mc.return_value.ping.return_value = True
+            from agno.tools.docker import DockerTools
+
+            return DockerTools(
+                enable_privileged_ops=True,
+                image_allowlist=["nginx:latest"],
+                **kw,
+            )
+
+    def test_blanket_denies_root_bind(self):
+        d = self._tools()
+        out = d.run_container(
+            "nginx:latest",
+            volumes={"/": {"bind": "/h", "mode": "rw"}},
+        )
+        assert "blanket-denied" in out
+
+    def test_blanket_denies_docker_sock(self):
+        d = self._tools()
+        out = d.run_container(
+            "nginx:latest",
+            volumes={
+                "/var/run/docker.sock": {"bind": "/s", "mode": "rw"},
+            },
+        )
+        assert "blanket-denied" in out
+
+    def test_blanket_denies_host_network(self):
+        d = self._tools()
+        out = d.run_container("nginx:latest", network="host")
+        assert "blanket-denied" in out
+
+    def test_requires_bind_mount_allowlist(self):
+        d = self._tools()
+        out = d.run_container(
+            "nginx:latest",
+            volumes={"/tmp/s": {"bind": "/d", "mode": "ro"}},
+        )
+        assert "allowed_bind_mounts" in out
+
+    def test_requires_env_allowlist(self):
+        d = self._tools()
+        out = d.run_container("nginx:latest", environment={"F": "b"})
+        assert "allowed_env_keys" in out
+
+    def test_operator_allowlist_cannot_override_blanket_deny(self):
+        d = self._tools(allowed_bind_mounts=["/etc"])
+        out = d.run_container(
+            "nginx:latest",
+            volumes={"/etc": {"bind": "/x", "mode": "ro"}},
+        )
+        assert "blanket-denied" in out
+
+
+class TestDockerInspectionGate:
+    def test_inspection_tools_hidden_by_default(self):
+        from unittest.mock import patch
+
+        with patch("agno.tools.docker.docker.DockerClient") as mc:
+            mc.return_value.ping.return_value = True
+            from agno.tools.docker import DockerTools
+
+            d = DockerTools()
+            names = sorted(f.name for f in d.functions.values())
+            assert "list_volumes" not in names
+            assert "inspect_volume" not in names
+            assert "list_networks" not in names
+            assert "inspect_network" not in names
+
+    def test_inspection_tools_surface_when_opted_in(self):
+        from unittest.mock import patch
+
+        with patch("agno.tools.docker.docker.DockerClient") as mc:
+            mc.return_value.ping.return_value = True
+            from agno.tools.docker import DockerTools
+
+            d = DockerTools(enable_inspection_ops=True)
+            names = sorted(f.name for f in d.functions.values())
+            for expected in (
+                "list_volumes",
+                "inspect_volume",
+                "list_networks",
+                "inspect_network",
+            ):
+                assert expected in names
+
+
+class TestCustomApiToolsRedirect:
+    def test_redirect_to_private_network_is_blocked(self):
+        from unittest.mock import MagicMock, patch
+
+        from agno.tools.api import CustomApiTools
+
+        api = CustomApiTools(base_url="https://example.com")
+        redirect = MagicMock(
+            status_code=302,
+            headers={"Location": "http://169.254.169.254/latest/meta-data/"},
+        )
+
+        def _gai(host, *args, **kwargs):
+            # Honor IP literals so the metadata IP validates as itself;
+            # everything else resolves to a public test address.
+            try:
+                import ipaddress as _ip
+
+                _ip.ip_address(host)
+                return [(None, None, None, "", (host, 0))]
+            except ValueError:
+                return [(None, None, None, "", ("8.8.8.8", 0))]
+
+        with patch(
+            "agno.tools.api.requests.request",
+            return_value=redirect,
+        ) as mock_req:
+            with mock.patch.object(socket, "getaddrinfo", side_effect=_gai):
+                out = api.make_request("/redirector")
+        assert "private" in out.lower() or "blocked" in out.lower()
+        assert mock_req.call_count == 1
+
+    def test_max_redirects_exhaustion(self):
+        from unittest.mock import MagicMock, patch
+
+        from agno.tools.api import CustomApiTools
+
+        api = CustomApiTools(
+            base_url="https://example.com",
+            max_redirects=2,
+        )
+        loop = MagicMock(
+            status_code=302,
+            headers={"Location": "https://example.com/loop"},
+        )
+        with patch(
+            "agno.tools.api.requests.request",
+            return_value=loop,
+        ) as mock_req:
+            with mock.patch.object(
+                socket,
+                "getaddrinfo",
+                return_value=[
+                    (None, None, None, "", ("8.8.8.8", 0)),
+                ],
+            ):
+                out = api.make_request("/loop")
+        assert "max_redirects" in out
+        assert mock_req.call_count == 3
+
+
+class TestSQLEngineReadOnly:
+    def test_sqlite_engine_ro_blocks_insert(self, tmp_path: Path):
+        from sqlalchemy import create_engine, text
+
+        from agno.tools.sql import SQLTools
+
+        db = tmp_path / "t.db"
+        seed = create_engine(f"sqlite:///{db}")
+        with seed.begin() as c:
+            c.execute(text("CREATE TABLE t(x INTEGER)"))
+            c.execute(text("INSERT INTO t VALUES (1)"))
+
+        st = SQLTools(db_url=f"sqlite:///{db}", read_only=True)
+
+        with pytest.raises(Exception) as exc:
+            st.run_sql("INSERT INTO t VALUES (2)")
+        assert "readonly" in str(exc.value).lower()
+
+        with seed.begin() as c:
+            count = c.execute(text("SELECT count(*) FROM t")).scalar()
+        assert count == 1
+
+    def test_engine_ro_not_applied_when_read_only_false(self, tmp_path: Path):
+        from sqlalchemy import create_engine, text
+
+        from agno.tools.sql import SQLTools
+
+        db = tmp_path / "t.db"
+        seed = create_engine(f"sqlite:///{db}")
+        with seed.begin() as c:
+            c.execute(text("CREATE TABLE t(x INTEGER)"))
+
+        st = SQLTools(db_url=f"sqlite:///{db}", read_only=False)
+        st.run_sql("INSERT INTO t VALUES (1)")
+
+        with seed.begin() as c:
+            count = c.execute(text("SELECT count(*) FROM t")).scalar()
+        assert count == 1

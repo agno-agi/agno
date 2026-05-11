@@ -150,6 +150,7 @@ def test_make_request_dog_image(api_tools, mock_dog_image_response):
             auth=api_tools._get_auth(),
             verify=True,
             timeout=10,
+            allow_redirects=False,
         )
 
 
@@ -176,6 +177,7 @@ def test_make_request_dog_breeds(api_tools, mock_dog_breeds_response):
             auth=api_tools._get_auth(),
             verify=True,
             timeout=10,
+            allow_redirects=False,
         )
 
 
@@ -201,6 +203,7 @@ def test_make_request_with_params(api_tools, mock_dog_image_response):
             auth=api_tools._get_auth(),
             verify=True,
             timeout=10,
+            allow_redirects=False,
         )
 
 
@@ -226,6 +229,7 @@ def test_make_request_without_base_url(mock_dog_image_response):
             auth=None,
             verify=True,
             timeout=30,
+            allow_redirects=False,
         )
 
 
@@ -320,4 +324,5 @@ def test_make_request_all_http_methods(api_tools, mock_dog_image_response):
                 auth=api_tools._get_auth(),
                 verify=True,
                 timeout=10,
+                allow_redirects=False,
             )

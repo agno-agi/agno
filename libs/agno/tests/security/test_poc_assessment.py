@@ -43,7 +43,11 @@ class TestB01_PythonToolsRCE:
         from agno.tools.python import PythonTools
 
         pt = PythonTools(base_dir=Path("/tmp"))
-        assert pt.safe_globals == {}
+        # In v2.6.5-hardened.3, safe_globals carries a restricted
+        # __builtins__ dict by default (see TestN05). The invariant
+        # we want here is that no user-defined host globals leak in.
+        leaked = {k for k in pt.safe_globals if k != "__builtins__"}
+        assert leaked == set()
 
     def test_restrict_to_base_dir_is_true_by_default(self):
         from agno.tools.python import PythonTools
@@ -524,3 +528,255 @@ class TestN04_DirectoryCreationContained:
             filename="../../etc/passwd",
         )
         assert "not permitted" in out.lower() or "separator" in out.lower() or "invalid" in out.lower()
+
+
+# ---------- N-5 Critical: v2.6.5-hardened.2 PythonTools RCE residual ----------
+
+
+class TestN05_PythonToolsSubclassEscapeContained:
+    """v2.6.5-hardened.2 still exposed run_python_code / exec with full
+    builtins; the subclass-traversal escape
+    ``().__class__.__mro__[-1].__subclasses__()`` reached ``subprocess.Popen``.
+
+    v2.6.5-hardened.3 removes the attack surface by NOT registering the
+    exec-based tools unless the operator opts in with ``unsafe_exec=True``.
+    """
+
+    def test_exec_tools_absent_by_default(self, tmp_path):
+        from agno.tools.python import PythonTools
+
+        pt = PythonTools(base_dir=tmp_path)
+        names = {getattr(t, "name", getattr(t, "__name__", "")) for t in pt.tools}
+        for banned in (
+            "run_python_code",
+            "save_to_file_and_run",
+            "run_python_file_return_variable",
+        ):
+            assert banned not in names, f"{banned} must be opt-in via unsafe_exec=True"
+
+    def test_safe_builtins_omit_dangerous_introspection(self, tmp_path):
+        from agno.tools.python import PythonTools
+
+        pt = PythonTools(base_dir=tmp_path, unsafe_exec=True)
+        safe = pt.safe_globals["__builtins__"]
+        for banned in (
+            "__import__",
+            "open",
+            "exec",
+            "eval",
+            "compile",
+            "globals",
+            "locals",
+            "vars",
+            "getattr",
+            "setattr",
+            "delattr",
+            "breakpoint",
+        ):
+            assert banned not in safe, f"safe_builtins leaked {banned!r}; subclass escape path becomes trivial"
+
+
+# ---------- N-6 High: v2.6.5-hardened.2 Docker bind-mount attack ----------
+
+
+class TestN06_DockerBindMountContained:
+    """v2.6.5-hardened.2 still let the LLM pass arbitrary ``volumes`` to
+    ``run_container`` once ``enable_privileged_ops=True`` was set. A
+    bind mount of ``/`` or ``/var/run/docker.sock`` is full host pwn.
+
+    v2.6.5-hardened.3 blanket-denies these regardless of operator
+    allowlist and refuses any bind mount that is not explicitly
+    allow-listed.
+    """
+
+    def _tools(self, **kw):
+        pytest.importorskip("docker")
+        with mock.patch("agno.tools.docker.docker.DockerClient") as mc:
+            mc.return_value.ping.return_value = True
+            from agno.tools.docker import DockerTools
+
+            return DockerTools(
+                enable_privileged_ops=True,
+                image_allowlist=["nginx:latest"],
+                **kw,
+            )
+
+    def test_root_bind_mount_refused(self):
+        d = self._tools()
+        out = d.run_container(
+            "nginx:latest",
+            volumes={"/": {"bind": "/host", "mode": "rw"}},
+        )
+        assert "blanket-denied" in out
+
+    def test_docker_sock_bind_refused(self):
+        d = self._tools()
+        out = d.run_container(
+            "nginx:latest",
+            volumes={
+                "/var/run/docker.sock": {
+                    "bind": "/sock",
+                    "mode": "rw",
+                },
+            },
+        )
+        assert "blanket-denied" in out
+
+    def test_host_network_refused(self):
+        d = self._tools()
+        out = d.run_container("nginx:latest", network="host")
+        assert "blanket-denied" in out
+
+    def test_bind_mount_refused_without_allowlist(self):
+        d = self._tools()
+        out = d.run_container(
+            "nginx:latest",
+            volumes={"/tmp/x": {"bind": "/d", "mode": "ro"}},
+        )
+        assert "allowed_bind_mounts" in out
+
+    def test_env_refused_without_allowlist(self):
+        d = self._tools()
+        out = d.run_container(
+            "nginx:latest",
+            environment={"AWS_ACCESS_KEY_ID": "AKIA..."},
+        )
+        assert "allowed_env_keys" in out
+
+    def test_operator_cannot_allowlist_blanket_denied_path(self):
+        # Even if an operator tries to allow /etc, the blanket-deny wins.
+        d = self._tools(allowed_bind_mounts=["/etc"])
+        out = d.run_container(
+            "nginx:latest",
+            volumes={"/etc": {"bind": "/x", "mode": "ro"}},
+        )
+        assert "blanket-denied" in out
+
+
+# ---------- N-7 High: v2.6.5-hardened.2 redirect SSRF bypass ----------
+
+
+class TestN07_ApiRedirectSsrfBlocked:
+    """v2.6.5-hardened.2 validated the *initial* URL but followed
+    redirects automatically, so an allow-listed public origin could
+    302 to ``http://169.254.169.254/latest/meta-data/`` and leak
+    cloud credentials.
+
+    v2.6.5-hardened.3 sets ``allow_redirects=False`` on ``requests``
+    and re-validates each ``Location`` hop against the SSRF blocklist.
+    """
+
+    def _gai(self, host, *args, **kwargs):
+        import ipaddress as _ip
+
+        try:
+            _ip.ip_address(host)
+            return [(None, None, None, "", (host, 0))]
+        except ValueError:
+            return [(None, None, None, "", ("8.8.8.8", 0))]
+
+    def test_redirect_to_aws_metadata_is_blocked(self):
+        from unittest.mock import MagicMock, patch
+
+        from agno.tools.api import CustomApiTools
+
+        api = CustomApiTools(base_url="https://example.com")
+        redirect = MagicMock(
+            status_code=302,
+            headers={
+                "Location": "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+            },
+        )
+        with patch(
+            "agno.tools.api.requests.request",
+            return_value=redirect,
+        ) as mock_req:
+            with mock.patch.object(socket, "getaddrinfo", side_effect=self._gai):
+                out = api.make_request("/redirector")
+        assert "private" in out.lower() or "blocked" in out.lower()
+        # Only the first hop is issued; the 302 target is never fetched.
+        assert mock_req.call_count == 1
+
+    def test_redirect_loop_exhausts_budget(self):
+        from unittest.mock import MagicMock, patch
+
+        from agno.tools.api import CustomApiTools
+
+        api = CustomApiTools(base_url="https://example.com", max_redirects=2)
+        loop = MagicMock(
+            status_code=302,
+            headers={"Location": "https://example.com/loop"},
+        )
+        with patch(
+            "agno.tools.api.requests.request",
+            return_value=loop,
+        ) as mock_req:
+            with mock.patch.object(socket, "getaddrinfo", side_effect=self._gai):
+                out = api.make_request("/loop")
+        assert "max_redirects" in out
+        assert mock_req.call_count == 3
+
+
+# ---------- N-8 High: v2.6.5-hardened.2 regex-only SQL read-only ----------
+
+
+class TestN08_SqlEngineReadOnlyEnforced:
+    """v2.6.5-hardened.2 relied on a regex to refuse DML. A whitespace,
+    comment, or unicode trick that bypasses the regex goes straight to
+    the database.
+
+    v2.6.5-hardened.3 also puts the connection into read-only mode at
+    the database level, so even if the regex is bypassed the engine
+    refuses the write.
+    """
+
+    def test_sqlite_engine_level_ro_blocks_raw_insert(self, tmp_path):
+        from sqlalchemy import create_engine, text
+
+        from agno.tools.sql import SQLTools
+
+        db = tmp_path / "t.db"
+        seed = create_engine(f"sqlite:///{db}")
+        with seed.begin() as c:
+            c.execute(text("CREATE TABLE t(x INTEGER)"))
+            c.execute(text("INSERT INTO t VALUES (1)"))
+
+        st = SQLTools(db_url=f"sqlite:///{db}", read_only=True)
+
+        # run_sql bypasses the regex entirely; engine-level RO must
+        # still reject the write.
+        with pytest.raises(Exception) as exc:
+            st.run_sql("INSERT INTO t VALUES (2)")
+        assert "readonly" in str(exc.value).lower()
+
+        with seed.begin() as c:
+            count = c.execute(text("SELECT count(*) FROM t")).scalar()
+        assert count == 1, "engine-level read-only was bypassed"
+
+
+# ---------- N-9 Medium: v2.6.5-hardened.2 Docker inspection info leak ----------
+
+
+class TestN09_DockerInspectionGated:
+    """v2.6.5-hardened.2 always registered volume/network *inspection*
+    tools. Even without write access an LLM could enumerate mounts,
+    bridges, and subnets — useful reconnaissance for pivoting.
+
+    v2.6.5-hardened.3 hides them behind ``enable_inspection_ops=True``.
+    """
+
+    def test_inspection_tools_hidden_by_default(self):
+        pytest.importorskip("docker")
+        with mock.patch("agno.tools.docker.docker.DockerClient") as mc:
+            mc.return_value.ping.return_value = True
+            from agno.tools.docker import DockerTools
+
+            d = DockerTools()
+            names = sorted(f.name for f in d.functions.values())
+            for banned in (
+                "list_volumes",
+                "inspect_volume",
+                "list_networks",
+                "inspect_network",
+            ):
+                assert banned not in names
