@@ -125,10 +125,6 @@ class TestTraceSpanLeak:
     """A user with trace_id+span_id of another user's trace must get 404."""
 
     def _insert_trace_and_span(self, db, *, trace_id: str, span_id: str, user_id: str):
-        """Insert a trace+span pair using the db's public API."""
-        # agno.tracing.schemas imports opentelemetry at module load — skip
-        # cleanly when the optional dependency isn't installed.
-        pytest.importorskip("opentelemetry")
         from agno.tracing.schemas import Span, Trace
 
         now = datetime.now(UTC)
@@ -179,8 +175,9 @@ class TestTraceSpanLeak:
             "/traces/trace-user-a?span_id=span-user-a",
             headers=auth_header(token_b),
         )
-        # Parent-trace check fires first and returns 404 (the user does not
-        # own the trace, so the scoped wrapper post-filters it to None).
+        # Parent-trace check fires first: the user does not own the trace,
+        # so the scoped wrapper post-filters it to None and the route 404s
+        # before ever touching the span.
         assert resp.status_code == 404, resp.text
 
     def test_admin_can_fetch_span_from_any_users_trace(self, client, shared_db):
@@ -197,9 +194,7 @@ class TestTraceSpanLeak:
             "/traces/trace-admin-test?span_id=span-admin-test",
             headers=auth_header(admin_token),
         )
-        # Admin sees the span (200 or schema mismatch returns 500; both are
-        # non-404 which is what matters for the leak).
-        assert resp.status_code != 404, resp.text
+        assert resp.status_code == 200, resp.text
 
 
 # ---------------------------------------------------------------------------
