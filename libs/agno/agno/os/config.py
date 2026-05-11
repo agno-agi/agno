@@ -13,6 +13,7 @@ class AuthorizationConfig(BaseModel):
     algorithm: Optional[str] = None
     verify_audience: Optional[bool] = None
     audience: Optional[str] = None
+    admin_scope: Optional[str] = None
 
 
 class EvalsDomainConfig(BaseModel):

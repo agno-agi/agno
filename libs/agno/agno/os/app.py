@@ -882,12 +882,14 @@ class AgentOS:
 
     def _add_jwt_middleware(self, fastapi_app: FastAPI) -> None:
         from agno.os.middleware.jwt import JWTMiddleware, JWTValidator
+        from agno.os.scopes import AgentOSScope
 
         verify_audience = False
         jwks_file = None
         verification_keys = None
         algorithm = "RS256"
         audience = None
+        admin_scope: Optional[str] = None
 
         if self.authorization_config:
             algorithm = self.authorization_config.algorithm or "RS256"
@@ -895,6 +897,7 @@ class AgentOS:
             jwks_file = self.authorization_config.jwks_file
             verify_audience = self.authorization_config.verify_audience or False
             audience = self.authorization_config.audience
+            admin_scope = self.authorization_config.admin_scope
 
         log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
 
@@ -905,6 +908,11 @@ class AgentOS:
             algorithm=algorithm,
         )
         fastapi_app.state.jwt_validator = jwt_validator
+        # Expose audience config + admin scope on app.state so WebSocket auth
+        # (which does not flow through HTTP middleware) can honour them.
+        fastapi_app.state.jwt_verify_audience = verify_audience
+        fastapi_app.state.jwt_audience = audience
+        fastapi_app.state.admin_scope = admin_scope or AgentOSScope.ADMIN.value
 
         # Collect interface route prefixes to exclude from JWT auth.
         # Interfaces use their own authentication mechanisms
@@ -940,6 +948,8 @@ class AgentOS:
         }
         if audience:
             middleware_kwargs["audience"] = audience
+        if admin_scope:
+            middleware_kwargs["admin_scope"] = admin_scope
         fastapi_app.add_middleware(JWTMiddleware, **middleware_kwargs)
 
     def get_routes(self) -> List[Any]:

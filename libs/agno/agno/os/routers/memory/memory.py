@@ -166,9 +166,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db = await get_user_scoped_db(request, dbs, db_id, table)
 
         if isinstance(db, RemoteDb):
-            remote_user_id = user_id
-            if hasattr(request.state, "user_id") and request.state.user_id is not None:
-                remote_user_id = request.state.user_id
+            from agno.os.middleware.user_scope import get_scoped_user_id
+
+            # Force JWT user_id for non-admins; admins keep act-on-behalf via the
+            # query param.
+            scoped_user_id = get_scoped_user_id(request)
+            remote_user_id = scoped_user_id if scoped_user_id is not None else user_id
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.delete_memory(
@@ -211,10 +214,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
+        from agno.os.middleware.user_scope import get_scoped_user_id
+
         db = await get_user_scoped_db(http_request, dbs, db_id, table)
 
-        if hasattr(http_request.state, "user_id") and http_request.state.user_id is not None:
-            request.user_id = http_request.state.user_id
+        # Non-admin callers may only act on their own memories. Admins keep
+        # act-on-behalf semantics (the user_id in the body is honoured).
+        scoped_user_id = get_scoped_user_id(http_request)
+        if scoped_user_id is not None:
+            request.user_id = scoped_user_id
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(http_request)
@@ -283,10 +291,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db = await get_user_scoped_db(request, dbs, db_id, table)
 
         if isinstance(db, RemoteDb):
-            # RemoteDb needs explicit user_id — scoped wrapper doesn't apply
-            remote_user_id = user_id
-            if hasattr(request.state, "user_id") and request.state.user_id is not None:
-                remote_user_id = request.state.user_id
+            from agno.os.middleware.user_scope import get_scoped_user_id
+
+            # RemoteDb needs explicit user_id — scoped wrapper doesn't apply.
+            # Force JWT user_id for non-admins; admins keep query-param control.
+            scoped_user_id = get_scoped_user_id(request)
+            remote_user_id = scoped_user_id if scoped_user_id is not None else user_id
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.get_memories(
@@ -375,9 +385,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db = await get_user_scoped_db(request, dbs, db_id, table)
 
         if isinstance(db, RemoteDb):
-            remote_user_id = user_id
-            if hasattr(request.state, "user_id") and request.state.user_id is not None:
-                remote_user_id = request.state.user_id
+            from agno.os.middleware.user_scope import get_scoped_user_id
+
+            # Force JWT user_id for non-admins; admins keep act-on-behalf via the
+            # query param.
+            scoped_user_id = get_scoped_user_id(request)
+            remote_user_id = scoped_user_id if scoped_user_id is not None else user_id
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.get_memory(
@@ -692,9 +705,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         """Optimize user memories using the default summarize strategy."""
         from agno.memory import MemoryManager
         from agno.memory.strategies.types import MemoryOptimizationStrategyType
+        from agno.os.middleware.user_scope import get_scoped_user_id
 
-        if hasattr(http_request.state, "user_id") and http_request.state.user_id is not None:
-            request.user_id = http_request.state.user_id
+        # Non-admin callers may only optimize their own memories. Admins keep
+        # act-on-behalf semantics.
+        scoped_user_id = get_scoped_user_id(http_request)
+        if scoped_user_id is not None:
+            request.user_id = scoped_user_id
 
         try:
             # Get database instance

@@ -283,9 +283,18 @@ def get_websocket_router(
     async def workflow_websocket_endpoint(websocket: WebSocket):
         """WebSocket endpoint for receiving real-time workflow events"""
         from agno.os.middleware.jwt import JWTValidator
+        from agno.os.scopes import AgentOSScope
+        from agno.os.utils import resolve_ws_jwt_config
 
-        # Check if JWT validator is configured (set by AgentOS when authorization=True)
-        jwt_validator: Optional[JWTValidator] = getattr(websocket.app.state, "jwt_validator", None)
+        # Check if JWT validator is configured (set by AgentOS when authorization=True
+        # or, for the manual app.add_middleware(JWTMiddleware, ...) path, resolved
+        # lazily from app.user_middleware so the FIRST WebSocket connection cannot
+        # see requires_auth=False before any HTTP request has been handled).
+        ws_jwt_config = resolve_ws_jwt_config(websocket.app)
+        jwt_validator: Optional[JWTValidator] = ws_jwt_config.get("validator")
+        ws_verify_audience: bool = ws_jwt_config.get("verify_audience", False)
+        ws_audience = ws_jwt_config.get("audience")
+        ws_admin_scope: str = ws_jwt_config.get("admin_scope") or AgentOSScope.ADMIN.value
         jwt_auth_enabled = jwt_validator is not None
 
         # Determine auth requirements - JWT takes precedence over legacy
@@ -310,9 +319,14 @@ def get_websocket_router(
                         continue
 
                     if jwt_auth_enabled and jwt_validator:
-                        # Use JWT validator for token validation
+                        # Use JWT validator for token validation. Honour the
+                        # configured audience so verify_audience=True applies to
+                        # WebSocket tokens, not just HTTP requests.
                         try:
-                            payload = jwt_validator.validate_token(token)
+                            expected_audience = None
+                            if ws_verify_audience:
+                                expected_audience = ws_audience or getattr(websocket.app.state, "agent_os_id", None)
+                            payload = jwt_validator.validate_token(token, expected_audience)
                             claims = jwt_validator.extract_claims(payload)
                             await websocket_manager.authenticate_websocket(websocket)
 
@@ -370,7 +384,11 @@ def get_websocket_router(
 
                         user_scopes = websocket_user_context.get("scopes", [])
                         if not has_required_scopes(
-                            user_scopes, ["workflows:run"], resource_type="workflows", resource_id=workflow_id
+                            user_scopes,
+                            ["workflows:run"],
+                            resource_type="workflows",
+                            resource_id=workflow_id,
+                            admin_scope=ws_admin_scope,
                         ):
                             await websocket.send_text(
                                 json.dumps({"event": "error", "error": "Insufficient permissions to run this workflow"})
@@ -381,10 +399,7 @@ def get_websocket_router(
                     # cannot attribute a run to another user by spoofing the field.
                     jwt_user_id = websocket_user_context.get("user_id")
                     if jwt_user_id:
-                        from agno.os.scopes import AgentOSScope
-
-                        admin_scope = getattr(websocket.app.state, "admin_scope", None) or AgentOSScope.ADMIN.value
-                        is_admin = admin_scope in websocket_user_context.get("scopes", [])
+                        is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
                         if is_admin:
                             message.setdefault("user_id", jwt_user_id)
                         else:
@@ -395,15 +410,18 @@ def get_websocket_router(
                     # Force user_id from JWT for non-admins so reconnecting
                     # cannot read another user's run events by swapping user_id.
                     jwt_user_id = websocket_user_context.get("user_id")
+                    is_admin = False
                     if jwt_user_id:
-                        from agno.os.scopes import AgentOSScope
-
-                        admin_scope = getattr(websocket.app.state, "admin_scope", None) or AgentOSScope.ADMIN.value
-                        is_admin = admin_scope in websocket_user_context.get("scopes", [])
+                        is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
                         if is_admin:
                             message.setdefault("user_id", jwt_user_id)
                         else:
                             message["user_id"] = jwt_user_id
+                    # Pass admin flag so the subscription handler can skip
+                    # ownership verification for admins. The JWT validator is
+                    # passed through so the handler can re-derive context.
+                    message["__ws_is_admin__"] = is_admin
+                    message["__ws_jwt_enabled__"] = jwt_auth_enabled
                     await handle_workflow_subscription(websocket, message, os)
 
                 else:

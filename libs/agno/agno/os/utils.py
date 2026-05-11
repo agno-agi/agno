@@ -938,6 +938,105 @@ def resolve_origins(user_origins: Optional[List[str]] = None, default_origins: O
     ]
 
 
+def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
+    """Resolve JWT auth config for the WebSocket entrypoint.
+
+    AgentOS (authorization=True) eagerly populates ``app.state.jwt_validator``,
+    ``app.state.jwt_verify_audience``, ``app.state.jwt_audience``, and
+    ``app.state.admin_scope`` from the authorization config.
+
+    For the manual ``app.add_middleware(JWTMiddleware, ...)`` path those
+    attributes are only populated lazily by ``JWTMiddleware.dispatch`` on the
+    FIRST HTTP request. WebSocket connections do not run that dispatch, so a
+    WebSocket connection that arrives before any HTTP request would otherwise
+    see no validator and silently fall through to ``requires_auth=False``.
+
+    This helper bridges that gap by walking ``app.user_middleware`` to find a
+    ``JWTMiddleware`` entry, building a validator from its kwargs the same way
+    the middleware does, and caching the result on ``app.state``.
+    """
+    state = getattr(app, "state", None)
+    if state is None:
+        return {
+            "validator": None,
+            "verify_audience": False,
+            "audience": None,
+            "admin_scope": None,
+        }
+
+    validator = getattr(state, "jwt_validator", None)
+    if validator is not None:
+        return {
+            "validator": validator,
+            "verify_audience": getattr(state, "jwt_verify_audience", False),
+            "audience": getattr(state, "jwt_audience", None),
+            "admin_scope": getattr(state, "admin_scope", None),
+        }
+
+    # Lazy resolution for manual setup: locate JWTMiddleware in user_middleware
+    # and build its validator from kwargs. Avoid importing JWTMiddleware at
+    # module import time to keep WebSocket-less imports light.
+    user_middleware = getattr(app, "user_middleware", None)
+    if not user_middleware:
+        return {
+            "validator": None,
+            "verify_audience": False,
+            "audience": None,
+            "admin_scope": None,
+        }
+
+    from agno.os.middleware.jwt import JWTMiddleware, JWTValidator
+
+    for entry in user_middleware:
+        if getattr(entry, "cls", None) is JWTMiddleware:
+            kwargs = getattr(entry, "kwargs", {}) or {}
+            try:
+                lazy_validator = JWTValidator(
+                    verification_keys=kwargs.get("verification_keys"),
+                    jwks_file=kwargs.get("jwks_file"),
+                    algorithm=kwargs.get("algorithm", "RS256"),
+                    validate=kwargs.get("validate", True),
+                    scopes_claim=kwargs.get("scopes_claim", "scopes"),
+                    user_id_claim=kwargs.get("user_id_claim", "sub"),
+                    session_id_claim=kwargs.get("session_id_claim", "session_id"),
+                    audience_claim=kwargs.get("audience_claim", "aud"),
+                )
+            except Exception as e:
+                log_warning(f"Could not lazily construct JWTValidator for WebSocket auth: {e}")
+                return {
+                    "validator": None,
+                    "verify_audience": False,
+                    "audience": None,
+                    "admin_scope": None,
+                }
+
+            verify_audience = bool(kwargs.get("verify_audience", False))
+            audience = kwargs.get("audience")
+            admin_scope = kwargs.get("admin_scope")
+
+            # Cache on app.state so subsequent WebSocket connections and the
+            # HTTP middleware see the same validator instance.
+            state.jwt_validator = lazy_validator
+            state.jwt_verify_audience = verify_audience
+            state.jwt_audience = audience
+            if admin_scope:
+                state.admin_scope = admin_scope
+
+            return {
+                "validator": lazy_validator,
+                "verify_audience": verify_audience,
+                "audience": audience,
+                "admin_scope": admin_scope,
+            }
+
+    return {
+        "validator": None,
+        "verify_audience": False,
+        "audience": None,
+        "admin_scope": None,
+    }
+
+
 def update_cors_middleware(app: FastAPI, new_origins: list):
     existing_origins: List[str] = []
 

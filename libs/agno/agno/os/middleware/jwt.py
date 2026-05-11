@@ -705,6 +705,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             internal_scopes = list(INTERNAL_SERVICE_SCOPES)
             request.state.scopes = internal_scopes
             request.state.authorization_enabled = self.authorization or False
+            request.state.admin_scope = self.admin_scope
 
             # Enforce RBAC for internal token (do not skip scope checks)
             if self.authorization:
@@ -752,6 +753,9 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.claims = payload  # Full decoded JWT for factory ctx.trusted.claims
             request.state.audience = audience
             request.state.authorization_enabled = self.authorization or False
+            # Expose admin scope so downstream helpers (e.g. get_scoped_user_id)
+            # honour custom admin scopes configured via JWTMiddleware(admin_scope=...).
+            request.state.admin_scope = self.admin_scope
 
             # Extract dependencies claims
             dependencies = {}
