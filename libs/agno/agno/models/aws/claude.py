@@ -42,44 +42,21 @@ class Claude(AnthropicClaude):
     client: Optional[AnthropicBedrock] = None  # type: ignore
     async_client: Optional[AsyncAnthropicBedrock] = None  # type: ignore
 
-    # Model ID patterns that do NOT support native structured outputs
-    _NON_STRUCTURED_PATTERNS = ("claude-3-",)
-
     def __post_init__(self):
         """Validate model configuration after initialization"""
         super().__post_init__()
-        # Re-evaluate structured output support using Bedrock-normalized model ID
+        # Re-evaluate structured output support for Bedrock model IDs
         self.supports_native_structured_outputs = self._supports_structured_outputs()
         self.supports_json_schema_outputs = False
 
-    def _normalize_model_id(self) -> str:
-        """Extract core model name from Bedrock format.
-
-        Examples:
-            global.anthropic.claude-sonnet-4-5-20250929-v1:0 -> claude-sonnet-4-5-20250929
-            us.anthropic.claude-3-5-haiku-20241022-v1:0 -> claude-3-5-haiku-20241022
-            anthropic.claude-3-sonnet-20240229-v1:0 -> claude-3-sonnet-20240229
-        """
-        model_id = self.id
-        # Strip region prefix (e.g., "global.anthropic." or "us.anthropic.")
-        if ".anthropic." in model_id:
-            model_id = model_id.split(".anthropic.")[-1]
-        elif model_id.startswith("anthropic."):
-            model_id = model_id.removeprefix("anthropic.")
-        # Strip version suffix (e.g., "-v1:0")
-        if "-v" in model_id and ":" in model_id:
-            model_id = model_id.rsplit("-v", 1)[0]
-        return model_id
-
     def _supports_structured_outputs(self) -> bool:
         """Check if the model supports native structured outputs."""
-        core_id = self._normalize_model_id()
-        # Check against exclusion patterns (Claude 3.x doesn't support it)
-        for pattern in self._NON_STRUCTURED_PATTERNS:
-            if core_id.startswith(pattern):
-                return False
-        # Also check parent's exact-match exclusions
-        if core_id in self.NON_STRUCTURED_OUTPUT_ALIASES:
+        # Claude 3.x models don't support structured outputs
+        if "claude-3" in self.id:
+            return False
+        # Claude 4.0 models (before 4.5) don't support structured outputs
+        # Check for patterns like claude-sonnet-4-20250514 or claude-opus-4-20250514
+        if "claude-sonnet-4-2025" in self.id or "claude-opus-4-2025" in self.id:
             return False
         return True
 
