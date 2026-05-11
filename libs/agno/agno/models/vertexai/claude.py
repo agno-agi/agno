@@ -35,12 +35,37 @@ class Claude(AnthropicClaude):
     client: Optional[AnthropicVertex] = None  # type: ignore
     async_client: Optional[AsyncAnthropicVertex] = None  # type: ignore
 
+    # Model ID patterns that do NOT support native structured outputs
+    _NON_STRUCTURED_PATTERNS = ("claude-3-",)
+
     def __post_init__(self):
         """Validate model configuration after initialization"""
         super().__post_init__()
-        # Overwrite output schema support for VertexAI Claude
-        self.supports_native_structured_outputs = False
+        # Re-evaluate structured output support using VertexAI-normalized model ID
+        self.supports_native_structured_outputs = self._supports_structured_outputs()
         self.supports_json_schema_outputs = False
+
+    def _normalize_model_id(self) -> str:
+        """Extract core model name from VertexAI format.
+
+        Examples:
+            claude-sonnet-4@20250514 -> claude-sonnet-4-20250514
+            claude-3-5-haiku@20241022 -> claude-3-5-haiku-20241022
+        """
+        # Replace @ with - to normalize to standard format
+        return self.id.replace("@", "-")
+
+    def _supports_structured_outputs(self) -> bool:
+        """Check if the model supports native structured outputs."""
+        core_id = self._normalize_model_id()
+        # Check against exclusion patterns (Claude 3.x doesn't support it)
+        for pattern in self._NON_STRUCTURED_PATTERNS:
+            if core_id.startswith(pattern):
+                return False
+        # Also check parent's exact-match exclusions
+        if core_id in self.NON_STRUCTURED_OUTPUT_ALIASES:
+            return False
+        return True
 
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}
