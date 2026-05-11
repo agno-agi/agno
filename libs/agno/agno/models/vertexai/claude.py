@@ -38,7 +38,7 @@ class Claude(AnthropicClaude):
     def __post_init__(self):
         """Validate model configuration after initialization."""
         super().__post_init__()
-        # Parent detection uses direct API IDs; VertexAI IDs have different format
+        # Parent's startswith() fails on model@date format IDs
         self.supports_native_structured_outputs = self._supports_structured_outputs()
         self.supports_json_schema_outputs = False
 
