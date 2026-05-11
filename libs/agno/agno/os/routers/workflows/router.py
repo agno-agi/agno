@@ -30,6 +30,11 @@ from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     SESSION_ID_REQUIRED_RECONNECT,
     WORKFLOW_ID_REQUIRED_RECONNECT,
+    assert_session_matches_component,
+    get_scoped_user_id,
+    run_matches_component,
+    verify_run_in_session,
+    verify_run_in_session_via_db,
 )
 from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import (
@@ -247,10 +252,8 @@ async def handle_workflow_subscription(
                 )
                 return
 
-            from agno.os.middleware.user_scope import _verify_run_in_session_via_db
-
             try:
-                await _verify_run_in_session_via_db(
+                await verify_run_in_session_via_db(
                     os.db,
                     session_id,
                     run_id,
@@ -1284,13 +1287,11 @@ def get_workflow_router(
         # Ownership check before status validation — see continue_agent_run.
         # Non-admin callers must own the session AND the run must belong to
         # this workflow (per-resource RBAC).
-        from agno.os.middleware.user_scope import _verify_run_in_session, get_scoped_user_id
-
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             if not session_id:
                 raise HTTPException(status_code=400, detail="session_id is required to continue a run")
-            await _verify_run_in_session(
+            await verify_run_in_session(
                 workflow,
                 session_id,
                 run_id,
@@ -1395,7 +1396,6 @@ def get_workflow_router(
         # a global cancellation intent keyed solely on run_id.
         factory = find_factory_by_id(workflow_id, os.workflows)
         if factory:
-            from agno.os.middleware.user_scope import _verify_run_in_session_via_db, get_scoped_user_id
             from agno.run.cancel import acancel_run
 
             scoped_user_id = get_scoped_user_id(request)
@@ -1403,7 +1403,7 @@ def get_workflow_router(
                 if not session_id:
                     raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
                 check_db = getattr(factory, "db", None) or os.db
-                await _verify_run_in_session_via_db(
+                await verify_run_in_session_via_db(
                     check_db,
                     session_id,
                     run_id,
@@ -1427,13 +1427,11 @@ def get_workflow_router(
 
         # Ownership check: non-admin JWT callers must supply a session_id and the
         # run must live in a session they own. Admins / unauthenticated bypass.
-        from agno.os.middleware.user_scope import _verify_run_in_session, get_scoped_user_id
-
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             if not session_id:
                 raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
-            await _verify_run_in_session(
+            await verify_run_in_session(
                 workflow,
                 session_id,
                 run_id,
@@ -1481,12 +1479,6 @@ def get_workflow_router(
         last_event_index: Optional[int] = Form(None, description="Index of last event received by client (0-based)"),
         session_id: Optional[str] = Form(None, description="Session ID for database fallback"),
     ):
-        from agno.os.middleware.user_scope import (
-            _verify_run_in_session,
-            _verify_run_in_session_via_db,
-            get_scoped_user_id,
-        )
-
         # Ownership check up-front (see resume_agent_run_stream for rationale).
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
@@ -1498,7 +1490,7 @@ def get_workflow_router(
             if scoped_user_id is not None:
                 assert session_id is not None
                 check_db = getattr(factory, "db", None) or os.db
-                await _verify_run_in_session_via_db(
+                await verify_run_in_session_via_db(
                     check_db,
                     session_id,
                     run_id,
@@ -1521,7 +1513,7 @@ def get_workflow_router(
 
         if scoped_user_id is not None:
             assert session_id is not None
-            await _verify_run_in_session(
+            await verify_run_in_session(
                 workflow,
                 session_id,
                 run_id,
@@ -1591,12 +1583,6 @@ def get_workflow_router(
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Run polling is not supported for remote workflows")
 
-        from agno.os.middleware.user_scope import (
-            _run_matches_component,
-            assert_session_matches_component,
-            get_scoped_user_id,
-        )
-
         user_id = get_scoped_user_id(request)
 
         # Verify session belongs to this workflow BEFORE loading the run.
@@ -1605,7 +1591,7 @@ def get_workflow_router(
             session = await workflow.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
             if session is None:
                 raise HTTPException(status_code=404, detail="Run not found")
-            await assert_session_matches_component(session, "workflows", workflow_id, not_found_detail="Run not found")
+            assert_session_matches_component(session, "workflows", workflow_id, not_found_detail="Run not found")
 
         run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
         if run_output is None:
@@ -1613,7 +1599,7 @@ def get_workflow_router(
 
         # Per-resource RBAC: the run must explicitly belong to the path workflow.
         # Fail closed when workflow_id is missing.
-        if not _run_matches_component(run_output, "workflows", workflow_id):
+        if not run_matches_component(run_output, "workflows", workflow_id):
             raise HTTPException(status_code=404, detail="Run not found")
 
         return run_output.to_dict()
@@ -1645,7 +1631,6 @@ def get_workflow_router(
             description="JSON object with factory-specific parameters for dynamic workflow reconstruction",
         ),
     ):
-        from agno.os.middleware.user_scope import get_scoped_user_id
         from agno.os.schema import WorkflowRunSchema
 
         # Non-admin callers must only see runs from sessions they own. Admins
@@ -1681,9 +1666,7 @@ def get_workflow_router(
         # Per-resource RBAC: the session must explicitly belong to this workflow.
         # Fail closed when workflow_id is missing — an agent/team session
         # must not be reachable through a workflow route.
-        from agno.os.middleware.user_scope import _run_matches_component, assert_session_matches_component
-
-        await assert_session_matches_component(session, "workflows", workflow_id)
+        assert_session_matches_component(session, "workflows", workflow_id)
 
         runs = session.runs or []
 
@@ -1692,7 +1675,7 @@ def get_workflow_router(
         # rather than leaking those.
         result = []
         for run in runs:
-            if not _run_matches_component(run, "workflows", workflow_id):
+            if not run_matches_component(run, "workflows", workflow_id):
                 continue
             run_dict = run.to_dict()
             if status and run_dict.get("status") != status:

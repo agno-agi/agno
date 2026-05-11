@@ -31,7 +31,14 @@ from agno.os.auth import (
     require_resource_access,
 )
 from agno.os.managers import event_buffer, sse_subscriber_manager
-from agno.os.middleware.user_scope import SESSION_ID_REQUIRED
+from agno.os.middleware.user_scope import (
+    SESSION_ID_REQUIRED,
+    assert_session_matches_component,
+    get_scoped_user_id,
+    run_matches_component,
+    verify_run_in_session,
+    verify_run_in_session_via_db,
+)
 from agno.os.routers.agents.schema import AgentResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -840,7 +847,6 @@ def get_agent_router(
         factory = find_factory_by_id(agent_id, os.agents)
         if factory:
             from agno.agent._run import acancel_run
-            from agno.os.middleware.user_scope import _verify_run_in_session_via_db, get_scoped_user_id
 
             scoped_user_id = get_scoped_user_id(request)
             if scoped_user_id is not None:
@@ -849,7 +855,7 @@ def get_agent_router(
                 # Prefer factory.db when present; only fall back to os.db when
                 # the factory shares the OS db.
                 check_db = getattr(factory, "db", None) or os.db
-                await _verify_run_in_session_via_db(
+                await verify_run_in_session_via_db(
                     check_db,
                     session_id,
                     run_id,
@@ -875,13 +881,11 @@ def get_agent_router(
 
         # Ownership check: non-admin JWT callers must supply a session_id and the
         # run must live in a session they own. Admins / unauthenticated bypass.
-        from agno.os.middleware.user_scope import _verify_run_in_session, get_scoped_user_id
-
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             if not session_id:
                 raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
-            await _verify_run_in_session(
+            await verify_run_in_session(
                 agent,
                 session_id,
                 run_id,
@@ -1006,12 +1010,10 @@ def get_agent_router(
         # must belong to this agent (per-resource RBAC). Without this, status
         # validation below leaks run existence/state across users and across
         # agents within the same user.
-        from agno.os.middleware.user_scope import _verify_run_in_session, get_scoped_user_id
-
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None and not isinstance(agent, RemoteAgent):
             assert session_id  # required above
-            await _verify_run_in_session(
+            await verify_run_in_session(
                 agent,
                 session_id,
                 run_id,
@@ -1330,12 +1332,6 @@ def get_agent_router(
             if isinstance(agent, RemoteAgent):
                 raise HTTPException(status_code=400, detail="Run polling is not supported for remote agents")
 
-        from agno.os.middleware.user_scope import (
-            _run_matches_component,
-            assert_session_matches_component,
-            get_scoped_user_id,
-        )
-
         user_id = get_scoped_user_id(request)
 
         # Verify session belongs to this agent BEFORE loading the run.
@@ -1346,7 +1342,7 @@ def get_agent_router(
             session = await agent.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
             if session is None:
                 raise HTTPException(status_code=404, detail="Run not found")
-            await assert_session_matches_component(session, "agents", agent_id, not_found_detail="Run not found")
+            assert_session_matches_component(session, "agents", agent_id, not_found_detail="Run not found")
 
         run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
         if run_output is None:
@@ -1356,7 +1352,7 @@ def get_agent_router(
         # Fail closed if agent_id is missing — nested member runs inside
         # team/workflow sessions may have ambiguous attribution and should
         # never be returned through an agent route they don't belong to.
-        if not _run_matches_component(run_output, "agents", agent_id):
+        if not run_matches_component(run_output, "agents", agent_id):
             raise HTTPException(status_code=404, detail="Run not found")
 
         return run_output.to_dict()
@@ -1395,12 +1391,6 @@ def get_agent_router(
         last_event_index: Optional[int] = Form(None, description="Index of last event received by client (0-based)"),
         session_id: Optional[str] = Form(None, description="Session ID for database fallback"),
     ):
-        from agno.os.middleware.user_scope import (
-            _verify_run_in_session,
-            _verify_run_in_session_via_db,
-            get_scoped_user_id,
-        )
-
         # Ownership check up-front: the buffer and DB fallback paths inside
         # _resume_stream_generator are both keyed on run_id alone, so a
         # non-admin with the right scope must prove session ownership before
@@ -1418,7 +1408,7 @@ def get_agent_router(
                 # session_id required above
                 assert session_id is not None
                 check_db = getattr(factory, "db", None) or os.db
-                await _verify_run_in_session_via_db(
+                await verify_run_in_session_via_db(
                     check_db,
                     session_id,
                     run_id,
@@ -1442,7 +1432,7 @@ def get_agent_router(
 
         if scoped_user_id is not None:
             assert session_id is not None
-            await _verify_run_in_session(
+            await verify_run_in_session(
                 agent,
                 session_id,
                 run_id,
@@ -1504,8 +1494,6 @@ def get_agent_router(
         # Read-only session lookup so we don't manufacture a session for a
         # user/agent that shouldn't own it (the previous read-or-create path
         # bypassed component-level RBAC for sessions not yet on disk).
-        from agno.os.middleware.user_scope import get_scoped_user_id
-
         user_id = get_scoped_user_id(request)
         if hasattr(agent, "aget_session"):
             session = await agent.aget_session(session_id=session_id, user_id=user_id)
@@ -1518,9 +1506,7 @@ def get_agent_router(
         # Fail closed when agent_id is missing — a WorkflowSession or
         # TeamSession can contain nested agent runs but doesn't have its own
         # agent_id, and must not be reachable through an agent route.
-        from agno.os.middleware.user_scope import _run_matches_component, assert_session_matches_component
-
-        await assert_session_matches_component(session, "agents", agent_id)
+        assert_session_matches_component(session, "agents", agent_id)
 
         runs = session.runs or []
 
@@ -1530,7 +1516,7 @@ def get_agent_router(
         # runs whose attribution is ambiguous).
         result = []
         for run in runs:
-            if not _run_matches_component(run, "agents", agent_id):
+            if not run_matches_component(run, "agents", agent_id):
                 continue
             run_dict = run.to_dict()
             if status and run_dict.get("status") != status:

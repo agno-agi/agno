@@ -14,6 +14,7 @@ from agno.agent.protocol import AgentProtocol
 from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import get_authentication_dependency, validate_websocket_token
 from agno.os.managers import websocket_manager
+from agno.os.middleware.jwt import JWTValidator
 from agno.os.middleware.user_scope import (
     INSUFFICIENT_PERMISSIONS_WS_RECONNECT,
     WORKFLOW_ID_REQUIRED_RECONNECT,
@@ -37,7 +38,9 @@ from agno.os.schema import (
     ValidationErrorResponse,
     WorkflowSummaryResponse,
 )
+from agno.os.scopes import AgentOSScope, has_required_scopes
 from agno.os.settings import AgnoAPISettings
+from agno.os.utils import resolve_ws_jwt_config
 from agno.team.factory import TeamFactory
 from agno.utils.log import logger
 
@@ -290,10 +293,6 @@ def get_websocket_router(
     )
     async def workflow_websocket_endpoint(websocket: WebSocket):
         """WebSocket endpoint for receiving real-time workflow events"""
-        from agno.os.middleware.jwt import JWTValidator
-        from agno.os.scopes import AgentOSScope
-        from agno.os.utils import resolve_ws_jwt_config
-
         # Check if JWT validator is configured (set by AgentOS when authorization=True
         # or, for the manual app.add_middleware(JWTMiddleware, ...) path, resolved
         # lazily from app.user_middleware so the FIRST WebSocket connection cannot
@@ -388,8 +387,6 @@ def get_websocket_router(
                     # Missing/empty scopes must deny, matching HTTP middleware semantics.
                     workflow_id = message.get("workflow_id")
                     if jwt_auth_enabled and workflow_id:
-                        from agno.os.scopes import has_required_scopes
-
                         user_scopes = websocket_user_context.get("scopes", [])
                         if not has_required_scopes(
                             user_scopes,
@@ -444,8 +441,6 @@ def get_websocket_router(
                                 )
                             )
                             continue
-
-                        from agno.os.scopes import has_required_scopes
 
                         user_scopes = websocket_user_context.get("scopes", [])
                         if not has_required_scopes(

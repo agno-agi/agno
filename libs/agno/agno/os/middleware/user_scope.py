@@ -167,7 +167,7 @@ def _component_field(component_type: Optional[ComponentType]) -> Optional[str]:
     return _RUN_COMPONENT_FIELDS[component_type]
 
 
-def _run_matches_component(run, component_type: Optional[ComponentType], component_id: Optional[str]) -> bool:
+def run_matches_component(run, component_type: Optional[ComponentType], component_id: Optional[str]) -> bool:
     """Return True if ``run`` explicitly belongs to the given path component.
 
     Fails closed: a run that lacks the relevant component field is rejected,
@@ -184,10 +184,10 @@ def _run_matches_component(run, component_type: Optional[ComponentType], compone
     return getattr(run, field, None) == component_id
 
 
-def _session_matches_component(session, component_type: Optional[ComponentType], component_id: Optional[str]) -> bool:
+def session_matches_component(session, component_type: Optional[ComponentType], component_id: Optional[str]) -> bool:
     """Return True if ``session`` explicitly belongs to the given path component.
 
-    Fails closed (see ``_run_matches_component`` for rationale). Unknown
+    Fails closed (see ``run_matches_component`` for rationale). Unknown
     component_type values raise.
     """
     if not component_type or not component_id:
@@ -198,7 +198,7 @@ def _session_matches_component(session, component_type: Optional[ComponentType],
     return getattr(session, field, None) == component_id
 
 
-async def assert_session_matches_component(
+def assert_session_matches_component(
     session,
     component_type: ComponentType,
     component_id: str,
@@ -207,15 +207,17 @@ async def assert_session_matches_component(
 ) -> None:
     """404 if ``session`` doesn't belong to the path component.
 
-    Centralises the open-coded ``getattr(session, "<x>_id", None) != path_id``
-    check used across get/list/cancel/resume/continue routes so route code
-    stays declarative and a single helper enforces fail-closed semantics.
+    Pure attribute check (no IO) — synchronous so callers don't have to
+    ``await`` a function that can't actually suspend. Centralises the
+    open-coded ``getattr(session, "<x>_id", None) != path_id`` check used
+    across get/list/cancel/resume/continue routes and enforces fail-closed
+    semantics in one place.
     """
-    if not _session_matches_component(session, component_type, component_id):
+    if not session_matches_component(session, component_type, component_id):
         raise HTTPException(status_code=404, detail=not_found_detail)
 
 
-async def _verify_run_in_session(
+async def verify_run_in_session(
     entity,
     session_id: str,
     run_id: str,
@@ -239,17 +241,17 @@ async def _verify_run_in_session(
     if session is None:
         raise HTTPException(status_code=404, detail="Run not found")
     # Session must belong to the path component before we even look at runs.
-    if not _session_matches_component(session, component_type, component_id):
+    if not session_matches_component(session, component_type, component_id):
         raise HTTPException(status_code=404, detail="Run not found")
     run = session.get_run(run_id=run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
-    if not _run_matches_component(run, component_type, component_id):
+    if not run_matches_component(run, component_type, component_id):
         # Mask existence — don't leak that the run lives under a different component.
         raise HTTPException(status_code=404, detail="Run not found")
 
 
-async def _verify_run_in_session_via_db(
+async def verify_run_in_session_via_db(
     db: Union["BaseDb", "AsyncBaseDb", None],
     session_id: str,
     run_id: str,
@@ -263,7 +265,7 @@ async def _verify_run_in_session_via_db(
     Used by factory cancel routes that don't resolve an entity but still need
     to verify run ownership before applying a global cancellation intent.
 
-    See ``_verify_run_in_session`` for the session/run component checks.
+    See ``verify_run_in_session`` for the session/run component checks.
     """
     if db is None:
         # No DB to verify against — fail closed.
@@ -277,7 +279,7 @@ async def _verify_run_in_session_via_db(
     if session is None:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    if not _session_matches_component(session, component_type, component_id):
+    if not session_matches_component(session, component_type, component_id):
         raise HTTPException(status_code=404, detail="Run not found")
 
     get_run = getattr(session, "get_run", None)
@@ -286,7 +288,7 @@ async def _verify_run_in_session_via_db(
     run = get_run(run_id=run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
-    if not _run_matches_component(run, component_type, component_id):
+    if not run_matches_component(run, component_type, component_id):
         raise HTTPException(status_code=404, detail="Run not found")
 
 
@@ -323,7 +325,7 @@ def resolve_owned_agent(os: "AgentOS") -> Callable:
         if scoped_user_id is not None:
             if not session_id:
                 raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
-            await _verify_run_in_session(
+            await verify_run_in_session(
                 agent,
                 session_id,
                 run_id,
@@ -366,7 +368,7 @@ def resolve_owned_team(os: "AgentOS") -> Callable:
         if scoped_user_id is not None:
             if not session_id:
                 raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
-            await _verify_run_in_session(
+            await verify_run_in_session(
                 team,
                 session_id,
                 run_id,
@@ -409,7 +411,7 @@ def resolve_owned_workflow(os: "AgentOS") -> Callable:
         if scoped_user_id is not None:
             if not session_id:
                 raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
-            await _verify_run_in_session(
+            await verify_run_in_session(
                 workflow,
                 session_id,
                 run_id,
