@@ -7285,16 +7285,27 @@ class Workflow:
             kwargs["remove_last_output"] = True
             start_index = paused_step_index
 
-        # Create WebSocket handler if websocket is provided
+        # Wire up WebSocket transport for streaming events.
+        #
+        # Three params govern this (mirrors arun()):
+        #   - websocket: the live WebSocket connection to broadcast events on.
+        #   - enable_websocket: explicit opt-in for WebSocket transport in
+        #     background streaming (vs. the default SSE/in-memory queue).
+        #   - background: run execution in a detached asyncio.Task (survives
+        #     client disconnect).
         websocket_handler = None
         if websocket:
             from agno.os.managers import WebSocketHandler
 
             websocket_handler = WebSocketHandler(websocket=websocket)
+
+        # Backward compat: if websocket is passed, treat as enable_websocket=True
         if websocket and not enable_websocket:
             enable_websocket = True
 
-        # Background + Streaming + WebSocket = Real-time events via WebSocket
+        # Background + Streaming + WebSocket: real-time events broadcast via
+        # WebSocketHandler in a detached task. The returned WorkflowRunOutput is
+        # the same object the background task mutates as execution progresses.
         if background and stream and enable_websocket:
             if not websocket:
                 raise ValueError("enable_websocket=True requires a websocket parameter")
