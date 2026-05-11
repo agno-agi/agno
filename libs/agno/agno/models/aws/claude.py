@@ -43,9 +43,8 @@ class Claude(AnthropicClaude):
     async_client: Optional[AsyncAnthropicBedrock] = None  # type: ignore
 
     def __post_init__(self):
-        """Validate model configuration after initialization"""
         super().__post_init__()
-        # Re-evaluate structured output support for Bedrock model IDs
+        # Parent detection uses direct API IDs; Bedrock IDs have different format
         self.supports_native_structured_outputs = self._supports_structured_outputs()
         self.supports_json_schema_outputs = False
 
