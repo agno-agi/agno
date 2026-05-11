@@ -3767,7 +3767,10 @@ class Workflow:
 
         # Create and start asyncio task
         loop = asyncio.get_running_loop()
-        loop.create_task(execute_workflow_background())
+        loop.create_task(
+            execute_workflow_background(),
+            name=f"workflow-background-{workflow_run_response.run_id}",
+        )
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
@@ -3933,7 +3936,10 @@ class Workflow:
 
         # Create and start asyncio task for background streaming execution
         loop = asyncio.get_running_loop()
-        loop.create_task(execute_workflow_background_stream())
+        loop.create_task(
+            execute_workflow_background_stream(),
+            name=f"workflow-background-stream-ws-{workflow_run_response.run_id}",
+        )
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
@@ -4144,7 +4150,10 @@ class Workflow:
                 except (Exception, asyncio.CancelledError):
                     log_warning(f"Failed to signal SSE subscribers for workflow run {run_id} completion")
 
-        task = asyncio.create_task(_background_producer())
+        task = asyncio.create_task(
+            _background_producer(),
+            name=f"workflow-background-stream-{run_id}",
+        )
         _workflow_background_tasks.add(task)
         task.add_done_callback(_workflow_background_tasks.discard)
 
@@ -8637,7 +8646,10 @@ class Workflow:
                     self.save_session(session=session)
 
         loop = asyncio.get_running_loop()
-        loop.create_task(_execute_continue_background())
+        loop.create_task(
+            _execute_continue_background(),
+            name=f"workflow-continue-{workflow_run_response.run_id}",
+        )
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
