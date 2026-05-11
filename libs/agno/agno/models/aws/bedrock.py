@@ -263,8 +263,21 @@ class AwsBedrock(Model):
 
     def _format_tool_choice(self, tool_choice: Union[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         if isinstance(tool_choice, dict):
+            # Bedrock native format passthrough
             if "auto" in tool_choice or "any" in tool_choice or "tool" in tool_choice:
                 return tool_choice
+
+            # Anthropic format: {"type": "auto"}, {"type": "any"}, {"type": "tool", "name": "X"}
+            type_value = tool_choice.get("type")
+            if type_value == "auto":
+                return {"auto": {}}
+            if type_value == "any":
+                return {"any": {}}
+            if type_value == "none":
+                log_warning("Bedrock Converse API does not support tool_choice='none'. Ignoring tool_choice.")
+                return None
+
+            # Extract tool name from various formats
             name = tool_choice.get("name")
             if not name:
                 func_dict = tool_choice.get("function", {})

@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from boto3.session import Session
@@ -85,6 +85,19 @@ class TestFormatToolChoice:
     def test_bedrock_native_tool_passthrough(self):
         choice = {"tool": {"name": "get_weather"}}
         assert self.model._format_tool_choice(choice) == {"tool": {"name": "get_weather"}}
+
+    def test_anthropic_format_auto(self):
+        assert self.model._format_tool_choice({"type": "auto"}) == {"auto": {}}
+
+    def test_anthropic_format_any(self):
+        assert self.model._format_tool_choice({"type": "any"}) == {"any": {}}
+
+    def test_anthropic_format_none(self):
+        assert self.model._format_tool_choice({"type": "none"}) is None
+
+    def test_anthropic_format_tool_with_name(self):
+        result = self.model._format_tool_choice({"type": "tool", "name": "get_weather"})
+        assert result == {"tool": {"name": "get_weather"}}
 
     def test_dict_no_name_returns_none(self):
         assert self.model._format_tool_choice({"type": "function"}) is None
@@ -234,9 +247,9 @@ class TestAsyncInvokeToolChoice:
 
         mock_session, _ = _make_mock_session()
         mock_async_client = MagicMock()
-        mock_async_client.converse = MagicMock(return_value=CONVERSE_RESPONSE)
-        mock_async_client.__aenter__ = MagicMock(return_value=mock_async_client)
-        mock_async_client.__aexit__ = MagicMock(return_value=None)
+        mock_async_client.converse = AsyncMock(return_value=CONVERSE_RESPONSE)
+        mock_async_client.__aenter__ = AsyncMock(return_value=mock_async_client)
+        mock_async_client.__aexit__ = AsyncMock(return_value=None)
 
         model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", session=mock_session)
 
@@ -251,3 +264,36 @@ class TestAsyncInvokeToolChoice:
         call_kwargs = mock_async_client.converse.call_args[1]
         assert "toolConfig" in call_kwargs
         assert call_kwargs["toolConfig"]["toolChoice"] == {"any": {}}
+
+    async def test_ainvoke_stream_includes_tool_choice(self):
+        try:
+            import aioboto3  # noqa: F401
+        except ImportError:
+            pytest.skip("aioboto3 not installed")
+
+        mock_session, _ = _make_mock_session()
+
+        async def mock_stream():
+            yield {"contentBlockDelta": {"delta": {"text": "Hello"}}}
+            yield {"metadata": {"usage": {"inputTokens": 10, "outputTokens": 5}}}
+
+        mock_async_client = MagicMock()
+        mock_async_client.converse_stream = AsyncMock(return_value={"stream": mock_stream()})
+        mock_async_client.__aenter__ = AsyncMock(return_value=mock_async_client)
+        mock_async_client.__aexit__ = AsyncMock(return_value=None)
+
+        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", session=mock_session)
+
+        with patch.object(model, "get_async_client", return_value=mock_async_client):
+            responses = []
+            async for response in model.ainvoke_stream(
+                messages=[Message(role="user", content="hi")],
+                assistant_message=Message(role="assistant"),
+                tools=SAMPLE_TOOLS,
+                tool_choice={"type": "tool", "name": "get_weather"},
+            ):
+                responses.append(response)
+
+        call_kwargs = mock_async_client.converse_stream.call_args[1]
+        assert "toolConfig" in call_kwargs
+        assert call_kwargs["toolConfig"]["toolChoice"] == {"tool": {"name": "get_weather"}}
