@@ -28,7 +28,7 @@ Then call the API:
 
 from agno.agents.langgraph import LangGraphAgent
 from agno.db.postgres import PostgresDb
-from agno.os.app import AgentOS
+from agno.os import AgentOS
 from langchain_community.tools import DuckDuckGoSearchResults
 from langchain_openai import ChatOpenAI
 from langgraph.graph import MessagesState, StateGraph

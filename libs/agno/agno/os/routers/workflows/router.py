@@ -972,10 +972,9 @@ def get_websocket_router(
                     await handle_workflow_subscription(websocket, message, os)
 
                 elif action == "continue-workflow":
-                    # Add user context to message if available from JWT auth
-                    if websocket_user_context:
-                        if "user_id" not in message and websocket_user_context.get("user_id"):
-                            message["user_id"] = websocket_user_context["user_id"]
+                    # Always override caller-supplied user_id with the JWT subject
+                    if websocket_user_context and websocket_user_context.get("user_id"):
+                        message["user_id"] = websocket_user_context["user_id"]
                     # Continue a paused workflow run
                     await handle_workflow_continue_via_websocket(websocket, message, os)
 

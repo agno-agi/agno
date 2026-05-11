@@ -101,7 +101,12 @@ class SQLTools(Toolkit):
             table_schema = inspector.get_columns(table_name, schema=self.schema)
             return json.dumps(
                 [
-                    {"name": column["name"], "type": str(column["type"]), "nullable": column["nullable"]}
+                    {
+                        "name": column["name"],
+                        "type": str(column["type"]),
+                        "nullable": column["nullable"],
+                        "default": column.get("default"),
+                    }
                     for column in table_schema
                 ]
             )

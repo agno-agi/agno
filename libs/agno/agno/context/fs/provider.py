@@ -8,6 +8,7 @@ Exposes a local directory tree to the calling agent via read-only
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -34,10 +35,12 @@ class FilesystemContextProvider(ContextProvider):
         instructions: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        exclude_patterns: list[str] | None = None,
     ) -> None:
         super().__init__(id=id, name=name, mode=mode, model=model)
         self.root = Path(root).expanduser().resolve()
         self.instructions_text = instructions if instructions is not None else DEFAULT_FS_INSTRUCTIONS
+        self.exclude_patterns = exclude_patterns
         self._agent: Agent | None = None
 
     def status(self) -> Status:
@@ -48,7 +51,7 @@ class FilesystemContextProvider(ContextProvider):
         return Status(ok=True, detail=str(self.root))
 
     async def astatus(self) -> Status:
-        return self.status()
+        return await asyncio.to_thread(self.status)
 
     def query(self, question: str, *, run_context: RunContext | None = None) -> Answer:
         kwargs = self._run_kwargs_for_sub_agent(run_context)
@@ -80,7 +83,7 @@ class FilesystemContextProvider(ContextProvider):
         return [self._query_tool()]
 
     def _all_tools(self) -> list:
-        return [_build_file_tools(self.root)]
+        return [_build_file_tools(self.root, exclude_patterns=self.exclude_patterns)]
 
     # ------------------------------------------------------------------
     # Sub-agent — built lazily for agent mode and programmatic query()
@@ -97,12 +100,12 @@ class FilesystemContextProvider(ContextProvider):
             name=self.name,
             model=self.model,
             instructions=self.instructions_text.replace("{root}", str(self.root)),
-            tools=[_build_file_tools(self.root)],
+            tools=[_build_file_tools(self.root, exclude_patterns=self.exclude_patterns)],
             markdown=True,
         )
 
 
-def _build_file_tools(root: Path) -> FileTools:
+def _build_file_tools(root: Path, *, exclude_patterns: list[str] | None = None) -> FileTools:
     return FileTools(
         base_dir=root,
         enable_save_file=False,
@@ -113,6 +116,7 @@ def _build_file_tools(root: Path) -> FileTools:
         enable_search_content=True,
         enable_read_file=True,
         enable_read_file_chunk=True,
+        exclude_patterns=exclude_patterns,
     )
 
 
@@ -128,6 +132,8 @@ Workflow:
 4. **Cite the paths.** Every claim points to a file path relative to the
    root. When quoting, use the exact text from the file — don't paraphrase.
    If the path you cite is a file you didn't actually read, note that.
+5. **Ignore generated noise.** Virtualenvs, dependency directories, build
+   outputs, caches, and agent scratch folders are excluded by default.
 
 You are read-only. No save, no delete. If a query doesn't match any
 file, say so plainly — don't guess at filenames.
