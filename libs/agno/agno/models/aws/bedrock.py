@@ -85,20 +85,12 @@ class AwsBedrock(Model):
     async_client: Optional[Any] = None
     async_session: Optional[Any] = None
 
-    # Model ID patterns that support native structured outputs (Claude 4.5+)
-    _STRUCTURED_OUTPUT_PATTERNS: Tuple[str, ...] = (
-        "claude-4-5",
-        "claude-4-6",
-        "claude-4-7",
-        "claude-opus-4-5",
-        "claude-opus-4-6",
-        "claude-opus-4-7",
-        "claude-sonnet-4-5",
-        "claude-sonnet-4-6",
-        "claude-sonnet-4-7",
-        "claude-haiku-4-5",
-        "claude-haiku-4-6",
-        "claude-haiku-4-7",
+    # Claude models that do NOT support native structured outputs.
+    # Blocklist approach: new models automatically get support (fail open).
+    _NON_STRUCTURED_OUTPUT_PATTERNS: Tuple[str, ...] = (
+        "claude-3-",  # All Claude 3.x models
+        "claude-sonnet-4-20250514",  # Claude 4.0 Sonnet
+        "claude-opus-4-20250514",  # Claude 4.0 Opus
     )
 
     def __post_init__(self):
@@ -339,7 +331,13 @@ class AwsBedrock(Model):
     def _supports_native_structured_outputs(self) -> bool:
         """Check if the model supports native structured outputs via outputConfig."""
         model_id_lower = self.id.lower()
-        return any(pattern in model_id_lower for pattern in self._STRUCTURED_OUTPUT_PATTERNS)
+        # Only Claude models support native structured outputs on Bedrock
+        if "claude" not in model_id_lower:
+            return False
+        # Blocklist: older Claude models that don't support structured outputs
+        if any(pattern in model_id_lower for pattern in self._NON_STRUCTURED_OUTPUT_PATTERNS):
+            return False
+        return True
 
     def _build_output_config(self, response_format: Optional[Union[Dict, Type[BaseModel]]]) -> Optional[Dict[str, Any]]:
         """Build outputConfig for native structured outputs (boto3 1.42+)."""

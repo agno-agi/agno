@@ -89,6 +89,14 @@ class TestSupportsNativeStructuredOutputs:
         model = AwsBedrock(id="mistral.mistral-small-2402-v1:0")
         assert model._supports_native_structured_outputs() is False
 
+    def test_claude_4_0_sonnet_does_not_support_native(self):
+        model = AwsBedrock(id="anthropic.claude-sonnet-4-20250514-v1:0")
+        assert model._supports_native_structured_outputs() is False
+
+    def test_claude_4_0_opus_does_not_support_native(self):
+        model = AwsBedrock(id="us.anthropic.claude-opus-4-20250514-v1:0")
+        assert model._supports_native_structured_outputs() is False
+
 
 class TestBuildOutputConfig:
     def setup_method(self):
