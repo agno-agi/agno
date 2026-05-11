@@ -974,7 +974,9 @@ class AwsBedrock(Model):
                             # Normal tool call handling
                             if model_response.tool_calls is None:
                                 model_response.tool_calls = []
-                                model_response.extra = model_response.extra or {}
+                            if model_response.extra is None:
+                                model_response.extra = {}
+                            if "tool_ids" not in model_response.extra:
                                 model_response.extra["tool_ids"] = []
 
                             model_response.extra["tool_ids"].append(tool["toolUse"]["toolUseId"])
