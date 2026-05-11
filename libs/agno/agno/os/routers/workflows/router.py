@@ -258,6 +258,13 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
                                     }
                                 )
                             )
+
+                        # If the run is paused, surface the full WorkflowRunOutput so the
+                        # reconnecting client has step_requirements to issue the next continue.
+                        if getattr(workflow_run, "is_paused", False):
+                            run_dict = workflow_run.to_dict()
+                            run_dict["event"] = "WorkflowRunOutput"
+                            await websocket.send_text(json.dumps(run_dict, default=json_serializer))
                         return
 
             # Run not found anywhere
@@ -294,6 +301,27 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
                     event_dict["run_id"] = run_id
 
                 await websocket.send_text(json.dumps(event_dict))
+
+            # If the run is paused, surface the full WorkflowRunOutput so the
+            # reconnecting client has step_requirements to issue the next continue.
+            # The buffer only stores events; load the run from DB for the full payload.
+            if buffer_status == RunStatus.paused and workflow_id and session_id:
+                try:
+                    workflow = get_workflow_by_id(
+                        workflow_id=workflow_id,
+                        workflows=os.workflows,
+                        db=os.db,
+                        registry=os.registry,
+                        create_fresh=True,
+                    )
+                except FactoryContextRequired:
+                    workflow = None
+                if workflow and isinstance(workflow, Workflow):
+                    paused_run = await workflow.aget_run_output(run_id, session_id)
+                    if paused_run is not None and getattr(paused_run, "is_paused", False):
+                        run_dict = paused_run.to_dict()
+                        run_dict["event"] = "WorkflowRunOutput"
+                        await websocket.send_text(json.dumps(run_dict, default=json_serializer))
             return
 
         # Run is still active - send missed events and subscribe to new ones

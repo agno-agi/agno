@@ -7216,9 +7216,16 @@ class Workflow:
         if session is None:
             raise ValueError(f"Could not find session with id {session_id}")
 
-        # Update run status to running
+        # Update run status to running and persist immediately so that any
+        # reload (page refresh, another process) sees the run as RUNNING rather
+        # than the stale PAUSED state. This mirrors _arun_background_stream_ws.
         run_response.status = RunStatus.running
         run_response.error_requirements = None
+        session.upsert_run(run=run_response)
+        if self._has_async_db():
+            await self.asave_session(session=session)
+        else:
+            self.save_session(session=session)
 
         # Create run context
         run_context = RunContext(
@@ -8638,15 +8645,6 @@ class Workflow:
                     run_dict["event"] = "WorkflowRunOutput"
                     await websocket_handler.websocket.send_text(json.dumps(run_dict, default=json_serializer))
 
-                # Update event buffer status so reconnecting clients know the run is paused
-                if workflow_run_response.is_paused and workflow_run_response.run_id:
-                    try:
-                        from agno.os.managers import event_buffer
-
-                        event_buffer.set_run_completed(workflow_run_response.run_id, RunStatus.paused)
-                    except Exception as e:
-                        log_debug(f"Failed to update event buffer status: {e}")
-
             except Exception as e:
                 logger.exception("Background continue streaming workflow execution failed")
                 workflow_run_response.status = RunStatus.error
@@ -8655,6 +8653,20 @@ class Workflow:
                     await self.asave_session(session=session)
                 else:
                     self.save_session(session=session)
+            finally:
+                # Update event buffer with the final status (paused, completed, error,
+                # cancelled) so reconnecting clients take the correct replay path.
+                # Without this the buffer would still report 'running' for terminal runs.
+                if workflow_run_response.run_id:
+                    try:
+                        from agno.os.managers import event_buffer
+
+                        event_buffer.set_run_completed(
+                            workflow_run_response.run_id,
+                            workflow_run_response.status or RunStatus.completed,
+                        )
+                    except Exception as e:
+                        log_debug(f"Failed to update event buffer status: {e}")
 
         loop = asyncio.get_running_loop()
         loop.create_task(
