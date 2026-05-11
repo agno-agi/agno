@@ -363,34 +363,6 @@ class AwsBedrock(Model):
             }
         }
 
-    def _response_format_to_tool(
-        self, response_format: Optional[Union[Dict, Type[BaseModel]]]
-    ) -> Optional[Dict[str, Any]]:
-        if response_format is None:
-            return None
-        if not isinstance(response_format, type) or not issubclass(response_format, BaseModel):
-            return None
-
-        schema = response_format.model_json_schema()
-        self._ensure_additional_properties_false(schema)
-
-        properties = schema.get("properties", {})
-        required = schema.get("required", [])
-
-        return {
-            "toolSpec": {
-                "name": f"respond_with_{response_format.__name__}",
-                "description": f"Return a structured response matching the {response_format.__name__} schema.",
-                "inputSchema": {
-                    "json": {
-                        "type": "object",
-                        "properties": properties,
-                        "required": required,
-                    }
-                },
-            }
-        }
-
     def _get_inference_config(self) -> Dict[str, Any]:
         """
         Get the inference config.
@@ -640,26 +612,14 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            # Handle structured outputs: native outputConfig for Claude 4.5+, tool fallback otherwise
+            # Native structured outputs for Claude 4.5+
             output_config = self._build_output_config(response_format)
-            using_tool_fallback = False
-            schema_tool = None
-
-            if output_config is None and response_format is not None:
-                schema_tool = self._response_format_to_tool(response_format)
-                if schema_tool is not None:
-                    using_tool_fallback = True
 
             tool_config: Optional[Dict[str, Any]] = None
-            if tools or schema_tool:
-                formatted_tools = self._format_tools_for_request(tools) if tools else []
-                if schema_tool:
-                    formatted_tools.append(schema_tool)
+            if tools:
+                formatted_tools = self._format_tools_for_request(tools)
                 tool_config = {"tools": formatted_tools}
-
-                if using_tool_fallback and schema_tool:
-                    tool_config["toolChoice"] = {"tool": {"name": schema_tool["toolSpec"]["name"]}}
-                elif tool_choice is not None:
+                if tool_choice is not None:
                     formatted_choice = self._format_tool_choice(tool_choice)
                     if formatted_choice is not None:
                         tool_config["toolChoice"] = formatted_choice
@@ -680,9 +640,7 @@ class AwsBedrock(Model):
             response = self.get_client().converse(modelId=self.id, messages=formatted_messages, **body)
             assistant_message.metrics.stop_timer()
 
-            model_response = self._parse_provider_response(
-                response, response_format=response_format, using_tool_fallback=using_tool_fallback
-            )
+            model_response = self._parse_provider_response(response, response_format=response_format)
 
             return model_response
 
@@ -709,26 +667,14 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            # Handle structured outputs: native outputConfig for Claude 4.5+, tool fallback otherwise
+            # Native structured outputs for Claude 4.5+
             output_config = self._build_output_config(response_format)
-            using_tool_fallback = False
-            schema_tool = None
-
-            if output_config is None and response_format is not None:
-                schema_tool = self._response_format_to_tool(response_format)
-                if schema_tool is not None:
-                    using_tool_fallback = True
 
             tool_config: Optional[Dict[str, Any]] = None
-            if tools or schema_tool:
-                formatted_tools = self._format_tools_for_request(tools) if tools else []
-                if schema_tool:
-                    formatted_tools.append(schema_tool)
+            if tools:
+                formatted_tools = self._format_tools_for_request(tools)
                 tool_config = {"tools": formatted_tools}
-
-                if using_tool_fallback and schema_tool:
-                    tool_config["toolChoice"] = {"tool": {"name": schema_tool["toolSpec"]["name"]}}
-                elif tool_choice is not None:
+                if tool_choice is not None:
                     formatted_choice = self._format_tool_choice(tool_choice)
                     if formatted_choice is not None:
                         tool_config["toolChoice"] = formatted_choice
@@ -751,9 +697,7 @@ class AwsBedrock(Model):
             for chunk in self.get_client().converse_stream(modelId=self.id, messages=formatted_messages, **body)[
                 "stream"
             ]:
-                model_response, current_tool = self._parse_provider_response_delta(
-                    chunk, current_tool, using_tool_fallback=using_tool_fallback
-                )
+                model_response, current_tool = self._parse_provider_response_delta(chunk, current_tool)
                 yield model_response
 
             assistant_message.metrics.stop_timer()
@@ -781,26 +725,14 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            # Handle structured outputs: native outputConfig for Claude 4.5+, tool fallback otherwise
+            # Native structured outputs for Claude 4.5+
             output_config = self._build_output_config(response_format)
-            using_tool_fallback = False
-            schema_tool = None
-
-            if output_config is None and response_format is not None:
-                schema_tool = self._response_format_to_tool(response_format)
-                if schema_tool is not None:
-                    using_tool_fallback = True
 
             tool_config: Optional[Dict[str, Any]] = None
-            if tools or schema_tool:
-                formatted_tools = self._format_tools_for_request(tools) if tools else []
-                if schema_tool:
-                    formatted_tools.append(schema_tool)
+            if tools:
+                formatted_tools = self._format_tools_for_request(tools)
                 tool_config = {"tools": formatted_tools}
-
-                if using_tool_fallback and schema_tool:
-                    tool_config["toolChoice"] = {"tool": {"name": schema_tool["toolSpec"]["name"]}}
-                elif tool_choice is not None:
+                if tool_choice is not None:
                     formatted_choice = self._format_tool_choice(tool_choice)
                     if formatted_choice is not None:
                         tool_config["toolChoice"] = formatted_choice
@@ -824,9 +756,7 @@ class AwsBedrock(Model):
 
             assistant_message.metrics.stop_timer()
 
-            model_response = self._parse_provider_response(
-                response, response_format=response_format, using_tool_fallback=using_tool_fallback
-            )
+            model_response = self._parse_provider_response(response, response_format=response_format)
 
             return model_response
 
@@ -853,26 +783,14 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            # Handle structured outputs: native outputConfig for Claude 4.5+, tool fallback otherwise
+            # Native structured outputs for Claude 4.5+
             output_config = self._build_output_config(response_format)
-            using_tool_fallback = False
-            schema_tool = None
-
-            if output_config is None and response_format is not None:
-                schema_tool = self._response_format_to_tool(response_format)
-                if schema_tool is not None:
-                    using_tool_fallback = True
 
             tool_config: Optional[Dict[str, Any]] = None
-            if tools or schema_tool:
-                formatted_tools = self._format_tools_for_request(tools) if tools else []
-                if schema_tool:
-                    formatted_tools.append(schema_tool)
+            if tools:
+                formatted_tools = self._format_tools_for_request(tools)
                 tool_config = {"tools": formatted_tools}
-
-                if using_tool_fallback and schema_tool:
-                    tool_config["toolChoice"] = {"tool": {"name": schema_tool["toolSpec"]["name"]}}
-                elif tool_choice is not None:
+                if tool_choice is not None:
                     formatted_choice = self._format_tool_choice(tool_choice)
                     if formatted_choice is not None:
                         tool_config["toolChoice"] = formatted_choice
@@ -895,9 +813,7 @@ class AwsBedrock(Model):
             async with self.get_async_client() as client:
                 response = await client.converse_stream(modelId=self.id, messages=formatted_messages, **body)
                 async for chunk in response["stream"]:
-                    model_response, current_tool = self._parse_provider_response_delta(
-                        chunk, current_tool, using_tool_fallback=using_tool_fallback
-                    )
+                    model_response, current_tool = self._parse_provider_response_delta(chunk, current_tool)
                     yield model_response
 
             assistant_message.metrics.stop_timer()
@@ -951,7 +867,6 @@ class AwsBedrock(Model):
             ModelResponse: The parsed response.
         """
         model_response = ModelResponse()
-        using_tool_fallback = kwargs.get("using_tool_fallback", False)
 
         if "output" in response and "message" in response["output"]:
             message = response["output"]["message"]
@@ -965,31 +880,24 @@ class AwsBedrock(Model):
                         tool_name = tool["toolUse"]["name"]
                         tool_input = tool["toolUse"]["input"]
 
-                        # Check if this is a schema tool from tool-based fallback
-                        if using_tool_fallback and tool_name.startswith("respond_with_"):
-                            # Extract the tool input as the structured content
-                            model_response.content = json.dumps(tool_input)
-                            break
-                        else:
-                            # Normal tool call handling
-                            if model_response.tool_calls is None:
-                                model_response.tool_calls = []
-                            if model_response.extra is None:
-                                model_response.extra = {}
-                            if "tool_ids" not in model_response.extra:
-                                model_response.extra["tool_ids"] = []
+                        if model_response.tool_calls is None:
+                            model_response.tool_calls = []
+                        if model_response.extra is None:
+                            model_response.extra = {}
+                        if "tool_ids" not in model_response.extra:
+                            model_response.extra["tool_ids"] = []
 
-                            model_response.extra["tool_ids"].append(tool["toolUse"]["toolUseId"])
-                            model_response.tool_calls.append(
-                                {
-                                    "id": tool["toolUse"]["toolUseId"],
-                                    "type": "function",
-                                    "function": {
-                                        "name": tool_name,
-                                        "arguments": json.dumps(tool_input),
-                                    },
-                                }
-                            )
+                        model_response.extra["tool_ids"].append(tool["toolUse"]["toolUseId"])
+                        model_response.tool_calls.append(
+                            {
+                                "id": tool["toolUse"]["toolUseId"],
+                                "type": "function",
+                                "function": {
+                                    "name": tool_name,
+                                    "arguments": json.dumps(tool_input),
+                                },
+                            }
+                        )
 
             # Extract text content if it's a list of dictionaries
             if model_response.content is None:
@@ -1006,14 +914,12 @@ class AwsBedrock(Model):
         self,
         response_delta: Dict[str, Any],
         current_tool: Dict[str, Any],
-        using_tool_fallback: bool = False,
     ) -> Tuple[ModelResponse, Dict[str, Any]]:
         """Parse the provider response delta for streaming.
 
         Args:
             response_delta: The streaming response delta from AWS Bedrock
             current_tool: The current tool being built across chunks
-            using_tool_fallback: Whether tool-based structured output fallback is active
 
         Returns:
             Tuple[ModelResponse, Dict[str, Any]]: The parsed model response delta and updated current_tool
@@ -1043,20 +949,12 @@ class AwsBedrock(Model):
                 tool_input = delta["toolUse"].get("input", "")
                 if tool_input:
                     current_tool["function"]["arguments"] += tool_input
-                    # For tool fallback, stream the arguments as content
-                    if using_tool_fallback and current_tool["function"]["name"].startswith("respond_with_"):
-                        model_response.content = tool_input
 
         # Handle contentBlockStop - tool use complete
         elif "contentBlockStop" in response_delta and current_tool:
-            tool_name = current_tool.get("function", {}).get("name", "")
-            # For tool fallback, don't emit as tool call
-            if using_tool_fallback and tool_name.startswith("respond_with_"):
-                current_tool = {}
-            else:
-                model_response.tool_calls = [current_tool]
-                model_response.extra = {"tool_ids": [current_tool["id"]]}
-                current_tool = {}
+            model_response.tool_calls = [current_tool]
+            model_response.extra = {"tool_ids": [current_tool["id"]]}
+            current_tool = {}
 
         # Handle metadata/usage information
         elif "metadata" in response_delta or "messageStop" in response_delta:

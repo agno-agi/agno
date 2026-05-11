@@ -42,25 +42,6 @@ CONVERSE_RESPONSE_TEXT = {
     "stopReason": "end_turn",
 }
 
-CONVERSE_RESPONSE_TOOL = {
-    "output": {
-        "message": {
-            "role": "assistant",
-            "content": [
-                {
-                    "toolUse": {
-                        "toolUseId": "tool-123",
-                        "name": "respond_with_MovieScript",
-                        "input": {"name": "Sunset", "genre": "Drama", "characters": ["Alice"]},
-                    }
-                }
-            ],
-        }
-    },
-    "usage": {"inputTokens": 10, "outputTokens": 5},
-    "stopReason": "tool_use",
-}
-
 
 class TestSupportsNativeStructuredOutputs:
     def test_claude_4_5_sonnet_supports_native(self):
@@ -101,7 +82,7 @@ class TestSupportsNativeStructuredOutputs:
 class TestBuildOutputConfig:
     def setup_method(self):
         self.model_native = AwsBedrock(id="us.anthropic.claude-sonnet-4-5-20250929-v1:0")
-        self.model_fallback = AwsBedrock(id="us.anthropic.claude-3-5-haiku-20241022-v1:0")
+        self.model_unsupported = AwsBedrock(id="us.anthropic.claude-3-5-haiku-20241022-v1:0")
 
     def test_returns_none_for_none_input(self):
         assert self.model_native._build_output_config(None) is None
@@ -110,7 +91,7 @@ class TestBuildOutputConfig:
         assert self.model_native._build_output_config({"type": "json"}) is None
 
     def test_returns_none_for_unsupported_model(self):
-        assert self.model_fallback._build_output_config(MovieScript) is None
+        assert self.model_unsupported._build_output_config(MovieScript) is None
 
     def test_returns_config_for_supported_model(self):
         result = self.model_native._build_output_config(MovieScript)
@@ -164,24 +145,6 @@ class TestEnsureAdditionalPropertiesFalse:
         assert schema["properties"]["items"]["items"]["additionalProperties"] is False
 
 
-class TestResponseFormatToTool:
-    def setup_method(self):
-        self.model = AwsBedrock(id="us.anthropic.claude-3-5-haiku-20241022-v1:0")
-
-    def test_returns_none_for_none(self):
-        assert self.model._response_format_to_tool(None) is None
-
-    def test_returns_none_for_dict(self):
-        assert self.model._response_format_to_tool({"type": "json"}) is None
-
-    def test_creates_tool_for_pydantic(self):
-        result = self.model._response_format_to_tool(MovieScript)
-        assert result is not None
-        assert "toolSpec" in result
-        assert result["toolSpec"]["name"] == "respond_with_MovieScript"
-        assert "inputSchema" in result["toolSpec"]
-
-
 class TestInvokeWithStructuredOutput:
     def test_native_path_includes_output_config(self):
         mock_session, mock_client = _make_mock_session()
@@ -197,28 +160,7 @@ class TestInvokeWithStructuredOutput:
         call_kwargs = mock_client.converse.call_args[1]
         assert "outputConfig" in call_kwargs
         assert call_kwargs["outputConfig"]["textFormat"]["type"] == "json_schema"
-        # No toolConfig should be present unless tools were explicitly passed
         assert "toolConfig" not in call_kwargs
-
-    def test_fallback_path_uses_tool(self):
-        mock_session, mock_client = _make_mock_session()
-        mock_client.converse.return_value = CONVERSE_RESPONSE_TOOL
-
-        model = AwsBedrock(id="us.anthropic.claude-3-5-haiku-20241022-v1:0", session=mock_session)
-        response = model.invoke(
-            messages=[Message(role="user", content="Write a movie script")],
-            assistant_message=Message(role="assistant"),
-            response_format=MovieScript,
-        )
-
-        call_kwargs = mock_client.converse.call_args[1]
-        # No outputConfig for fallback
-        assert "outputConfig" not in call_kwargs
-        # Should have toolConfig with forced tool
-        assert "toolConfig" in call_kwargs
-        assert call_kwargs["toolConfig"]["toolChoice"] == {"tool": {"name": "respond_with_MovieScript"}}
-        # Response content should be extracted from tool input
-        assert '"name": "Sunset"' in response.content
 
     def test_native_path_preserves_tools(self):
         mock_session, mock_client = _make_mock_session()
@@ -245,10 +187,8 @@ class TestInvokeWithStructuredOutput:
         call_kwargs = mock_client.converse.call_args[1]
         assert "outputConfig" in call_kwargs
         assert "toolConfig" in call_kwargs
-        # Should have the weather tool but not the schema tool
         tool_names = [t["toolSpec"]["name"] for t in call_kwargs["toolConfig"]["tools"]]
         assert "get_weather" in tool_names
-        assert "respond_with_MovieScript" not in tool_names
 
 
 class TestInvokeStreamWithStructuredOutput:
@@ -273,36 +213,6 @@ class TestInvokeStreamWithStructuredOutput:
         call_kwargs = mock_client.converse_stream.call_args[1]
         assert "outputConfig" in call_kwargs
         assert call_kwargs["outputConfig"]["textFormat"]["type"] == "json_schema"
-
-    def test_fallback_streams_tool_input_as_content(self):
-        mock_session, mock_client = _make_mock_session()
-        mock_client.converse_stream.return_value = {
-            "stream": [
-                {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "t1", "name": "respond_with_MovieScript"}}}},
-                {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"name": "'}}}},
-                {"contentBlockDelta": {"delta": {"toolUse": {"input": 'Test"}'}}}},
-                {"contentBlockStop": {}},
-                {"metadata": {"usage": {"inputTokens": 10, "outputTokens": 5}}},
-            ]
-        }
-
-        model = AwsBedrock(id="us.anthropic.claude-3-5-haiku-20241022-v1:0", session=mock_session)
-        responses = list(
-            model.invoke_stream(
-                messages=[Message(role="user", content="hi")],
-                assistant_message=Message(role="assistant"),
-                response_format=MovieScript,
-            )
-        )
-
-        call_kwargs = mock_client.converse_stream.call_args[1]
-        assert "outputConfig" not in call_kwargs
-        assert "toolConfig" in call_kwargs
-        # Content should be streamed from tool input chunks
-        content_chunks = [r.content for r in responses if r.content]
-        assert len(content_chunks) == 2
-        assert content_chunks[0] == '{"name": "'
-        assert content_chunks[1] == 'Test"}'
 
 
 @pytest.mark.asyncio
@@ -333,40 +243,3 @@ class TestAsyncInvokeWithStructuredOutput:
         call_kwargs = mock_async_client.converse.call_args[1]
         assert "outputConfig" in call_kwargs
         assert call_kwargs["outputConfig"]["textFormat"]["type"] == "json_schema"
-
-    async def test_ainvoke_stream_fallback_path(self):
-        try:
-            import aioboto3  # noqa: F401
-        except ImportError:
-            pytest.skip("aioboto3 not installed")
-
-        from unittest.mock import AsyncMock, patch
-
-        mock_session, _ = _make_mock_session()
-
-        async def mock_stream():
-            yield {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "t1", "name": "respond_with_MovieScript"}}}}
-            yield {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"name": "Test"}'}}}}
-            yield {"contentBlockStop": {}}
-            yield {"metadata": {"usage": {"inputTokens": 10, "outputTokens": 5}}}
-
-        mock_async_client = MagicMock()
-        mock_async_client.converse_stream = AsyncMock(return_value={"stream": mock_stream()})
-        mock_async_client.__aenter__ = AsyncMock(return_value=mock_async_client)
-        mock_async_client.__aexit__ = AsyncMock(return_value=None)
-
-        model = AwsBedrock(id="us.anthropic.claude-3-5-haiku-20241022-v1:0", session=mock_session)
-
-        with patch.object(model, "get_async_client", return_value=mock_async_client):
-            responses = []
-            async for r in model.ainvoke_stream(
-                messages=[Message(role="user", content="hi")],
-                assistant_message=Message(role="assistant"),
-                response_format=MovieScript,
-            ):
-                responses.append(r)
-
-        call_kwargs = mock_async_client.converse_stream.call_args[1]
-        assert "outputConfig" not in call_kwargs
-        assert "toolConfig" in call_kwargs
-        assert call_kwargs["toolConfig"]["toolChoice"] == {"tool": {"name": "respond_with_MovieScript"}}
