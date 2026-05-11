@@ -15,6 +15,8 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.models.claude import supports_prefill
 from agno.utils.tokens import count_schema_tokens
 
+STRUCTURED_OUTPUT_TOOL_NAME = "structured_output"
+
 try:
     from boto3 import client as AwsClient
     from boto3.session import Session
@@ -260,6 +262,26 @@ class AwsBedrock(Model):
                 )
 
         return parsed_tools
+
+    def _response_format_to_tool(self, response_format: Union[Dict, Type[BaseModel]]) -> Optional[Dict[str, Any]]:
+        """Convert a Pydantic model or dict to a Bedrock tool definition for structured outputs.
+
+        Returns None if response_format is not a Pydantic model (e.g., {"type": "json_object"}).
+        """
+        if response_format is None:
+            return None
+
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            schema = response_format.model_json_schema()
+            return {
+                "toolSpec": {
+                    "name": STRUCTURED_OUTPUT_TOOL_NAME,
+                    "description": "Return a structured response matching the required schema",
+                    "inputSchema": {"json": schema},
+                }
+            }
+
+        return None
 
     def _format_tool_choice(self, tool_choice: Union[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         if isinstance(tool_choice, dict):
@@ -533,6 +555,35 @@ class AwsBedrock(Model):
             log_warning(f"Failed to count tokens via Bedrock API: {str(e)}")
             return await super().acount_tokens(messages, tools, output_schema)
 
+    def _prepare_tool_config(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]],
+        tools: Optional[List[Dict[str, Any]]],
+        tool_choice: Optional[Union[str, Dict[str, Any]]],
+    ) -> Optional[Dict[str, Any]]:
+        """Build toolConfig, injecting a schema tool when response_format is a Pydantic model."""
+        schema_tool: Optional[Dict[str, Any]] = None
+        if response_format is not None:
+            schema_tool = self._response_format_to_tool(response_format)
+
+        if not tools and schema_tool is None:
+            return None
+
+        formatted_tools = self._format_tools_for_request(tools) if tools else []
+        if schema_tool is not None:
+            formatted_tools.append(schema_tool)
+
+        tool_config: Dict[str, Any] = {"tools": formatted_tools}
+
+        if schema_tool is not None:
+            tool_config["toolChoice"] = {"tool": {"name": STRUCTURED_OUTPUT_TOOL_NAME}}
+        elif tool_choice is not None:
+            formatted_choice = self._format_tool_choice(tool_choice)
+            if formatted_choice is not None:
+                tool_config["toolChoice"] = formatted_choice
+
+        return tool_config
+
     def invoke(
         self,
         messages: List[Message],
@@ -548,14 +599,7 @@ class AwsBedrock(Model):
         """
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
-
-            tool_config: Optional[Dict[str, Any]] = None
-            if tools:
-                tool_config = {"tools": self._format_tools_for_request(tools)}
-                if tool_choice is not None:
-                    formatted_choice = self._format_tool_choice(tool_choice)
-                    if formatted_choice is not None:
-                        tool_config["toolChoice"] = formatted_choice
+            tool_config = self._prepare_tool_config(response_format, tools, tool_choice)
 
             body = {
                 "system": system_message,
@@ -598,14 +642,7 @@ class AwsBedrock(Model):
         """
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
-
-            tool_config: Optional[Dict[str, Any]] = None
-            if tools:
-                tool_config = {"tools": self._format_tools_for_request(tools)}
-                if tool_choice is not None:
-                    formatted_choice = self._format_tool_choice(tool_choice)
-                    if formatted_choice is not None:
-                        tool_config["toolChoice"] = formatted_choice
+            tool_config = self._prepare_tool_config(response_format, tools, tool_choice)
 
             body = {
                 "system": system_message,
@@ -625,7 +662,9 @@ class AwsBedrock(Model):
             for chunk in self.get_client().converse_stream(modelId=self.id, messages=formatted_messages, **body)[
                 "stream"
             ]:
-                model_response, current_tool = self._parse_provider_response_delta(chunk, current_tool)
+                model_response, current_tool = self._parse_provider_response_delta(
+                    chunk, current_tool, response_format=response_format
+                )
                 yield model_response
 
             assistant_message.metrics.stop_timer()
@@ -652,14 +691,7 @@ class AwsBedrock(Model):
         """
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
-
-            tool_config: Optional[Dict[str, Any]] = None
-            if tools:
-                tool_config = {"tools": self._format_tools_for_request(tools)}
-                if tool_choice is not None:
-                    formatted_choice = self._format_tool_choice(tool_choice)
-                    if formatted_choice is not None:
-                        tool_config["toolChoice"] = formatted_choice
+            tool_config = self._prepare_tool_config(response_format, tools, tool_choice)
 
             body = {
                 "system": system_message,
@@ -705,14 +737,7 @@ class AwsBedrock(Model):
         """
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
-
-            tool_config: Optional[Dict[str, Any]] = None
-            if tools:
-                tool_config = {"tools": self._format_tools_for_request(tools)}
-                if tool_choice is not None:
-                    formatted_choice = self._format_tool_choice(tool_choice)
-                    if formatted_choice is not None:
-                        tool_config["toolChoice"] = formatted_choice
+            tool_config = self._prepare_tool_config(response_format, tools, tool_choice)
 
             body = {
                 "system": system_message,
@@ -732,7 +757,9 @@ class AwsBedrock(Model):
             async with self.get_async_client() as client:
                 response = await client.converse_stream(modelId=self.id, messages=formatted_messages, **body)
                 async for chunk in response["stream"]:
-                    model_response, current_tool = self._parse_provider_response_delta(chunk, current_tool)
+                    model_response, current_tool = self._parse_provider_response_delta(
+                        chunk, current_tool, response_format=response_format
+                    )
                     yield model_response
 
             assistant_message.metrics.stop_timer()
@@ -786,40 +813,47 @@ class AwsBedrock(Model):
             ModelResponse: The parsed response.
         """
         model_response = ModelResponse()
+        response_format = kwargs.get("response_format")
 
         if "output" in response and "message" in response["output"]:
             message = response["output"]["message"]
-            # Set the role of the message
             model_response.role = message["role"]
-
-            # Get the content of the message
             content = message["content"]
 
-            # Tools
             if "stopReason" in response and response["stopReason"] == "tool_use":
                 model_response.tool_calls = []
                 model_response.extra = model_response.extra or {}
                 model_response.extra["tool_ids"] = []
+
                 for tool in content:
                     if "toolUse" in tool:
+                        tool_name = tool["toolUse"]["name"]
+                        tool_input = tool["toolUse"]["input"]
+
+                        # Intercept structured_output tool and return its input as content
+                        if tool_name == STRUCTURED_OUTPUT_TOOL_NAME and response_format is not None:
+                            model_response.content = json.dumps(tool_input)
+                            model_response.tool_calls = []
+                            model_response.extra = None
+                            break
+
                         model_response.extra["tool_ids"].append(tool["toolUse"]["toolUseId"])
                         model_response.tool_calls.append(
                             {
                                 "id": tool["toolUse"]["toolUseId"],
                                 "type": "function",
                                 "function": {
-                                    "name": tool["toolUse"]["name"],
-                                    "arguments": json.dumps(tool["toolUse"]["input"]),
+                                    "name": tool_name,
+                                    "arguments": json.dumps(tool_input),
                                 },
                             }
                         )
-
-            # Extract text content if it's a list of dictionaries
-            if isinstance(content, list) and content and isinstance(content[0], dict):
-                content = [item.get("text", "") for item in content if "text" in item]
-                content = "\n".join(content)  # Join multiple text items if present
-
-            model_response.content = content
+            else:
+                # Extract text content if it's a list of dictionaries
+                if isinstance(content, list) and content and isinstance(content[0], dict):
+                    content = [item.get("text", "") for item in content if "text" in item]
+                    content = "\n".join(content)
+                model_response.content = content
 
         if "usage" in response:
             model_response.response_usage = self._get_metrics(response["usage"])
@@ -827,55 +861,55 @@ class AwsBedrock(Model):
         return model_response
 
     def _parse_provider_response_delta(
-        self, response_delta: Dict[str, Any], current_tool: Dict[str, Any]
+        self, response_delta: Dict[str, Any], current_tool: Dict[str, Any], **kwargs
     ) -> Tuple[ModelResponse, Dict[str, Any]]:
         """Parse the provider response delta for streaming.
 
         Args:
             response_delta: The streaming response delta from AWS Bedrock
             current_tool: The current tool being built across chunks
+            **kwargs: Additional arguments including response_format
 
         Returns:
             Tuple[ModelResponse, Dict[str, Any]]: The parsed model response delta and updated current_tool
         """
         model_response = ModelResponse(role="assistant")
+        response_format = kwargs.get("response_format")
 
-        # Handle contentBlockStart - tool use start
         if "contentBlockStart" in response_delta:
             start = response_delta["contentBlockStart"]["start"]
             if "toolUse" in start:
-                # Start a new tool
                 tool_use_data = start["toolUse"]
                 current_tool = {
                     "id": tool_use_data.get("toolUseId", ""),
                     "type": "function",
                     "function": {
                         "name": tool_use_data.get("name", ""),
-                        "arguments": "",  # Will be filled in subsequent deltas
+                        "arguments": "",
                     },
                 }
 
-        # Handle contentBlockDelta - text content or tool input
         elif "contentBlockDelta" in response_delta:
             delta = response_delta["contentBlockDelta"]["delta"]
             if "text" in delta:
                 model_response.content = delta["text"]
             elif "toolUse" in delta and current_tool:
-                # Accumulate tool input
                 tool_input = delta["toolUse"].get("input", "")
                 if tool_input:
+                    # For structured_output tool, stream the input as content
+                    if current_tool["function"]["name"] == STRUCTURED_OUTPUT_TOOL_NAME and response_format is not None:
+                        model_response.content = tool_input
                     current_tool["function"]["arguments"] += tool_input
 
-        # Handle contentBlockStop - tool use complete
         elif "contentBlockStop" in response_delta and current_tool:
-            # Tool is complete, add it to model response
-            model_response.tool_calls = [current_tool]
-            # Track tool_id in extra for format_function_call_results
-            model_response.extra = {"tool_ids": [current_tool["id"]]}
-            # Reset current_tool for next tool
-            current_tool = {}
+            # For structured_output tool, don't emit as a tool call
+            if current_tool["function"]["name"] == STRUCTURED_OUTPUT_TOOL_NAME and response_format is not None:
+                current_tool = {}
+            else:
+                model_response.tool_calls = [current_tool]
+                model_response.extra = {"tool_ids": [current_tool["id"]]}
+                current_tool = {}
 
-        # Handle metadata/usage information
         elif "metadata" in response_delta or "messageStop" in response_delta:
             body = response_delta.get("metadata") or response_delta.get("messageStop") or {}
             if "usage" in body:
