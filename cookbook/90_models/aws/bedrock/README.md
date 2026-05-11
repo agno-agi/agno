@@ -88,9 +88,7 @@ python cookbook/90_models/aws/bedrock/tool_choice.py
 
 ### 7. Run Agent that returns structured output
 
-The implementation automatically selects the best approach based on model:
-- **Claude 4.x** (Sonnet 4.5, Haiku 4.5, Opus 4.5+): Uses native `outputConfig.textFormat`
-- **Claude 3.x and older**: Uses tool-based fallback (forced tool call)
+Uses tool-based extraction (forced tool call) to get structured responses.
 
 ```shell
 python cookbook/90_models/aws/bedrock/structured_output.py

@@ -85,21 +85,10 @@ class AwsBedrock(Model):
     async_client: Optional[Any] = None
     async_session: Optional[Any] = None
 
-    # Model ID patterns that support native structured outputs (Claude 4.x+)
-    _STRUCTURED_OUTPUT_PATTERNS: Tuple[str, ...] = (
-        "claude-4",
-        "claude-opus-4",
-        "claude-sonnet-4",
-        "claude-haiku-4",
-    )
-
     def __post_init__(self):
         super().__post_init__()
         if self.append_trailing_user_message is None:
             self.append_trailing_user_message = not supports_prefill(self.id)
-        # Set structured outputs capability based on model ID
-        if self._supports_native_structured_outputs():
-            self.supports_native_structured_outputs = True
 
     def get_client(self) -> AwsClient:
         """
@@ -311,10 +300,6 @@ class AwsBedrock(Model):
 
         return None
 
-    def _supports_native_structured_outputs(self) -> bool:
-        model_id_lower = self.id.lower()
-        return any(pattern in model_id_lower for pattern in self._STRUCTURED_OUTPUT_PATTERNS)
-
     def _ensure_additional_properties_false(self, schema: Dict[str, Any]) -> None:
         if not isinstance(schema, dict):
             return
@@ -332,29 +317,6 @@ class AwsBedrock(Model):
                     for item in value:
                         if isinstance(item, dict):
                             self._ensure_additional_properties_false(item)
-
-    def _build_output_config(self, response_format: Optional[Union[Dict, Type[BaseModel]]]) -> Optional[Dict[str, Any]]:
-        if response_format is None:
-            return None
-        if not self._supports_native_structured_outputs():
-            return None
-        if not isinstance(response_format, type) or not issubclass(response_format, BaseModel):
-            return None
-
-        schema = response_format.model_json_schema()
-        self._ensure_additional_properties_false(schema)
-
-        return {
-            "textFormat": {
-                "type": "json_schema",
-                "structure": {
-                    "jsonSchema": {
-                        "schema": json.dumps(schema),
-                        "name": response_format.__name__,
-                    }
-                },
-            }
-        }
 
     def _response_format_to_tool(
         self, response_format: Optional[Union[Dict, Type[BaseModel]]]
@@ -633,13 +595,11 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            # Handle structured outputs
-            output_config = self._build_output_config(response_format)
+            # Handle structured outputs via tool-based fallback
+            # boto3 Converse API doesn't support outputConfig, so we use forced tool calls
             using_tool_fallback = False
             schema_tool = None
-
-            if output_config is None and response_format is not None:
-                # Tool-based fallback for older models
+            if response_format is not None:
                 schema_tool = self._response_format_to_tool(response_format)
                 if schema_tool is not None:
                     using_tool_fallback = True
@@ -652,7 +612,6 @@ class AwsBedrock(Model):
                 tool_config = {"tools": formatted_tools}
 
                 if using_tool_fallback and schema_tool:
-                    # Force the model to use the schema tool
                     tool_config["toolChoice"] = {"tool": {"name": schema_tool["toolSpec"]["name"]}}
                 elif tool_choice is not None:
                     formatted_choice = self._format_tool_choice(tool_choice)
@@ -663,7 +622,6 @@ class AwsBedrock(Model):
                 "system": system_message,
                 "toolConfig": tool_config,
                 "inferenceConfig": self._get_inference_config(),
-                "outputConfig": output_config,
             }
             body = {k: v for k, v in body.items() if v is not None}
 
@@ -704,12 +662,10 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            # Handle structured outputs
-            output_config = self._build_output_config(response_format)
+            # Handle structured outputs via tool-based fallback
             using_tool_fallback = False
             schema_tool = None
-
-            if output_config is None and response_format is not None:
+            if response_format is not None:
                 schema_tool = self._response_format_to_tool(response_format)
                 if schema_tool is not None:
                     using_tool_fallback = True
@@ -732,7 +688,6 @@ class AwsBedrock(Model):
                 "system": system_message,
                 "toolConfig": tool_config,
                 "inferenceConfig": self._get_inference_config(),
-                "outputConfig": output_config,
             }
             body = {k: v for k, v in body.items() if v is not None}
 
@@ -741,7 +696,6 @@ class AwsBedrock(Model):
 
             assistant_message.metrics.start_timer()
 
-            # Track current tool being built across chunks
             current_tool: Dict[str, Any] = {}
 
             for chunk in self.get_client().converse_stream(modelId=self.id, messages=formatted_messages, **body)[
@@ -777,12 +731,10 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            # Handle structured outputs
-            output_config = self._build_output_config(response_format)
+            # Handle structured outputs via tool-based fallback
             using_tool_fallback = False
             schema_tool = None
-
-            if output_config is None and response_format is not None:
+            if response_format is not None:
                 schema_tool = self._response_format_to_tool(response_format)
                 if schema_tool is not None:
                     using_tool_fallback = True
@@ -805,7 +757,6 @@ class AwsBedrock(Model):
                 "system": system_message,
                 "toolConfig": tool_config,
                 "inferenceConfig": self._get_inference_config(),
-                "outputConfig": output_config,
             }
             body = {k: v for k, v in body.items() if v is not None}
 
@@ -849,12 +800,10 @@ class AwsBedrock(Model):
         try:
             formatted_messages, system_message = self._format_messages(messages, compress_tool_results)
 
-            # Handle structured outputs
-            output_config = self._build_output_config(response_format)
+            # Handle structured outputs via tool-based fallback
             using_tool_fallback = False
             schema_tool = None
-
-            if output_config is None and response_format is not None:
+            if response_format is not None:
                 schema_tool = self._response_format_to_tool(response_format)
                 if schema_tool is not None:
                     using_tool_fallback = True
@@ -877,7 +826,6 @@ class AwsBedrock(Model):
                 "system": system_message,
                 "toolConfig": tool_config,
                 "inferenceConfig": self._get_inference_config(),
-                "outputConfig": output_config,
             }
             body = {k: v for k, v in body.items() if v is not None}
 
@@ -886,7 +834,6 @@ class AwsBedrock(Model):
 
             assistant_message.metrics.start_timer()
 
-            # Track current tool being built across chunks
             current_tool: Dict[str, Any] = {}
 
             async with self.get_async_client() as client:
