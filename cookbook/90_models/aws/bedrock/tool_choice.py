@@ -14,6 +14,10 @@ Run with:
 from agno.agent import Agent
 from agno.models.aws import AwsBedrock
 
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+
 
 def get_weather(city: str) -> str:
     """Get the current weather for a city."""
@@ -24,6 +28,10 @@ def get_time(timezone: str) -> str:
     """Get the current time in a timezone."""
     return f"The current time in {timezone} is 2:30 PM."
 
+
+# ---------------------------------------------------------------------------
+# Create Agents
+# ---------------------------------------------------------------------------
 
 # Auto mode: model decides whether to use tools
 auto_agent = Agent(
@@ -47,6 +55,10 @@ forced_agent = Agent(
     tool_call_limit=1,
 )
 
+
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     print("Auto mode - model decides:")

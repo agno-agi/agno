@@ -36,6 +36,7 @@ class Claude(AnthropicClaude):
     async_client: Optional[AsyncAnthropicVertex] = None  # type: ignore
 
     def __post_init__(self):
+        """Validate model configuration after initialization."""
         super().__post_init__()
         # Parent detection uses direct API IDs; VertexAI IDs have different format
         self.supports_native_structured_outputs = self._supports_structured_outputs()
