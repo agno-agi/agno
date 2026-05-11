@@ -3904,17 +3904,23 @@ class Workflow:
 
                 # If the workflow paused, send the full WorkflowRunOutput over the WebSocket
                 # so the client has step_requirements for the continue request.
-                # Yield to the event loop first so any pending _handle_event tasks
-                # (e.g. StepPaused) are delivered before WorkflowRunOutput.
                 if workflow_run_response.is_paused and websocket_handler and websocket_handler.websocket:
                     import json
 
                     from agno.utils.serialize import json_serializer
 
-                    await asyncio.sleep(0)
                     run_dict = workflow_run_response.to_dict()
                     run_dict["event"] = "WorkflowRunOutput"
                     await websocket_handler.websocket.send_text(json.dumps(run_dict, default=json_serializer))
+
+                # Update event buffer status so reconnecting clients know the run is paused
+                if workflow_run_response.is_paused and workflow_run_response.run_id:
+                    try:
+                        from agno.os.managers import event_buffer
+
+                        event_buffer.set_run_completed(workflow_run_response.run_id, RunStatus.paused)
+                    except Exception as e:
+                        log_debug(f"Failed to update event buffer status: {e}")
 
             except Exception as e:
                 logger.exception("Background streaming workflow execution failed")
@@ -6914,7 +6920,7 @@ class Workflow:
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
-        websocket: Optional["WebSocket"] = None,
+        websocket: Optional[WebSocket] = None,
         enable_websocket: bool = False,
     ) -> WorkflowRunOutput: ...
 
@@ -6929,7 +6935,7 @@ class Workflow:
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
-        websocket: Optional["WebSocket"] = None,
+        websocket: Optional[WebSocket] = None,
         enable_websocket: bool = False,
     ) -> AsyncIterator[WorkflowRunOutputEvent]: ...
 
@@ -6943,7 +6949,7 @@ class Workflow:
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         background: Optional[bool] = False,
-        websocket: Optional["WebSocket"] = None,
+        websocket: Optional[WebSocket] = None,
         enable_websocket: bool = False,
         **kwargs: Any,
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
@@ -8603,17 +8609,23 @@ class Workflow:
 
                 # If the workflow re-paused, send the full WorkflowRunOutput over the WebSocket
                 # so the client has step_requirements for the next continue request.
-                # Yield to the event loop first so any pending _handle_event tasks
-                # (e.g. StepPaused) are delivered before WorkflowRunOutput.
                 if workflow_run_response.is_paused and websocket_handler and websocket_handler.websocket:
                     import json
 
                     from agno.utils.serialize import json_serializer
 
-                    await asyncio.sleep(0)
                     run_dict = workflow_run_response.to_dict()
                     run_dict["event"] = "WorkflowRunOutput"
                     await websocket_handler.websocket.send_text(json.dumps(run_dict, default=json_serializer))
+
+                # Update event buffer status so reconnecting clients know the run is paused
+                if workflow_run_response.is_paused and workflow_run_response.run_id:
+                    try:
+                        from agno.os.managers import event_buffer
+
+                        event_buffer.set_run_completed(workflow_run_response.run_id, RunStatus.paused)
+                    except Exception as e:
+                        log_debug(f"Failed to update event buffer status: {e}")
 
             except Exception as e:
                 logger.exception("Background continue streaming workflow execution failed")
