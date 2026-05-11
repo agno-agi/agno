@@ -61,8 +61,7 @@ dev = [
   "fakeredis",
   "xlwt",
   "types-greenlet",
-  "slack_sdk>=3.40.0",
-  "aiohttp>=3.7.3",
+  "aiohttp",
 ]
 
 os = ["fastapi[standard]", "uvicorn", "sqlalchemy", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "croniter>=1.3", "pytz>=2023.3"]
