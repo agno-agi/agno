@@ -14,6 +14,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    Tuple,
     Type,
     Union,
     cast,
@@ -51,6 +52,12 @@ from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
 from agno.run.messages import RunMessages
+from agno.run.team import (
+    RunCancelledEvent as TeamRunCancelledEvent,
+)
+from agno.run.team import (
+    RunCompletedEvent as TeamRunCompletedEvent,
+)
 from agno.run.team import (
     TaskData,
     TeamRunInput,
@@ -894,17 +901,18 @@ def _run_tasks_stream(
 
     except RunCancelledException as e:
         run_response = _handle_team_run_cancellation(run_response, e, run_messages)
-        # Append cancelled event BEFORE storing so the DB copy includes it
-        cancelled_event = handle_event(
-            create_team_run_cancelled_event(
-                from_run_response=run_response, reason=_normalize_team_cancellation_reason(run_response, e)
-            ),
+        cancelled_event, completed_event = _build_team_cancel_terminal_events(
+            team,
             run_response,
-            events_to_skip=team.events_to_skip,
-            store_events=team.store_events,
+            error=e,
+            run_context=run_context,
         )
-        _cleanup_and_store(team, run_response=run_response, session=session)
+        try:
+            _cleanup_and_store(team, run_response=run_response, session=session)
+        except Exception as store_err:
+            log_warning(f"Failed to persist cancelled run: {store_err}")
         yield cancelled_event  # type: ignore
+        yield completed_event  # type: ignore
         if yield_run_output:
             yield run_response
 
@@ -926,18 +934,18 @@ def _run_tasks_stream(
 
     except KeyboardInterrupt:
         run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
-        # Append cancelled event BEFORE storing so the DB copy includes it
-        cancelled_event = handle_event(
-            create_team_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
+        cancelled_event, completed_event = _build_team_cancel_terminal_events(
+            team,
             run_response,
-            events_to_skip=team.events_to_skip,
-            store_events=team.store_events,
+            error=KeyboardInterrupt(),
+            run_context=run_context,
         )
         try:
             _cleanup_and_store(team, run_response=run_response, session=session)
         except Exception as store_err:
             log_warning(f"Failed to persist cancelled run: {store_err}")
         yield cancelled_event  # type: ignore
+        yield completed_event  # type: ignore
         if yield_run_output:
             yield run_response
 
@@ -1670,17 +1678,18 @@ def _run_stream(
                 break
             except RunCancelledException as e:
                 run_response = _handle_team_run_cancellation(run_response, e, run_messages)
-                # Append cancelled event BEFORE storing so the DB copy includes it
-                cancelled_event = handle_event(
-                    create_team_run_cancelled_event(
-                        from_run_response=run_response, reason=_normalize_team_cancellation_reason(run_response, e)
-                    ),
+                cancelled_event, completed_event = _build_team_cancel_terminal_events(
+                    team,
                     run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
+                    error=e,
+                    run_context=run_context,
                 )
-                _cleanup_and_store(team, run_response=run_response, session=session)
+                try:
+                    _cleanup_and_store(team, run_response=run_response, session=session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
                 if yield_run_output:
                     yield run_response
                 break
@@ -1705,20 +1714,18 @@ def _run_stream(
 
             except KeyboardInterrupt:
                 run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
-                # Append cancelled event BEFORE storing so the DB copy includes it
-                cancelled_event = handle_event(
-                    create_team_run_cancelled_event(
-                        from_run_response=run_response, reason="Operation cancelled by user"
-                    ),
+                cancelled_event, completed_event = _build_team_cancel_terminal_events(
+                    team,
                     run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
+                    error=KeyboardInterrupt(),
+                    run_context=run_context,
                 )
                 try:
                     _cleanup_and_store(team, run_response=run_response, session=session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
                 if yield_run_output:
                     yield run_response
                 break
@@ -2721,18 +2728,19 @@ async def _arun_tasks_stream(
 
     except RunCancelledException as e:
         run_response = _handle_team_run_cancellation(run_response, e, run_messages)
-        # Append cancelled event BEFORE storing so the DB copy includes it
-        cancelled_event = handle_event(
-            create_team_run_cancelled_event(
-                from_run_response=run_response, reason=_normalize_team_cancellation_reason(run_response, e)
-            ),
+        cancelled_event, completed_event = _build_team_cancel_terminal_events(
+            team,
             run_response,
-            events_to_skip=team.events_to_skip,
-            store_events=team.store_events,
+            error=e,
+            run_context=run_context,
         )
-        if team_session is not None:
-            await _acleanup_and_store(team, run_response=run_response, session=team_session)
+        try:
+            if team_session is not None:
+                await _acleanup_and_store(team, run_response=run_response, session=team_session)
+        except Exception as store_err:
+            log_warning(f"Failed to persist cancelled run: {store_err}")
         yield cancelled_event  # type: ignore
+        yield completed_event  # type: ignore
         if yield_run_output:
             yield run_response
 
@@ -2755,12 +2763,11 @@ async def _arun_tasks_stream(
 
     except (KeyboardInterrupt, asyncio.CancelledError):
         run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
-        # Append cancelled event BEFORE storing so the DB copy includes it
-        cancelled_event = handle_event(
-            create_team_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
+        cancelled_event, completed_event = _build_team_cancel_terminal_events(
+            team,
             run_response,
-            events_to_skip=team.events_to_skip,
-            store_events=team.store_events,
+            error=KeyboardInterrupt(),
+            run_context=run_context,
         )
         try:
             if team_session is not None:
@@ -2768,6 +2775,7 @@ async def _arun_tasks_stream(
         except Exception as store_err:
             log_warning(f"Failed to persist cancelled run: {store_err}")
         yield cancelled_event  # type: ignore
+        yield completed_event  # type: ignore
         if yield_run_output:
             yield run_response
 
@@ -3785,17 +3793,18 @@ async def _arun_stream(
                 break
             except RunCancelledException as e:
                 run_response = _handle_team_run_cancellation(run_response, e, run_messages)
-                # Append cancelled event BEFORE storing so the DB copy includes it
-                cancelled_event = handle_event(
-                    create_team_run_cancelled_event(
-                        from_run_response=run_response, reason=_normalize_team_cancellation_reason(run_response, e)
-                    ),
+                cancelled_event, completed_event = _build_team_cancel_terminal_events(
+                    team,
                     run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
+                    error=e,
+                    run_context=run_context,
                 )
-                await _acleanup_and_store(team, run_response=run_response, session=team_session)
+                try:
+                    await _acleanup_and_store(team, run_response=run_response, session=team_session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
                 if yield_run_output:
                     yield run_response
                 break
@@ -3823,20 +3832,18 @@ async def _arun_stream(
 
             except (KeyboardInterrupt, asyncio.CancelledError):
                 run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
-                # Append cancelled event BEFORE storing so the DB copy includes it
-                cancelled_event = handle_event(
-                    create_team_run_cancelled_event(
-                        from_run_response=run_response, reason="Operation cancelled by user"
-                    ),
+                cancelled_event, completed_event = _build_team_cancel_terminal_events(
+                    team,
                     run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
+                    error=KeyboardInterrupt(),
+                    run_context=run_context,
                 )
                 try:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
                 if yield_run_output:
                     yield run_response
                 break
@@ -4145,6 +4152,40 @@ def _handle_team_run_cancellation(
         if messages_for_run_response:
             run_response.messages = messages_for_run_response
     return run_response
+
+
+def _build_team_cancel_terminal_events(
+    team: "Team",
+    run_response: TeamRunOutput,
+    error: Union[RunCancelledException, KeyboardInterrupt],
+    run_context: Optional[RunContext] = None,
+) -> Tuple[TeamRunCancelledEvent, TeamRunCompletedEvent]:
+    """Return the (cancelled, completed) terminal event pair for a cancelled team run."""
+    # Update run_response.session_state before creating the events
+    if run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+    cancelled_event = cast(
+        TeamRunCancelledEvent,
+        handle_event(
+            create_team_run_cancelled_event(
+                from_run_response=run_response,
+                reason=_normalize_team_cancellation_reason(run_response, error),
+            ),
+            run_response,
+            events_to_skip=team.events_to_skip,
+            store_events=team.store_events,
+        ),
+    )
+    completed_event = cast(
+        TeamRunCompletedEvent,
+        handle_event(
+            create_team_run_completed_event(from_run_response=run_response),
+            run_response,
+            events_to_skip=team.events_to_skip,
+            store_events=team.store_events,
+        ),
+    )
+    return cancelled_event, completed_event
 
 
 # ---------------------------------------------------------------------------
@@ -6286,17 +6327,18 @@ def _continue_run_stream(
 
             except RunCancelledException as e:
                 run_response = _handle_team_run_cancellation(run_response, e, run_messages)
-                # Append cancelled event BEFORE storing so the DB copy includes it
-                cancelled_event = handle_event(
-                    create_team_run_cancelled_event(
-                        from_run_response=run_response, reason=_normalize_team_cancellation_reason(run_response, e)
-                    ),
+                cancelled_event, completed_event = _build_team_cancel_terminal_events(
+                    team,
                     run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
+                    error=e,
+                    run_context=run_context,
                 )
-                _cleanup_and_store(team, run_response=run_response, session=session)
+                try:
+                    _cleanup_and_store(team, run_response=run_response, session=session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
                 if yield_run_output:
                     yield run_response
                 break
@@ -6320,20 +6362,18 @@ def _continue_run_stream(
 
             except KeyboardInterrupt:
                 run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
-                # Append cancelled event BEFORE storing so the DB copy includes it
-                cancelled_event = handle_event(
-                    create_team_run_cancelled_event(
-                        from_run_response=run_response, reason="Operation cancelled by user"
-                    ),
+                cancelled_event, completed_event = _build_team_cancel_terminal_events(
+                    team,
                     run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
+                    error=KeyboardInterrupt(),
+                    run_context=run_context,
                 )
                 try:
                     _cleanup_and_store(team, run_response=run_response, session=session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
                 if yield_run_output:
                     yield run_response
                 break
@@ -7280,18 +7320,19 @@ async def _acontinue_run_stream(
                     run_response = TeamRunOutput(run_id=run_id)
                 run_response = cast(TeamRunOutput, run_response)
                 run_response = _handle_team_run_cancellation(run_response, e, run_messages)
-                # Append cancelled event BEFORE storing so the DB copy includes it
-                cancelled_event = handle_event(
-                    create_team_run_cancelled_event(
-                        from_run_response=run_response, reason=_normalize_team_cancellation_reason(run_response, e)
-                    ),
+                cancelled_event, completed_event = _build_team_cancel_terminal_events(
+                    team,
                     run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
+                    error=e,
+                    run_context=run_context,
                 )
-                if team_session is not None:
-                    await _acleanup_and_store(team, run_response=run_response, session=team_session)
+                try:
+                    if team_session is not None:
+                        await _acleanup_and_store(team, run_response=run_response, session=team_session)
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
                 if yield_run_output:
                     yield run_response
                 break
@@ -7320,14 +7361,11 @@ async def _acontinue_run_stream(
                     run_response = TeamRunOutput(run_id=run_id)
                 run_response = cast(TeamRunOutput, run_response)
                 run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
-                # Append cancelled event BEFORE storing so the DB copy includes it
-                cancelled_event = handle_event(
-                    create_team_run_cancelled_event(
-                        from_run_response=run_response, reason="Operation cancelled by user"
-                    ),
+                cancelled_event, completed_event = _build_team_cancel_terminal_events(
+                    team,
                     run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
+                    error=KeyboardInterrupt(),
+                    run_context=run_context,
                 )
                 try:
                     if team_session is not None:
@@ -7335,6 +7373,7 @@ async def _acontinue_run_stream(
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
                 if yield_run_output:
                     yield run_response
                 break

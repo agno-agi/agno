@@ -429,18 +429,18 @@ def _get_task_management_tools(
                     yield_run_output=True,
                 )
                 member_run_id = None
-                _draining_after_cancel = False
+                draining_after_cancel = False
                 for event in member_stream:
                     if isinstance(event, (TeamRunOutput, RunOutput)):
                         member_run_response = event
                         continue
                     # After cancellation, keep draining to capture member's RunOutput
-                    if _draining_after_cancel:
+                    if draining_after_cancel:
                         continue
                     if member_run_id is None:
                         member_run_id = getattr(event, "run_id", None)
                     if event.is_cancelled:
-                        _draining_after_cancel = True
+                        draining_after_cancel = True
                         continue
                     # Check if the parent team's run is cancelled - propagate to member
                     try:
@@ -449,11 +449,11 @@ def _get_task_management_tools(
                     except RunCancelledException:
                         if member_run_id:
                             cancel_run(member_run_id)
-                        _draining_after_cancel = True
+                        draining_after_cancel = True
                         continue
                     event.parent_run_id = event.parent_run_id or run_response.run_id
                     yield event
-                if _draining_after_cancel:
+                if draining_after_cancel:
                     raise RunCancelledException(run_response.run_id or "")
             else:
                 member_run_response = member_agent.run(
@@ -479,7 +479,6 @@ def _get_task_management_tools(
                 if run_response.run_id is not None:
                     raise_if_cancelled(run_response.run_id)
         except RunCancelledException:
-            # Persist the member's partial run before re-raising
             use_team_logger()
             _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
             raise
@@ -598,18 +597,18 @@ def _get_task_management_tools(
                     yield_run_output=True,
                 )
                 member_run_id = None
-                _draining_after_cancel = False
+                draining_after_cancel = False
                 async for event in member_stream:
                     if isinstance(event, (TeamRunOutput, RunOutput)):
                         member_run_response = event
                         continue
                     # After cancellation, keep draining to capture member's RunOutput
-                    if _draining_after_cancel:
+                    if draining_after_cancel:
                         continue
                     if member_run_id is None:
                         member_run_id = getattr(event, "run_id", None)
                     if event.is_cancelled:
-                        _draining_after_cancel = True
+                        draining_after_cancel = True
                         continue
                     # Check if the parent team's run is cancelled - propagate to member
                     try:
@@ -618,11 +617,11 @@ def _get_task_management_tools(
                     except RunCancelledException:
                         if member_run_id:
                             cancel_run(member_run_id)
-                        _draining_after_cancel = True
+                        draining_after_cancel = True
                         continue
                     event.parent_run_id = event.parent_run_id or run_response.run_id
                     yield event
-                if _draining_after_cancel:
+                if draining_after_cancel:
                     raise RunCancelledException(run_response.run_id or "")
             else:
                 member_run_response = await member_agent.arun(  # type: ignore[misc]
@@ -648,7 +647,6 @@ def _get_task_management_tools(
                 if run_response.run_id is not None:
                     raise_if_cancelled(run_response.run_id)
         except RunCancelledException:
-            # Persist the member's partial run before re-raising
             use_team_logger()
             _post_process_member_run(member_run_response, member_agent, member_agent_task, member_session_state_copy)
             raise

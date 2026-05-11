@@ -15,6 +15,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    Tuple,
     Type,
     Union,
     cast,
@@ -43,6 +44,8 @@ from agno.models.metrics import RunMetrics, merge_background_metrics
 from agno.models.response import ModelResponse, ToolExecution
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
+    RunCancelledEvent,
+    RunCompletedEvent,
     RunInput,
     RunOutput,
     RunOutputEvent,
@@ -1115,24 +1118,25 @@ def _run_stream(
                 break
             except RunCancelledException as e:
                 run_response = _handle_run_cancellation(run_response, e, run_messages)
-                # Append cancelled event BEFORE storing so the DB copy includes it
-                cancelled_event = handle_event(
-                    create_run_cancelled_event(
-                        from_run_response=run_response, reason=_normalize_cancellation_reason(run_response, e)
-                    ),
+                cancelled_event, completed_event = _build_cancel_terminal_events(
+                    agent,
                     run_response,
-                    events_to_skip=agent.events_to_skip,  # type: ignore
-                    store_events=agent.store_events,
+                    error=e,
+                    run_context=run_context,
                 )
-                if agent_session is not None:
-                    cleanup_and_store(
-                        agent,
-                        run_response=run_response,
-                        session=agent_session,
-                        run_context=run_context,
-                        user_id=user_id,
-                    )
+                try:
+                    if agent_session is not None:
+                        cleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
                 if yield_run_output:
                     yield run_response
                 break
@@ -1167,12 +1171,11 @@ def _run_stream(
                 break
             except KeyboardInterrupt:
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
-                # Append cancelled event BEFORE storing so the DB copy includes it
-                cancelled_event = handle_event(
-                    create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
+                cancelled_event, completed_event = _build_cancel_terminal_events(
+                    agent,
                     run_response,
-                    events_to_skip=agent.events_to_skip,  # type: ignore
-                    store_events=agent.store_events,
+                    error=KeyboardInterrupt(),
+                    run_context=run_context,
                 )
                 try:
                     if agent_session is not None:
@@ -1186,6 +1189,7 @@ def _run_stream(
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
                 if yield_run_output:
                     yield run_response
                 break
@@ -2483,24 +2487,25 @@ async def _arun_stream(
 
             except RunCancelledException as e:
                 run_response = _handle_run_cancellation(run_response, e, run_messages)
-                # Append cancelled event BEFORE storing so the DB copy includes it
-                cancelled_event = handle_event(
-                    create_run_cancelled_event(
-                        from_run_response=run_response, reason=_normalize_cancellation_reason(run_response, e)
-                    ),
+                cancelled_event, completed_event = _build_cancel_terminal_events(
+                    agent,
                     run_response,
-                    events_to_skip=agent.events_to_skip,  # type: ignore
-                    store_events=agent.store_events,
+                    error=e,
+                    run_context=run_context,
                 )
-                if agent_session is not None:
-                    await acleanup_and_store(
-                        agent,
-                        run_response=run_response,
-                        session=agent_session,
-                        run_context=run_context,
-                        user_id=user_id,
-                    )
+                try:
+                    if agent_session is not None:
+                        await acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
                 if yield_run_output:
                     yield run_response
                 break
@@ -2540,12 +2545,11 @@ async def _arun_stream(
 
             except (KeyboardInterrupt, asyncio.CancelledError):
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
-                # Append cancelled event BEFORE storing so the DB copy includes it
-                cancelled_event = handle_event(
-                    create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
+                cancelled_event, completed_event = _build_cancel_terminal_events(
+                    agent,
                     run_response,
-                    events_to_skip=agent.events_to_skip,  # type: ignore
-                    store_events=agent.store_events,
+                    error=KeyboardInterrupt(),
+                    run_context=run_context,
                 )
                 try:
                     if agent_session is not None:
@@ -2559,6 +2563,7 @@ async def _arun_stream(
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
                 if yield_run_output:
                     yield run_response
                 break
@@ -3504,19 +3509,20 @@ def _continue_run_stream(
                 break
             except RunCancelledException as e:
                 run_response = _handle_run_cancellation(run_response, e, run_messages)
-                # Append cancelled event BEFORE storing so the DB copy includes it
-                cancelled_event = handle_event(
-                    create_run_cancelled_event(
-                        from_run_response=run_response, reason=_normalize_cancellation_reason(run_response, e)
-                    ),
+                cancelled_event, completed_event = _build_cancel_terminal_events(
+                    agent,
                     run_response,
-                    events_to_skip=agent.events_to_skip,  # type: ignore
-                    store_events=agent.store_events,
+                    error=e,
+                    run_context=run_context,
                 )
-                cleanup_and_store(
-                    agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
-                )
+                try:
+                    cleanup_and_store(
+                        agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+                    )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
                 if yield_run_output:
                     yield run_response
                 break
@@ -3547,12 +3553,11 @@ def _continue_run_stream(
                 break
             except KeyboardInterrupt:
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
-                # Append cancelled event BEFORE storing so the DB copy includes it
-                cancelled_event = handle_event(
-                    create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
+                cancelled_event, completed_event = _build_cancel_terminal_events(
+                    agent,
                     run_response,
-                    events_to_skip=agent.events_to_skip,  # type: ignore
-                    store_events=agent.store_events,
+                    error=KeyboardInterrupt(),
+                    run_context=run_context,
                 )
                 try:
                     cleanup_and_store(
@@ -3561,6 +3566,7 @@ def _continue_run_stream(
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
                 if yield_run_output:
                     yield run_response
                 break
@@ -4659,24 +4665,25 @@ async def _acontinue_run_stream(
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
                 run_response = _handle_run_cancellation(run_response, e, run_messages)
-                # Append cancelled event BEFORE storing so the DB copy includes it
-                cancelled_event = handle_event(
-                    create_run_cancelled_event(
-                        from_run_response=run_response, reason=_normalize_cancellation_reason(run_response, e)
-                    ),
+                cancelled_event, completed_event = _build_cancel_terminal_events(
+                    agent,
                     run_response,
-                    events_to_skip=agent.events_to_skip,  # type: ignore
-                    store_events=agent.store_events,
+                    error=e,
+                    run_context=run_context,
                 )
-                if agent_session is not None:
-                    await acleanup_and_store(
-                        agent,
-                        run_response=run_response,
-                        session=agent_session,
-                        run_context=run_context,
-                        user_id=user_id,
-                    )
+                try:
+                    if agent_session is not None:
+                        await acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                except Exception as store_err:
+                    log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
                 if yield_run_output:
                     yield run_response
                 break
@@ -4720,12 +4727,11 @@ async def _acontinue_run_stream(
                 if run_response is None:
                     run_response = RunOutput(run_id=run_id)
                 run_response = _handle_run_cancellation(run_response, KeyboardInterrupt(), run_messages)
-                # Append cancelled event BEFORE storing so the DB copy includes it
-                cancelled_event = handle_event(
-                    create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user"),
+                cancelled_event, completed_event = _build_cancel_terminal_events(
+                    agent,
                     run_response,
-                    events_to_skip=agent.events_to_skip,  # type: ignore
-                    store_events=agent.store_events,
+                    error=KeyboardInterrupt(),
+                    run_context=run_context,
                 )
                 try:
                     if agent_session is not None:
@@ -4739,6 +4745,7 @@ async def _acontinue_run_stream(
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 yield cancelled_event  # type: ignore
+                yield completed_event  # type: ignore
                 if yield_run_output:
                     yield run_response
                 break
@@ -4880,6 +4887,40 @@ def _handle_run_cancellation(
         if messages_for_run_response:
             run_response.messages = messages_for_run_response
     return run_response
+
+
+def _build_cancel_terminal_events(
+    agent: Agent,
+    run_response: RunOutput,
+    error: Union[RunCancelledException, KeyboardInterrupt],
+    run_context: Optional[RunContext] = None,
+) -> Tuple[RunCancelledEvent, RunCompletedEvent]:
+    """Return the (cancelled, completed) terminal event pair for a cancelled run."""
+    # Update run_response.session_state before creating the events
+    if run_context is not None and run_context.session_state is not None:
+        run_response.session_state = run_context.session_state
+    cancelled_event = cast(
+        RunCancelledEvent,
+        handle_event(
+            create_run_cancelled_event(
+                from_run_response=run_response,
+                reason=_normalize_cancellation_reason(run_response, error),
+            ),
+            run_response,
+            events_to_skip=agent.events_to_skip,  # type: ignore
+            store_events=agent.store_events,
+        ),
+    )
+    completed_event = cast(
+        RunCompletedEvent,
+        handle_event(
+            create_run_completed_event(from_run_response=run_response),
+            run_response,
+            events_to_skip=agent.events_to_skip,  # type: ignore
+            store_events=agent.store_events,
+        ),
+    )
+    return cancelled_event, completed_event
 
 
 def cleanup_and_store(

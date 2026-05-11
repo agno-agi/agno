@@ -11,27 +11,38 @@ Requires: PostgreSQL running on localhost:5532 (see cookbook/scripts/run_pgvecto
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
-from agno.run.team import TeamRunEvent
-from agno.team import Team
+from agno.models.openai import OpenAIResponses
+from agno.run.team import RunCancelledEvent as TeamRunCancelledEvent
+from agno.run.team import ToolCallStartedEvent
+from agno.team.mode import TeamMode
+from agno.team.team import Team
 
 # ---------------------------------------------------------------------------
 # Create Members
 # ---------------------------------------------------------------------------
+
 researcher = Agent(
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
-    instructions="You are a researcher. Write very detailed, very long responses with many paragraphs.",
+    id="researcher",
+    role="Writes long-form research essays with many paragraphs",
+    model=OpenAIResponses(id="gpt-5.4"),
+    instructions=[
+        "You are a researcher.",
+        "Write very detailed, very long responses with many paragraphs.",
+    ],
 )
 
 # ---------------------------------------------------------------------------
 # Create Team
 # ---------------------------------------------------------------------------
+
 team = Team(
     name="CancelWhileMemberRuns",
+    mode=TeamMode.route,
+    model=OpenAIResponses(id="gpt-5.4"),
     members=[researcher],
-    model=OpenAIChat(id="gpt-4o-mini"),
     db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
+    show_members_responses=True,
     store_tool_messages=True,
     store_history_messages=True,
 )
@@ -40,10 +51,12 @@ team = Team(
 # ---------------------------------------------------------------------------
 # Run Team
 # ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
     run_id = None
     cancelled = False
-    content_chunks: list = []
+    delegation_started = False
+    member_content_chunks = 0
 
     for event in team.run(
         input=(
@@ -56,26 +69,53 @@ if __name__ == "__main__":
         if run_id is None and hasattr(event, "run_id") and event.run_id:
             run_id = event.run_id
 
+        # Watch for delegation kicking off so cancel lands while the member is in flight.
+        if isinstance(event, ToolCallStartedEvent):
+            tool_name = getattr(getattr(event, "tool", None), "tool_name", None)
+            if tool_name == "delegate_task_to_member":
+                delegation_started = True
+                print(f"\n[delegation started: {tool_name}]")
+
         if hasattr(event, "content") and event.content:
-            content_chunks.append(event.content)
+            if delegation_started:
+                member_content_chunks += 1
             print(event.content, end="", flush=True)
 
-        # Cancel after seeing substantial member content (member is in flight)
-        if len(content_chunks) >= 30 and run_id and not cancelled:
-            print(f"\n\nCancelling after {len(content_chunks)} content chunks")
+        if (
+            delegation_started
+            and member_content_chunks >= 10
+            and not cancelled
+            and run_id
+        ):
+            print(
+                f"\n\nCancelling mid-member-stream after {member_content_chunks} member chunks"
+            )
             team.cancel_run(run_id)
             cancelled = True
 
-        if hasattr(event, "event") and event.event == TeamRunEvent.run_cancelled:
-            print("\nReceived run_cancelled event")
+        if isinstance(event, TeamRunCancelledEvent):
+            print("\nReceived TeamRunCancelled")
             break
 
-    # Verify persistence
+    # Verify persistence — both the team run and the member run end up in
+    # session.runs. Team runs carry team_id; member runs carry agent_id and
+    # link back via parent_run_id.
     print("\n--- Verification ---")
     session = team.get_session(session_id=team.session_id)
     if session and session.runs:
-        for i, run in enumerate(session.runs):
+        team_runs = [r for r in session.runs if getattr(r, "team_id", None)]
+        member_runs = [r for r in session.runs if getattr(r, "agent_id", None)]
+
+        for r in team_runs:
             print(
-                f"Run {i}: status={run.status}, content_length={len(str(run.content or ''))}"
+                f"Team run {r.run_id}: status={r.status}, "
+                f"content_length={len(str(r.content or ''))}, "
+                f"messages={len(r.messages or [])}"
             )
-            print(f"  Messages: {len(run.messages or [])}")
+
+        for r in member_runs:
+            print(
+                f"Member run {r.run_id} (agent={r.agent_name}, parent={r.parent_run_id}): "
+                f"status={r.status}, content_length={len(str(r.content or ''))}, "
+                f"messages={len(r.messages or [])}"
+            )

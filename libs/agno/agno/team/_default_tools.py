@@ -588,7 +588,7 @@ def _get_delegate_task_function(
                     yield_run_output=True,
                 )
                 member_run_id = None
-                _draining_after_cancel = False
+                draining_after_cancel = False
                 for member_agent_run_output_event in member_agent_run_response_stream:
                     # Do NOT break out of the loop, Iterator need to exit properly
                     if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
@@ -596,7 +596,7 @@ def _get_delegate_task_function(
                         continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                     # After cancellation, keep draining to capture member's RunOutput
-                    if _draining_after_cancel:
+                    if draining_after_cancel:
                         continue
 
                     # Capture the member's run_id for cancellation propagation
@@ -605,7 +605,7 @@ def _get_delegate_task_function(
 
                     # Check if the member's own run is cancelled
                     if member_agent_run_output_event.is_cancelled:
-                        _draining_after_cancel = True
+                        draining_after_cancel = True
                         continue
 
                     # Check if the parent team's run is cancelled - propagate to member
@@ -616,7 +616,7 @@ def _get_delegate_task_function(
                         # Cancel the member's run and drain remaining events for RunOutput
                         if member_run_id:
                             cancel_run(member_run_id)
-                        _draining_after_cancel = True
+                        draining_after_cancel = True
                         continue
 
                     # Yield the member event directly
@@ -624,7 +624,7 @@ def _get_delegate_task_function(
                         member_agent_run_output_event.parent_run_id or run_response.run_id
                     )
                     yield member_agent_run_output_event  # type: ignore
-                if _draining_after_cancel:
+                if draining_after_cancel:
                     raise RunCancelledException(run_response.run_id or "")
             else:
                 member_agent_run_response = member_agent.run(  # type: ignore
@@ -767,7 +767,7 @@ def _get_delegate_task_function(
                     yield_run_output=True,
                 )
                 member_run_id = None
-                _draining_after_cancel = False
+                draining_after_cancel = False
                 async for member_agent_run_response_event in member_agent_run_response_stream:
                     # Do NOT break out of the loop, AsyncIterator need to exit properly
                     if isinstance(member_agent_run_response_event, (TeamRunOutput, RunOutput)):
@@ -775,7 +775,7 @@ def _get_delegate_task_function(
                         continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                     # After cancellation, keep draining to capture member's RunOutput
-                    if _draining_after_cancel:
+                    if draining_after_cancel:
                         continue
 
                     # Capture the member's run_id for cancellation propagation
@@ -784,7 +784,7 @@ def _get_delegate_task_function(
 
                     # Check if the member's own run is cancelled
                     if member_agent_run_response_event.is_cancelled:
-                        _draining_after_cancel = True
+                        draining_after_cancel = True
                         continue
 
                     # Check if the parent team's run is cancelled - propagate to member
@@ -795,7 +795,7 @@ def _get_delegate_task_function(
                         # Cancel the member's run and drain remaining events for RunOutput
                         if member_run_id:
                             cancel_run(member_run_id)
-                        _draining_after_cancel = True
+                        draining_after_cancel = True
                         continue
 
                     # Yield the member event directly
@@ -803,7 +803,7 @@ def _get_delegate_task_function(
                         run_response.run_id if run_response is not None else None
                     )
                     yield member_agent_run_response_event  # type: ignore
-                if _draining_after_cancel:
+                if draining_after_cancel:
                     raise RunCancelledException(run_response.run_id or "")
             else:
                 member_agent_run_response = await member_agent.arun(  # type: ignore
@@ -935,7 +935,7 @@ def _get_delegate_task_function(
                         yield_run_output=True,
                     )
                     member_run_id = None
-                    _draining_after_cancel = False
+                    draining_after_cancel = False
                     for member_agent_run_response_chunk in member_agent_run_response_stream:
                         # Do NOT break out of the loop, Iterator need to exit properly
                         if isinstance(member_agent_run_response_chunk, (TeamRunOutput, RunOutput)):
@@ -943,7 +943,7 @@ def _get_delegate_task_function(
                             continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                         # After cancellation, keep draining to capture member's RunOutput
-                        if _draining_after_cancel:
+                        if draining_after_cancel:
                             continue
 
                         # Capture the member's run_id for cancellation propagation
@@ -952,7 +952,7 @@ def _get_delegate_task_function(
 
                         # Check if the member's own run is cancelled
                         if member_agent_run_response_chunk.is_cancelled:
-                            _draining_after_cancel = True
+                            draining_after_cancel = True
                             continue
 
                         # Check if the parent team's run is cancelled - propagate to member
@@ -962,7 +962,7 @@ def _get_delegate_task_function(
                         except RunCancelledException:
                             if member_run_id:
                                 cancel_run(member_run_id)
-                            _draining_after_cancel = True
+                            draining_after_cancel = True
                             continue
 
                         # Yield the member event directly
@@ -971,7 +971,7 @@ def _get_delegate_task_function(
                             or (run_response.run_id if run_response is not None else None)
                         )
                         yield member_agent_run_response_chunk  # type: ignore
-                    if _draining_after_cancel:
+                    if draining_after_cancel:
                         raise RunCancelledException(run_response.run_id or "")
 
                 else:
@@ -1102,7 +1102,7 @@ def _get_delegate_task_function(
                 member_run_id = None
                 try:
                     try:
-                        _draining_after_cancel = False
+                        draining_after_cancel = False
                         async for member_agent_run_output_event in member_stream:
                             # Do NOT break out of the loop, AsyncIterator need to exit properly
                             if isinstance(member_agent_run_output_event, (TeamRunOutput, RunOutput)):
@@ -1110,7 +1110,7 @@ def _get_delegate_task_function(
                                 continue  # Don't yield TeamRunOutput or RunOutput, only yield events
 
                             # After cancellation, keep draining to capture member's RunOutput
-                            if _draining_after_cancel:
+                            if draining_after_cancel:
                                 continue
 
                             # Capture the member's run_id for cancellation propagation
@@ -1118,7 +1118,7 @@ def _get_delegate_task_function(
                                 member_run_id = member_agent_run_output_event.run_id
 
                             if member_agent_run_output_event.is_cancelled:
-                                _draining_after_cancel = True
+                                draining_after_cancel = True
                                 continue
 
                             # Check if the parent team's run is cancelled - propagate to member
@@ -1128,7 +1128,7 @@ def _get_delegate_task_function(
                             except RunCancelledException:
                                 if member_run_id:
                                     cancel_run(member_run_id)
-                                _draining_after_cancel = True
+                                draining_after_cancel = True
                                 continue
 
                             member_agent_run_output_event.parent_run_id = (
@@ -1136,7 +1136,7 @@ def _get_delegate_task_function(
                                 or (run_response.run_id if run_response is not None else None)
                             )
                             await queue.put(member_agent_run_output_event)
-                        if _draining_after_cancel:
+                        if draining_after_cancel:
                             raise RunCancelledException(run_response.run_id or "")
                     finally:
                         # Check if the member run is paused (HITL)

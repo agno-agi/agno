@@ -9,7 +9,7 @@ Requires: PostgreSQL running on localhost:5532 (see cookbook/scripts/run_pgvecto
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.run.agent import RunEvent
 
 # ---------------------------------------------------------------------------
@@ -17,7 +17,7 @@ from agno.run.agent import RunEvent
 # ---------------------------------------------------------------------------
 agent = Agent(
     name="Storyteller",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.4"),
     instructions="You are a storyteller. Write very long detailed stories.",
     db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
     store_tool_messages=True,
