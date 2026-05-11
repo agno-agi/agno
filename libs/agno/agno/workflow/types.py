@@ -1212,9 +1212,14 @@ class StepRequirement:
             timeout_at=timeout_at,
             on_timeout=data.get("on_timeout", "cancel"),
         )
-        # Sync user_input values into user_input_schema fields 
+        # Sync user_input values into user_input_schema fields and validate against schema.
         if requirement.user_input:
-            requirement.set_user_input(validate=False, **requirement.user_input)
+            try:
+                requirement.set_user_input(validate=True, **requirement.user_input)
+            except ValueError as e:
+                raise ValueError(
+                    f"Invalid user_input for step '{requirement.step_name}': {e}"
+                ) from e
         return requirement
 
 
