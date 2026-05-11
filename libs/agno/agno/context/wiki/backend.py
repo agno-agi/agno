@@ -20,6 +20,7 @@ in without touching ``WikiContextProvider``.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -105,7 +106,7 @@ class WikiBackend(ABC):
 
     async def astatus(self) -> Status:
         """Async health check. Default mirrors ``status``."""
-        return self.status()
+        return await asyncio.to_thread(self.status)
 
     # -----------------------------------------------------------------
     # Helper for write sub-agents
@@ -364,7 +365,7 @@ class GitBackend(WikiBackend):
         return Status(ok=True, detail=f"{self.repo_url}@{self.branch} -> {self.path}")
 
     async def astatus(self) -> Status:
-        return self.status()
+        return await asyncio.to_thread(self.status)
 
     # -----------------------------------------------------------------
     # Internals
