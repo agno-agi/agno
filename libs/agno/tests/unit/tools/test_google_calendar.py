@@ -16,6 +16,7 @@ def mock_credentials():
     mock_creds = Mock(spec=Credentials)
     mock_creds.valid = True
     mock_creds.expired = False
+    mock_creds.universe_domain = "googleapis.com"
     mock_creds.to_json.return_value = '{"token": "test_token"}'
     return mock_creds
 
@@ -29,39 +30,36 @@ def mock_calendar_service():
 @pytest.fixture
 def calendar_tools(mock_credentials, mock_calendar_service):
     with (
-        patch("agno.tools.google.calendar.build") as mock_build,
-        patch("agno.tools.google.calendar.authenticate", lambda func: func),
+        patch("agno.tools.google.base.get_current_service", return_value=mock_calendar_service),
+        patch.object(GoogleCalendarTools, "_resolve_creds", return_value=mock_credentials),
+        patch.object(GoogleCalendarTools, "_build_service", return_value=mock_calendar_service),
     ):
-        mock_build.return_value = mock_calendar_service
-        tools = GoogleCalendarTools()
-        tools.creds = mock_credentials
-        tools.service = mock_calendar_service
-        return tools
+        tools = GoogleCalendarTools(creds=mock_credentials)
+        yield tools
 
 
 @pytest.fixture
 def calendar_tools_all(mock_credentials, mock_calendar_service):
     """Instance with ALL tools enabled including write tools."""
     with (
-        patch("agno.tools.google.calendar.build") as mock_build,
-        patch("agno.tools.google.calendar.authenticate", lambda func: func),
+        patch("agno.tools.google.base.get_current_service", return_value=mock_calendar_service),
+        patch.object(GoogleCalendarTools, "_resolve_creds", return_value=mock_credentials),
+        patch.object(GoogleCalendarTools, "_build_service", return_value=mock_calendar_service),
     ):
-        mock_build.return_value = mock_calendar_service
         tools = GoogleCalendarTools(
+            creds=mock_credentials,
             quick_add_event=True,
             move_event=True,
             respond_to_event=True,
         )
-        tools.creds = mock_credentials
-        tools.service = mock_calendar_service
-        return tools
+        yield tools
 
 
 class TestGoogleCalendarToolsInitialization:
     def test_init_defaults(self):
         tools = GoogleCalendarTools()
         assert tools.calendar_id == "primary"
-        assert tools.creds is None
+        # Stateless: service comes from contextvar, returns None outside decorated call
         assert tools.service is None
 
     def test_init_with_credentials_path(self):
@@ -73,7 +71,8 @@ class TestGoogleCalendarToolsInitialization:
             tools = GoogleCalendarTools(credentials_path=temp_file)
             assert tools.credentials_path == temp_file
             assert tools.calendar_id == "primary"
-            assert tools.creds is None
+            # Stateless: no explicit creds passed, service from contextvar
+            assert tools._explicit_creds is None
             assert tools.service is None
         finally:
             os.unlink(temp_file)
@@ -683,5 +682,7 @@ class TestRespondToEvent:
 class TestErrorHandling:
     def test_method_integration_works(self, calendar_tools):
         assert calendar_tools.calendar_id == "primary"
+        # Stateless: service from contextvar (mocked in fixture)
         assert calendar_tools.service is not None
-        assert calendar_tools.creds is not None
+        # Explicit creds passed to constructor
+        assert calendar_tools._explicit_creds is not None

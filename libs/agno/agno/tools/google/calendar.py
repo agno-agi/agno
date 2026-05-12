@@ -2,20 +2,16 @@ import datetime
 import json
 import textwrap
 import uuid
-from os import getenv
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, cast
 
-from agno.tools import Toolkit
-from agno.tools.google.auth import google_authenticate
-from agno.utils.log import log_debug, log_error, log_info
+from agno.tools.google.auth import get_cache_key, google_authenticate
+from agno.tools.google.base import GoogleToolkit
+from agno.utils.log import log_debug, log_error
 
 try:
-    from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     from google.oauth2.service_account import Credentials as ServiceAccountCredentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from googleapiclient.discovery import Resource, build
+    from googleapiclient.discovery import Resource
     from googleapiclient.errors import HttpError
 except ImportError:
     raise ImportError(
@@ -42,14 +38,20 @@ CALENDAR_INSTRUCTIONS = textwrap.dedent("""\
 authenticate = google_authenticate("calendar")
 
 
-class GoogleCalendarTools(Toolkit):
-    DEFAULT_SCOPES = [
+class GoogleCalendarTools(GoogleToolkit):
+    api_name = "calendar"
+    api_version = "v3"
+    google_service_name = "calendar"
+    default_scopes = [
         "https://www.googleapis.com/auth/calendar.readonly",
         "https://www.googleapis.com/auth/calendar",
     ]
+    DEFAULT_SCOPES = default_scopes
 
     def __init__(
         self,
+        oauth_config: Optional[Any] = None,
+        store_token_in_db: bool = False,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = "token.json",
@@ -99,22 +101,12 @@ class GoogleCalendarTools(Toolkit):
             delete_event = True
 
         if instructions is None:
-            self.instructions = CALENDAR_INSTRUCTIONS
-        else:
-            self.instructions = instructions
+            instructions = CALENDAR_INSTRUCTIONS
 
-        self.creds = creds
-        self.service: Optional[Resource] = None
+        # Calendar-specific attributes
         self.calendar_id = calendar_id
-        self.credentials_path = credentials_path
-        self.token_path = token_path
-        self.service_account_path = service_account_path
-        self.delegated_user = delegated_user
-        self.scopes = scopes or self.DEFAULT_SCOPES
-        self.oauth_port = oauth_port
-        self.login_hint = login_hint
-        # Cached email for respond_to_event
-        self._user_email: Optional[str] = None
+        self._user_email: Dict[Optional[str], str] = {}
+
         tools: List[Any] = []
 
         if list_events:
@@ -150,8 +142,18 @@ class GoogleCalendarTools(Toolkit):
         super().__init__(
             name="google_calendar_tools",
             tools=tools,
-            instructions=self.instructions,
+            instructions=instructions,
             add_instructions=add_instructions,
+            scopes=scopes,
+            creds=creds,
+            token_path=token_path,
+            credentials_path=credentials_path,
+            service_account_path=service_account_path,
+            delegated_user=delegated_user,
+            oauth_config=oauth_config,
+            store_token_in_db=store_token_in_db,
+            oauth_port=oauth_port,
+            login_hint=login_hint,
             **kwargs,
         )
 
@@ -184,77 +186,6 @@ class GoogleCalendarTools(Toolkit):
             write_scope = "https://www.googleapis.com/auth/calendar"
             if read_scope not in self.scopes and write_scope not in self.scopes:
                 raise ValueError(f"The scope {read_scope} is required for read operations")
-
-    def _build_service(self):
-        return build("calendar", "v3", credentials=self.creds)
-
-    def _auth(self) -> None:
-        """Authenticate with Google Calendar API using service account (priority) or OAuth flow."""
-        if self.creds and self.creds.valid:
-            return
-
-        # Service account authentication takes priority over OAuth
-        service_account_path = self.service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
-        if service_account_path:
-            delegated_user = self.delegated_user or getenv("GOOGLE_DELEGATED_USER")
-            sa_creds = ServiceAccountCredentials.from_service_account_file(
-                service_account_path,
-                scopes=self.scopes,
-            )
-            # Calendar service accounts can optionally impersonate a user
-            if delegated_user:
-                sa_creds = sa_creds.with_subject(delegated_user)
-            # Eagerly fetch token so creds.valid=True and @authenticate won't re-enter _auth
-            sa_creds.refresh(Request())
-            self.creds = sa_creds
-            return
-
-        # OAuth flow
-        token_file = Path(self.token_path or "token.json")
-        creds_file = Path(self.credentials_path or "credentials.json")
-
-        if token_file.exists():
-            try:
-                self.creds = Credentials.from_authorized_user_file(str(token_file), self.scopes)
-            except ValueError:
-                # Token file missing refresh_token — fall through to re-auth
-                self.creds = None
-
-        if self.creds and self.creds.expired and self.creds.refresh_token:  # type: ignore[union-attr]
-            try:
-                self.creds.refresh(Request())
-            except Exception:
-                # Refresh token revoked or expired — fall through to re-auth
-                self.creds = None
-
-        if not self.creds or not self.creds.valid:
-            client_config = {
-                "installed": {
-                    "client_id": getenv("GOOGLE_CLIENT_ID"),
-                    "client_secret": getenv("GOOGLE_CLIENT_SECRET"),
-                    "project_id": getenv("GOOGLE_PROJECT_ID"),
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                    "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
-                }
-            }
-            if creds_file.exists():
-                flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
-            else:
-                flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
-            # prompt=consent forces Google to return a refresh_token every time
-            oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
-            if self.login_hint:
-                oauth_kwargs["login_hint"] = self.login_hint
-            oauth_kwargs["port"] = self.oauth_port
-            self.creds = flow.run_local_server(**oauth_kwargs)
-
-        # Save the credentials for future use
-        if self.creds and self.creds.valid:
-            token_file.write_text(self.creds.to_json())  # type: ignore[union-attr]
-            log_debug("Successfully authenticated with Google Calendar API.")
-            log_info(f"Token file path: {token_file}")
 
     @authenticate
     def list_events(self, limit: int = 10, start_date: Optional[str] = None) -> str:
@@ -1013,24 +944,26 @@ class GoogleCalendarTools(Toolkit):
         try:
             service = cast(Resource, self.service)
 
-            # Get authenticated user's email (cached)
-            if not self._user_email:
+            # Get authenticated user's email (cached per user)
+            cache_key = get_cache_key()
+            if cache_key not in self._user_email:
                 cal = service.calendarList().get(calendarId="primary").execute()
-                self._user_email = cal.get("id")
+                self._user_email[cache_key] = cal.get("id")
+            user_email = self._user_email[cache_key]
 
             event = service.events().get(calendarId=self.calendar_id, eventId=event_id).execute()
             attendees = event.get("attendees", [])
 
             found = False
             for attendee in attendees:
-                if attendee.get("email") == self._user_email:
+                if attendee.get("email") == user_email:
                     attendee["responseStatus"] = response
                     found = True
                     break
 
             if not found:
                 # User not in attendees — add them with the response
-                attendees.append({"email": self._user_email, "responseStatus": response})
+                attendees.append({"email": user_email, "responseStatus": response})
                 event["attendees"] = attendees
 
             updated_event = (

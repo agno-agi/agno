@@ -15,6 +15,7 @@ def mock_credentials():
     mock_creds = Mock(spec=Credentials)
     mock_creds.valid = True
     mock_creds.expired = False
+    mock_creds.universe_domain = "googleapis.com"
     return mock_creds
 
 
@@ -35,11 +36,13 @@ def mock_drive_service():
 @pytest.fixture
 def sheets_tools(mock_credentials, mock_sheets_service):
     """Create GoogleSheetsTools instance with mocked dependencies."""
-    with patch("agno.tools.google.sheets.build") as mock_build:
-        mock_build.return_value = mock_sheets_service
+    with (
+        patch("agno.tools.google.base.get_current_service", return_value=mock_sheets_service),
+        patch.object(GoogleSheetsTools, "_resolve_creds", return_value=mock_credentials),
+        patch.object(GoogleSheetsTools, "_build_service", return_value=mock_sheets_service),
+    ):
         tools = GoogleSheetsTools(creds=mock_credentials)
-        tools.service = mock_sheets_service
-        return tools
+        yield tools
 
 
 # Initialization Tests
@@ -123,7 +126,7 @@ def test_update_sheet(sheets_tools, mock_sheets_service):
     assert "Sheet updated successfully: test_id" in result
 
 
-def test_create_duplicate_sheet(sheets_tools, mock_sheets_service, mock_drive_service):
+def test_create_duplicate_sheet(mock_credentials, mock_sheets_service, mock_drive_service):
     """Test duplicating a sheet."""
     # Setup mock data
     mock_source = {"properties": {"title": "Source Sheet"}, "sheets": [{"properties": {"title": "Sheet1"}}]}
@@ -160,9 +163,19 @@ def test_create_duplicate_sheet(sheets_tools, mock_sheets_service, mock_drive_se
     mock_drive_service.files.return_value = files_mock
     mock_drive_service.permissions.return_value = permissions_mock
 
-    # Setup mock for drive service
-    with patch("agno.tools.google.sheets.build") as mock_build:
+    # Create tools with drive scope for create_duplicate_sheet
+    with (
+        patch("agno.tools.google.sheets.build") as mock_build,
+        patch("agno.tools.google.sheets.authenticate", lambda func: func),
+        patch("agno.tools.google.base.get_current_service", return_value=mock_sheets_service),
+        patch("agno.tools.google.sheets.get_current_creds", return_value=mock_credentials),
+    ):
         mock_build.return_value = mock_drive_service
+        sheets_tools = GoogleSheetsTools(
+            creds=mock_credentials,
+            create_duplicate_sheet=True,
+            scopes=["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"],
+        )
 
         # Execute test
         result = sheets_tools.create_duplicate_sheet(
@@ -204,17 +217,33 @@ def test_error_handling(sheets_tools, mock_sheets_service):
 def test_service_account():
     """Test setting service_account_path when instantiating a GoogleSheetsTools."""
     path = "/some/path"
-    tool = GoogleSheetsTools(service_account_path=path)
-    with patch("agno.tools.google.sheets.ServiceAccountCredentials") as mock_creds_class:
-        tool._auth()
-    mock_creds_class.from_service_account_file.assert_called_once_with(path, scopes=tool.scopes)
+    with (
+        patch("google.oauth2.service_account.Credentials") as mock_creds_class,
+        patch("google.auth.transport.requests.Request"),
+        patch("agno.tools.google.sheets.authenticate", lambda func: func),
+    ):
+        mock_creds = MagicMock()
+        mock_creds.valid = True
+        mock_creds.expired = False
+        mock_creds_class.from_service_account_file.return_value = mock_creds
+        tool = GoogleSheetsTools(service_account_path=path)
+        tool._resolve_creds()
+        mock_creds_class.from_service_account_file.assert_called_once_with(path, scopes=tool.scopes)
 
 
 def test_service_account_environment_variable(monkeypatch):
     """Test setting the service account file path via an environment variable."""
     path = "/some/path"
     monkeypatch.setenv("GOOGLE_SERVICE_ACCOUNT_FILE", path)
-    tool = GoogleSheetsTools()
-    with patch("agno.tools.google.sheets.ServiceAccountCredentials") as mock_creds_class:
-        tool._auth()
-    mock_creds_class.from_service_account_file.assert_called_once_with(path, scopes=tool.scopes)
+    with (
+        patch("google.oauth2.service_account.Credentials") as mock_creds_class,
+        patch("google.auth.transport.requests.Request"),
+        patch("agno.tools.google.sheets.authenticate", lambda func: func),
+    ):
+        mock_creds = MagicMock()
+        mock_creds.valid = True
+        mock_creds.expired = False
+        mock_creds_class.from_service_account_file.return_value = mock_creds
+        tool = GoogleSheetsTools()
+        tool._resolve_creds()
+        mock_creds_class.from_service_account_file.assert_called_once_with(path, scopes=tool.scopes)

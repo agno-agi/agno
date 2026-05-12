@@ -43,6 +43,68 @@ from agno.utils.events import (
 from agno.utils.log import log_debug, log_warning
 
 
+def _wire_google_auth(
+    tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]],
+) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
+    """Consolidate OAuth scopes across Google toolkits.
+
+    If no toolkit has oauth_config= set, auto-creates a shared GoogleOAuthConfig for
+    scope consolidation. If any toolkit has oauth_config=, wires that coordinator to
+    all others.
+    """
+    if tools is None:
+        return tools
+
+    # Lazy import to avoid circular dependency
+    try:
+        from agno.tools.google.auth import GoogleOAuthConfig
+        from agno.tools.google.base import GoogleToolkit
+        from agno.tools.google.oauth_tools import GoogleOAuthTools
+    except ImportError:
+        return tools
+
+    # Find Google toolkits and OAuth tools
+    google_toolkits = [t for t in tools if isinstance(t, GoogleToolkit)]
+    oauth_tools = [t for t in tools if isinstance(t, GoogleOAuthTools)]
+
+    # Nothing to wire if no Google toolkits
+    if not google_toolkits and not oauth_tools:
+        return tools
+
+    # Check if any toolkit/oauth_tool has a custom GoogleOAuthConfig configured
+    shared_config = None
+    for t in google_toolkits + oauth_tools:
+        ga = getattr(t, "oauth_config", None)
+        if ga is not None:
+            shared_config = ga
+            break
+
+    # Auto-create GoogleOAuthConfig if none provided (cookbook mode)
+    if shared_config is None:
+        shared_config = GoogleOAuthConfig()
+        log_debug("Auto-created GoogleOAuthConfig for scope consolidation (cookbook mode)")
+
+    # Wire GoogleOAuthConfig to each Google toolkit and register scopes
+    for t in google_toolkits:
+        if getattr(t, "oauth_config", None) is None:
+            t.oauth_config = shared_config
+
+        ga = t.oauth_config
+        service_name = getattr(t, "google_service_name", None)
+        scopes = getattr(t, "scopes", None)
+        if ga is not None and service_name and scopes:
+            ga.register_service(service_name, scopes)
+            log_debug(f"Registered {service_name} scopes with GoogleOAuthConfig")
+
+    # Wire GoogleOAuthConfig to GoogleOAuthTools if not already set
+    for t in oauth_tools:
+        if getattr(t, "oauth_config", None) is None:
+            t.oauth_config = shared_config
+            log_debug("Wired GoogleOAuthConfig to GoogleOAuthTools")
+
+    return tools
+
+
 def raise_if_async_tools(agent: Agent) -> None:
     """Raise an exception if any tools contain async functions."""
     if agent.tools is None:
@@ -125,6 +187,9 @@ def get_tools(
 
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
+
+    # Auto-register oauth_google when Google toolkits have client-side OAuth enabled
+    resolved_tools = _wire_google_auth(resolved_tools)
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
@@ -229,6 +294,9 @@ async def aget_tools(
 
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
+
+    # Auto-register oauth_google when Google toolkits have client-side OAuth enabled
+    resolved_tools = _wire_google_auth(resolved_tools)
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
@@ -368,6 +436,12 @@ def parse_tools(
             log_debug(f"Included builtin tool {tool}")
 
         elif isinstance(tool, Toolkit):
+            # Per-user isolation: clone toolkit when user_id is set so each
+            # run gets its own mutable state. Credentials/service are resolved
+            # per-call via contextvar, not stored on the clone.
+            if run_context and run_context.user_id is not None:
+                tool = tool._clone_for_run()
+
             # For each function in the toolkit and process entrypoint
             toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
             for name, _func in toolkit_functions.items():
@@ -379,6 +453,15 @@ def parse_tools(
                     continue
                 _function_names.append(name)
                 _func = _func.model_copy(deep=True)
+                # Rebind entrypoint to current tool instance (clone or original).
+                # model_copy shallow-copies entrypoint (function.py:246), leaving
+                # it bound to the original toolkit. Use `name` (the registered
+                # tool name) rather than entrypoint.__name__ which may differ
+                # for custom-named or @tool-decorated methods.
+                if _func.entrypoint is not None:
+                    bound = getattr(tool, name, None)
+                    if bound is not None:
+                        _func.entrypoint = bound
                 _func._agent = agent
                 if agent._team is not None:
                     _func._team = agent._team

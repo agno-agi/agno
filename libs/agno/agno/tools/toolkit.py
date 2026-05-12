@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from copy import copy
 from inspect import iscoroutinefunction
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
@@ -344,6 +345,34 @@ class Toolkit:
         Called automatically by the Agent when _requires_connect is True.
         """
         pass
+
+    def _clone_for_run(self) -> "Toolkit":
+        """Shallow-copy this toolkit for per-run state isolation.
+
+        Called by the framework when ``user_id`` is set so each run gets its
+        own mutable state (credentials, service clients, caches).  Shared
+        immutable config (scopes, instructions, db refs) stays referenced.
+
+        Resets ``creds`` and all ``*_service`` handles to ``None`` so the auth
+        decorator re-authenticates for the current user on first tool call.
+        Subclasses may override to reset additional runtime fields.
+        """
+        clone = copy(self)
+        # Reset auth state — forces the decorator to call _auth(user_id)
+        # and _build_service() which rebuilds all service handles.
+        # Use vars() to only reset instance attributes, not properties
+        # (stateless toolkits use @property + contextvars, not instance attrs)
+        if "creds" in vars(clone):
+            setattr(clone, "creds", None)
+        if "service" in vars(clone):
+            setattr(clone, "service", None)
+        # Defense-in-depth: reset secondary service handles (e.g. Slides)
+        # so they can't leak from a previous user even if _build_service
+        # is skipped by a future code change.
+        for attr in list(vars(clone)):
+            if attr.endswith("_service") and attr != "service":
+                setattr(clone, attr, None)
+        return clone
 
     def _check_path(self, file_name: str, base_dir: Path, restrict_to_base_dir: bool = True) -> Tuple[bool, Path]:
         """Check if the file path is within the base directory.

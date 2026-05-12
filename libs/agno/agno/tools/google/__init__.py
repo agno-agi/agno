@@ -1,5 +1,5 @@
 __all__ = [
-    "GoogleAuth",
+    "GoogleOAuthConfig",
     "GoogleSlidesTools",
     "GoogleBigQueryTools",
     "GoogleCalendarTools",
@@ -11,10 +11,10 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    if name == "GoogleAuth":
-        from agno.tools.google.auth import GoogleAuth
+    if name == "GoogleOAuthConfig":
+        from agno.tools.google.auth import GoogleOAuthConfig
 
-        return GoogleAuth
+        return GoogleOAuthConfig
     if name == "GoogleSlidesTools":
         from agno.tools.google.slides import GoogleSlidesTools
 

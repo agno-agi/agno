@@ -13,6 +13,7 @@ def mock_creds():
     creds = MagicMock(spec=Credentials)
     creds.valid = True
     creds.expired = False
+    creds.universe_domain = "googleapis.com"
     return creds
 
 
@@ -29,13 +30,12 @@ def mock_service():
 @pytest.fixture
 def drive_tools(mock_creds, mock_service):
     with (
-        patch("agno.tools.google.drive.build") as mock_build,
-        patch.object(GoogleDriveTools, "_auth", return_value=None),
+        patch("agno.tools.google.base.get_current_service", return_value=mock_service),
+        patch.object(GoogleDriveTools, "_resolve_creds", return_value=mock_creds),
+        patch.object(GoogleDriveTools, "_build_service", return_value=mock_service),
     ):
-        mock_build.return_value = mock_service
-        tools = GoogleDriveTools(creds=mock_creds, auth_port=5050)
-        tools.service = mock_service
-        return tools
+        tools = GoogleDriveTools(creds=mock_creds, oauth_port=5050)
+        yield tools
 
 
 def test_search_files_success(drive_tools):
@@ -52,10 +52,13 @@ def test_search_files_trashed_auto(drive_tools):
 
 def test_search_files_include_trashed(mock_creds, mock_service):
     # include_trashed=True skips the trashed=false filter
-    tools = GoogleDriveTools(creds=mock_creds, include_trashed=True)
-    tools.service = mock_service
-    result = json.loads(tools.search_files(query="name contains 'x'"))
-    assert result["query"] == "name contains 'x'"
+    with (
+        patch("agno.tools.google.drive.authenticate", lambda func: func),
+        patch("agno.tools.google.base.get_current_service", return_value=mock_service),
+    ):
+        tools = GoogleDriveTools(creds=mock_creds, include_trashed=True)
+        result = json.loads(tools.search_files(query="name contains 'x'"))
+        assert result["query"] == "name contains 'x'"
 
 
 def test_search_files_no_query(drive_tools):
@@ -281,20 +284,14 @@ def test_download_file_error(tmp_path, drive_tools):
 
 
 def test_init_scope_inference_readonly(mock_creds):
-    with (
-        patch("agno.tools.google.drive.build"),
-        patch.object(GoogleDriveTools, "_auth", return_value=None),
-    ):
+    with patch("agno.tools.google.drive.authenticate", lambda func: func):
         tools = GoogleDriveTools(creds=mock_creds, upload_file=False)
     assert "https://www.googleapis.com/auth/drive.readonly" in tools.scopes
     assert "https://www.googleapis.com/auth/drive.file" not in tools.scopes
 
 
 def test_init_scope_inference_write(mock_creds):
-    with (
-        patch("agno.tools.google.drive.build"),
-        patch.object(GoogleDriveTools, "_auth", return_value=None),
-    ):
+    with patch("agno.tools.google.drive.authenticate", lambda func: func):
         tools = GoogleDriveTools(creds=mock_creds, upload_file=True)
     assert "https://www.googleapis.com/auth/drive.readonly" in tools.scopes
     assert "https://www.googleapis.com/auth/drive.file" in tools.scopes
@@ -302,20 +299,19 @@ def test_init_scope_inference_write(mock_creds):
 
 def test_service_account_auth():
     with (
-        patch("agno.tools.google.drive.build"),
-        patch("agno.tools.google.drive.ServiceAccountCredentials") as mock_sa,
-        patch("agno.tools.google.drive.Request"),
+        patch("google.oauth2.service_account.Credentials") as mock_sa,
+        patch("google.auth.transport.requests.Request"),
+        patch("agno.tools.google.drive.authenticate", lambda func: func),
     ):
         mock_creds = MagicMock()
         mock_creds.valid = True
+        mock_creds.expired = False
         mock_sa.from_service_account_file.return_value = mock_creds
-        mock_creds.with_subject.return_value = mock_creds
 
         tools = GoogleDriveTools(service_account_path="/fake/sa.json", delegated_user="user@example.com")
-        tools._auth()
+        tools._resolve_creds()
 
         mock_sa.from_service_account_file.assert_called_once()
-        mock_creds.with_subject.assert_called_once_with("user@example.com")
 
 
 # ---------------------------------------------------------------------------
@@ -331,8 +327,7 @@ def test_service_account_auth():
 def test_init_read_scope_mismatch(mock_creds):
     # A scope that's not in any of read/write/full candidates
     with (
-        patch("agno.tools.google.drive.build"),
-        patch.object(GoogleDriveTools, "_auth", return_value=None),
+        patch("agno.tools.google.drive.authenticate", lambda func: func),
         pytest.raises(ValueError, match="read scope"),
     ):
         GoogleDriveTools(creds=mock_creds, scopes=["https://www.googleapis.com/auth/gmail.readonly"], read_file=True)
@@ -340,8 +335,7 @@ def test_init_read_scope_mismatch(mock_creds):
 
 def test_init_write_scope_mismatch(mock_creds):
     with (
-        patch("agno.tools.google.drive.build"),
-        patch.object(GoogleDriveTools, "_auth", return_value=None),
+        patch("agno.tools.google.drive.authenticate", lambda func: func),
         pytest.raises(ValueError, match="write scope"),
     ):
         GoogleDriveTools(
@@ -360,14 +354,9 @@ def test_init_write_scope_mismatch(mock_creds):
 
 
 def test_auth_failure_returns_json(mock_creds, mock_service):
-    with (
-        patch("agno.tools.google.drive.build") as mock_build,
-        patch.object(GoogleDriveTools, "_auth", side_effect=RuntimeError("token expired")),
-    ):
-        mock_build.return_value = mock_service
-        tools = GoogleDriveTools(creds=mock_creds, auth_port=5050)
-        tools.creds = MagicMock(valid=False)
-        tools.service = None
+    # Stateless: decorator catches _resolve_creds errors and returns JSON
+    tools = GoogleDriveTools(creds=mock_creds, oauth_port=5050)
+    with patch.object(tools, "_resolve_creds", side_effect=RuntimeError("token expired")):
         result = json.loads(tools.search_files())
     assert "error" in result
     assert "authentication failed" in result["error"].lower()
@@ -620,17 +609,18 @@ async def test_async_download_file(tmp_path, drive_tools):
 
 def test_service_account_no_delegated_user():
     with (
-        patch("agno.tools.google.drive.build"),
-        patch("agno.tools.google.drive.ServiceAccountCredentials") as mock_sa,
-        patch("agno.tools.google.drive.Request"),
+        patch("google.oauth2.service_account.Credentials") as mock_sa,
+        patch("google.auth.transport.requests.Request"),
+        patch("agno.tools.google.drive.authenticate", lambda func: func),
         patch.dict("os.environ", {"GOOGLE_DELEGATED_USER": ""}, clear=False),
     ):
         mock_creds = MagicMock()
         mock_creds.valid = True
+        mock_creds.expired = False
         mock_sa.from_service_account_file.return_value = mock_creds
 
         tools = GoogleDriveTools(service_account_path="/fake/sa.json")
-        tools._auth()
+        tools._resolve_creds()
 
         mock_sa.from_service_account_file.assert_called_once()
         mock_creds.with_subject.assert_not_called()
@@ -644,18 +634,17 @@ def test_service_account_no_delegated_user():
 @pytest.fixture
 def all_drives_tools(mock_creds, mock_service):
     with (
-        patch("agno.tools.google.drive.build") as mock_build,
-        patch.object(GoogleDriveTools, "_auth", return_value=None),
+        patch("agno.tools.google.base.get_current_service", return_value=mock_service),
+        patch.object(GoogleDriveTools, "_resolve_creds", return_value=mock_creds),
+        patch.object(GoogleDriveTools, "_build_service", return_value=mock_service),
     ):
-        mock_build.return_value = mock_service
         tools = GoogleDriveTools(
             creds=mock_creds,
             corpora="allDrives",
             supports_all_drives=True,
             include_items_from_all_drives=True,
         )
-        tools.service = mock_service
-        return tools
+        yield tools
 
 
 def test_all_drives_search_files_passes_all_drives_flags(all_drives_tools):
@@ -715,12 +704,11 @@ def test_all_drives_read_file_passes_supports_all_drives(all_drives_tools):
 def test_download_bytes_method(mock_creds, mock_service):
     """GoogleDriveTools._download_bytes correctly downloads bytes from MediaIoBaseDownload."""
     with (
-        patch("agno.tools.google.drive.build") as mock_build,
-        patch.object(GoogleDriveTools, "_auth", return_value=None),
+        patch("agno.tools.google.base.get_current_service", return_value=mock_service),
+        patch.object(GoogleDriveTools, "_resolve_creds", return_value=mock_creds),
+        patch.object(GoogleDriveTools, "_build_service", return_value=mock_service),
     ):
-        mock_build.return_value = mock_service
         tools = GoogleDriveTools(creds=mock_creds)
-        tools.service = mock_service
 
     mock_request = MagicMock()
     mock_downloader = MagicMock()
