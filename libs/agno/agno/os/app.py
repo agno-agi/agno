@@ -760,6 +760,10 @@ class AgentOS:
         self._auto_discover_databases()
         self._auto_discover_knowledge_instances()
 
+        # Auto-mount Google OAuth routers when GoogleOAuthTools is detected
+        for router in self._discover_oauth_routers():
+            self._add_router(fastapi_app, router)
+
         routers = [
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
@@ -1021,6 +1025,59 @@ class AgentOS:
             "workflows": workflow_ids,
             "interfaces": [interface.type for interface in self.interfaces] if self.interfaces else None,
         }
+
+    def _discover_oauth_routers(self) -> List[APIRouter]:
+        """Find GoogleOAuthTools in agents and return their OAuth callback routers.
+
+        When GoogleOAuthTools is present in an agent's tools, this auto-mounts the
+        /google/oauth/callback endpoint so users don't need to manually call
+        `app.include_router(oauth_config.get_oauth_router(db=db))`.
+        """
+        routers: List[APIRouter] = []
+        seen_configs: set = set()
+
+        try:
+            from agno.tools.google.auth import GoogleOAuthConfig
+            from agno.tools.google.oauth_tools import GoogleOAuthTools
+        except ImportError:
+            return routers
+
+        for agent in self._agents:
+            if not agent.tools or not isinstance(agent.tools, list):
+                continue
+
+            for tool in agent.tools:
+                if not isinstance(tool, GoogleOAuthTools):
+                    continue
+
+                oauth_config = getattr(tool, "oauth_config", None)
+                # Auto-create config from env vars if not provided
+                if oauth_config is None:
+                    oauth_config = GoogleOAuthConfig()
+                    tool.oauth_config = oauth_config
+
+                # Deduplicate by config object identity
+                if id(oauth_config) in seen_configs:
+                    continue
+                seen_configs.add(id(oauth_config))
+
+                # Resolve DB: agent.db or AgentOS.db
+                db = agent.db or self.db
+                if db is None:
+                    log_warning(
+                        "GoogleOAuthTools found but no db available for OAuth router. "
+                        "Set agent.db or AgentOS(db=...) to enable OAuth callback."
+                    )
+                    continue
+
+                try:
+                    router = oauth_config.get_oauth_router(db=db)
+                    routers.append(router)
+                    log_info("Auto-mounted Google OAuth router at /google/oauth/callback")
+                except Exception as e:
+                    log_warning(f"Failed to auto-mount OAuth router: {e}")
+
+        return routers
 
     def _auto_discover_databases(self) -> None:
         """Auto-discover and initialize the databases used by all contextual agents, teams and workflows."""

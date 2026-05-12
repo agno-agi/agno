@@ -51,6 +51,9 @@ class BaseDb(ABC):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
+        auth_tokens_table: Optional[str] = None,
+        encrypt_auth_tokens: Optional[bool] = None,
+        auth_token_encryption_key: Optional[str] = None,
         id: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
@@ -70,6 +73,9 @@ class BaseDb(ABC):
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.approvals_table_name = approvals_table or "agno_approvals"
+        self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
+        self.encrypt_auth_tokens = encrypt_auth_tokens
+        self.auth_token_encryption_key = auth_token_encryption_key
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -93,6 +99,9 @@ class BaseDb(ABC):
             "schedules_table": self.schedules_table_name,
             "schedule_runs_table": self.schedule_runs_table_name,
             "approvals_table": self.approvals_table_name,
+            "auth_tokens_table": self.auth_tokens_table_name,
+            "encrypt_auth_tokens": self.encrypt_auth_tokens,
+            "auth_token_encryption_key": self.auth_token_encryption_key,
         }
 
     @classmethod
@@ -117,6 +126,9 @@ class BaseDb(ABC):
             schedules_table=data.get("schedules_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
             approvals_table=data.get("approvals_table"),
+            auth_tokens_table=data.get("auth_tokens_table"),
+            encrypt_auth_tokens=data.get("encrypt_auth_tokens"),
+            auth_token_encryption_key=data.get("auth_token_encryption_key"),
             id=data.get("id"),
         )
 
@@ -1097,6 +1109,54 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
+    # --- Auth Tokens (Optional) ---
+
+    @staticmethod
+    def _validate_auth_token_payload(token: Dict[str, Any]) -> None:
+        """Fail fast with a readable message when the token dict is missing required fields.
+
+        Without this, missing fields surface as opaque SQLAlchemy IntegrityErrors
+        (NOT NULL violations) that don't name the missing column.
+        """
+        required = {"provider", "service", "token_data"}
+        missing = required - set(token)
+        if missing:
+            raise ValueError(f"Auth token missing required fields: {sorted(missing)}")
+        if not isinstance(token["token_data"], dict):
+            raise ValueError("Auth token 'token_data' must be a dict")
+
+    def _should_encrypt_auth_tokens(self) -> bool:
+        """Check if auth token encryption is enabled (param or env var)."""
+        import os
+
+        if self.encrypt_auth_tokens is not None:
+            return self.encrypt_auth_tokens
+        return os.getenv("AGNO_AUTH_TOKEN_ENCRYPTION", "false").lower() == "true"
+
+    def _encrypt_token_data(self, token_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Encrypt token_data if encryption is enabled."""
+        if not self._should_encrypt_auth_tokens():
+            return token_data
+
+        from agno.utils.encryption import encrypt_dict
+
+        return encrypt_dict(token_data, key=self.auth_token_encryption_key)
+
+    def _decrypt_token_data(self, token_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Decrypt token_data if encrypted (passes through if plaintext)."""
+        from agno.utils.encryption import decrypt_dict
+
+        return decrypt_dict(token_data, key=self.auth_token_encryption_key)
+
+    def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError
+
+    def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
+        raise NotImplementedError
+
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
@@ -1117,6 +1177,7 @@ class AsyncBaseDb(ABC):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
+        auth_tokens_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
@@ -1132,6 +1193,7 @@ class AsyncBaseDb(ABC):
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.approvals_table_name = approvals_table or "agno_approvals"
+        self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""
@@ -1812,3 +1874,8 @@ class AsyncBaseDb(ABC):
             Number of approvals updated.
         """
         raise NotImplementedError
+
+    # Async auth-token CRUD is deliberately not part of AsyncBaseDb. All OAuth
+    # token callers (agno.tools.google.auth) invoke these synchronously, so
+    # routing them through an async backend would return unawaited coroutines.
+    # Use sync PostgresDb / SqliteDb for OAuth token storage.

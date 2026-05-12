@@ -68,6 +68,7 @@ class SqliteDb(BaseDb):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
+        auth_tokens_table: Optional[str] = None,
         id: Optional[str] = None,
     ):
         """
@@ -98,6 +99,7 @@ class SqliteDb(BaseDb):
             learnings_table (Optional[str]): Name of the table to store learning records.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
+            auth_tokens_table (Optional[str]): Name of the table to store OAuth tokens.
             id (Optional[str]): ID of the database.
 
         Raises:
@@ -125,6 +127,7 @@ class SqliteDb(BaseDb):
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
             approvals_table=approvals_table,
+            auth_tokens_table=auth_tokens_table,
         )
 
         _engine: Optional[Engine] = db_engine
@@ -184,6 +187,7 @@ class SqliteDb(BaseDb):
             schedules_table=data.get("schedules_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
             approvals_table=data.get("approvals_table"),
+            auth_tokens_table=data.get("auth_tokens_table"),
             id=data.get("id"),
         )
 
@@ -226,6 +230,7 @@ class SqliteDb(BaseDb):
             (self.schedule_runs_table_name, "schedule_runs"),
             (self.approvals_table_name, "approvals"),
         ]
+        # auth_tokens is opt-in via store_token_in_db=True — created lazily on first write
 
         for table_name, table_type in tables_to_create:
             self._get_or_create_table(table_name=table_name, table_type=table_type, create_table_if_not_found=True)
@@ -577,6 +582,14 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.approvals_table
+
+        elif table_type == "auth_tokens":
+            self.auth_tokens_table = self._get_or_create_table(
+                table_name=self.auth_tokens_table_name,
+                table_type="auth_tokens",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.auth_tokens_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -4818,3 +4831,67 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_debug(f"Error updating approval run_status: {e}")
             return 0
+
+    # -- Auth Token methods --
+
+    @staticmethod
+    def _auth_token_id(provider: str, user_id: Optional[str], service: str) -> str:
+        return f"{provider}:{user_id or ''}:{service}"
+
+    def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="auth_tokens")
+            if table is None:
+                return None
+            token_id = self._auth_token_id(provider, user_id, service)
+            with self.Session() as sess:
+                result = sess.execute(select(table).where(table.c.id == token_id)).fetchone()
+                if not result:
+                    return None
+                row = dict(result._mapping)
+                row["token_data"] = self._decrypt_token_data(row["token_data"])
+                return row
+        except Exception as e:
+            log_debug(f"Error getting auth token: {e}")
+            return None
+
+    def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        try:
+            self._validate_auth_token_payload(token)
+            table = self._get_table(table_type="auth_tokens", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create auth_tokens table")
+            data = {**token}
+            data["token_data"] = self._encrypt_token_data(data["token_data"])
+            data["id"] = self._auth_token_id(data["provider"], data.get("user_id"), data["service"])
+            now = int(time.time())
+            data.setdefault("created_at", now)
+            data["updated_at"] = now
+            with self.Session() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(**data)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["id"],
+                    set_={
+                        "token_data": stmt.excluded.token_data,
+                        "granted_scopes": stmt.excluded.granted_scopes,
+                        "updated_at": stmt.excluded.updated_at,
+                    },
+                )
+                sess.execute(stmt)
+            return data
+        except Exception as e:
+            log_error(f"Error upserting auth token: {e}")
+            raise
+
+    def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
+        try:
+            table = self._get_table(table_type="auth_tokens")
+            if table is None:
+                return False
+            token_id = self._auth_token_id(provider, user_id, service)
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.id == token_id))
+                return result.rowcount > 0
+        except Exception as e:
+            log_debug(f"Error deleting auth token: {e}")
+            return False
