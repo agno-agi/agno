@@ -746,7 +746,7 @@ async def aset_session_name_util(
 
     # -*- Generate name for session
     if autogenerate:
-        session_name = entity.generate_session_name(session=session)  # type: ignore
+        session_name = await entity.agenerate_session_name(session=session)  # type: ignore
         log_debug(f"Generated Session Name: {session_name}")
     elif session_name is None:
         raise Exception("No session name provided")
