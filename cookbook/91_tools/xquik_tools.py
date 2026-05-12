@@ -32,7 +32,7 @@ agent = Agent(
         "Use your tools to search and read X (Twitter) content",
         "When presenting search results, highlight the most engaging posts",
         "Include engagement metrics when they add context",
-        "Never post or interact — this toolkit is read-only",
+        "Never post or interact. This toolkit is read-only",
     ],
     tools=[xquik_tools],
 )
@@ -49,6 +49,11 @@ if __name__ == "__main__":
     # # Look up a user profile
     # agent.print_response(
     #     "Get the profile info for @AgnoAgi on X", markdown=True
+    # )
+
+    # # Read recent posts from a user
+    # agent.print_response(
+    #     "Show recent posts from @AgnoAgi on X", markdown=True
     # )
 
     # # Check trending topics

@@ -46,14 +46,50 @@ class TestInit:
         assert tools.api_key == "xk_explicit_key"
 
     def test_init_registers_all_tools(self):
-        """Test that all four tools are registered."""
+        """Test that all five tools are registered."""
         with patch.dict("os.environ", {"XQUIK_API_KEY": "xk_test_key"}):
             tools = XquikTools()
             tool_names = [func.name for func in tools.functions.values()]
             assert "search_posts" in tool_names
             assert "get_user_info" in tool_names
             assert "get_tweet" in tool_names
+            assert "get_user_posts" in tool_names
             assert "get_trends" in tool_names
+
+    def test_init_can_disable_tools(self):
+        """Test that registration flags control individual tools."""
+        tools = XquikTools(
+            api_key="xk_test_key",
+            enable_search_posts=True,
+            enable_get_user_info=False,
+            enable_get_tweet=False,
+            enable_get_user_posts=False,
+            enable_get_trends=False,
+        )
+
+        tool_names = [func.name for func in tools.functions.values()]
+        assert tool_names == ["search_posts"]
+
+    def test_init_all_overrides_disabled_tools(self):
+        """Test that all=True enables every tool."""
+        tools = XquikTools(
+            api_key="xk_test_key",
+            enable_search_posts=False,
+            enable_get_user_info=False,
+            enable_get_tweet=False,
+            enable_get_user_posts=False,
+            enable_get_trends=False,
+            all=True,
+        )
+
+        tool_names = [func.name for func in tools.functions.values()]
+        assert tool_names == [
+            "search_posts",
+            "get_user_info",
+            "get_tweet",
+            "get_user_posts",
+            "get_trends",
+        ]
 
     def test_init_without_key_logs_error(self):
         """Test that missing API key logs an error."""
@@ -64,6 +100,17 @@ class TestInit:
 
 class TestSearchPosts:
     """Tests for the search_posts method."""
+
+    def test_request_uses_api_key_header(self, xquik_tools):
+        """Test that requests use the documented API key header."""
+        mock_data = {"tweets": []}
+
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(mock_data)) as mock_open:
+            xquik_tools.search_posts("hello")
+            request = mock_open.call_args[0][0]
+
+        assert request.headers["X-api-key"] == "xk_test_key"
+        assert request.headers["Accept"] == "application/json"
 
     def test_search_success(self, xquik_tools):
         """Test successful search returns formatted posts."""
@@ -121,17 +168,31 @@ class TestSearchPosts:
         assert "metrics" not in result["posts"][0]
 
     def test_search_clamps_max_results(self, xquik_tools):
-        """Test that max_results is clamped to 10-200 range."""
+        """Test that max_results is clamped to the API maximum."""
         mock_data = {"tweets": []}
 
         with patch("urllib.request.urlopen", return_value=_mock_urlopen(mock_data)) as mock_open:
-            xquik_tools.search_posts("test", max_results=5)
-            call_url = mock_open.call_args[0][0].full_url
-            assert "limit=10" in call_url
-
             xquik_tools.search_posts("test", max_results=500)
             call_url = mock_open.call_args[0][0].full_url
             assert "limit=200" in call_url
+
+    def test_search_rejects_invalid_max_results(self, xquik_tools):
+        """Test that non-positive max_results is rejected before the API call."""
+        with patch("urllib.request.urlopen") as mock_open:
+            result = json.loads(xquik_tools.search_posts("test", max_results=0))
+
+        assert "error" in result
+        assert "greater than 0" in result["error"]
+        mock_open.assert_not_called()
+
+    def test_search_requires_query(self, xquik_tools):
+        """Test that an empty query is rejected before the API call."""
+        with patch("urllib.request.urlopen") as mock_open:
+            result = json.loads(xquik_tools.search_posts(""))
+
+        assert "error" in result
+        assert "query" in result["error"]
+        mock_open.assert_not_called()
 
     def test_search_empty_results(self, xquik_tools):
         """Test search with no results."""
@@ -188,6 +249,16 @@ class TestGetUserInfo:
             assert "/x/users/user" in call_url
             assert "@@" not in call_url
 
+    def test_get_user_encodes_path(self, xquik_tools):
+        """Test that user identifiers are URL encoded."""
+        mock_data = {"id": "1", "name": "User", "username": "user"}
+
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(mock_data)) as mock_open:
+            xquik_tools.get_user_info("team/user")
+            call_url = mock_open.call_args[0][0].full_url
+
+        assert "/x/users/team%2Fuser" in call_url
+
     def test_get_user_error_handling(self, xquik_tools):
         """Test user lookup error returns error JSON."""
         with patch("urllib.request.urlopen", side_effect=Exception("Not found")):
@@ -238,6 +309,62 @@ class TestGetTweet:
         assert "Rate limited" in result["error"]
 
 
+class TestGetUserPosts:
+    """Tests for the get_user_posts method."""
+
+    def test_get_user_posts_success(self, xquik_tools):
+        """Test successful user posts retrieval."""
+        mock_data = {
+            "tweets": [
+                {
+                    "id": "111",
+                    "text": "Latest post",
+                    "createdAt": "2026-04-10T12:00:00Z",
+                    "author": {
+                        "id": "1",
+                        "name": "User",
+                        "username": "user",
+                        "verified": False,
+                    },
+                    "likeCount": 3,
+                }
+            ],
+            "has_next_page": True,
+            "next_cursor": "cursor-1",
+        }
+
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(mock_data)):
+            result = json.loads(xquik_tools.get_user_posts("@user"))
+
+        assert result["username"] == "user"
+        assert result["count"] == 1
+        assert result["posts"][0]["id"] == "111"
+        assert result["posts"][0]["metrics"]["like_count"] == 3
+        assert result["has_next_page"] is True
+        assert result["next_cursor"] == "cursor-1"
+
+    def test_get_user_posts_params(self, xquik_tools):
+        """Test user posts request parameters."""
+        mock_data = {"tweets": []}
+
+        with patch("urllib.request.urlopen", return_value=_mock_urlopen(mock_data)) as mock_open:
+            xquik_tools.get_user_posts("team/user", cursor="abc", include_replies=True)
+            call_url = mock_open.call_args[0][0].full_url
+
+        assert "/x/users/team%2Fuser/tweets" in call_url
+        assert "cursor=abc" in call_url
+        assert "includeReplies=true" in call_url
+        assert "includeParentTweet=false" in call_url
+
+    def test_get_user_posts_error_handling(self, xquik_tools):
+        """Test user posts error returns error JSON."""
+        with patch("urllib.request.urlopen", side_effect=Exception("Unavailable")):
+            result = json.loads(xquik_tools.get_user_posts("user"))
+
+        assert "error" in result
+        assert "Unavailable" in result["error"]
+
+
 class TestGetTrends:
     """Tests for the get_trends method."""
 
@@ -263,6 +390,7 @@ class TestGetTrends:
         with patch("urllib.request.urlopen", return_value=_mock_urlopen(mock_data)) as mock_open:
             xquik_tools.get_trends(woeid=23424977)
             call_url = mock_open.call_args[0][0].full_url
+            assert "/x/trends" in call_url
             assert "woeid=23424977" in call_url
 
     def test_get_trends_clamps_count(self, xquik_tools):
@@ -273,6 +401,15 @@ class TestGetTrends:
             xquik_tools.get_trends(count=100)
             call_url = mock_open.call_args[0][0].full_url
             assert "count=50" in call_url
+
+    def test_get_trends_rejects_invalid_count(self, xquik_tools):
+        """Test that non-positive count is rejected before the API call."""
+        with patch("urllib.request.urlopen") as mock_open:
+            result = json.loads(xquik_tools.get_trends(count=0))
+
+        assert "error" in result
+        assert "greater than 0" in result["error"]
+        mock_open.assert_not_called()
 
     def test_get_trends_error_handling(self, xquik_tools):
         """Test trends error returns error JSON."""
