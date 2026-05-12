@@ -41,6 +41,7 @@ class WorkflowRunEvent(str, Enum):
 
     workflow_started = "WorkflowStarted"
     workflow_completed = "WorkflowCompleted"
+    workflow_paused = "WorkflowPaused"
     workflow_cancelled = "WorkflowCancelled"
     workflow_error = "WorkflowError"
 
@@ -122,6 +123,12 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
         if hasattr(self, "step_executor_runs") and self.step_executor_runs is not None:
             _dict["step_executor_runs"] = [
                 run.to_dict() if hasattr(run, "to_dict") else run for run in self.step_executor_runs
+            ]
+
+        # Handle step_requirements (StepRequirement objects with their own to_dict)
+        if hasattr(self, "step_requirements") and self.step_requirements is not None:
+            _dict["step_requirements"] = [
+                req.to_dict() if hasattr(req, "to_dict") else req for req in self.step_requirements
             ]
 
         if hasattr(self, "step_response") and self.step_response is not None:
@@ -223,6 +230,37 @@ class WorkflowCancelledEvent(BaseWorkflowRunOutputEvent):
 
     @property
     def is_cancelled(self):
+        return True
+
+
+@dataclass
+class WorkflowPausedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when workflow execution pauses (HITL).
+
+    Carries the full paused workflow state so clients can issue a continue
+    without having to merge multiple events. Emitted after the inner
+    step-level pause event (StepPaused / StepExecutorPaused / RouterPaused).
+    """
+
+    event: str = WorkflowRunEvent.workflow_paused.value
+
+    # Pause context (mirrors fields on WorkflowRunOutput)
+    status: Optional[str] = None
+    paused_step_index: Optional[int] = None
+    paused_step_name: Optional[str] = None
+    pause_kind: Optional[Union[PauseKind, str]] = None
+
+    # Active state required to issue a continue
+    step_requirements: Optional[List[StepRequirement]] = None
+    step_results: Optional[List[StepOutput]] = None
+    step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput, "WorkflowRunOutput"]]] = None
+
+    # Convenience fields
+    content: Optional[Any] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    @property
+    def is_paused(self):
         return True
 
 
@@ -562,6 +600,7 @@ WorkflowRunOutputEvent = Union[
     WorkflowAgentStartedEvent,
     WorkflowAgentCompletedEvent,
     WorkflowCompletedEvent,
+    WorkflowPausedEvent,
     WorkflowErrorEvent,
     WorkflowCancelledEvent,
     StepStartedEvent,
@@ -595,6 +634,7 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.workflow_agent_started.value: WorkflowAgentStartedEvent,
     WorkflowRunEvent.workflow_agent_completed.value: WorkflowAgentCompletedEvent,
     WorkflowRunEvent.workflow_completed.value: WorkflowCompletedEvent,
+    WorkflowRunEvent.workflow_paused.value: WorkflowPausedEvent,
     WorkflowRunEvent.workflow_cancelled.value: WorkflowCancelledEvent,
     WorkflowRunEvent.workflow_error.value: WorkflowErrorEvent,
     WorkflowRunEvent.step_started.value: StepStartedEvent,

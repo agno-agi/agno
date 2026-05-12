@@ -527,14 +527,35 @@ async def workflow_response_streamer(
         async for run_response_chunk in run_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
 
-        # If the workflow paused, yield the full WorkflowRunOutput as a final SSE event
-        # so the FE has step_requirements for the /continue request.
+        # If the workflow paused, yield a final WorkflowPausedEvent carrying the
+        # full paused state so the client has step_requirements for /continue.
+        # Also yield the legacy "WorkflowRunOutput" event for backwards compat.
         if isinstance(workflow, RemoteWorkflow):
             return
         _session = workflow.get_session(session_id=session_id)
         if _session and _session.runs:
             _last_run = _session.runs[-1]
             if getattr(_last_run, "is_paused", False):
+                from agno.run.workflow import WorkflowPausedEvent
+
+                paused_event = WorkflowPausedEvent(
+                    run_id=_last_run.run_id or "",
+                    workflow_id=_last_run.workflow_id,
+                    workflow_name=_last_run.workflow_name,
+                    session_id=_last_run.session_id,
+                    status=_last_run.status.value if hasattr(_last_run.status, "value") else _last_run.status,
+                    paused_step_index=_last_run.paused_step_index,
+                    paused_step_name=_last_run.paused_step_name,
+                    pause_kind=_last_run.pause_kind,
+                    step_requirements=_last_run.step_requirements,
+                    step_results=_last_run.step_results,
+                    step_executor_runs=_last_run.step_executor_runs,
+                    content=_last_run.content,
+                    metadata=_last_run.metadata,
+                )
+                yield format_sse_event(paused_event)
+
+                # Legacy WorkflowRunOutput event for backwards compatibility
                 run_dict = _last_run.to_dict()
                 run_json = json.dumps(run_dict, default=json_serializer, separators=(",", ":"))
                 yield f"event: WorkflowRunOutput\ndata: {run_json}\n\n"
@@ -651,11 +672,33 @@ async def workflow_continue_response_streamer(
         async for run_response_chunk in run_response:
             yield format_sse_event(run_response_chunk)  # type: ignore
 
-        # If the workflow re-paused, yield the full WorkflowRunOutput as a final SSE event
+        # If the workflow re-paused, yield WorkflowPausedEvent as the new clean
+        # snapshot event. Also yield the legacy "WorkflowRunOutput" event for
+        # backwards compatibility.
         _session = workflow.get_session(session_id=session_id)
         if _session and _session.runs:
             _last_run = _session.runs[-1]
             if getattr(_last_run, "is_paused", False):
+                from agno.run.workflow import WorkflowPausedEvent
+
+                paused_event = WorkflowPausedEvent(
+                    run_id=_last_run.run_id or "",
+                    workflow_id=_last_run.workflow_id,
+                    workflow_name=_last_run.workflow_name,
+                    session_id=_last_run.session_id,
+                    status=_last_run.status.value if hasattr(_last_run.status, "value") else _last_run.status,
+                    paused_step_index=_last_run.paused_step_index,
+                    paused_step_name=_last_run.paused_step_name,
+                    pause_kind=_last_run.pause_kind,
+                    step_requirements=_last_run.step_requirements,
+                    step_results=_last_run.step_results,
+                    step_executor_runs=_last_run.step_executor_runs,
+                    content=_last_run.content,
+                    metadata=_last_run.metadata,
+                )
+                yield format_sse_event(paused_event)
+
+                # Legacy WorkflowRunOutput event for backwards compatibility
                 run_dict = _last_run.to_dict()
                 run_json = json.dumps(run_dict, default=json_serializer, separators=(",", ":"))
                 yield f"event: WorkflowRunOutput\ndata: {run_json}\n\n"

@@ -61,6 +61,7 @@ from agno.run.workflow import (
     StepOutputReviewEvent,
     WorkflowCancelledEvent,
     WorkflowCompletedEvent,
+    WorkflowPausedEvent,
     WorkflowRunEvent,
     WorkflowRunOutput,
     WorkflowRunOutputEvent,
@@ -3923,16 +3924,28 @@ class Workflow:
 
                 log_debug(f"Background streaming execution completed with status: {workflow_run_response.status}")
 
-                # If the workflow paused, send the full WorkflowRunOutput over the WebSocket
-                # so the client has step_requirements for the continue request.
-                if workflow_run_response.is_paused and websocket_handler and websocket_handler.websocket:
-                    import json
-
-                    from agno.utils.serialize import json_serializer
-
-                    run_dict = workflow_run_response.to_dict()
-                    run_dict["event"] = "WorkflowRunOutput"
-                    await websocket_handler.websocket.send_text(json.dumps(run_dict, default=json_serializer))
+                # If the workflow paused, emit a WorkflowPausedEvent carrying the
+                # full paused state so the client has step_requirements for the
+                # continue request.
+                if workflow_run_response.is_paused:
+                    paused_event = WorkflowPausedEvent(
+                        run_id=workflow_run_response.run_id or "",
+                        workflow_id=workflow_run_response.workflow_id,
+                        workflow_name=workflow_run_response.workflow_name,
+                        session_id=workflow_run_response.session_id,
+                        status=workflow_run_response.status.value
+                        if hasattr(workflow_run_response.status, "value")
+                        else workflow_run_response.status,
+                        paused_step_index=workflow_run_response.paused_step_index,
+                        paused_step_name=workflow_run_response.paused_step_name,
+                        pause_kind=workflow_run_response.pause_kind,
+                        step_requirements=workflow_run_response.step_requirements,
+                        step_results=workflow_run_response.step_results,
+                        step_executor_runs=workflow_run_response.step_executor_runs,
+                        content=workflow_run_response.content,
+                        metadata=workflow_run_response.metadata,
+                    )
+                    self._handle_event(paused_event, workflow_run_response, websocket_handler=websocket_handler)
 
                 # Update event buffer status so reconnecting clients know the run is paused
                 if workflow_run_response.is_paused and workflow_run_response.run_id:
@@ -8662,16 +8675,27 @@ class Workflow:
 
                 log_debug(f"Background continue streaming completed with status: {workflow_run_response.status}")
 
-                # If the workflow re-paused, send the full WorkflowRunOutput over the WebSocket
-                # so the client has step_requirements for the next continue request.
-                if workflow_run_response.is_paused and websocket_handler and websocket_handler.websocket:
-                    import json
-
-                    from agno.utils.serialize import json_serializer
-
-                    run_dict = workflow_run_response.to_dict()
-                    run_dict["event"] = "WorkflowRunOutput"
-                    await websocket_handler.websocket.send_text(json.dumps(run_dict, default=json_serializer))
+                # If the workflow re-paused, emit a WorkflowPausedEvent carrying the
+                # full paused state.
+                if workflow_run_response.is_paused:
+                    paused_event = WorkflowPausedEvent(
+                        run_id=workflow_run_response.run_id or "",
+                        workflow_id=workflow_run_response.workflow_id,
+                        workflow_name=workflow_run_response.workflow_name,
+                        session_id=workflow_run_response.session_id,
+                        status=workflow_run_response.status.value
+                        if hasattr(workflow_run_response.status, "value")
+                        else workflow_run_response.status,
+                        paused_step_index=workflow_run_response.paused_step_index,
+                        paused_step_name=workflow_run_response.paused_step_name,
+                        pause_kind=workflow_run_response.pause_kind,
+                        step_requirements=workflow_run_response.step_requirements,
+                        step_results=workflow_run_response.step_results,
+                        step_executor_runs=workflow_run_response.step_executor_runs,
+                        content=workflow_run_response.content,
+                        metadata=workflow_run_response.metadata,
+                    )
+                    self._handle_event(paused_event, workflow_run_response, websocket_handler=websocket_handler)
 
             except Exception as e:
                 logger.exception("Background continue streaming workflow execution failed")
