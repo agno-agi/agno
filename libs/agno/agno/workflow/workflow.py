@@ -5509,6 +5509,7 @@ class Workflow:
                             session_id=workflow_run_response.session_id,
                             step_name=step_name,
                             step_index=i,
+                            step_id=getattr(step, "step_id", None),
                             executor_name=executor_step_req.executor_name,
                             executor_type=executor_step_req.executor_type,
                         ),
@@ -5764,6 +5765,7 @@ class Workflow:
                             session_id=workflow_run_response.session_id,
                             step_name=step_name,
                             step_index=i,
+                            step_id=getattr(step, "step_id", None),
                         ),
                         workflow_run_response,
                     )
@@ -6293,6 +6295,7 @@ class Workflow:
                             session_id=workflow_run_response.session_id,
                             step_name=step_name,
                             step_index=i,
+                            step_id=getattr(step, "step_id", None),
                             executor_name=executor_step_req.executor_name,
                             executor_type=executor_step_req.executor_type,
                         ),
@@ -6641,6 +6644,7 @@ class Workflow:
                             session_id=workflow_run_response.session_id,
                             step_name=step_name,
                             step_index=i,
+                            step_id=getattr(step, "step_id", None),
                         ),
                         workflow_run_response,
                     )
@@ -7444,6 +7448,7 @@ class Workflow:
                             session_id=workflow_run_response.session_id,
                             step_name=step_name,
                             step_index=i,
+                            step_id=getattr(step, "step_id", None),
                             executor_name=executor_step_req.executor_name,
                             executor_type=executor_step_req.executor_type,
                         ),
@@ -7686,6 +7691,7 @@ class Workflow:
                             session_id=workflow_run_response.session_id,
                             step_name=step_name,
                             step_index=i,
+                            step_id=getattr(step, "step_id", None),
                         ),
                         workflow_run_response,
                     )
@@ -7947,6 +7953,7 @@ class Workflow:
                             session_id=workflow_run_response.session_id,
                             step_name=step_name,
                             step_index=i,
+                            step_id=getattr(step, "step_id", None),
                             executor_name=executor_step_req.executor_name,
                             executor_type=executor_step_req.executor_type,
                         ),
@@ -8310,6 +8317,7 @@ class Workflow:
                             session_id=workflow_run_response.session_id,
                             step_name=step_name,
                             step_index=i,
+                            step_id=getattr(step, "step_id", None),
                         ),
                         workflow_run_response,
                         websocket_handler=websocket_handler,
@@ -9938,6 +9946,7 @@ class Workflow:
                 )
             # Copy Step configuration attributes
             for attr in [
+                "step_id",
                 "max_retries",
                 "timeout_seconds",
                 "skip_on_failure",
