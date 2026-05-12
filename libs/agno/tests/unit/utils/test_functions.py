@@ -118,7 +118,7 @@ def test_get_function_call_argument(sample_functions):
         "param1": None,
         "param2": True,
         "param3": False,
-        "param4": "test",
+        "param4": "  test  ",  # whitespace preserved
     }
 
 
@@ -177,3 +177,72 @@ def test_get_function_call_no_arguments(sample_functions):
     assert result is not None
     assert result.arguments is None
     assert result.error is None
+
+
+def test_get_function_call_preserves_leading_trailing_whitespace(sample_functions):
+    """String arguments with surrounding whitespace must be passed through unchanged.
+
+    Regression test for #7871: get_function_call used to call .strip() on the
+    final string value, silently destroying intentional leading/trailing spaces
+    and newlines (e.g. arguments to string-replace tools).
+    """
+    arguments = json.dumps({"param1": "  leading and trailing  "})
+    result = get_function_call(
+        name="test_function",
+        arguments=arguments,
+        functions=sample_functions,
+    )
+    assert result is not None
+    assert result.error is None
+    assert result.arguments == {"param1": "  leading and trailing  "}
+
+
+def test_get_function_call_preserves_newlines_in_arguments(sample_functions):
+    """Newlines inside string arguments must survive get_function_call unchanged.
+
+    Tools that search/replace multi-line content (e.g. consecutive blank lines)
+    pass newline-only strings like "
+
+
+" as arguments.  Before #7871 these
+    were silently stripped to "", causing the tool to fail with a confusing
+    empty-string error.
+    """
+    arguments = json.dumps({"param1": "
+
+
+"})
+    result = get_function_call(
+        name="test_function",
+        arguments=arguments,
+        functions=sample_functions,
+    )
+    assert result is not None
+    assert result.error is None
+    assert result.arguments == {"param1": "
+
+
+"}
+
+
+def test_get_function_call_coercion_still_works_with_surrounding_whitespace(sample_functions):
+    """Type coercion (None/True/False) still works even when the string has surrounding
+    whitespace — the coercion uses a stripped+lowercased copy, not the original value.
+    """
+    arguments = json.dumps({
+        "param1": "  None  ",
+        "param2": " True ",
+        "param3": " false ",
+    })
+    result = get_function_call(
+        name="test_function",
+        arguments=arguments,
+        functions=sample_functions,
+    )
+    assert result is not None
+    assert result.error is None
+    assert result.arguments == {
+        "param1": None,
+        "param2": True,
+        "param3": False,
+    }
