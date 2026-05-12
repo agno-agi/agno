@@ -36,9 +36,7 @@ from agno.workflow import RemoteWorkflow, Workflow
 try:
     from telebot.async_telebot import AsyncTeleBot
 except ImportError as e:
-    raise ImportError(
-        "`pyTelegramBotAPI` not installed. Please install using `pip install 'agno[telegram]'`"
-    ) from e
+    raise ImportError("`pyTelegramBotAPI` not installed. Please install using `pip install 'agno[telegram]'`") from e
 
 _TG_GROUP_CHAT_TYPES = {"group", "supergroup"}
 
@@ -76,6 +74,7 @@ class TelegramMessageProcessor:
         commands: Optional[List[dict]] = None,
         register_commands: bool = True,
         new_message: str = "New conversation started. How can I help you?",
+        quoted_responses: bool = False,
     ):
         if entity_type not in ("agent", "team", "workflow"):
             raise ValueError(f"entity_type must be one of 'agent', 'team', 'workflow', got '{entity_type}'")
@@ -92,6 +91,7 @@ class TelegramMessageProcessor:
         self.new_message = new_message
         self.commands = commands
         self.register_commands = register_commands
+        self.quoted_responses = quoted_responses
 
         entity_id = getattr(entity, "id", None) or getattr(entity, "name", None) or entity_type
         session_config = build_session_store_config(entity, entity_type)
@@ -171,7 +171,6 @@ class TelegramMessageProcessor:
         chat_id: int,
         reply_to: Optional[int],
         message_thread_id: Optional[int],
-        is_private: bool = False,
     ) -> None:
         is_workflow = self.entity_type == "workflow"
         stream_kwargs: dict = dict(stream=True, stream_events=True, **run_kwargs)
@@ -342,13 +341,11 @@ class TelegramMessageProcessor:
             log_info(f"Processing message from user {user_id}")
             log_debug(f"Message content: {message_text}")
 
-            reply_to = incoming_message_id if is_group else None
+            reply_to = incoming_message_id if (is_group or self.quoted_responses) else None
             run_kwargs = dict(user_id=user_id, session_id=session_id, **extracted)
 
             if self.streaming:
-                await self._stream_response(
-                    message_text, run_kwargs, chat_id, reply_to, message_thread_id, is_private=not is_group
-                )
+                await self._stream_response(message_text, run_kwargs, chat_id, reply_to, message_thread_id)
             else:
                 await self._sync_response(message_text, run_kwargs, chat_id, reply_to, message_thread_id)
 
