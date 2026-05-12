@@ -14,6 +14,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
+
 from agno.os.middleware.jwt import JWTMiddleware
 from agno.os.scopes import AgentOSScope
 from agno.os.utils import resolve_ws_jwt_config
@@ -232,3 +234,91 @@ class TestAdminScopeDefault:
 
     def test_default_admin_scope_value(self):
         assert AgentOSScope.ADMIN.value == "agent_os:admin"
+
+
+class TestManualSetupHttpFirstPreservesWsConfig:
+    """Regression: manual ``app.add_middleware(JWTMiddleware, ...)`` setups
+    cache JWT auth config on ``app.state`` lazily inside the middleware's
+    ``dispatch``. If an HTTP request fires before a WebSocket connection,
+    ``dispatch`` must cache ALL the WS-relevant fields together — not just
+    ``jwt_validator`` — otherwise ``resolve_ws_jwt_config`` returns early on
+    the AgentOS-path branch and silently drops ``verify_audience``,
+    ``audience``, ``admin_scope`` and ``user_isolation``.
+    """
+
+    @pytest.fixture
+    def manual_setup(self):
+        from agno.os.middleware.jwt import JWTMiddleware
+
+        # Construct the middleware exactly the way ``app.add_middleware`` would
+        # instantiate it. ``app=None`` is fine because we never invoke the
+        # next-app callable here — we only exercise the state-caching prelude.
+        middleware = JWTMiddleware(
+            app=None,
+            verification_keys=["test-secret"],
+            algorithm="HS256",
+            verify_audience=True,
+            audience="manual-os",
+            admin_scope="ops:admin",
+            user_isolation=True,
+        )
+        return middleware
+
+    @pytest.mark.asyncio
+    async def test_dispatch_caches_full_ws_config_then_resolver_preserves_it(self, manual_setup):
+        from datetime import UTC, datetime, timedelta
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        import jwt
+
+        token = jwt.encode(
+            {
+                "sub": "u",
+                "scopes": [],
+                "aud": "manual-os",
+                "exp": datetime.now(UTC) + timedelta(minutes=5),
+            },
+            "test-secret",
+            algorithm="HS256",
+        )
+        request = MagicMock()
+        request.url = SimpleNamespace(path="/some/path")
+        request.method = "GET"
+        request.headers = {"Authorization": f"Bearer {token}", "origin": None}
+        request.cookies = {}
+        # The real FastAPI app object — that's what user_middleware is
+        # attached to. We need a stand-in with both ``state`` and the empty
+        # ``user_middleware`` list the resolver walks if app.state is bare.
+        fake_app = MagicMock()
+        fake_app.state = SimpleNamespace()
+        fake_app.user_middleware = []
+        request.app = fake_app
+
+        from agno.os.middleware.jwt import JWTMiddleware as _MwClass  # noqa: F401
+
+        # Make the request.state writable like real Starlette state.
+        class _State:
+            pass
+
+        request.state = _State()
+
+        call_next = AsyncMock(return_value=MagicMock(status_code=200))
+        await manual_setup.dispatch(request, call_next)
+
+        # All the WS-relevant fields must now be on app.state, not just the validator.
+        assert fake_app.state.jwt_validator is manual_setup.validator
+        assert fake_app.state.jwt_verify_audience is True
+        assert fake_app.state.jwt_audience == "manual-os"
+        assert fake_app.state.admin_scope == "ops:admin"
+        assert fake_app.state.user_isolation_enabled is True
+
+        # A subsequent WebSocket connection routes through resolve_ws_jwt_config.
+        # It must take the AgentOS-path (validator already on app.state) and
+        # return the full set of values rather than silently defaulting.
+        cfg = resolve_ws_jwt_config(fake_app)
+        assert cfg["validator"] is manual_setup.validator
+        assert cfg["verify_audience"] is True
+        assert cfg["audience"] == "manual-os"
+        assert cfg["admin_scope"] == "ops:admin"
+        assert cfg["user_isolation"] is True

@@ -674,12 +674,23 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process the request: extract JWT, validate, and check RBAC scopes."""
-        # Ensure the JWTValidator is accessible on app.state for WebSocket endpoints
-        # and other components that need JWT validation outside the middleware chain.
-        # This handles both built-in (AgentOS authorization=True) and manual
+        # Ensure the JWT auth config is accessible on app.state for WebSocket
+        # endpoints (which don't flow through this middleware) and any other
+        # components that need it outside the middleware chain. This handles
+        # both built-in (AgentOS authorization=True) and manual
         # (app.add_middleware(JWTMiddleware, ...)) setup paths.
+        #
+        # All these values must be cached together: resolve_ws_jwt_config
+        # returns early once it sees ``jwt_validator``, so without the
+        # companion fields a manual-setup WebSocket connection arriving after
+        # the first HTTP request would silently drop verify_audience, the
+        # custom admin scope, and the user_isolation flag.
         if not getattr(request.app.state, "jwt_validator", None):
             request.app.state.jwt_validator = self.validator
+            request.app.state.jwt_verify_audience = self.verify_audience
+            request.app.state.jwt_audience = self.audience
+            request.app.state.admin_scope = self.admin_scope
+            request.app.state.user_isolation_enabled = self.user_isolation
 
         path = request.url.path
         method = request.method
