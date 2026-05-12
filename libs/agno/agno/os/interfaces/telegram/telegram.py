@@ -33,10 +33,9 @@ class Telegram(BaseInterface):
         agent: Optional[Union[Agent, RemoteAgent]] = None,
         team: Optional[Union[Team, RemoteTeam]] = None,
         workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
-        token: Optional[str] = None,
-        mode: Literal["webhook", "polling"] = "webhook",
         prefix: str = "/telegram",
         tags: Optional[List[str]] = None,
+        token: Optional[str] = None,
         reply_to_mentions_only: bool = True,
         reply_to_bot_messages: bool = True,
         start_message: str = DEFAULT_START_MESSAGE,
@@ -48,14 +47,14 @@ class Telegram(BaseInterface):
         register_commands: bool = True,
         new_message: str = DEFAULT_NEW_MESSAGE,
         quoted_responses: bool = False,
+        mode: Literal["webhook", "polling"] = "webhook",
     ):
         self.agent = agent
         self.team = team
         self.workflow = workflow
-        self.token = token
-        self.mode = mode
         self.prefix = prefix
         self.tags = tags or ["Telegram"]
+        self.token = token
         self.reply_to_mentions_only = reply_to_mentions_only
         self.reply_to_bot_messages = reply_to_bot_messages
         self.start_message = start_message
@@ -67,6 +66,7 @@ class Telegram(BaseInterface):
         self.register_commands = register_commands
         self.new_message = new_message
         self.quoted_responses = quoted_responses
+        self.mode = mode
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("Telegram requires an agent, team, or workflow")
@@ -79,16 +79,15 @@ class Telegram(BaseInterface):
             from agno.os.interfaces.telegram.processor import TelegramMessageProcessor
 
             entity = self.agent or self.team or self.workflow
+            assert entity is not None  # __init__ guarantees one of agent/team/workflow is set
             entity_type = "agent" if self.agent else "team" if self.team else "workflow"
 
             # Resolve token: explicit param → env var
             token = self.token or os.environ.get("TELEGRAM_TOKEN")
             if not token:
-                raise ValueError(
-                    "TELEGRAM_TOKEN is not set. Pass token='...' or set the TELEGRAM_TOKEN env var."
-                )
+                raise ValueError("TELEGRAM_TOKEN is not set. Pass token='...' or set the TELEGRAM_TOKEN env var.")
 
-            self._processor = TelegramMessageProcessor(
+            self._processor = TelegramMessageProcessor(  # type: ignore[assignment]
                 entity=entity,
                 entity_type=entity_type,
                 token=token,
@@ -102,6 +101,7 @@ class Telegram(BaseInterface):
                 commands=self.commands,
                 register_commands=self.register_commands,
                 new_message=self.new_message,
+                quoted_responses=self.quoted_responses,
             )
         return self._processor
 
@@ -109,11 +109,10 @@ class Telegram(BaseInterface):
         """Build and return a FastAPI APIRouter for webhook mode."""
         if self.mode == "polling":
             raise RuntimeError(
-                "Telegram interface is configured for polling mode. "
-                "Use start_polling() instead of mounting a router."
+                "Telegram interface is configured for polling mode. Use start_polling() instead of mounting a router."
             )
         return attach_routes(
-            router=APIRouter(prefix=self.prefix, tags=self.tags),
+            router=APIRouter(prefix=self.prefix, tags=self.tags),  # type: ignore
             agent=self.agent,
             team=self.team,
             workflow=self.workflow,
@@ -134,12 +133,14 @@ class Telegram(BaseInterface):
     async def start_polling(self) -> None:
         """Start long-polling mode (blocks until stopped).
 
+        A polling-mode ``Telegram`` is a standalone runner — do not pass it to
+        ``AgentOS`` (it contributes no routes and ``get_router()`` raises).
+
         Raises ``RuntimeError`` if mode is not ``"polling"``.
         """
         if self.mode != "polling":
             raise RuntimeError(
-                "Telegram interface is configured for webhook mode. "
-                "Set mode='polling' to use start_polling()."
+                "Telegram interface is configured for webhook mode. Set mode='polling' to use start_polling()."
             )
 
         from agno.os.interfaces.telegram.polling import TelegramPolling
@@ -158,4 +159,8 @@ class Telegram(BaseInterface):
         """
         import asyncio
 
-        asyncio.run(self.start_polling())
+        try:
+            asyncio.run(self.start_polling())
+        except KeyboardInterrupt:
+            # poller.start()'s finally already logs "stopped" and closes the session
+            pass
