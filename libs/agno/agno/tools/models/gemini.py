@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import time
 from os import getenv
@@ -28,18 +29,22 @@ class GeminiTools(Toolkit):
         location: Optional[str] = None,
         image_generation_model: str = "imagen-3.0-generate-002",
         video_generation_model: str = "veo-2.0-generate-001",
+        poll_interval: int = 5,
+        max_wait_time: int = 600,
         enable_generate_image: bool = True,
         enable_generate_video: bool = True,
         all: bool = False,
         **kwargs,
     ):
         tools = []
+        async_tools = []
         if all or enable_generate_image:
             tools.append(self.generate_image)
         if all or enable_generate_video:
             tools.append(self.generate_video)
+            async_tools.append((self.agenerate_video, "generate_video"))
 
-        super().__init__(name="gemini_tools", tools=tools, **kwargs)
+        super().__init__(name="gemini_tools", tools=tools, async_tools=async_tools, **kwargs)
 
         # Set mode and credentials: use only provided vertexai parameter
         self.vertexai = vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI") == "true"
@@ -72,6 +77,8 @@ class GeminiTools(Toolkit):
 
         self.image_model = image_generation_model
         self.video_model = video_generation_model
+        self.poll_interval = poll_interval
+        self.max_wait_time = max_wait_time
 
     def generate_image(
         self,
@@ -160,8 +167,13 @@ class GeminiTools(Toolkit):
                 ),
             )
 
+            seconds_waited = 0
             while not operation.done:
-                time.sleep(5)
+                if seconds_waited >= self.max_wait_time:
+                    log_error(f"Video generation timed out after {self.max_wait_time} seconds")
+                    return ToolResult(content=f"Failed to generate video: timed out after {self.max_wait_time} seconds")
+                time.sleep(self.poll_interval)
+                seconds_waited += self.poll_interval
                 operation = self.client.operations.get(operation=operation)
 
             result = operation.result
@@ -181,6 +193,81 @@ class GeminiTools(Toolkit):
                 media_id = str(uuid4())
 
                 # Create VideoArtifact with base64 encoded content
+                video_artifact = Video(
+                    id=media_id,
+                    content=base64.b64encode(generated_video.video_bytes).decode("utf-8"),
+                    original_prompt=prompt,
+                    mime_type=generated_video.mime_type or "video/mp4",
+                )
+                generated_videos.append(video_artifact)
+                log_debug(f"Successfully generated video {media_id} with model {self.video_model}")
+
+            if generated_videos:
+                return ToolResult(
+                    content="Video generated successfully",
+                    videos=generated_videos,
+                )
+            else:
+                return ToolResult(content="Failed to generate video: No valid videos were generated.")
+
+        except Exception as e:
+            log_error(f"Failed to generate video: {str(e)}")
+            return ToolResult(content=f"Failed to generate video: {e}")
+
+    async def agenerate_video(
+        self,
+        agent: Agent,
+        prompt: str,
+    ) -> ToolResult:
+        """Generate a video based on a text prompt.
+        Args:
+            prompt (str): The text prompt to generate the video from.
+        Returns:
+            ToolResult: A ToolResult containing the generated video or error message.
+        """
+        # Video generation requires Vertex AI mode.
+        if not self.vertexai:
+            log_error("Video generation requires Vertex AI mode. Please enable Vertex AI mode.")
+            return ToolResult(
+                content="Video generation requires Vertex AI mode. "
+                "Please set `vertexai=True` or environment variable `GOOGLE_GENAI_USE_VERTEXAI=true`."
+            )
+
+        from google.genai.types import GenerateVideosConfig
+
+        try:
+            operation: GenerateVideosOperation = await asyncio.to_thread(
+                self.client.models.generate_videos,
+                model=self.video_model,
+                prompt=prompt,
+                config=GenerateVideosConfig(enhance_prompt=True),
+            )
+
+            seconds_waited = 0
+            while not operation.done:
+                if seconds_waited >= self.max_wait_time:
+                    log_error(f"Video generation timed out after {self.max_wait_time} seconds")
+                    return ToolResult(content=f"Failed to generate video: timed out after {self.max_wait_time} seconds")
+                await asyncio.sleep(self.poll_interval)
+                seconds_waited += self.poll_interval
+                operation = await asyncio.to_thread(self.client.operations.get, operation=operation)
+
+            result = operation.result
+            if result is None or result.generated_videos is None or not result.generated_videos:
+                log_error("No videos were generated.")
+                return ToolResult(content="Failed to generate video: No videos were generated.")
+
+            generated_videos = []
+            for video in result.generated_videos:
+                if video.video is None or not video.video.video_bytes:
+                    continue
+
+                generated_video = video.video
+                if generated_video.video_bytes is None:
+                    continue
+
+                media_id = str(uuid4())
+
                 video_artifact = Video(
                     id=media_id,
                     content=base64.b64encode(generated_video.video_bytes).decode("utf-8"),
