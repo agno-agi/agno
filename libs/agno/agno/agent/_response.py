@@ -1725,6 +1725,7 @@ def _build_followup_messages(
 
     system_prompt = (
         "Based on the user's message and the assistant's response below, generate follow-up suggestions. "
+        "The output MUST be a JSON object with a single key 'suggestions' containing a list of strings. "
         "Each suggestion should be a short action-oriented prompt (5-10 words). "
         "Cover different angles: dig deeper, practical next step, or alternative perspective."
     )
