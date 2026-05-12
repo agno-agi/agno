@@ -8,12 +8,18 @@ flow covers Gmail + Calendar + Drive scopes.
 Setup:
   1. Google Cloud Console -> Enable Gmail, Calendar, and Drive APIs
   2. OAuth Client -> Authorized redirect URIs:
-       https://<your-ngrok>.ngrok-free.dev/google/oauth/callback
+       https://<your-domain>/google/oauth/callback
+     (AgentOS auto-mounts this route when GoogleOAuthTools is present)
   3. Slack App -> Event Subscriptions:
-       https://<your-ngrok>.ngrok-free.dev/slack/events
+       https://<your-domain>/slack/events
   4. Env vars:
        SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET
-       GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI
+       GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+       GOOGLE_REDIRECT_URI=https://<your-domain>/google/oauth/callback
+
+     To customize the callback path:
+       GoogleOAuthConfig(callback_path="/auth/google/callback")
+       Then set GOOGLE_REDIRECT_URI to match.
 
 Run:
   .venvs/demo/bin/python cookbook/05_agent_os/interfaces/slack/workspace_oauth.py

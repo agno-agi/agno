@@ -280,6 +280,7 @@ class AgentOS:
             self.on_route_conflict = on_route_conflict
 
         self.interfaces = interfaces or []
+        self._oauth_callback_paths: List[str] = []  # Populated by _discover_oauth_routers()
 
         self.name = name
 
@@ -912,16 +913,19 @@ class AgentOS:
         # Interfaces use their own authentication mechanisms
         # (e.g. Slack HMAC-SHA256 signing, Telegram webhook verification).
         excluded_route_paths: Optional[List[str]] = None
+        interface_prefixes: List[str] = []
         if self.interfaces:
             interface_prefixes = [
                 f"{interface.prefix}/*"
                 for interface in self.interfaces
                 if hasattr(interface, "prefix") and interface.prefix
             ]
-            if interface_prefixes:
-                # Passing excluded_route_paths replaces the middleware defaults,
-                # so include the default excluded routes as well.
-                excluded_route_paths = [
+        oauth_paths = self._oauth_callback_paths or []
+        if interface_prefixes or oauth_paths:
+            # Passing excluded_route_paths replaces the middleware defaults,
+            # so include the default excluded routes as well.
+            excluded_route_paths = (
+                [
                     "/",
                     "/health",
                     "/info",
@@ -929,7 +933,10 @@ class AgentOS:
                     "/redoc",
                     "/openapi.json",
                     "/docs/oauth2-redirect",
-                ] + interface_prefixes
+                ]
+                + interface_prefixes
+                + oauth_paths
+            )
 
         # Add middleware to stack
         fastapi_app.add_middleware(
@@ -1073,7 +1080,13 @@ class AgentOS:
                 try:
                     router = oauth_config.get_oauth_router(db=db)
                     routers.append(router)
-                    log_info("Auto-mounted Google OAuth router at /google/oauth/callback")
+                    callback_path = getattr(oauth_config, "_callback_path", "/google/oauth/callback")
+                    self._oauth_callback_paths.append(callback_path)
+                    log_warning(
+                        f"Auto-mounted Google OAuth callback at {callback_path}. "
+                        f"Set GOOGLE_REDIRECT_URI to match (e.g., https://your-domain{callback_path}). "
+                        "To customize the path, use GoogleOAuthConfig(callback_path='/your/path')."
+                    )
                 except Exception as e:
                     log_warning(f"Failed to auto-mount OAuth router: {e}")
 

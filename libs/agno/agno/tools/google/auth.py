@@ -322,6 +322,8 @@ class GoogleOAuthConfig:
         access_type: str = "offline",
         prompt: str = "consent",
         login_hint: Optional[str] = None,
+        # Route configuration
+        callback_path: Optional[str] = None,
     ):
         self.client_id = client_id or os.getenv("GOOGLE_CLIENT_ID")
         self.client_secret = client_secret or os.getenv("GOOGLE_CLIENT_SECRET")
@@ -342,6 +344,8 @@ class GoogleOAuthConfig:
         # Enterprise OAuth parameters
         self._hosted_domain = hosted_domain or os.getenv("GOOGLE_HOSTED_DOMAIN")
         self._access_type = access_type
+        # Route path for OAuth callback (default: /google/oauth/callback)
+        self._callback_path = callback_path or os.getenv("GOOGLE_OAUTH_CALLBACK_PATH", "/google/oauth/callback")
         self._prompt = prompt
         self._login_hint = login_hint
 
@@ -513,10 +517,11 @@ class GoogleOAuthConfig:
 
         router = APIRouter(tags=["Google OAuth"])
         google_auth = self
+        callback_path = self._callback_path
         # Captured in closure — survives restarts, works across workers
         callback_db = resolved_db
 
-        @router.get("/google/oauth/callback")
+        @router.get(callback_path)
         async def oauth_callback(request: Request) -> HTMLResponse:
             error = request.query_params.get("error")
             if error:
