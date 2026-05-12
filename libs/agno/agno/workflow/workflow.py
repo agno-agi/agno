@@ -54,6 +54,7 @@ from agno.run.cancel import (
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent
 from agno.run.workflow import (
+    StepCompletedEvent,
     StepContinuedEvent,
     StepErrorEvent,
     StepExecutorContinuedEvent,
@@ -6067,10 +6068,11 @@ class Workflow:
         paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
         _apply_requirements_to_run_response(paused_run_response, requirements)
 
-        # Call executor's continue_run with the stored run_response (streaming)
+        # Call executor's continue_run with the stored run_response (streaming).
         response_stream = executor.continue_run(
             run_response=paused_run_response,
             stream=True,
+            stream_events=True,
             yield_run_output=True,
         )
 
@@ -6093,6 +6095,21 @@ class Workflow:
             step_output = inner_step._process_step_output(active_executor_run_response)
             if hasattr(active_executor_run_response, "is_paused") and active_executor_run_response.is_paused:
                 step_output.is_paused = True
+
+        # If the step finished (not paused again), emit StepCompletedEvent so the
+        # step's lifecycle closes — mirrors the emission in Step.execute_stream.
+        if not step_output.is_paused:
+            yield StepCompletedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=inner_step.name,
+                step_index=step_index,
+                step_id=getattr(inner_step, "step_id", None),
+                content=step_output.content,
+                step_response=step_output,
+            )
 
         yield step_output
 
@@ -6139,10 +6156,12 @@ class Workflow:
         paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
         _apply_requirements_to_run_response(paused_run_response, requirements)
 
-        # Call executor's acontinue_run with the stored run_response (streaming)
+        # Call executor's acontinue_run with the stored run_response (streaming).
+        # stream_events=True ensures RunCompleted/RunError lifecycle events are emitted.
         response_stream = executor.acontinue_run(
             run_response=paused_run_response,
             stream=True,
+            stream_events=True,
             yield_run_output=True,
         )
 
@@ -6163,6 +6182,22 @@ class Workflow:
             step_output = inner_step._process_step_output(active_executor_run_response)
             if hasattr(active_executor_run_response, "is_paused") and active_executor_run_response.is_paused:
                 step_output.is_paused = True
+
+        # If the step finished (not paused again), emit StepCompletedEvent so the
+        # step's lifecycle closes — mirrors the emission in Step.aexecute_stream.
+        # When the executor re-paused, the caller emits StepExecutorPaused instead.
+        if not step_output.is_paused:
+            yield StepCompletedEvent(
+                run_id=workflow_run_response.run_id or "",
+                workflow_name=workflow_run_response.workflow_name or "",
+                workflow_id=workflow_run_response.workflow_id or "",
+                session_id=workflow_run_response.session_id or "",
+                step_name=inner_step.name,
+                step_index=step_index,
+                step_id=getattr(inner_step, "step_id", None),
+                content=step_output.content,
+                step_response=step_output,
+            )
 
         yield step_output
 
