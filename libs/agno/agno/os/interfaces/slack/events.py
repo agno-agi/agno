@@ -15,18 +15,21 @@ Key concepts:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Awaitable, Callable, Dict
+from typing import TYPE_CHECKING, Awaitable, Callable, Dict, Union, cast
 
 from agno.agent import RunEvent
 from agno.os.interfaces.slack.helpers import member_name, task_id
 from agno.os.interfaces.slack.state import StreamState
 from agno.run.agent import BaseAgentRunEvent
+from agno.run.team import TeamRunEvent
 from agno.run.workflow import WorkflowRunEvent
 
 if TYPE_CHECKING:
     from slack_sdk.web.async_chat_stream import AsyncChatStream
 
+    from agno.run.agent import RunPausedEvent as AgentRunPausedEvent
     from agno.run.base import BaseRunOutputEvent
+    from agno.run.team import RunPausedEvent as TeamRunPausedEvent
 
 
 # =============================================================================
@@ -82,7 +85,12 @@ async def _emit_task(
     """Send a task card update to the Slack stream."""
     chunk: dict = {"type": "task_update", "id": card_id, "title": title, "status": status}
     if output:
-        chunk["output"] = output[:200]  # Slack truncates longer task output
+        # Slack rejects plain strings in task_card output slots — requires rich_text
+        # even though slack_sdk types output as Optional[str]. Truncate to 200 chars.
+        chunk["output"] = {
+            "type": "rich_text",
+            "elements": [{"type": "rich_text_section", "elements": [{"type": "text", "text": output[:200]}]}],
+        }
     await stream.append(markdown_text="", chunks=[chunk])
 
 
@@ -119,15 +127,20 @@ async def _wf_task(
 # Values are NORMALIZED (no "Team" prefix) so one set covers agent + team events.
 _SUPPRESSED_IN_WORKFLOW: frozenset[str] = frozenset(
     {
+        # Reasoning: internal chain-of-thought, not actionable for Slack users
         RunEvent.reasoning_started.value,
         RunEvent.reasoning_completed.value,
+        # Tool calls: workflow steps already emit their own progress cards
         RunEvent.tool_call_started.value,
         RunEvent.tool_call_completed.value,
         RunEvent.tool_call_error.value,
+        # Memory: background housekeeping, no user-facing impact
         RunEvent.memory_update_started.value,
         RunEvent.memory_update_completed.value,
+        # Content: workflow consolidates final output in WorkflowCompleted
         RunEvent.run_content.value,
         RunEvent.run_intermediate_content.value,
+        # Lifecycle: workflow-level events handle start/end, not inner runs
         RunEvent.run_completed.value,
         RunEvent.run_error.value,
         RunEvent.run_cancelled.value,
@@ -263,6 +276,35 @@ async def _on_run_error(chunk: BaseRunOutputEvent, state: StreamState, stream: A
     return True
 
 
+async def _on_run_paused(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+    # For Teams: only stop on TeamRunPausedEvent (has team_id), not member RunPausedEvent.
+    # HITL card must carry Team's run_id — aget_run_output(member_run_id) fails at approval.
+    if state.entity_type == "team":
+        if getattr(chunk, "team_id", None) is None:
+            return False
+
+    state.paused_event = cast(Union["AgentRunPausedEvent", "TeamRunPausedEvent"], chunk)
+    state.terminal_status = "in_progress"
+
+    from agno.os.interfaces.slack.types import tool_name
+
+    requirements = list(getattr(chunk, "active_requirements", None) or [])
+    for req in requirements:
+        req_id = getattr(req, "id", None) or ""
+        key = f"pause_req_{req_id}"
+        if key in state.task_cards:
+            continue
+        tool_label = tool_name(req)
+        # "complete" required — non-complete at stream.stop renders Slack error icon
+        state.track_task(key, tool_label, "complete")
+        await _emit_task(stream, key, tool_label, "complete")
+
+    if not state.has_content() and state.stream_chars_sent == 0 and not state.task_cards:
+        await stream.append(markdown_text="_Reviewing request…_")
+
+    return True
+
+
 # =============================================================================
 # Workflow Event Handlers (require custom logic)
 # =============================================================================
@@ -387,6 +429,9 @@ HANDLERS: Dict[str, _EventHandler] = {
     RunEvent.run_completed.value: _on_run_completed,
     RunEvent.run_error.value: _on_run_error,
     RunEvent.run_cancelled.value: _on_run_error,  # Treat cancellation as terminal error
+    # HITL pause — stream ends, router posts Block Kit approval card separately
+    RunEvent.run_paused.value: _on_run_paused,
+    TeamRunEvent.run_paused.value: _on_run_paused,
     # -------------------------------------------------------------------------
     # Workflow Lifecycle Events
     # -------------------------------------------------------------------------

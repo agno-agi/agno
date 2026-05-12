@@ -382,6 +382,10 @@ def parse_tools(
             toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
             for name, _func in toolkit_functions.items():
                 if name in _function_names:
+                    log_warning(
+                        f"Duplicate tool name '{name}' from toolkit '{tool.name}' "
+                        f"already registered on agent; skipping the duplicate."
+                    )
                     continue
                 _function_names.append(name)
                 _func = _func.model_copy(deep=True)
@@ -398,12 +402,17 @@ def parse_tools(
                 _functions.append(_func)
                 log_debug(f"Added tool {name} from {tool.name}")
 
+                # Add per-function instructions
+                if _func.add_instructions and _func.instructions is not None:
+                    agent._tool_instructions.append(_func.instructions)
+
             # Add instructions from the toolkit
             if tool.add_instructions and tool.instructions is not None:
                 agent._tool_instructions.append(tool.instructions)
 
         elif isinstance(tool, Function):
             if tool.name in _function_names:
+                log_warning(f"Duplicate tool name '{tool.name}' already registered on agent; skipping the duplicate.")
                 continue
             _function_names.append(tool.name)
 
@@ -431,6 +440,9 @@ def parse_tools(
                 function_name = tool.__name__
 
                 if function_name in _function_names:
+                    log_warning(
+                        f"Duplicate tool name '{function_name}' already registered on agent; skipping the duplicate."
+                    )
                     continue
                 _function_names.append(function_name)
 

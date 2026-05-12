@@ -62,6 +62,21 @@ async def _aresolve_callable_resources(team: "Team", run_context: "RunContext") 
     await aresolve_callable_members(team, run_context)
 
 
+async def _aget_learning_tools(
+    team: "Team",
+    user_id: Optional[str] = None,
+    session: Optional[TeamSession] = None,
+) -> List[Callable]:
+    """Async helper to fetch learning tools for Team runs."""
+    if team._learning is None:
+        return []
+    return await team._learning.aget_tools(
+        user_id=user_id,
+        session_id=session.session_id if session else None,
+        team_id=team.id,
+    )
+
+
 async def _check_and_refresh_mcp_tools(team: "Team") -> None:
     # Connect MCP tools
     from agno.team._init import _connect_mcp_tools
@@ -114,6 +129,7 @@ def _determine_tools_for_model(
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = None,
     check_mcp_tools: bool = True,
+    learning_tools: Optional[List[Callable]] = None,
 ) -> List[Union[Function, dict]]:
     # Connect tools that require connection management
     from functools import partial
@@ -174,13 +190,17 @@ def _determine_tools_for_model(
         _tools.append(_get_update_user_memory_function(team, user_id=user_id, async_mode=async_mode))
 
     # Add learning machine tools
+    # In async mode, caller should pre-fetch with await team._learning.aget_tools() and pass learning_tools
     if team._learning is not None:
-        learning_tools = team._learning.get_tools(
-            user_id=user_id,
-            session_id=session.session_id if session else None,
-            team_id=team.id,
-        )
-        _tools.extend(learning_tools)
+        if learning_tools is not None:
+            _tools.extend(learning_tools)
+        else:
+            _learning_tools = team._learning.get_tools(
+                user_id=user_id,
+                session_id=session.session_id if session else None,
+                team_id=team.id,
+            )
+            _tools.extend(_learning_tools)
 
     if team.enable_agentic_state:
         _tools.append(Function(name="update_session_state", entrypoint=partial(_update_session_state_tool, team)))
@@ -327,6 +347,10 @@ def _determine_tools_for_model(
             toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
             for name, _func in toolkit_functions.items():
                 if name in _function_names:
+                    log_warning(
+                        f"Duplicate tool name '{name}' from toolkit '{tool.name}' "
+                        f"already registered on team; skipping the duplicate."
+                    )
                     continue
                 _function_names.append(name)
                 _func = _func.model_copy(deep=True)
@@ -342,6 +366,12 @@ def _determine_tools_for_model(
                 _functions.append(_func)
                 log_debug(f"Added tool {_func.name} from {tool.name}")
 
+                # Add per-function instructions
+                if _func.add_instructions and _func.instructions is not None:
+                    if team._tool_instructions is None:
+                        team._tool_instructions = []
+                    team._tool_instructions.append(_func.instructions)
+
             # Add instructions from the toolkit
             if tool.add_instructions and tool.instructions is not None:
                 if team._tool_instructions is None:
@@ -350,6 +380,7 @@ def _determine_tools_for_model(
 
         elif isinstance(tool, Function):
             if tool.name in _function_names:
+                log_warning(f"Duplicate tool name '{tool.name}' already registered on team; skipping the duplicate.")
                 continue
             _function_names.append(tool.name)
             tool = tool.model_copy(deep=True)
@@ -376,6 +407,9 @@ def _determine_tools_for_model(
                 _func = Function.from_callable(tool, strict=strict)
                 _func = _func.model_copy(deep=True)
                 if _func.name in _function_names:
+                    log_warning(
+                        f"Duplicate tool name '{_func.name}' already registered on team; skipping the duplicate."
+                    )
                     continue
                 _function_names.append(_func.name)
 
