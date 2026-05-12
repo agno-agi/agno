@@ -230,7 +230,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
                                     {
                                         "event": "replay",
                                         "run_id": run_id,
-                                        "status": workflow_run.status.value if workflow_run.status else "unknown",
+                                        "status": (getattr(workflow_run.status, "value", workflow_run.status) if workflow_run.status else "unknown"),
                                         "total_events": len(workflow_run.events),
                                         "message": "Run completed. Replaying all events from database.",
                                     }
@@ -252,7 +252,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
                                     {
                                         "event": "replay",
                                         "run_id": run_id,
-                                        "status": workflow_run.status.value if workflow_run.status else "unknown",
+                                        "status": (getattr(workflow_run.status, "value", workflow_run.status) if workflow_run.status else "unknown"),
                                         "total_events": 0,
                                         "message": "Run completed but no events stored.",
                                     }
@@ -756,7 +756,7 @@ async def _resume_stream_generator(
                 meta: dict = {
                     "event": "replay",
                     "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
+                    "status": (getattr(run_output.status, "value", run_output.status) if run_output.status else "unknown"),
                     "total_events": len(run_output.events),
                     "message": "Run completed. Replaying all events from database.",
                 }
@@ -774,7 +774,7 @@ async def _resume_stream_generator(
                 meta = {
                     "event": "replay",
                     "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
+                    "status": (getattr(run_output.status, "value", run_output.status) if run_output.status else "unknown"),
                     "total_events": 0,
                     "message": "Run completed but no events stored.",
                 }
@@ -1324,7 +1324,7 @@ def get_workflow_router(
                 content={
                     "run_id": run_response.run_id,
                     "session_id": run_response.session_id,
-                    "status": run_response.status.value if run_response.status else "PENDING",
+                    "status": (getattr(run_response.status, "value", run_response.status) if run_response.status else "PENDING"),
                 },
             )
 
