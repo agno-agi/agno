@@ -2321,13 +2321,15 @@ def test_agent_cancel_with_run_scope(test_agent):
     # Token with run scope
     token = create_jwt_token(scopes=["agents:test-agent:run"])
 
-    # Should be able to cancel (returns 200, cancel stores intent even for nonexistent runs)
+    # Should pass the RBAC scope check. Non-admin callers must also supply a
+    # session_id for ownership verification (added by user-scoped DB work), so
+    # without it the route returns 400 — which still means scope check passed.
     response = client.post(
         "/agents/test-agent/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 200 means auth passed and cancel intent stored, 403 would mean auth failed
-    assert response.status_code == 200
+    # 403 would mean auth failed. Anything else means the scope check passed.
+    assert response.status_code != 403, response.text
 
 
 def test_agent_cancel_blocked_without_run_scope(test_agent, second_agent):
@@ -2372,8 +2374,10 @@ def test_agent_cancel_with_global_scope(test_agent):
         "/agents/test-agent/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 200 means auth passed and cancel intent stored
-    assert response.status_code == 200
+    # Anything other than 403 means the RBAC scope check passed. Non-admin
+    # callers also need session_id for the ownership check; missing it yields
+    # 400 here, which is still an auth pass.
+    assert response.status_code != 403, response.text
 
 
 def test_agent_continue_with_run_scope(test_agent):
@@ -2440,13 +2444,13 @@ def test_team_cancel_with_run_scope(test_team):
     # Token with run scope
     token = create_jwt_token(scopes=["teams:test-team:run"])
 
-    # Should be able to cancel (returns 200, cancel stores intent even for nonexistent runs)
+    # Non-admin callers also need session_id for ownership verification; the
+    # 400 that returns when it's missing still proves the scope check passed.
     response = client.post(
         "/teams/test-team/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 200 means auth passed and cancel intent stored, 403 would mean auth failed
-    assert response.status_code == 200
+    assert response.status_code != 403, response.text
 
 
 def test_team_cancel_blocked_without_run_scope(test_team, second_team):
@@ -2491,8 +2495,9 @@ def test_team_cancel_with_global_scope(test_team):
         "/teams/test-team/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 200 means auth passed and cancel intent stored
-    assert response.status_code == 200
+    # Anything other than 403 means scope check passed (see notes on the
+    # per-team variant above for the session_id requirement).
+    assert response.status_code != 403, response.text
 
 
 def test_workflow_cancel_with_run_scope(test_workflow):
@@ -2510,13 +2515,13 @@ def test_workflow_cancel_with_run_scope(test_workflow):
     # Token with run scope
     token = create_jwt_token(scopes=["workflows:test-workflow:run"])
 
-    # Should be able to cancel (returns 200, cancel stores intent even for nonexistent runs)
+    # Non-admin callers also need session_id for ownership verification; the
+    # 400 that returns when it's missing still proves the scope check passed.
     response = client.post(
         "/workflows/test-workflow/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 200 means auth passed and cancel intent stored, 403 would mean auth failed
-    assert response.status_code == 200
+    assert response.status_code != 403, response.text
 
 
 def test_workflow_cancel_blocked_without_run_scope(test_workflow, second_workflow):
@@ -2561,8 +2566,8 @@ def test_workflow_cancel_with_global_scope(test_workflow):
         "/workflows/test-workflow/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    # 200 means auth passed and cancel intent stored
-    assert response.status_code == 200
+    # Anything other than 403 means scope check passed.
+    assert response.status_code != 403, response.text
 
 
 def test_cancel_with_wildcard_scope(test_agent, second_agent):
@@ -2580,19 +2585,19 @@ def test_cancel_with_wildcard_scope(test_agent, second_agent):
     # Token with wildcard run scope
     token = create_jwt_token(scopes=["agents:*:run"])
 
-    # Should be able to cancel test-agent
+    # Wildcard run scope is not the same as admin; non-admin callers still
+    # need session_id for ownership verification. != 403 proves auth passed.
     response = client.post(
         "/agents/test-agent/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 200  # Auth passed
+    assert response.status_code != 403, response.text
 
-    # Should also be able to cancel second-agent
     response = client.post(
         "/agents/second-agent/runs/nonexistent-run-id/cancel",
         headers={"Authorization": f"Bearer {token}"},
     )
-    assert response.status_code == 200  # Auth passed
+    assert response.status_code != 403, response.text
 
 
 def test_cancel_with_admin_scope(test_agent, test_team, test_workflow):

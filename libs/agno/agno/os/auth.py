@@ -197,8 +197,19 @@ def get_accessible_resources(request: Request, resource_type: str) -> Set[str]:
     # Get user's scopes from request state (set by JWT middleware)
     user_scopes = getattr(request.state, "scopes", [])
 
+    # Honour any custom admin_scope configured on JWTMiddleware (set on
+    # request.state by the middleware). Without this, list endpoints reject
+    # custom-admin tokens with 403 even though check_resource_access would
+    # accept them.
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+
     # Get accessible resource IDs
-    accessible_ids = get_accessible_resource_ids(user_scopes=user_scopes, resource_type=resource_type)
+    accessible_ids = get_accessible_resource_ids(
+        user_scopes=user_scopes,
+        resource_type=resource_type,
+        admin_scope=admin_scope,
+    )
 
     return accessible_ids
 
@@ -269,7 +280,17 @@ def check_resource_access(request: Request, resource_id: str, resource_type: str
         False
     """
     user_scopes = getattr(request.state, "scopes", [])
-    accessible_ids = get_accessible_resource_ids(user_scopes=user_scopes, resource_type=resource_type, action=action)
+    # Honour the configured admin scope (set by JWTMiddleware on request.state)
+    # so custom-admin tokens are recognised here too. Non-string values (e.g.
+    # MagicMock attributes in tests) are ignored.
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+    accessible_ids = get_accessible_resource_ids(
+        user_scopes=user_scopes,
+        resource_type=resource_type,
+        action=action,
+        admin_scope=admin_scope,
+    )
 
     # Wildcard access grants all permissions
     if "*" in accessible_ids:

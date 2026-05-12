@@ -409,6 +409,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         scope_mappings: Optional[Dict[str, List[str]]] = None,
         excluded_route_paths: Optional[List[str]] = None,
         admin_scope: Optional[str] = None,
+        user_isolation: bool = False,
     ):
         """
         Initialize the JWT middleware.
@@ -450,6 +451,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
                            Format: {"POST /agents/*/runs": ["agents:run"], "GET /public": []}
             excluded_route_paths: List of route paths to exclude from JWT/RBAC checks
             admin_scope: The scope that grants admin access (default: "agent_os:admin")
+            user_isolation: Opt in to per-user data isolation (default False).
+                When True, route handlers wrap the DB in a per-request scoped
+                adapter and enforce session/run ownership on non-admin callers.
+                When False (the default) JWT and RBAC still apply but
+                ownership/scoping gates stay dormant — preserves backwards
+                compatibility with deployments that handle isolation in their
+                own application layer.
 
         Note:
             - At least one verification key or JWKS file must be provided if validate=True
@@ -517,6 +525,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
             excluded_route_paths if excluded_route_paths is not None else self._get_default_excluded_routes()
         )
         self.admin_scope = admin_scope or AgentOSScope.ADMIN.value
+        self.user_isolation = user_isolation
 
     def _get_default_excluded_routes(self) -> List[str]:
         """Get default routes that should be excluded from RBAC checks."""
@@ -668,12 +677,23 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process the request: extract JWT, validate, and check RBAC scopes."""
-        # Ensure the JWTValidator is accessible on app.state for WebSocket endpoints
-        # and other components that need JWT validation outside the middleware chain.
-        # This handles both built-in (AgentOS authorization=True) and manual
+        # Ensure the JWT auth config is accessible on app.state for WebSocket
+        # endpoints (which don't flow through this middleware) and any other
+        # components that need it outside the middleware chain. This handles
+        # both built-in (AgentOS authorization=True) and manual
         # (app.add_middleware(JWTMiddleware, ...)) setup paths.
+        #
+        # All these values must be cached together: resolve_ws_jwt_config
+        # returns early once it sees ``jwt_validator``, so without the
+        # companion fields a manual-setup WebSocket connection arriving after
+        # the first HTTP request would silently drop verify_audience, the
+        # custom admin scope, and the user_isolation flag.
         if not getattr(request.app.state, "jwt_validator", None):
             request.app.state.jwt_validator = self.validator
+            request.app.state.jwt_verify_audience = self.verify_audience
+            request.app.state.jwt_audience = self.audience
+            request.app.state.admin_scope = self.admin_scope
+            request.app.state.user_isolation_enabled = self.user_isolation
 
         path = request.url.path
         method = request.method
@@ -708,6 +728,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
             internal_scopes = list(INTERNAL_SERVICE_SCOPES)
             request.state.scopes = internal_scopes
             request.state.authorization_enabled = self.authorization or False
+            request.state.admin_scope = self.admin_scope
+            request.state.user_isolation_enabled = self.user_isolation
 
             # Enforce RBAC for internal token (do not skip scope checks)
             if self.authorization:
@@ -759,6 +781,13 @@ class JWTMiddleware(BaseHTTPMiddleware):
             request.state.claims = payload  # Full decoded JWT for factory ctx.trusted.claims
             request.state.audience = audience
             request.state.authorization_enabled = self.authorization or False
+            # Expose admin scope so downstream helpers (e.g. get_scoped_user_id)
+            # honour custom admin scopes configured via JWTMiddleware(admin_scope=...).
+            request.state.admin_scope = self.admin_scope
+            # Per-user isolation is opt-in. get_scoped_user_id short-circuits
+            # to None when this is False, so the DB wrapper and route-level
+            # ownership gates stay dormant.
+            request.state.user_isolation_enabled = self.user_isolation
 
             # Extract dependencies claims
             dependencies = {}

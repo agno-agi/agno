@@ -13,6 +13,14 @@ class AuthorizationConfig(BaseModel):
     algorithm: Optional[str] = None
     verify_audience: Optional[bool] = None
     audience: Optional[str] = None
+    admin_scope: Optional[str] = None
+    # Opt-in per-user data isolation. When True, AgentOS:
+    #   - wraps the DB in a per-request UserScopedDbAdapter
+    #   - enforces session/run ownership on cancel/resume/continue routes
+    #   - requires session_id (and workflow_id on WS reconnect) for non-admins
+    # When False (default) JWT/RBAC still apply, but routes operate on the
+    # unscoped DB and don't add per-user ownership gates on top of RBAC.
+    user_isolation: bool = False
 
 
 class EvalsDomainConfig(BaseModel):

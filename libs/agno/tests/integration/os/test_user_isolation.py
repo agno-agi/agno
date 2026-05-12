@@ -70,6 +70,7 @@ def client(test_agent):
         authorization_config=AuthorizationConfig(
             verification_keys=[JWT_SECRET],
             algorithm="HS256",
+            user_isolation=True,
         ),
     )
     app = agent_os.get_app()
@@ -311,6 +312,7 @@ class TestAsyncDbDispatch:
             authorization_config=AuthorizationConfig(
                 verification_keys=[JWT_SECRET],
                 algorithm="HS256",
+                user_isolation=True,
             ),
         )
         return TestClient(agent_os.get_app())
