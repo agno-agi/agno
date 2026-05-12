@@ -27,6 +27,7 @@ class TelegramPolling:
     def __init__(self, processor: TelegramMessageProcessor):
         self.processor = processor
         self._running = False
+        self._tasks: set = set()
 
     # ------------------------------------------------------------------
     # Public API
@@ -34,7 +35,7 @@ class TelegramPolling:
 
     async def start(self) -> None:
         """Start long-polling. Blocks until :meth:`stop` is called or
-        an unrecoverable error occurs."""
+        an unrecoverable error occurs. Closes the bot's HTTP session on exit."""
         self._running = True
         bot = self.processor.bot
         offset: int = 0
@@ -42,31 +43,36 @@ class TelegramPolling:
 
         log_info("Telegram polling started")
 
-        while self._running:
-            try:
-                updates = await bot.get_updates(offset=offset, timeout=timeout)
-            except Exception as e:
-                log_error(f"Polling error: {e}")
-                await asyncio.sleep(5)
-                continue
-
-            for update in updates:
-                # Advance offset to acknowledge this update
-                offset = update.update_id + 1
-
-                message = None
-                if hasattr(update, "message") and update.message:
-                    message = _message_to_dict(update.message)
-                elif hasattr(update, "edited_message") and update.edited_message:
-                    message = _message_to_dict(update.edited_message)
-
-                if message is None:
+        try:
+            while self._running:
+                try:
+                    updates = await bot.get_updates(offset=offset, timeout=timeout)
+                except Exception as e:
+                    log_error(f"Polling error: {e}")
+                    await asyncio.sleep(5)
                     continue
 
-                # Process in the background so we don't block the poll loop
-                asyncio.create_task(self._safe_process(message))
+                for update in updates:
+                    # Advance offset to acknowledge this update
+                    offset = update.update_id + 1
 
-        log_info("Telegram polling stopped")
+                    message = None
+                    if hasattr(update, "message") and update.message:
+                        message = _message_to_dict(update.message)
+                    elif hasattr(update, "edited_message") and update.edited_message:
+                        message = _message_to_dict(update.edited_message)
+
+                    if message is None:
+                        continue
+
+                    # Process in the background so we don't block the poll loop;
+                    # keep a reference so the task is not garbage-collected mid-run.
+                    task = asyncio.create_task(self._safe_process(message))
+                    self._tasks.add(task)
+                    task.add_done_callback(self._tasks.discard)
+        finally:
+            await bot.close_session()
+            log_info("Telegram polling stopped")
 
     def stop(self) -> None:
         """Signal the poll loop to exit."""
@@ -95,16 +101,14 @@ def _message_to_dict(msg) -> dict:
     that Telegram sends in webhook payloads, so we serialise the object
     back to its raw dict form.
     """
-    # pyTelegramBotAPI Message objects have a .json() method that
-    # returns the raw API response as a JSON string.
-    json_method = getattr(msg, "json", None)
-    if json_method and callable(json_method):
-        return json.loads(json_method())
-
-    # Fallback: use the internal dict if available
-    msg_json = getattr(msg, "json", None)
-    if isinstance(msg_json, dict):
-        return msg_json
+    # pyTelegramBotAPI Message objects expose ``.json`` — either a method
+    # returning the raw API response as a JSON string, or the raw dict itself
+    # (varies by version). Handle both.
+    raw = getattr(msg, "json", None)
+    if callable(raw):
+        return json.loads(raw())
+    if isinstance(raw, dict):
+        return raw
 
     # Last resort: manual conversion of the fields the processor reads
     result: dict = {}
@@ -133,9 +137,7 @@ def _message_to_dict(msg) -> dict:
         result["reply_to_message"] = {"from": {"id": rt.from_user.id}} if rt.from_user else {}
     # Entities (for mention detection)
     if hasattr(msg, "entities") and msg.entities:
-        result["entities"] = [
-            {"type": e.type, "offset": e.offset, "length": e.length} for e in msg.entities
-        ]
+        result["entities"] = [{"type": e.type, "offset": e.offset, "length": e.length} for e in msg.entities]
     return result
 
 
