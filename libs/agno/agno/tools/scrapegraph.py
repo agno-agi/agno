@@ -14,6 +14,7 @@ Tools:
 - crawl: multi-page extraction with a JSON schema (polls until complete)
 """
 
+import asyncio
 import json
 import time
 from os import getenv
@@ -76,6 +77,7 @@ class ScrapeGraphTools(Toolkit):
         self.crawl_max_wait: int = crawl_max_wait
 
         tools: List[Any] = []
+        async_tools: List[Any] = []
         if all or enable_smartscraper:
             tools.append(self.smartscraper)
         if all or enable_markdownify:
@@ -84,10 +86,11 @@ class ScrapeGraphTools(Toolkit):
             tools.append(self.searchscraper)
         if all or enable_crawl:
             tools.append(self.crawl)
+            async_tools.append((self.acrawl, "crawl"))
         if all or enable_scrape:
             tools.append(self.scrape)
 
-        super().__init__(name="scrapegraph_tools", tools=tools, **kwargs)
+        super().__init__(name="scrapegraph_tools", tools=tools, async_tools=async_tools, **kwargs)
 
     def _fetch_config(self) -> Optional[FetchConfig]:
         config_kwargs: Dict[str, Any] = {}
@@ -202,6 +205,57 @@ class ScrapeGraphTools(Toolkit):
                     return f"Error: crawl timed out after {self.crawl_max_wait}s (id={crawl_id})"
                 time.sleep(self.crawl_poll_interval)
                 status_response = self.client.crawl.get(crawl_id)
+                if status_response.status != "success" or status_response.data is None:
+                    return f"Error polling crawl {crawl_id}: {status_response.error or 'unknown error'}"
+                crawl_data = status_response.data
+
+            return crawl_data.model_dump_json(by_alias=True)
+        except Exception as error:
+            return f"Error crawling {url}: {type(error).__name__}: {error}"
+
+    async def acrawl(
+        self,
+        url: str,
+        prompt: str,
+        schema: Dict[str, Any],
+        max_depth: int = 2,
+        max_pages: int = 2,
+    ) -> str:
+        """Crawl a website and extract structured data across multiple pages.
+
+        Starts a crawl job upstream and polls until it completes or `crawl_max_wait` elapses.
+
+        Args:
+            url (str): The URL to crawl.
+            prompt (str): Natural language prompt describing what to extract.
+            schema (Dict[str, Any]): JSON schema for extraction.
+            max_depth (int): Max crawl depth. Defaults to 2.
+            max_pages (int): Max number of pages to crawl. Defaults to 2.
+
+        Returns:
+            str: JSON string with the crawl result, or an error message.
+        """
+        try:
+            log_debug(f"ScrapeGraph crawl start for URL: {url}")
+            start_response = await asyncio.to_thread(
+                self.client.crawl.start,
+                url,
+                formats=[JsonFormatConfig(prompt=prompt, schema=schema)],
+                max_depth=max_depth,
+                max_pages=max_pages,
+                fetch_config=self._fetch_config(),
+            )
+            if start_response.status != "success" or start_response.data is None:
+                return f"Error starting crawl of {url}: {start_response.error or 'unknown error'}"
+
+            crawl_data = start_response.data
+            crawl_id = crawl_data.id
+            deadline = time.monotonic() + self.crawl_max_wait
+            while crawl_data.status == "running":
+                if time.monotonic() > deadline:
+                    return f"Error: crawl timed out after {self.crawl_max_wait}s (id={crawl_id})"
+                await asyncio.sleep(self.crawl_poll_interval)
+                status_response = await asyncio.to_thread(self.client.crawl.get, crawl_id)
                 if status_response.status != "success" or status_response.data is None:
                     return f"Error polling crawl {crawl_id}: {status_response.error or 'unknown error'}"
                 crawl_data = status_response.data
