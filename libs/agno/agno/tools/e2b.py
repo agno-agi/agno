@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import tempfile
@@ -82,8 +83,9 @@ class E2BTools(Toolkit):
             self.run_background_command,
             self.kill_background_command,
         ]
+        async_tools: List[Any] = [(self.arun_server, "run_server")]
 
-        super().__init__(name="e2b_tools", tools=tools, **kwargs)
+        super().__init__(name="e2b_tools", tools=tools, async_tools=async_tools, **kwargs)
 
     # Code Execution Functions
     def run_python_code(self, code: str) -> str:
@@ -609,6 +611,32 @@ class E2BTools(Toolkit):
 
             # Get the public URL
             host = self.sandbox.get_host(port)
+            url = f"http://{host}"
+
+            return url
+        except Exception as e:
+            return json.dumps({"status": "error", "message": f"Error starting server: {str(e)}"})
+
+    async def arun_server(self, command: str, port: int) -> str:
+        """
+        Start a server in the sandbox and return its public URL.
+
+        Args:
+            command (str): Command to start the server
+            port (int): Port the server will listen on
+
+        Returns:
+            str: Server information including public URL or error message
+        """
+        try:
+            # Start the server in the background
+            await asyncio.to_thread(self.sandbox.commands.run, command, background=True)
+
+            # Wait a moment for the server to start
+            await asyncio.sleep(2)
+
+            # Get the public URL
+            host = await asyncio.to_thread(self.sandbox.get_host, port)
             url = f"http://{host}"
 
             return url
