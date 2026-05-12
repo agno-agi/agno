@@ -306,6 +306,62 @@ def generate_session_name(team: "Team", session: TeamSession, _retries: int = 0)
     return content.replace('"', "").strip()
 
 
+async def agenerate_session_name(
+    team: "Team", session: TeamSession, _retries: int = 0
+) -> str:
+    """
+    Asynchronously generate a name for the team session.
+
+    Mirrors :func:`generate_session_name` but calls ``team.model.aresponse``
+    so that the async event loop is not blocked while waiting for the LLM.
+
+    Args:
+        team: The Team instance.
+        session: The TeamSession to generate a name for.
+        _retries: Internal retry counter (do not set manually).
+    Returns:
+        str: The generated session name.
+    """
+    max_retries = 3
+
+    if team.model is None:
+        raise Exception("Model not set")
+
+    gen_session_name_prompt = "Team Conversation\n"
+
+    messages_for_generating_session_name = session.get_messages()
+
+    for message in messages_for_generating_session_name:
+        gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
+
+    gen_session_name_prompt += "\n\nTeam Session Name: "
+
+    system_message = Message(
+        role=team.system_message_role,
+        content="Please provide a suitable name for this conversation in maximum 5 words. "
+        "Remember, do not exceed 5 words.",
+    )
+    user_message = Message(role="user", content=gen_session_name_prompt)
+    generate_name_messages = [system_message, user_message]
+
+    # Generate name asynchronously so the event loop is not blocked
+    generated_name = await team.model.aresponse(messages=generate_name_messages)
+    content = generated_name.content
+    if content is None:
+        if _retries < max_retries:
+            log_error("Generated name is None. Trying again.")
+            return await agenerate_session_name(team, session=session, _retries=_retries + 1)
+        log_error("Generated name is None after max retries. Using fallback.")
+        return "Team Session"
+    if len(content.split()) > 15:
+        if _retries < max_retries:
+            log_error("Generated name is too long. Trying again.")
+            return await agenerate_session_name(team, session=session, _retries=_retries + 1)
+        log_error("Generated name is too long after max retries. Using fallback.")
+        return "Team Session"
+    return content.replace('"', "").strip()
+
+
 def set_session_name(
     team: "Team", session_id: Optional[str] = None, autogenerate: bool = False, session_name: Optional[str] = None
 ) -> TeamSession:
