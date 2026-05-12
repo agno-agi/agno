@@ -1,8 +1,11 @@
+import asyncio
 import json
 import time
 from os import getenv
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
+
+import httpx
 
 from agno.media import Audio, Image, Video
 from agno.models.response import FileType
@@ -64,9 +67,11 @@ class ModelsLabTools(Toolkit):
             log_error("MODELS_LAB_API_KEY not set. Please set the MODELS_LAB_API_KEY environment variable.")
 
         tools: List[Any] = []
+        async_tools: List[Any] = []
         tools.append(self.generate_media)
+        async_tools.append((self.agenerate_media, "generate_media"))
 
-        super().__init__(name="models_labs", tools=tools, **kwargs)
+        super().__init__(name="models_labs", tools=tools, async_tools=async_tools, **kwargs)
 
     def _create_payload(self, prompt: str) -> Dict[str, Any]:
         """Create payload based on file type."""
@@ -227,6 +232,102 @@ class ModelsLabTools(Toolkit):
             )
 
         except RequestException as e:
+            error_msg = f"Network error while generating {self.file_type.value}: {e}"
+            log_error(error_msg)
+            return ToolResult(content=f"Error: {error_msg}")
+        except Exception as e:
+            error_msg = f"Unexpected error while generating {self.file_type.value}: {e}"
+            log_error(error_msg)
+            return ToolResult(content=f"Error: {error_msg}")
+
+    async def _await_for_media(self, media_id: str, eta: int) -> bool:
+        """Wait for media generation to complete (async)."""
+        time_to_wait = min(eta + self.add_to_eta, self.max_wait_time)
+        log_info(f"Waiting for {time_to_wait} seconds for {self.file_type.value} to be ready")
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for seconds_waited in range(time_to_wait):
+                try:
+                    fetch_response = await client.post(
+                        f"{self.fetch_url}/{media_id}",
+                        json={"key": self.api_key},
+                        headers={"Content-Type": "application/json"},
+                    )
+                    fetch_result = fetch_response.json()
+
+                    if fetch_result.get("status") == "success":
+                        return True
+
+                    await asyncio.sleep(1)
+
+                except httpx.HTTPError as e:
+                    log_warning(f"Error during fetch attempt {seconds_waited}: {str(e)}")
+
+        return False
+
+    async def agenerate_media(self, prompt: str) -> ToolResult:
+        """Generate media (video, image, or audio) given a prompt."""
+        if not self.api_key:
+            return ToolResult(content="Please set the MODELS_LAB_API_KEY")
+
+        try:
+            payload = json.dumps(self._create_payload(prompt))
+            headers = {"Content-Type": "application/json"}
+
+            log_debug(f"Generating {self.file_type.value} for prompt: {prompt}")
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(self.url, content=payload, headers=headers)
+                response.raise_for_status()
+                result = response.json()
+
+            status = result.get("status")
+            if status == "error":
+                log_error(f"Error in response: {result.get('message')}")
+                return ToolResult(content=f"Error: {result.get('message')}")
+
+            if "error" in result:
+                error_msg = f"Failed to generate {self.file_type.value}: {result['error']}"
+                log_error(error_msg)
+                return ToolResult(content=f"Error: {result['error']}")
+
+            eta = result.get("eta")
+            media_id = str(uuid4())
+
+            all_images = []
+            all_videos = []
+            all_audios = []
+
+            if self.file_type in [FileType.PNG, FileType.JPG, FileType.WAV]:
+                url_links = result.get("output") or result.get("future_links", [])
+            else:
+                url_links = result.get("future_links") or result.get("output", [])
+            for media_url in url_links:
+                artifacts = self._create_media_artifacts(media_id, media_url, str(eta))
+                all_images.extend(artifacts["images"])
+                all_videos.extend(artifacts["videos"])
+                all_audios.extend(artifacts["audios"])
+
+                if self.wait_for_completion and isinstance(eta, int):
+                    if await self._await_for_media(media_id, eta):
+                        log_info("Media generation completed successfully")
+                    else:
+                        logger.warning("Media generation timed out")
+
+            if self.file_type in [FileType.PNG, FileType.JPG] and eta is None:
+                content_msg = f"Image generated successfully ({self.file_type.value.upper()})"
+            elif eta is not None:
+                content_msg = f"{self.file_type.value.capitalize()} has been generated successfully and will be ready in {eta} seconds"
+            else:
+                content_msg = f"{self.file_type.value.capitalize()} generated successfully"
+
+            return ToolResult(
+                content=content_msg,
+                images=all_images if all_images else None,
+                videos=all_videos if all_videos else None,
+                audios=all_audios if all_audios else None,
+            )
+
+        except httpx.HTTPError as e:
             error_msg = f"Network error while generating {self.file_type.value}: {e}"
             log_error(error_msg)
             return ToolResult(content=f"Error: {error_msg}")
