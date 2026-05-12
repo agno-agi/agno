@@ -683,15 +683,31 @@ class Clickhouse(VectorDb):
             log_debug(f"ClickHouse VectorDB : Deleting documents with metadata {metadata}")
             parameters = self._get_base_parameters()
 
-            # Build WHERE clause for metadata matching using proper ClickHouse JSON syntax
+            # Build a parameterised WHERE clause so that user-supplied metadata
+            # keys and values are never interpolated directly into SQL.
+            # Each key/value pair gets its own named ClickHouse parameter
+            # ({meta_key_N:String} / {meta_val_N:String|Float64|Bool}) so the
+            # client driver handles escaping, eliminating the SQL-injection path.
             where_conditions = []
-            for key, value in metadata.items():
+            for i, (key, value) in enumerate(metadata.items()):
+                param_key = f"meta_key_{i}"
+                param_val = f"meta_val_{i}"
+                parameters[param_key] = key
                 if isinstance(value, bool):
-                    where_conditions.append(f"JSONExtractBool(toString(filters), '{key}') = {str(value).lower()}")
+                    parameters[param_val] = value
+                    where_conditions.append(
+                        f"JSONExtractBool(toString(filters), {{{param_key}:String}}) = {{{param_val}:Bool}}"
+                    )
                 elif isinstance(value, (int, float)):
-                    where_conditions.append(f"JSONExtractFloat(toString(filters), '{key}') = {value}")
+                    parameters[param_val] = float(value)
+                    where_conditions.append(
+                        f"JSONExtractFloat(toString(filters), {{{param_key}:String}}) = {{{param_val}:Float64}}"
+                    )
                 else:
-                    where_conditions.append(f"JSONExtractString(toString(filters), '{key}') = '{value}'")
+                    parameters[param_val] = str(value)
+                    where_conditions.append(
+                        f"JSONExtractString(toString(filters), {{{param_key}:String}}) = {{{param_val}:String}}"
+                    )
 
             if not where_conditions:
                 return False
