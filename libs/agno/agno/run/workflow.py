@@ -252,7 +252,8 @@ class WorkflowPausedEvent(BaseWorkflowRunOutputEvent):
 
     # Active state required to issue a continue
     step_requirements: Optional[List[StepRequirement]] = None
-    step_results: Optional[List[StepOutput]] = None
+    # Match WorkflowRunOutput.step_results — nested lists support parallel/loop iterations.
+    step_results: Optional[List[Union[StepOutput, List[StepOutput]]]] = None
     step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput, "WorkflowRunOutput"]]] = None
 
     # Convenience fields
