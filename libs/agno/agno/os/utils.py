@@ -955,14 +955,17 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
     ``JWTMiddleware`` entry, building a validator from its kwargs the same way
     the middleware does, and caching the result on ``app.state``.
     """
+    blank: Dict[str, Any] = {
+        "validator": None,
+        "verify_audience": False,
+        "audience": None,
+        "admin_scope": None,
+        "user_isolation": False,
+    }
+
     state = getattr(app, "state", None)
     if state is None:
-        return {
-            "validator": None,
-            "verify_audience": False,
-            "audience": None,
-            "admin_scope": None,
-        }
+        return blank
 
     validator = getattr(state, "jwt_validator", None)
     if validator is not None:
@@ -971,6 +974,7 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
             "verify_audience": getattr(state, "jwt_verify_audience", False),
             "audience": getattr(state, "jwt_audience", None),
             "admin_scope": getattr(state, "admin_scope", None),
+            "user_isolation": bool(getattr(state, "user_isolation_enabled", False)),
         }
 
     # Lazy resolution for manual setup: locate JWTMiddleware in user_middleware
@@ -978,12 +982,7 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
     # module import time to keep WebSocket-less imports light.
     user_middleware = getattr(app, "user_middleware", None)
     if not user_middleware:
-        return {
-            "validator": None,
-            "verify_audience": False,
-            "audience": None,
-            "admin_scope": None,
-        }
+        return blank
 
     from agno.os.middleware.jwt import JWTMiddleware, JWTValidator
 
@@ -1010,16 +1009,12 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
                 )
             except Exception as e:
                 log_warning(f"Could not lazily construct JWTValidator for WebSocket auth: {e}")
-                return {
-                    "validator": None,
-                    "verify_audience": False,
-                    "audience": None,
-                    "admin_scope": None,
-                }
+                return blank
 
             verify_audience = bool(kwargs.get("verify_audience", False))
             audience = kwargs.get("audience")
             admin_scope = kwargs.get("admin_scope")
+            user_isolation = bool(kwargs.get("user_isolation", False))
 
             # Cache on app.state so subsequent WebSocket connections and the
             # HTTP middleware see the same validator instance.
@@ -1028,20 +1023,17 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
             state.jwt_audience = audience
             if admin_scope:
                 state.admin_scope = admin_scope
+            state.user_isolation_enabled = user_isolation
 
             return {
                 "validator": lazy_validator,
                 "verify_audience": verify_audience,
                 "audience": audience,
                 "admin_scope": admin_scope,
+                "user_isolation": user_isolation,
             }
 
-    return {
-        "validator": None,
-        "verify_audience": False,
-        "audience": None,
-        "admin_scope": None,
-    }
+    return blank
 
 
 def update_cors_middleware(app: FastAPI, new_origins: list):

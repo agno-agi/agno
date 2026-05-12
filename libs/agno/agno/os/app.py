@@ -890,6 +890,7 @@ class AgentOS:
         algorithm = "RS256"
         audience = None
         admin_scope: Optional[str] = None
+        user_isolation = False
 
         if self.authorization_config:
             algorithm = self.authorization_config.algorithm or "RS256"
@@ -898,6 +899,7 @@ class AgentOS:
             verify_audience = self.authorization_config.verify_audience or False
             audience = self.authorization_config.audience
             admin_scope = self.authorization_config.admin_scope
+            user_isolation = self.authorization_config.user_isolation
 
         log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
 
@@ -913,6 +915,10 @@ class AgentOS:
         fastapi_app.state.jwt_verify_audience = verify_audience
         fastapi_app.state.jwt_audience = audience
         fastapi_app.state.admin_scope = admin_scope or AgentOSScope.ADMIN.value
+        # User isolation is opt-in and orthogonal to RBAC. When False (default)
+        # JWT/RBAC still apply but the per-user DB wrapper and ownership gates
+        # added by the user-scoped-DB work stay dormant.
+        fastapi_app.state.user_isolation_enabled = user_isolation
 
         # Collect interface route prefixes to exclude from JWT auth.
         # Interfaces use their own authentication mechanisms
@@ -950,6 +956,10 @@ class AgentOS:
             middleware_kwargs["audience"] = audience
         if admin_scope:
             middleware_kwargs["admin_scope"] = admin_scope
+        # Default to False on the middleware; only forward when actually enabled
+        # so manual app.add_middleware(JWTMiddleware) defaults stay backwards-compatible.
+        if user_isolation:
+            middleware_kwargs["user_isolation"] = True
         fastapi_app.add_middleware(JWTMiddleware, **middleware_kwargs)
 
     def get_routes(self) -> List[Any]:

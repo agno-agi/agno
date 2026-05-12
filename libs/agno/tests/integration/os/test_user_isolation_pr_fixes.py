@@ -100,6 +100,7 @@ def client(test_agent, test_team, test_workflow):
         authorization_config=AuthorizationConfig(
             verification_keys=[JWT_SECRET],
             algorithm="HS256",
+            user_isolation=True,
         ),
     )
     return TestClient(agent_os.get_app())
@@ -116,6 +117,7 @@ def custom_admin_client(test_agent):
             verification_keys=[JWT_SECRET],
             algorithm="HS256",
             admin_scope=CUSTOM_ADMIN_SCOPE,
+            user_isolation=True,
         ),
     )
     return TestClient(agent_os.get_app())
@@ -526,6 +528,7 @@ def two_agent_client(shared_db):
         authorization_config=AuthorizationConfig(
             verification_keys=[JWT_SECRET],
             algorithm="HS256",
+            user_isolation=True,
         ),
     )
     return TestClient(agent_os.get_app())
@@ -715,6 +718,7 @@ class TestWorkflowSessionLeakViaAgentRoute:
             authorization_config=AuthorizationConfig(
                 verification_keys=[JWT_SECRET],
                 algorithm="HS256",
+                user_isolation=True,
             ),
         )
         return TestClient(agent_os.get_app())
@@ -782,3 +786,79 @@ class TestCustomAdminScopeListings:
         # The fixture has a single agent registered; admin must see it.
         ids = [a.get("id") for a in resp.json()]
         assert "test-agent" in ids
+
+
+# ---------------------------------------------------------------------------
+# Opt-in: user_isolation must default to OFF
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def no_isolation_client(test_agent):
+    """AgentOS with authorization=True but user_isolation NOT enabled.
+
+    Asserts the backwards-compatibility contract: JWT/RBAC apply, but the
+    user-scoped DB wrapper and per-user ownership gates stay dormant.
+    """
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[JWT_SECRET],
+            algorithm="HS256",
+            # user_isolation deliberately omitted — must default to False.
+        ),
+    )
+    return TestClient(agent_os.get_app())
+
+
+class TestUserIsolationDefaultOff:
+    """When AuthorizationConfig(user_isolation=...) is left unset, the
+    ownership/scoping behaviour added by the user-scoped-DB work must not
+    fire. RBAC alone still governs access."""
+
+    def test_non_admin_cancel_does_not_require_session_id(self, no_isolation_client):
+        """Without isolation, the non-admin cancel path drops the
+        session_id-required gate that was added for ownership verification.
+        The route should accept the cancel and return 200 (cancel stores
+        intent even for non-existent runs)."""
+        token = make_token("user-a", scopes=["agents:test-agent:run"])
+        resp = no_isolation_client.post(
+            "/agents/test-agent/runs/some-run/cancel",
+            headers=auth_header(token),
+        )
+        # 403 would mean RBAC denied; 400 would mean the isolation gate
+        # still fired. Neither should happen here.
+        assert resp.status_code == 200, resp.text
+
+    def test_rbac_still_denies_without_run_scope(self, no_isolation_client):
+        """User isolation being off must NOT relax RBAC. A token with only
+        read scope must still be denied on a cancel (run) endpoint."""
+        token = make_token("user-a", scopes=["agents:test-agent:read"])
+        resp = no_isolation_client.post(
+            "/agents/test-agent/runs/some-run/cancel",
+            headers=auth_header(token),
+        )
+        assert resp.status_code == 403, resp.text
+
+    def test_sessions_list_returns_other_users_sessions(self, no_isolation_client):
+        """Without isolation, the sessions list does not auto-filter by JWT
+        user_id. user-b can see user-a's session because the DB wrapper
+        stays unscoped — matching legacy AgentOS behavior."""
+        # Seed a session under user-a via an admin token (write path).
+        admin_token = make_token("admin", scopes=["agent_os:admin"])
+        resp = no_isolation_client.post(
+            "/sessions?type=agent",
+            json={"agent_id": "test-agent", "user_id": "user-a"},
+            headers=auth_header(admin_token),
+        )
+        assert resp.status_code == 201, resp.text
+        session_id = resp.json().get("session_id") or resp.json().get("agent_session_id")
+
+        # user-b lists sessions — must see user-a's session because no scoping.
+        token_b = make_token("user-b", scopes=["sessions:read"])
+        resp = no_isolation_client.get("/sessions?type=agent", headers=auth_header(token_b))
+        assert resp.status_code == 200, resp.text
+        ids = [s["session_id"] for s in resp.json()["data"]]
+        assert session_id in ids

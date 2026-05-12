@@ -39,6 +39,7 @@ class TestResolveWsJwtConfigAgentOSPath:
                 "jwt_verify_audience": True,
                 "jwt_audience": "my-os",
                 "admin_scope": "custom:admin",
+                "user_isolation_enabled": True,
             }
         )
 
@@ -48,6 +49,7 @@ class TestResolveWsJwtConfigAgentOSPath:
         assert cfg["verify_audience"] is True
         assert cfg["audience"] == "my-os"
         assert cfg["admin_scope"] == "custom:admin"
+        assert cfg["user_isolation"] is True
 
     def test_state_attrs_default_when_unset(self):
         validator = MagicMock(name="validator")
@@ -59,6 +61,9 @@ class TestResolveWsJwtConfigAgentOSPath:
         assert cfg["verify_audience"] is False
         assert cfg["audience"] is None
         assert cfg["admin_scope"] is None
+        # user_isolation must default to False even when the validator is set
+        # — this is the opt-in safety net for legacy deployments.
+        assert cfg["user_isolation"] is False
 
 
 class TestResolveWsJwtConfigManualSetupPath:
@@ -72,6 +77,7 @@ class TestResolveWsJwtConfigManualSetupPath:
         assert cfg["validator"] is None
         assert cfg["verify_audience"] is False
         assert cfg["audience"] is None
+        assert cfg["user_isolation"] is False
 
     def test_builds_validator_from_jwt_middleware_kwargs(self):
         # Simulate what Starlette stores in user_middleware
@@ -83,6 +89,7 @@ class TestResolveWsJwtConfigManualSetupPath:
                 "verify_audience": True,
                 "audience": "manual-os",
                 "admin_scope": "ops:admin",
+                "user_isolation": True,
             },
         )
         app = _make_fake_app(middleware_entries=[entry])
@@ -93,6 +100,7 @@ class TestResolveWsJwtConfigManualSetupPath:
         assert cfg["verify_audience"] is True
         assert cfg["audience"] == "manual-os"
         assert cfg["admin_scope"] == "ops:admin"
+        assert cfg["user_isolation"] is True
 
         # The resolver must cache results on app.state for subsequent calls
         # and for the HTTP middleware that will run later.
@@ -100,6 +108,23 @@ class TestResolveWsJwtConfigManualSetupPath:
         assert app.state.jwt_verify_audience is True
         assert app.state.jwt_audience == "manual-os"
         assert app.state.admin_scope == "ops:admin"
+        assert app.state.user_isolation_enabled is True
+
+    def test_user_isolation_defaults_false_when_kwargs_omit_it(self):
+        """Manual setups that don't pass user_isolation must default to False."""
+        entry = SimpleNamespace(
+            cls=JWTMiddleware,
+            kwargs={
+                "verification_keys": ["k"],
+                "algorithm": "HS256",
+            },
+        )
+        app = _make_fake_app(middleware_entries=[entry])
+
+        cfg = resolve_ws_jwt_config(app)
+
+        assert cfg["user_isolation"] is False
+        assert app.state.user_isolation_enabled is False
 
     def test_lazy_validator_can_validate_token(self):
         """The lazily-constructed validator must actually verify tokens."""

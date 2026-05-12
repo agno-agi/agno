@@ -1,4 +1,4 @@
-"""Helper for per-user data isolation via scoped DB wrappers.
+"""Helper for per-user data isolation via scoped DB adapters.
 
 When a JWT contains a user_id (sub claim), `get_user_scoped_db` wraps
 the DB instance so all user-scoped queries (sessions, memory, traces)
@@ -26,7 +26,7 @@ from fastapi import HTTPException, Query, Request
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.scopes import AgentOSScope
-from agno.os.user_scoped_db import AsyncUserScopedDb, UserScopedDb
+from agno.os.user_scoped_db import AsyncUserScopedDbAdapter, UserScopedDbAdapter
 from agno.os.utils import get_db
 from agno.remote.base import RemoteDb
 from agno.utils.log import log_debug
@@ -61,10 +61,13 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
     """Get the user_id for data scoping from the request, or None if unscoped.
 
     Returns None (meaning "no filtering") when:
-    - No user_id in the JWT
-    - The user has admin scope (admins see all data)
+    - User isolation is not enabled (the opt-in
+      ``AuthorizationConfig(user_isolation=True)`` flag is off).
+    - No user_id in the JWT.
+    - The user has admin scope (admins see all data).
 
-    Returns the user_id string when a regular (non-admin) user is authenticated.
+    Returns the user_id string only when a regular (non-admin) user is
+    authenticated AND user isolation is enabled.
 
     Use this in endpoints that thread user_id through internal method calls
     (e.g. agent.aget_run_output, aread_or_create_session).
@@ -72,6 +75,12 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
     If the operator configured a custom ``admin_scope`` on JWTMiddleware, that
     value is honoured here too (read from ``request.state.admin_scope``).
     """
+    # Opt-in gate: when user isolation is disabled, callers see the raw,
+    # unscoped DB and route-level ownership checks behave as if no JWT user
+    # were present. JWT/RBAC remain in force; they're orthogonal to scoping.
+    if not getattr(request.state, "user_isolation_enabled", False):
+        return None
+
     user_id = getattr(request.state, "user_id", None)
     if not user_id:
         return None
@@ -110,7 +119,7 @@ async def get_user_scoped_db(
         table: Optional table name
 
     Returns:
-        A user-scoped DB wrapper, or the original DB if no user_id is present or user is admin.
+        A user-scoped DB adapter, or the original DB if no user_id is present or user is admin.
     """
     db = await get_db(dbs, db_id, table)
 
@@ -122,16 +131,16 @@ async def get_user_scoped_db(
     if isinstance(db, RemoteDb):
         return db
 
-    # The wrappers are registered as virtual subclasses of AsyncBaseDb / BaseDb
+    # The adapters are registered as virtual subclasses of AsyncBaseDb / BaseDb
     # (see user_scoped_db.py), so `isinstance(wrapped, AsyncBaseDb)` returns
     # True at runtime. `cast` communicates that to mypy without inheriting
-    # every abstract method on the wrapper.
+    # every abstract method on the adapter.
     if isinstance(db, AsyncBaseDb):
-        log_debug(f"Creating async user-scoped DB wrapper for user_id={user_id}")
-        return cast(AsyncBaseDb, AsyncUserScopedDb(db, user_id))
+        log_debug(f"Creating async user-scoped DB adapter for user_id={user_id}")
+        return cast(AsyncBaseDb, AsyncUserScopedDbAdapter(db, user_id))
 
-    log_debug(f"Creating user-scoped DB wrapper for user_id={user_id}")
-    return cast(BaseDb, UserScopedDb(db, user_id))
+    log_debug(f"Creating user-scoped DB adapter for user_id={user_id}")
+    return cast(BaseDb, UserScopedDbAdapter(db, user_id))
 
 
 # ----------------------------------------------------------------------------

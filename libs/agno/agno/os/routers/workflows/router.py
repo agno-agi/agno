@@ -191,6 +191,10 @@ class WebSocketAuthContext:
 
     jwt_enabled: bool = False
     is_admin: bool = False
+    # Opt-in per-user isolation. When False (default), ownership checks added
+    # by the user-scoped-DB work stay dormant — RBAC still applies but the
+    # handler treats reconnect as session-id-optional.
+    user_isolation_enabled: bool = False
 
 
 async def handle_workflow_subscription(
@@ -211,21 +215,23 @@ async def handle_workflow_subscription(
         user_id = message.get("user_id")
         last_event_index = message.get("last_event_index")  # 0-based index of last received event
         # Auth context is set by the WS dispatcher in router.py; default to
-        # "no JWT" for callers that bypass the dispatcher (the handler runs
-        # the same ownership/component checks regardless).
+        # "no JWT, no isolation" for callers that bypass the dispatcher.
         ctx = ws_auth or WebSocketAuthContext()
         jwt_enabled = ctx.jwt_enabled
         is_admin = ctx.is_admin
+        user_isolation_enabled = ctx.user_isolation_enabled
 
         if not run_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required for subscription"}))
             return
 
         # Non-admin JWT callers must prove session ownership before any replay or
-        # live-event subscription. The buffer path is keyed solely on run_id, so
-        # without this check a caller with workflows:run could read another
-        # user's run events by guessing the run_id.
-        if jwt_enabled and not is_admin and user_id:
+        # live-event subscription — but only when per-user isolation is enabled.
+        # The buffer path is keyed solely on run_id, so without this check (when
+        # isolation is on) a caller with workflows:run could read another user's
+        # run events by guessing the run_id. With isolation off, RBAC alone
+        # governs reconnect access.
+        if jwt_enabled and user_isolation_enabled and not is_admin and user_id:
             if not session_id:
                 await websocket.send_text(
                     json.dumps(

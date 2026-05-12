@@ -302,6 +302,7 @@ def get_websocket_router(
         ws_verify_audience: bool = ws_jwt_config.get("verify_audience", False)
         ws_audience = ws_jwt_config.get("audience")
         ws_admin_scope: str = ws_jwt_config.get("admin_scope") or AgentOSScope.ADMIN.value
+        ws_user_isolation_enabled: bool = bool(ws_jwt_config.get("user_isolation", False))
         jwt_auth_enabled = jwt_validator is not None
 
         # Determine auth requirements - JWT takes precedence over legacy
@@ -424,14 +425,16 @@ def get_websocket_router(
                             message["user_id"] = jwt_user_id
 
                     # Enforce workflow-level RBAC at reconnect just like
-                    # start-workflow does. Without this, a token with no
-                    # workflows:run could subscribe to a buffered run by
-                    # guessing its run_id, and the downstream ownership check
-                    # would silently skip the workflow component check when
-                    # workflow_id is omitted.
+                    # start-workflow does. RBAC fires whenever JWT auth is on
+                    # (independent of user isolation) so a token with no
+                    # workflows:run can't subscribe to a buffered run by
+                    # guessing its run_id. The workflow_id requirement, by
+                    # contrast, only matters when user isolation is enabled —
+                    # that's when the downstream session/component check
+                    # actually uses it.
+                    workflow_id_for_reconnect = message.get("workflow_id")
                     if jwt_auth_enabled and not is_admin:
-                        workflow_id_for_reconnect = message.get("workflow_id")
-                        if not workflow_id_for_reconnect:
+                        if ws_user_isolation_enabled and not workflow_id_for_reconnect:
                             await websocket.send_text(
                                 json.dumps(
                                     {
@@ -465,6 +468,7 @@ def get_websocket_router(
                     ws_auth = WebSocketAuthContext(
                         jwt_enabled=jwt_auth_enabled,
                         is_admin=is_admin,
+                        user_isolation_enabled=ws_user_isolation_enabled,
                     )
                     await handle_workflow_subscription(websocket, message, os, ws_auth=ws_auth)
 
