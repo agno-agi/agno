@@ -29,13 +29,18 @@ class GeminiTools(Toolkit):
         location: Optional[str] = None,
         image_generation_model: str = "imagen-3.0-generate-002",
         video_generation_model: str = "veo-2.0-generate-001",
-        poll_interval: int = 5,
-        max_wait_time: int = 600,
         enable_generate_image: bool = True,
         enable_generate_video: bool = True,
         all: bool = False,
+        poll_interval: int = 5,
+        max_wait_time: int = 600,
         **kwargs,
     ):
+        if poll_interval <= 0:
+            raise ValueError(f"poll_interval must be > 0, got {poll_interval}")
+        if max_wait_time < 0:
+            raise ValueError(f"max_wait_time must be >= 0, got {max_wait_time}")
+
         tools = []
         async_tools = []
         if all or enable_generate_image:

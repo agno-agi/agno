@@ -100,7 +100,9 @@ class LumaLabTools(Toolkit):
             video_id = str(uuid.uuid4())
 
             if not self.wait_for_completion:
-                return ToolResult(content="Async generation unsupported")
+                return ToolResult(
+                    content=f"Video generation started (id={video_id}); polling skipped because wait_for_completion=False"
+                )
 
             # Poll for completion
             seconds_waited = 0
@@ -155,7 +157,9 @@ class LumaLabTools(Toolkit):
 
             video_id = str(uuid.uuid4())
             if not self.wait_for_completion:
-                return ToolResult(content="Async generation unsupported")
+                return ToolResult(
+                    content=f"Video generation started (id={video_id}); polling skipped because wait_for_completion=False"
+                )
 
             # Poll for completion
             seconds_waited = 0
@@ -168,7 +172,7 @@ class LumaLabTools(Toolkit):
                 if generation.state == "completed" and generation.assets:
                     video_url = generation.assets.video
                     if video_url:
-                        video_artifact = Video(id=video_id, url=video_url, state="completed")
+                        video_artifact = Video(id=video_id, url=video_url, eta="completed")
                         return ToolResult(
                             content=f"Video generated successfully: {video_url}",
                             videos=[video_artifact],
@@ -226,7 +230,9 @@ class LumaLabTools(Toolkit):
             video_id = str(uuid.uuid4())
 
             if not self.wait_for_completion:
-                return ToolResult(content="Async generation unsupported")
+                return ToolResult(
+                    content=f"Video generation started (id={video_id}); polling skipped because wait_for_completion=False"
+                )
 
             # Poll for completion
             seconds_waited = 0
@@ -281,7 +287,9 @@ class LumaLabTools(Toolkit):
 
             video_id = str(uuid.uuid4())
             if not self.wait_for_completion:
-                return ToolResult(content="Async generation unsupported")
+                return ToolResult(
+                    content=f"Video generation started (id={video_id}); polling skipped because wait_for_completion=False"
+                )
 
             # Poll for completion
             seconds_waited = 0
@@ -294,7 +302,7 @@ class LumaLabTools(Toolkit):
                 if generation.state == "completed" and generation.assets:
                     video_url = generation.assets.video
                     if video_url:
-                        video_artifact = Video(id=video_id, url=video_url, state="completed")
+                        video_artifact = Video(id=video_id, url=video_url, eta="completed")
                         return ToolResult(
                             content=f"Video generated successfully: {video_url}",
                             videos=[video_artifact],
