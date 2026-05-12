@@ -2700,6 +2700,7 @@ class Workflow:
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
             step_results=workflow_run_response.step_results,  # type: ignore
+            step_executor_runs=workflow_run_response.step_executor_runs,
             metadata=workflow_run_response.metadata,
             run_output=workflow_run_response,  # Include full run output for nested workflows
         )
@@ -3617,7 +3618,8 @@ class Workflow:
             workflow_name=workflow_run_response.workflow_name,
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
-            step_results=workflow_run_response.step_results,  # type: ignore[arg-type]
+            step_results=workflow_run_response.step_results,  # type: ignore
+            step_executor_runs=workflow_run_response.step_executor_runs,  # type: ignore[arg-type]
             metadata=workflow_run_response.metadata,
             run_output=workflow_run_response,  # Include full run output for nested workflows
         )
@@ -6923,6 +6925,7 @@ class Workflow:
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
             step_results=workflow_run_response.step_results,  # type: ignore
+            step_executor_runs=workflow_run_response.step_executor_runs,
             metadata=workflow_run_response.metadata,
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response)
@@ -8607,6 +8610,7 @@ class Workflow:
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
             step_results=workflow_run_response.step_results,  # type: ignore
+            step_executor_runs=workflow_run_response.step_executor_runs,
             metadata=workflow_run_response.metadata,
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)

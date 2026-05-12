@@ -118,6 +118,12 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
         if hasattr(self, "step_results") and self.step_results is not None:
             _dict["step_results"] = [step.to_dict() if hasattr(step, "to_dict") else step for step in self.step_results]
 
+        # Handle step_executor_runs (RunOutput/TeamRunOutput/WorkflowRunOutput objects)
+        if hasattr(self, "step_executor_runs") and self.step_executor_runs is not None:
+            _dict["step_executor_runs"] = [
+                run.to_dict() if hasattr(run, "to_dict") else run for run in self.step_executor_runs
+            ]
+
         if hasattr(self, "step_response") and self.step_response is not None:
             _dict["step_response"] = (
                 self.step_response.to_dict() if hasattr(self.step_response, "to_dict") else self.step_response
@@ -187,6 +193,8 @@ class WorkflowCompletedEvent(BaseWorkflowRunOutputEvent):
 
     # Store actual step execution results as StepOutput objects
     step_results: List[StepOutput] = field(default_factory=list)
+    # Store underlying agent/team runs (parallels WorkflowRunOutput.step_executor_runs)
+    step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput, "WorkflowRunOutput"]]] = None
     metadata: Optional[Dict[str, Any]] = None
 
     # Full workflow run output for nested workflows
