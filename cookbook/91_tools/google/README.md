@@ -2,6 +2,32 @@
 
 Agents for Gmail, Google Calendar, Google Drive, and Google Slides using OAuth or service account authentication.
 
+## Authentication Scenarios
+
+The framework supports 5 credential resolution paths. Choose based on your deployment:
+
+| Scenario | Cookbook | Use Case |
+|----------|----------|----------|
+| **Interactive OAuth (file)** | `gmail_tools.py` | Dev/single-user: browser popup, saves `token.json` |
+| **Database + Standalone** | `google_auth_db_storage.py` | Persist tokens across runs without browser each time |
+| **Database + Interface** | `slack/gmail_oauth.py` | Multi-user SaaS: Slack/WhatsApp bots with per-user OAuth |
+| **Service Account** | `google_service_account.py` | Server/enterprise: no browser, domain-wide delegation |
+| **Enterprise OAuth** | `google_enterprise_oauth.py` | Restrict to workspace domain (`hosted_domain`) |
+| **Multi-toolkit Workspace** | `google_workspace_with_db.py` | Gmail + Calendar + Drive with shared auth |
+
+### Quick Decision Guide
+
+```
+Do you need per-user authentication?
+├─ NO (single service account) → google_service_account.py
+└─ YES
+   ├─ Running in Slack/WhatsApp/Web interface? → slack/gmail_oauth.py
+   ├─ Running standalone script?
+   │  ├─ Want to persist tokens in DB? → google_auth_db_storage.py
+   │  └─ OK with token.json file? → gmail_tools.py (default)
+   └─ Need to restrict to company domain? → google_enterprise_oauth.py
+```
+
 ## Quick Start
 
 ```python
@@ -135,3 +161,13 @@ export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail, optional
 | File | Description |
 |------|-------------|
 | `calendar_gmail_meeting_prep.py` | Calendar + Gmail: meeting prep briefs with attendee email context |
+| `google_workspace_with_db.py` | Gmail + Calendar with DB token storage |
+| `google_workspace_agent.py` | Multi-service agent with all Google tools |
+
+### Authentication
+
+| File | Description |
+|------|-------------|
+| `google_auth_db_storage.py` | Simplified: just `GmailTools()` + `db=SqliteDb()` — zero config |
+| `google_service_account.py` | Service account with domain-wide delegation (enterprise) |
+| `google_enterprise_oauth.py` | OAuth with `hosted_domain` restriction and enterprise features |
