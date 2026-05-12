@@ -433,6 +433,64 @@ def generate_session_name(agent: Agent, session: AgentSession, max_retries: int 
     return content.replace('"', "").strip()
 
 
+async def agenerate_session_name(
+    agent: Agent, session: AgentSession, max_retries: int = 3, _attempt: int = 0
+) -> str:
+    """
+    Asynchronously generate a name for the session using the first few messages.
+
+    Mirrors :func:`generate_session_name` but calls ``agent.model.aresponse``
+    so that the async event loop is not blocked while waiting for the LLM.
+
+    Args:
+        agent: The Agent instance.
+        session (AgentSession): The session to generate a name for.
+        max_retries: Maximum number of retries if generation fails.
+        _attempt: Current attempt number (used internally for recursion).
+    Returns:
+        str: The generated session name.
+    """
+    if agent.model is None:
+        raise Exception("Model not set")
+
+    gen_session_name_prompt = "Conversation\n"
+
+    messages_for_generating_session_name = session.get_messages()
+
+    for message in messages_for_generating_session_name:
+        gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
+
+    gen_session_name_prompt += "\n\nConversation Name: "
+
+    system_message = Message(
+        role=agent.system_message_role,
+        content="Please provide a suitable name for this conversation in maximum 5 words. "
+        "Remember, do not exceed 5 words.",
+    )
+    user_message = Message(role=agent.user_message_role, content=gen_session_name_prompt)
+    generate_name_messages = [system_message, user_message]
+
+    # Generate name asynchronously so the event loop is not blocked
+    generated_name = await agent.model.aresponse(messages=generate_name_messages)
+    content = generated_name.content
+    if content is None:
+        if _attempt >= max_retries:
+            return "New Session"
+        log_error("Generated name is None. Trying again.")
+        return await agenerate_session_name(
+            agent, session=session, max_retries=max_retries, _attempt=_attempt + 1
+        )
+
+    if len(content.split()) > 5:
+        if _attempt >= max_retries:
+            return " ".join(content.split()[:5])
+        log_error("Generated name is too long. It should be less than 5 words. Trying again.")
+        return await agenerate_session_name(
+            agent, session=session, max_retries=max_retries, _attempt=_attempt + 1
+        )
+    return content.replace('"', "").strip()
+
+
 def get_session_name(agent: Agent, session_id: Optional[str] = None) -> str:
     """
     Get the session name for the given session ID.
