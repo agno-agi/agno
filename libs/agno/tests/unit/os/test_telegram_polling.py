@@ -289,12 +289,14 @@ class TestTelegramPolling:
         message.from_user.is_bot = False
         message.message_id = 100
         message.text = "Hello"
-        message.json = lambda: json.dumps({
-            "message_id": 100,
-            "from": {"id": 67890, "is_bot": False},
-            "chat": {"id": 12345, "type": "private"},
-            "text": "Hello",
-        })
+        message.json = lambda: json.dumps(
+            {
+                "message_id": 100,
+                "from": {"id": 67890, "is_bot": False},
+                "chat": {"id": 12345, "type": "private"},
+                "text": "Hello",
+            }
+        )
         # Remove edited_message
         del update.edited_message
         update.message = message
@@ -428,3 +430,97 @@ class TestTelegramPollingMode:
         tg = Telegram(agent=MagicMock(), mode="polling", prefix="/bot", tags=["Custom"])
         assert tg.prefix == "/bot"
         assert tg.tags == ["Custom"]
+
+
+# ===================================================================
+# Shutdown hygiene, quoted_responses, __init__ order, processor<->router parity
+# ===================================================================
+
+
+class TestPollingShutdown:
+    @pytest.mark.asyncio
+    async def test_start_closes_bot_session_on_exit(self):
+        processor = _make_processor()
+        processor.bot.close_session = AsyncMock()
+        poller = TelegramPolling(processor)
+
+        async def fake_get_updates(**kwargs):
+            poller.stop()
+            return []
+
+        processor.bot.get_updates = fake_get_updates
+        await poller.start()
+        processor.bot.close_session.assert_awaited_once()
+
+
+def _completed_response():
+    return MagicMock(
+        status="COMPLETED",
+        content="ok",
+        reasoning_content=None,
+        images=None,
+        videos=None,
+        audio=None,
+        files=None,
+    )
+
+
+class TestQuotedResponses:
+    @pytest.mark.asyncio
+    async def test_quoted_responses_quotes_reply_in_dm(self):
+        agent = AsyncMock(id="a1")
+        agent.arun = AsyncMock(return_value=_completed_response())
+        processor = _make_processor(entity=agent, entity_type="agent", streaming=False, quoted_responses=True)
+        msg = _text_update("Hi", message_id=777)  # private chat
+        with patch(f"{PROCESSOR_MODULE}.extract_message_payload", return_value={"message": "Hi"}):
+            with patch(f"{PROCESSOR_MODULE}.send_response_media", new_callable=AsyncMock):
+                with patch(f"{PROCESSOR_MODULE}.send_message", new_callable=AsyncMock) as mock_send:
+                    await processor.process_message(msg)
+        assert mock_send.called
+        assert any(c.kwargs.get("reply_to_message_id") == 777 for c in mock_send.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_no_quoted_reply_in_dm_by_default(self):
+        agent = AsyncMock(id="a1")
+        agent.arun = AsyncMock(return_value=_completed_response())
+        processor = _make_processor(entity=agent, entity_type="agent", streaming=False)
+        msg = _text_update("Hi", message_id=777)  # private chat
+        with patch(f"{PROCESSOR_MODULE}.extract_message_payload", return_value={"message": "Hi"}):
+            with patch(f"{PROCESSOR_MODULE}.send_response_media", new_callable=AsyncMock):
+                with patch(f"{PROCESSOR_MODULE}.send_message", new_callable=AsyncMock) as mock_send:
+                    await processor.process_message(msg)
+        assert mock_send.called
+        assert all(c.kwargs.get("reply_to_message_id") is None for c in mock_send.call_args_list)
+
+    def test_processor_and_webhook_both_accept_quoted_responses(self):
+        import inspect
+
+        from agno.os.interfaces.telegram.router import attach_routes
+
+        webhook_params = set(inspect.signature(attach_routes).parameters)
+        processor_params = set(inspect.signature(TelegramMessageProcessor.__init__).parameters)
+        assert "quoted_responses" in webhook_params
+        assert "quoted_responses" in processor_params
+
+    def test_get_processor_threads_quoted_responses(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_TOKEN", "123456:fake")
+        with patch(f"{PROCESSOR_MODULE}.AsyncTeleBot", return_value=AsyncMock()):
+            tg = Telegram(agent=MagicMock(id="t"), mode="polling", quoted_responses=True)
+            processor = tg._get_processor()
+        assert processor.quoted_responses is True
+
+
+class TestTelegramInitAndShutdown:
+    def test_init_positional_args_match_webhook_order(self):
+        # main's positional order: agent, team, workflow, prefix, tags, token, ...
+        tg = Telegram(MagicMock(), None, None, "/bot", ["Tag"], "tok")
+        assert tg.prefix == "/bot"
+        assert tg.tags == ["Tag"]
+        assert tg.token == "tok"
+        assert tg.mode == "webhook"
+
+    def test_run_polling_swallows_keyboard_interrupt(self, monkeypatch):
+        tg = Telegram(agent=MagicMock(), mode="polling", token="123456:fake")
+        monkeypatch.setattr(tg, "start_polling", MagicMock())
+        monkeypatch.setattr("asyncio.run", MagicMock(side_effect=KeyboardInterrupt()))
+        tg.run_polling()  # KeyboardInterrupt is caught and logged, not propagated
