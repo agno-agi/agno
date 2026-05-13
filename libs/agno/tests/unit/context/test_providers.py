@@ -13,9 +13,12 @@ from pathlib import Path
 import pytest
 from sqlalchemy import create_engine
 
+from agno.context.calendar import GoogleCalendarContextProvider
 from agno.context.database import DatabaseContextProvider
 from agno.context.fs import FilesystemContextProvider
-from agno.context.gdrive import GDriveContextProvider
+from agno.context.gdrive import GoogleDriveContextProvider
+from agno.context.gmail import GmailContextProvider
+from agno.context.google import validate_google_credentials
 from agno.context.mcp import MCPContextProvider
 from agno.context.mode import ContextMode
 from agno.context.slack import SlackContextProvider
@@ -601,33 +604,233 @@ def test_slack_agent_mode_surface_is_query_only():
 # ---------------------------------------------------------------------------
 
 
-def test_gdrive_requires_service_account_path(monkeypatch):
+def test_gdrive_defaults_to_oauth_when_no_sa(monkeypatch):
+    """GDrive supports OAuth — status reports unauthenticated when no token."""
     monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
-    with pytest.raises(ValueError, match="GOOGLE_SERVICE_ACCOUNT_FILE"):
-        GDriveContextProvider()
-
-
-def test_gdrive_status_reports_missing_sa_file(tmp_path):
-    missing = tmp_path / "no-such-sa.json"
-    p = GDriveContextProvider(service_account_path=str(missing))
+    p = GoogleDriveContextProvider()
     status = p.status()
     assert status.ok is False
-    assert "service account file not found" in status.detail
+    assert "not authenticated" in status.detail
 
 
-def test_gdrive_status_ok_when_sa_file_exists(tmp_path):
+def test_gdrive_status_fails_for_missing_sa_file(tmp_path):
+    """When SA path points to nonexistent file, status reports failure."""
+    missing = tmp_path / "missing.json"
+    p = GoogleDriveContextProvider(service_account_path=str(missing))
+    status = p.status()
+    assert status.ok is False
+    assert "not found" in status.detail
+
+
+def test_gdrive_status_fails_for_invalid_sa_json(tmp_path):
+    """When SA file is not valid JSON, status reports failure."""
+    bad_sa = tmp_path / "bad.json"
+    bad_sa.write_text("not valid json")
+    p = GoogleDriveContextProvider(service_account_path=str(bad_sa))
+    status = p.status()
+    assert status.ok is False
+    assert "invalid" in status.detail
+
+
+def test_gdrive_status_reports_service_account_email(tmp_path, monkeypatch):
+    """When SA file is valid, status includes the service account email."""
+    from unittest.mock import MagicMock
+
     sa = tmp_path / "sa.json"
     sa.write_text("{}")
-    p = GDriveContextProvider(service_account_path=str(sa))
-    assert p.status().ok is True
+
+    mock_creds = MagicMock()
+    mock_creds.service_account_email = "test@test-project.iam.gserviceaccount.com"
+
+    def mock_from_sa_file(path):
+        return mock_creds
+
+    import google.oauth2.service_account as sa_module
+
+    monkeypatch.setattr(sa_module.Credentials, "from_service_account_file", mock_from_sa_file)
+
+    p = GoogleDriveContextProvider(service_account_path=str(sa))
+    status = p.status()
+    assert status.ok is True
+    assert "service_account" in status.detail
+    assert "test@test-project.iam.gserviceaccount.com" in status.detail
 
 
-def test_gdrive_default_surface_is_single_query_tool(tmp_path):
-    sa = tmp_path / "sa.json"
-    sa.write_text("{}")
-    p = GDriveContextProvider(service_account_path=str(sa))
+def test_gdrive_default_surface_is_single_query_tool(monkeypatch):
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    p = GoogleDriveContextProvider()
     tools = p.get_tools()
     assert [t.name for t in tools] == ["query_gdrive"]
+
+
+# ---------------------------------------------------------------------------
+# Gmail
+# ---------------------------------------------------------------------------
+
+
+def test_gmail_requires_delegated_user_with_sa(tmp_path, monkeypatch):
+    """Gmail SA requires delegated_user because SAs have no inbox."""
+    monkeypatch.delenv("GOOGLE_DELEGATED_USER", raising=False)
+    sa = tmp_path / "sa.json"
+    sa.write_text("{}")
+    with pytest.raises(ValueError, match="delegated_user"):
+        GmailContextProvider(service_account_path=str(sa))
+
+
+def test_gmail_status_fails_for_missing_sa_file(tmp_path):
+    missing = tmp_path / "missing.json"
+    p = GmailContextProvider(service_account_path=str(missing), delegated_user="user@example.com")
+    status = p.status()
+    assert status.ok is False
+    assert "not found" in status.detail
+
+
+def test_gmail_status_reports_oauth_not_authenticated(monkeypatch):
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    p = GmailContextProvider(token_path="/nonexistent/token.json")
+    status = p.status()
+    assert status.ok is False
+    assert "not authenticated" in status.detail
+
+
+def test_gmail_default_surface_is_single_query_tool(monkeypatch):
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    p = GmailContextProvider()
+    tools = p.get_tools()
+    assert [t.name for t in tools] == ["query_gmail"]
+
+
+def test_gmail_write_enabled_adds_update_tool(monkeypatch):
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    p = GmailContextProvider(write=True)
+    tools = p.get_tools()
+    assert [t.name for t in tools] == ["query_gmail", "update_gmail"]
+
+
+# ---------------------------------------------------------------------------
+# Calendar
+# ---------------------------------------------------------------------------
+
+
+def test_calendar_does_not_require_delegated_user(tmp_path, monkeypatch):
+    """Calendar SA can use its own calendar, unlike Gmail."""
+    from unittest.mock import MagicMock
+
+    sa = tmp_path / "sa.json"
+    sa.write_text("{}")
+
+    mock_creds = MagicMock()
+    mock_creds.service_account_email = "test@test-project.iam.gserviceaccount.com"
+
+    def mock_from_sa_file(path):
+        return mock_creds
+
+    import google.oauth2.service_account as sa_module
+
+    monkeypatch.setattr(sa_module.Credentials, "from_service_account_file", mock_from_sa_file)
+
+    p = GoogleCalendarContextProvider(service_account_path=str(sa))
+    status = p.status()
+    assert status.ok is True
+
+
+def test_calendar_status_fails_for_missing_sa_file(tmp_path):
+    missing = tmp_path / "missing.json"
+    p = GoogleCalendarContextProvider(service_account_path=str(missing))
+    status = p.status()
+    assert status.ok is False
+    assert "not found" in status.detail
+
+
+def test_calendar_status_reports_oauth_not_authenticated(monkeypatch):
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    p = GoogleCalendarContextProvider(token_path="/nonexistent/token.json")
+    status = p.status()
+    assert status.ok is False
+    assert "not authenticated" in status.detail
+
+
+def test_calendar_default_surface_is_single_query_tool(monkeypatch):
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    p = GoogleCalendarContextProvider()
+    tools = p.get_tools()
+    assert [t.name for t in tools] == ["query_calendar"]
+
+
+def test_calendar_write_enabled_adds_update_tool(monkeypatch):
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    p = GoogleCalendarContextProvider(write=True)
+    tools = p.get_tools()
+    assert [t.name for t in tools] == ["query_calendar", "update_calendar"]
+
+
+def test_calendar_write_toolkit_includes_find_available_slots(monkeypatch):
+    """Write agent needs find_available_slots to schedule meetings."""
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    p = GoogleCalendarContextProvider(write=True)
+    write_toolkit = p._build_write_toolkit()
+    assert "find_available_slots" in write_toolkit.functions
+
+
+# ---------------------------------------------------------------------------
+# validate_google_credentials helper
+# ---------------------------------------------------------------------------
+
+
+def test_validate_google_credentials_sa_file_not_found():
+    status = validate_google_credentials(
+        provider_id="test",
+        sa_path="/nonexistent/sa.json",
+        token_path=None,
+    )
+    assert status.ok is False
+    assert "not found" in status.detail
+
+
+def test_validate_google_credentials_sa_invalid_json(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json")
+    status = validate_google_credentials(
+        provider_id="test",
+        sa_path=str(bad),
+        token_path=None,
+    )
+    assert status.ok is False
+    assert "invalid" in status.detail
+
+
+def test_validate_google_credentials_oauth_not_authenticated():
+    status = validate_google_credentials(
+        provider_id="test",
+        sa_path=None,
+        token_path="/nonexistent/token.json",
+    )
+    assert status.ok is False
+    assert "not authenticated" in status.detail
+
+
+def test_validate_google_credentials_oauth_valid_token(tmp_path):
+    token = tmp_path / "token.json"
+    token.write_text(
+        json.dumps(
+            {
+                "token": "ya29.valid",
+                "refresh_token": "1//refresh",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "client_id": "client.apps.googleusercontent.com",
+                "client_secret": "secret",
+                "scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+            }
+        )
+    )
+    status = validate_google_credentials(
+        provider_id="test",
+        sa_path=None,
+        token_path=str(token),
+    )
+    # Token will be expired (no expiry set), but has refresh_token
+    assert status.ok is True
+    assert "oauth" in status.detail
 
 
 # ---------------------------------------------------------------------------

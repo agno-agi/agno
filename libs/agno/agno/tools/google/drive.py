@@ -19,6 +19,19 @@ Required Setup:
 4. Optionally set GOOGLE_DELEGATED_USER to impersonate a user via domain-wide delegation
 
 Install dependencies: `pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`
+
+**Shared Drive Support:**
+
+By default, searches only personal Drive (corpora="user"). To access Shared Drives:
+
+    GoogleDriveTools(
+        corpora="allDrives",           # Search all drives
+        supports_all_drives=True,      # Enable Shared Drive API features
+        include_items_from_all_drives=True,  # Include Shared Drive items in results
+    )
+
+Corpora options: "user" (default), "domain", "drive" (requires drive_id), "allDrives".
+See: https://developers.google.com/drive/api/guides/enable-shareddrives
 """
 
 import asyncio
@@ -85,6 +98,112 @@ DRIVE_QUERY_INSTRUCTIONS = textwrap.dedent(f"""\
 
 
 authenticate = google_authenticate("drive")
+
+BINARY_MIME_PREFIXES = (
+    # Microsoft Office
+    "application/vnd.openxmlformats-officedocument",  # .docx, .xlsx, .pptx
+    "application/vnd.ms-",  # .doc, .xls, .ppt (legacy Office)
+    "application/msword",  # .doc (alternative)
+    # OpenDocument (LibreOffice/OpenOffice)
+    "application/vnd.oasis.opendocument",  # .odt, .ods, .odp
+    "application/vnd.sun.xml",  # older OpenOffice
+    # Apple iWork
+    "application/vnd.apple.",  # .pages, .numbers, .key
+    # Documents
+    "application/pdf",
+    "application/x-pdf",
+    "application/rtf",
+    "application/x-rtf",
+    "application/epub",
+    "application/x-mobipocket-ebook",  # .mobi
+    "application/vnd.amazon.ebook",  # .azw
+    # Archives
+    "application/zip",
+    "application/x-zip",
+    "application/gzip",
+    "application/x-gzip",
+    "application/x-tar",
+    "application/tar",
+    "application/x-rar",
+    "application/vnd.rar",  # modern RAR
+    "application/x-7z",
+    "application/x-bzip",
+    "application/x-xz",
+    "application/x-lzma",
+    "application/zstd",
+    "application/x-zstd",
+    "application/java-archive",  # .jar
+    "application/vnd.android.package-archive",  # .apk
+    "application/x-iso9660-image",  # .iso
+    "application/x-apple-diskimage",  # .dmg
+    # Generic binary
+    "application/octet-stream",
+    # Media (excluding SVG which is text)
+    "image/",
+    "video/",
+    "audio/",
+    "font/",
+)
+
+# Text formats that start with binary prefixes but should be readable
+TEXT_EXCEPTIONS = {
+    "image/svg+xml",  # SVG is XML text
+}
+
+
+def _is_binary_mime(mime_type: str) -> bool:
+    """Return True if the MIME type indicates a binary format that cannot be decoded as text."""
+    if mime_type in TEXT_EXCEPTIONS:
+        return False
+    return any(mime_type.startswith(prefix) for prefix in BINARY_MIME_PREFIXES)
+
+
+# Office formats with optional text extraction support
+DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+PPTX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+OFFICE_MIME_TYPES = {DOCX_MIME_TYPE, XLSX_MIME_TYPE, PPTX_MIME_TYPE}
+
+
+def _extract_docx_text(content_bytes: bytes) -> str:
+    import docx
+
+    buffer = io.BytesIO(content_bytes)
+    document = docx.Document(buffer)
+    paragraphs = [p.text for p in document.paragraphs]
+    return "\n".join(paragraphs)
+
+
+def _extract_xlsx_text(content_bytes: bytes) -> str:
+    import openpyxl
+
+    buffer = io.BytesIO(content_bytes)
+    workbook = openpyxl.load_workbook(buffer, read_only=True, data_only=True)
+    lines = []
+    for sheet in workbook.worksheets:
+        lines.append(f"=== Sheet: {sheet.title} ===")
+        for row in sheet.iter_rows(values_only=True):
+            cells = [str(c) if c is not None else "" for c in row]
+            if any(cells):
+                lines.append("\t".join(cells))
+    return "\n".join(lines)
+
+
+def _extract_pptx_text(content_bytes: bytes) -> str:
+    from pptx import Presentation  # type: ignore[import-not-found]
+
+    buffer = io.BytesIO(content_bytes)
+    prs = Presentation(buffer)
+    lines = []
+    for i, slide in enumerate(prs.slides, 1):
+        lines.append(f"=== Slide {i} ===")
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                for paragraph in shape.text_frame.paragraphs:
+                    text = "".join(run.text for run in paragraph.runs)
+                    if text.strip():
+                        lines.append(text)
+    return "\n".join(lines)
 
 
 class GoogleDriveTools(Toolkit):
@@ -154,6 +273,12 @@ class GoogleDriveTools(Toolkit):
         include_trashed: bool = False,
         # Maximum file size (bytes) read_file will load into memory for non-Workspace files
         max_read_size: int = 10 * 1024 * 1024,
+        # Shared Drive support — passthrough to Google Drive API
+        # See: https://developers.google.com/drive/api/guides/enable-shareddrives
+        corpora: str = "user",  # "user" | "domain" | "drive" | "allDrives"
+        supports_all_drives: bool = False,
+        include_items_from_all_drives: bool = False,
+        drive_id: Optional[str] = None,  # Required when corpora="drive"
         # Injected into agent system prompt with Drive query syntax
         instructions: Optional[str] = None,
         add_instructions: bool = True,
@@ -167,6 +292,10 @@ class GoogleDriveTools(Toolkit):
         self.include_trashed = include_trashed
         self.max_read_size = max_read_size
         self.download_dir = Path(download_dir).resolve()
+        self.corpora = corpora
+        self.supports_all_drives = supports_all_drives
+        self.include_items_from_all_drives = include_items_from_all_drives
+        self.drive_id = drive_id
 
         # Pre-built credentials skip the OAuth/service account flow entirely
         self.creds = creds
@@ -302,7 +431,7 @@ class GoogleDriveTools(Toolkit):
 
     def _get_file_metadata(self, file_id: str, fields: str) -> dict:
         service = cast(Resource, self.service)
-        return service.files().get(fileId=file_id, fields=fields).execute()
+        return service.files().get(fileId=file_id, fields=fields, supportsAllDrives=self.supports_all_drives).execute()
 
     def _download_bytes(self, request: Any) -> bytes:
         """Download a Drive API media request into memory via MediaIoBaseDownload."""
@@ -374,7 +503,12 @@ class GoogleDriveTools(Toolkit):
                 "pageSize": max_results,
                 "orderBy": "modifiedTime desc",
                 "fields": self.SEARCH_FIELDS,
+                "corpora": self.corpora,
+                "supportsAllDrives": self.supports_all_drives,
+                "includeItemsFromAllDrives": self.include_items_from_all_drives,
             }
+            if self.drive_id:
+                list_kwargs["driveId"] = self.drive_id
             if page_token:
                 list_kwargs["pageToken"] = page_token
             results = service.files().list(**list_kwargs).execute()
@@ -433,6 +567,62 @@ class GoogleDriveTools(Toolkit):
                 return json.dumps(
                     {"error": f"Cannot read {mime_type} as text. Use download_file instead.", "file": metadata}
                 )
+            elif mime_type in OFFICE_MIME_TYPES:
+                file_size = int(metadata.get("size", 0))
+                if file_size > self.max_read_size:
+                    return json.dumps(
+                        {
+                            "error": (
+                                f"File is {file_size} bytes, exceeds max_read_size "
+                                f"({self.max_read_size}). Use download_file instead."
+                            ),
+                            "file": metadata,
+                        }
+                    )
+                request = service.files().get_media(fileId=file_id, supportsAllDrives=self.supports_all_drives)
+                content_bytes = self._download_bytes(request)
+                fmt, pkg = {
+                    DOCX_MIME_TYPE: ("docx", "python-docx"),
+                    XLSX_MIME_TYPE: ("xlsx", "openpyxl"),
+                    PPTX_MIME_TYPE: ("pptx", "python-pptx"),
+                }[mime_type]
+                try:
+                    if mime_type == DOCX_MIME_TYPE:
+                        content = _extract_docx_text(content_bytes)
+                    elif mime_type == XLSX_MIME_TYPE:
+                        content = _extract_xlsx_text(content_bytes)
+                    else:
+                        content = _extract_pptx_text(content_bytes)
+                    return json.dumps(
+                        {
+                            "file": metadata,
+                            "content": content,
+                            "contentLength": len(content),
+                            "extractedFrom": fmt,
+                        }
+                    )
+                except ImportError:
+                    return json.dumps(
+                        {
+                            "error": f"Cannot read .{fmt} file: {pkg} not installed. Install with: pip install {pkg}",
+                            "file": metadata,
+                        }
+                    )
+            elif _is_binary_mime(mime_type):
+                file_ext = metadata.get("name", "").rsplit(".", 1)[-1].lower()
+                hint = ""
+                if file_ext in ("docx", "doc"):
+                    hint = " To read as text, open in Google Drive and convert to Google Docs format."
+                elif file_ext in ("xlsx", "xls"):
+                    hint = " To read as text, open in Google Drive and convert to Google Sheets format."
+                elif file_ext in ("pptx", "ppt"):
+                    hint = " To read as text, open in Google Drive and convert to Google Slides format."
+                return json.dumps(
+                    {
+                        "error": f"Cannot read binary file ({mime_type}) as text.{hint}",
+                        "file": metadata,
+                    }
+                )
             else:
                 export_mime = None
 
@@ -450,7 +640,7 @@ class GoogleDriveTools(Toolkit):
                             "file": metadata,
                         }
                     )
-                request = service.files().get_media(fileId=file_id)
+                request = service.files().get_media(fileId=file_id, supportsAllDrives=self.supports_all_drives)
                 content_bytes = self._download_bytes(request)
 
             content = content_bytes.decode("utf-8", errors="replace")
@@ -579,7 +769,7 @@ class GoogleDriveTools(Toolkit):
                 )
 
             # Regular file — direct download
-            request = service.files().get_media(fileId=file_id)
+            request = service.files().get_media(fileId=file_id, supportsAllDrives=self.supports_all_drives)
             with path.open("wb") as file_handle:
                 downloader = MediaIoBaseDownload(file_handle, request)
                 done = False
