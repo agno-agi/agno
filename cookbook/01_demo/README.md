@@ -1,121 +1,97 @@
 # Agno Demo
 
-5 agents, 1 team, 1 workflow served via AgentOS. Each agent learns from interactions and improves with every use.
+A minimal AgentOS to copy and build on. A small set of agents and a local SQLite database for sessions + memory.
 
-## Overview
+For a production-ready version of this demo, see the [agent-platform-railway](https://github.com/agno-agi/agent-platform-railway) codebase. Comes with AgentOS (FastAPI) + Postgres. One-command deploy to Railway. JWT auth, Slack integration, eval suite, and recursive-improvement loops driven by Claude Code.
 
-### Agents
+## Agents
 
-| Agent | Description |
-|-------|-------------|
-| **Dash** | An adaptive data agent that queries and interprets your data — improving its understanding of your schema, metrics, and priorities with every interaction. |
-| **Pal** | A personal agent that learns your preferences, context, and history. |
-| **Gcode** | A lightweight coding agent that writes, reviews, and iterates on code. No bloat, no IDE lock-in — just a fast agent that gets sharper the more you use it. |
-| **Scout** | A self-managing context agent that researches, drafts, and refines information stored in s3 buckets. |
-| **Seek** | A self-learning research agent that investigates complex topics over time, building persistent knowledge that compounds across sessions. |
+| Agent | What it does | Backing |
+|-------|--------------|---------|
+| **LocalWiki** | Read + write a local markdown wiki. Ingest URLs via the web — "add a page about X" fetches, digests, and files in one update call. | `WikiContextProvider(FileSystemBackend, web=ParallelMCPBackend)` |
+| **GitWiki** *(env-gated)* | Same as LocalWiki, but the wiki lives in a real git repo. Auto-commits and pushes after each write. Registered when `WIKI_REPO_URL` + `WIKI_GITHUB_TOKEN` are set. | `WikiContextProvider(GitBackend, web=ParallelMCPBackend)` |
+| **WebSearch** | Keyless web research via Parallel MCP. Returns answers with cited URLs. | `WebContextProvider(ParallelMCPBackend)` |
+| **CodeSearch** | Answers questions about this repository — file paths, line numbers. | `WorkspaceContextProvider` |
+| **Researcher** | Composes WebSearch + LocalWiki + CodeSearch on one agent. Checks the wiki first, searches the web, queries the codebase, and files findings back into the wiki. | composition of the three providers above |
 
-### Team
+All agents share `db=get_db()` (SQLite at `data/demo.db`), agentic memory on, datetime + history in context, markdown output.
 
-| Team | Description |
-|------|-------------|
-| **Research Team** | Seek and Scout working together as a team. |
+## Teams
 
-### Workflow
+| Team | What it does | Pattern |
+|------|--------------|---------|
+| **Swarm** | Broadcast the same question to two web-search agents — one on OpenAI gpt-5.5, one on Anthropic claude-opus-4-7 — and synthesize. Lead calls out where the models agree, disagree, and a confidence read. | `Team(mode=broadcast, members=[openai_agent, anthropic_agent])` |
 
-| Workflow | Description |
-|----------|-------------|
-| **Daily Brief** | A workflow that sources and surfaces new developments (using seek), tracks metrics (using dash), and produces a daily digest (using scout). |
+This is the "assemble a bunch of agents on a common problem, mix OpenAI and Anthropic" pattern. Both members share the same web provider — one Parallel MCP session, two perspectives.
 
-## Architecture
+## Get started
 
-All agents share a common foundation:
-
-- **Model**: `OpenAIResponses(id="gpt-5.2")`
-- **Storage**: PostgreSQL + PgVector for knowledge, learnings, and chat history
-- **Knowledge**: Dual knowledge system — static curated knowledge + dynamic learnings discovered at runtime
-- **Search**: Hybrid search (semantic + keyword) with OpenAI embeddings (`text-embedding-3-small`)
-- **Learning**: `LearningMachine` in `AGENTIC` mode — agents decide when to save learnings
-
-## Getting Started
-
-### 1. Clone the repo
+### 1. Create a virtual environment
 
 ```bash
-git clone https://github.com/agno-agi/agno.git
-cd agno
-```
-
-### 2. Create and activate the demo virtual environment
-
-```bash
-./scripts/demo_setup.sh
+uv venv .venvs/demo --python 3.12
 source .venvs/demo/bin/activate
 ```
 
-### 3. Run PgVector
+### 2. Install dependencies
 
 ```bash
-./cookbook/scripts/run_pgvector.sh
+uv pip install -r cookbook/01_demo/requirements.txt
 ```
 
-### 4. Export environment variables
+### 3. Set your API keys
 
 ```bash
-export OPENAI_API_KEY="..."      # Required for all agents
-export EXA_API_KEY="..."         # Optional (Exa MCP is currently free)
+export OPENAI_API_KEY="..."
+export ANTHROPIC_API_KEY="..."   # required for the Swarm team's Claude member
+
+export PARALLEL_API_KEY="..."    # optional — raises rate ceiling on Parallel MCP
+
+# Optional — enables the GitWiki agent
+export WIKI_REPO_URL="https://github.com/<owner>/<repo>.git"
+export WIKI_GITHUB_TOKEN="ghp_..."   # PAT with contents:write
 ```
 
-### 5. Load data and knowledge
+### 4. Serve
 
 ```bash
-cd cookbook/01_demo
-
-python -m agents.dash.scripts.load_data
-python -m agents.dash.scripts.load_knowledge
-python -m agents.scout.scripts.load_knowledge
+fastapi dev cookbook/01_demo/run.py
 ```
 
-### 6. Run the demo
+Then open [os.agno.com](https://os.agno.com) and sign in:
 
-```bash
-python -m run
-```
-
-### 7. Connect via AgentOS
-
-- Open [os.agno.com](https://os.agno.com) in your browser
-- Click "Add AgentOS"
-- Add `http://localhost:7777` as an endpoint
-- Click "Connect"
+1. **Add OS** → **Local**
+2. Connect to `http://localhost:8000`, call it Local AgentOS
+3. Chat with your agents
 
 ## Evals
 
-Test cases covering all agents, team, and workflow. Uses string-matching validation with `all` or `any` match modes.
+From the repo root:
 
 ```bash
-# Run all evals
-python -m evals.run_evals
-
-# Filter by agent
-python -m evals.run_evals --agent dash
-python -m evals.run_evals --agent seek
-
-# Verbose mode (show full responses on failure)
-python -m evals.run_evals --verbose
+python -m cookbook.01_demo.evals               # run all cases (concise)
+python -m cookbook.01_demo.evals -v            # stream the full agent run
+python -m cookbook.01_demo.evals --case <name> # run one case
 ```
 
-## Agno Features Demonstrated
+Or from `cookbook/01_demo`:
 
-| Feature | Where |
-|---------|-------|
-| LearningMachine (AGENTIC mode) | All 5 agents |
-| CodingTools | Gcode |
-| ReasoningTools | Gcode |
-| SQL Tools | Dash, Pal |
-| MCP Tools | Seek (Exa), Scout (Exa), Dash (Exa), Pal (Exa) |
-| Knowledge (hybrid search) | All agents |
-| Persistent Memory | Pal, Seek |
-| Teams (coordinate mode) | Research Team |
-| Workflows (parallel steps) | Daily Brief |
-| Scheduled Tasks | Daily Brief |
-| AgentOS | run.py |
+```bash
+python -m evals
+python -m evals -v
+python -m evals --case <name>
+```
+
+Each case runs the agent (or team / workflow) once, then checks the response with `AgentAsJudgeEval` (LLM rubric, binary pass/fail) and optionally `ReliabilityEval` (tool-call assertion). Results log to SQLite — connect AgentOS at os.agno.com to see history.
+
+## Extending
+
+To add an agent: drop a file in `agents/`, register it in `run.py`'s `AgentOS(agents=[...])` list, add quick prompts to `config.yaml`, restart. Same pattern for `teams/` and `workflows/`. Add eval cases in `evals/cases.py` once it's stable.
+
+## Regenerating requirements
+
+```bash
+./cookbook/01_demo/generate_requirements.sh
+```
+
+Edits to `requirements.in` are the source of truth; the `.txt` is regenerated and pinned via `uv pip compile`.
