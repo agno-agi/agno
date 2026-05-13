@@ -2,9 +2,8 @@ chat:
   quick_prompts:
     # ----- Agents -----
     local-wiki:
-      - "What does the wiki say about CPython's release cycle?"
-      - "Add a one-page summary of CPython's release schedule to papers/cpython-release-cycle.md. Search the web (python.org or PEP 602) and cite the source."
-      - "List the pages currently in the wiki."
+      - "Add https://docs.agno.com/ to the wiki"
+      - "What do you know about agno"
 
     git-wiki:
       - "What does the wiki say about onboarding?"
