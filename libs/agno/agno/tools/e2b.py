@@ -17,7 +17,7 @@ from agno.utils.code_execution import prepare_python_code
 from agno.utils.log import log_error, logger
 
 try:
-    from e2b_code_interpreter import Sandbox
+    from e2b_code_interpreter import AsyncSandbox, Sandbox
 except ImportError:
     raise ImportError("`e2b_code_interpreter` not installed. Please install using `pip install e2b_code_interpreter`")
 
@@ -51,6 +51,9 @@ class E2BTools(Toolkit):
         except Exception as e:
             logger.exception("Warning: Could not create sandbox")
             raise e
+
+        # Async sandbox is lazy-connected on first async-tool use (shares the same remote sandbox-id)
+        self.async_sandbox: Optional[AsyncSandbox] = None
 
         # Last execution result for reference
         self.last_execution = None
@@ -617,6 +620,22 @@ class E2BTools(Toolkit):
         except Exception as e:
             return json.dumps({"status": "error", "message": f"Error starting server: {str(e)}"})
 
+    async def _aget_sandbox(self) -> AsyncSandbox:
+        """Lazily connect an AsyncSandbox to the existing remote sandbox-id.
+
+        Reuses ``self.sandbox.sandbox_id`` so sync and async clients operate on
+        the same remote VM (no extra sandbox is created).
+
+        Returns:
+            AsyncSandbox connected to the sandbox already created in __init__.
+        """
+        if self.async_sandbox is None:
+            self.async_sandbox = await AsyncSandbox.connect(
+                sandbox_id=self.sandbox.sandbox_id,
+                api_key=self.api_key,
+            )
+        return self.async_sandbox
+
     async def arun_server(self, command: str, port: int) -> str:
         """
         Start a server in the sandbox and return its public URL.
@@ -629,14 +648,16 @@ class E2BTools(Toolkit):
             str: Server information including public URL or error message
         """
         try:
+            sandbox = await self._aget_sandbox()
+
             # Start the server in the background
-            await asyncio.to_thread(self.sandbox.commands.run, command, background=True)
+            await sandbox.commands.run(command, background=True)
 
             # Wait a moment for the server to start
             await asyncio.sleep(2)
 
-            # Get the public URL
-            host = await asyncio.to_thread(self.sandbox.get_host, port)
+            # Get the public URL (get_host is sync on AsyncSandbox)
+            host = sandbox.get_host(port)
             url = f"http://{host}"
 
             return url

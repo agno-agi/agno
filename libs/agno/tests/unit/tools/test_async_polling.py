@@ -173,14 +173,21 @@ async def test_e2b():
     from agno.tools.e2b import E2BTools
 
     sandbox = Mock()
-    sandbox.get_host.return_value = "host123"
-    with patch("agno.tools.e2b.Sandbox") as sandbox_cls, patch.dict("os.environ", {"E2B_API_KEY": "k"}):
+    sandbox.sandbox_id = "sb-123"
+    async_sandbox = MagicMock()
+    async_sandbox.commands.run = AsyncMock()
+    async_sandbox.get_host = Mock(return_value="host123")
+    with (
+        patch("agno.tools.e2b.Sandbox") as sandbox_cls,
+        patch("agno.tools.e2b.AsyncSandbox") as async_sandbox_cls,
+        patch("agno.tools.e2b.asyncio.sleep", new_callable=AsyncMock) as slept,
+        patch.dict("os.environ", {"E2B_API_KEY": "k"}),
+    ):
         sandbox_cls.create.return_value = sandbox
+        async_sandbox_cls.connect = AsyncMock(return_value=async_sandbox)
         tools = E2BTools()
-    assert "run_server" in tools.async_functions
-
-    with patch("agno.tools.e2b.asyncio.sleep", new_callable=AsyncMock) as slept:
+        assert "run_server" in tools.async_functions
         url = await tools.arun_server("python -m http.server 8000", 8000)
     slept.assert_awaited_once_with(2)
-    sandbox.commands.run.assert_called_once_with("python -m http.server 8000", background=True)
+    async_sandbox.commands.run.assert_awaited_once_with("python -m http.server 8000", background=True)
     assert url == "http://host123"
