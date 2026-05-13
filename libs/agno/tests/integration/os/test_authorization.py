@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 import pytest
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
@@ -745,6 +746,68 @@ def test_session_state_claims_extraction(test_agent):
     )
 
     assert response.status_code == 200
+
+
+def test_authorization_config_forwards_jwt_claim_mapping(test_agent):
+    """Test native authorization config forwards JWT claim mapping options."""
+    base_app = FastAPI()
+
+    @base_app.get("/auth-state")
+    async def auth_state(request: Request):
+        return {
+            "user_id": request.state.user_id,
+            "session_id": request.state.session_id,
+            "scopes": request.state.scopes,
+            "dependencies": request.state.dependencies,
+            "session_state": request.state.session_state,
+        }
+
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        base_app=base_app,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            algorithm="HS256",
+            validate=False,
+            token_source="cookie",
+            scopes_claim="permissions",
+            user_id_claim="email",
+            session_id_claim="sid",
+            dependencies_claims=["org_id"],
+            session_state_claims=["theme"],
+        ),
+    )
+    app = agent_os.get_app()
+
+    assert app.state.jwt_validator.validate is False
+    assert app.state.jwt_validator.scopes_claim == "permissions"
+    assert app.state.jwt_validator.user_id_claim == "email"
+    assert app.state.jwt_validator.session_id_claim == "sid"
+
+    client = TestClient(app)
+    token = create_jwt_token(
+        scopes=[],
+        extra_claims={
+            "email": "alice@example.com",
+            "sid": "session-from-custom-claim",
+            "permissions": "agents:read",
+            "org_id": "org-123",
+            "theme": "dark",
+        },
+    )
+    client.cookies.set("access_token", token)
+
+    response = client.get("/auth-state")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "user_id": "alice@example.com",
+        "session_id": "session-from-custom-claim",
+        "scopes": ["agents:read"],
+        "dependencies": {"org_id": "org-123"},
+        "session_state": {"theme": "dark"},
+    }
 
 
 def test_system_scope(test_agent):

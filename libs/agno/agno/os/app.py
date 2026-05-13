@@ -881,18 +881,40 @@ class AgentOS:
         return fastapi_app
 
     def _add_jwt_middleware(self, fastapi_app: FastAPI) -> None:
-        from agno.os.middleware.jwt import JWTMiddleware, JWTValidator
+        from agno.os.middleware.jwt import JWTMiddleware, JWTValidator, TokenSource
 
         verify_audience = False
         jwks_file = None
         verification_keys = None
         algorithm = "RS256"
+        validate = True
+        token_source = TokenSource.HEADER
+        scopes_claim = "scopes"
+        user_id_claim = "sub"
+        session_id_claim = "session_id"
+        dependencies_claims = None
+        session_state_claims = None
 
         if self.authorization_config:
             algorithm = self.authorization_config.algorithm or "RS256"
             verification_keys = self.authorization_config.verification_keys
             jwks_file = self.authorization_config.jwks_file
-            verify_audience = self.authorization_config.verify_audience or False
+            verify_audience = (
+                self.authorization_config.verify_audience
+                if self.authorization_config.verify_audience is not None
+                else False
+            )
+            validate = (
+                self.authorization_config.validate_token
+                if self.authorization_config.validate_token is not None
+                else True
+            )
+            token_source = TokenSource(self.authorization_config.token_source or TokenSource.HEADER.value)
+            scopes_claim = self.authorization_config.scopes_claim or "scopes"
+            user_id_claim = self.authorization_config.user_id_claim or "sub"
+            session_id_claim = self.authorization_config.session_id_claim or "session_id"
+            dependencies_claims = self.authorization_config.dependencies_claims
+            session_state_claims = self.authorization_config.session_state_claims
 
         log_info(f"Adding JWT middleware for authorization (algorithm: {algorithm})")
 
@@ -901,6 +923,10 @@ class AgentOS:
             verification_keys=verification_keys,
             jwks_file=jwks_file,
             algorithm=algorithm,
+            validate=validate,
+            scopes_claim=scopes_claim,
+            user_id_claim=user_id_claim,
+            session_id_claim=session_id_claim,
         )
         fastapi_app.state.jwt_validator = jwt_validator
 
@@ -933,8 +959,15 @@ class AgentOS:
             verification_keys=verification_keys,
             jwks_file=jwks_file,
             algorithm=algorithm,
+            validate=validate,
             authorization=self.authorization,
+            token_source=token_source,
+            scopes_claim=scopes_claim,
+            user_id_claim=user_id_claim,
+            session_id_claim=session_id_claim,
             verify_audience=verify_audience,
+            dependencies_claims=dependencies_claims,
+            session_state_claims=session_state_claims,
             excluded_route_paths=excluded_route_paths,
         )
 

@@ -1,17 +1,26 @@
 """Schemas related to the AgentOS configuration"""
 
-from typing import Generic, List, Optional, TypeVar
+from typing import Generic, List, Literal, Optional, TypeVar
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class AuthorizationConfig(BaseModel):
     """Configuration for the JWT middleware"""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     verification_keys: Optional[List[str]] = None
     jwks_file: Optional[str] = None
     algorithm: Optional[str] = None
     verify_audience: Optional[bool] = None
+    validate_token: Optional[bool] = Field(default=None, alias="validate")
+    token_source: Optional[Literal["header", "cookie", "both"]] = None
+    scopes_claim: Optional[str] = None
+    user_id_claim: Optional[str] = None
+    session_id_claim: Optional[str] = None
+    dependencies_claims: Optional[List[str]] = None
+    session_state_claims: Optional[List[str]] = None
 
 
 class EvalsDomainConfig(BaseModel):
