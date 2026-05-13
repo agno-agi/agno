@@ -6,7 +6,6 @@ import httpx
 from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
-from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_warning
 from agno.utils.models.claude import format_tools_for_model
 
@@ -121,12 +120,15 @@ class Claude(AnthropicClaude):
             if isinstance(self.http_client, httpx.Client):
                 client_params["http_client"] = self.http_client
             else:
-                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
-                # Use global sync client when user http_client is invalid
-                client_params["http_client"] = get_default_sync_client()
-        else:
-            # Use global sync client when no custom http_client is provided
-            client_params["http_client"] = get_default_sync_client()
+                log_warning("http_client is not an instance of httpx.Client. Ignoring and using SDK default.")
+        # When no custom http_client is provided, let the SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
+        # Close the previous client before creating a new one to avoid leaking
+        # connection pools when session-based credential refresh forces recreation.
+        if self.session and self.client is not None and not self.client.is_closed():
+            self.client.close()
 
         # Use a local variable so concurrent callers on the same model
         # instance cannot overwrite each other's client via self.client.
@@ -155,14 +157,15 @@ class Claude(AnthropicClaude):
             if isinstance(self.http_client, httpx.AsyncClient):
                 client_params["http_client"] = self.http_client
             else:
-                log_warning(
-                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
-                )
-                # Use global async client when user http_client is invalid
-                client_params["http_client"] = get_default_async_client()
-        else:
-            # Use global async client when no custom http_client is provided
-            client_params["http_client"] = get_default_async_client()
+                log_warning("http_client is not an instance of httpx.AsyncClient. Ignoring and using SDK default.")
+        # When no custom http_client is provided, let the SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
+
+        # Close the previous client before creating a new one to avoid leaking
+        # connection pools when session-based credential refresh forces recreation.
+        if self.session and self.async_client is not None and not self.async_client.is_closed():
+            self.async_client.close()
 
         # Use a local variable so concurrent callers on the same model
         # instance cannot overwrite each other's client via self.async_client.
@@ -241,20 +244,15 @@ class Claude(AnthropicClaude):
         """
         # Pass response_format and tools to get_request_params for beta header handling
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools).copy()
-        if system_message:
-            if self.cache_system_prompt:
-                cache_control = (
-                    {"type": "ephemeral", "ttl": "1h"}
-                    if self.extended_cache_time is not None and self.extended_cache_time is True
-                    else {"type": "ephemeral"}
-                )
-                request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
-            else:
-                request_kwargs["system"] = [{"text": system_message, "type": "text"}]
+        system = self._build_system(system_message)
+        if system:
+            request_kwargs["system"] = system
 
         # Format tools (this will handle strict mode)
         if tools:
             request_kwargs["tools"] = format_tools_for_model(tools)
+
+        self._apply_cache_tools(request_kwargs)
 
         if request_kwargs:
             log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
