@@ -3,7 +3,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 import httpx
 
