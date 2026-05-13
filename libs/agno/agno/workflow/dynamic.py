@@ -1,39 +1,44 @@
 """DynamicWorkflowDriver - workflow-level mirror of dynamic subagents (PR #7387).
 
 A DynamicWorkflowDriver lets a workflow expand itself at runtime: instead of declaring a
-static list of steps, the user hands a driver to `Workflow(steps=driver.as_workflow_function())`
-and the driver's underlying LLM invents new agents on demand by calling a `spawn_agent` tool.
-Each spawn creates a fresh Agent with the role/instructions/tools the LLM chose, runs it,
-records the result, and returns only a short summary back to the driver's context.
+static list of steps, the user hands a driver to `Workflow(steps=driver)`. The driver's
+underlying LLM invents new agents on demand by calling spawn tools (currently:
+`spawn_agent`). Each spawn creates an ephemeral Agent with the role/instructions/tools
+the LLM chose, runs it through Step.execute(_stream), and returns a short summary back
+to the driver so its context stays clean across many spawns.
 
-The output of `Workflow.run(...)` will have:
+The output of `Workflow.run(...)` carries:
 - `content`: the driver's final response after all spawns
-- `executed_steps`: the canonical trail (list of ExecutedStepRecord) of what actually ran
-- `step_results`: the same trail re-expressed as StepOutput objects for compatibility with
-  the rest of the workflow ecosystem
+- `executed_steps`: the canonical leaf trail (one ExecutedStepRecord per agent spawn,
+  with parent_id for spawns nested inside composites)
+- `step_results`: the same trail re-expressed as StepOutput objects in the static
+  workflow shape — composite spawns (Condition/Loop/Parallel/Router, v0.1+) nest
+  their children under `StepOutput.steps`
+- `step_executor_runs`: full RunOutput per spawned agent when store_executor_outputs=True
 
-Out of scope for v0: spawn_parallel / spawn_loop / spawn_condition (deferred to v0.1),
-recursive dynamic workflows (spawned agents cannot themselves spawn), HITL on spawns.
+Internals (this file is thin): each spawn type is implemented as a _SpawnHandler in
+agno.workflow.dynamic_handlers. The driver wires the LLM-facing tools and delegates.
 """
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
-from uuid import uuid4
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from agno.agent import Agent
 from agno.models.base import Model
-from agno.run.workflow import ExecutedStepRecord
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_info, log_warning
-from agno.workflow.step import Step
-from agno.workflow.types import StepInput
+from agno.utils.log import log_warning
+from agno.workflow.dynamic_handlers import (
+    _AgentSpawnHandler,
+    _MaxStepsExceededError,
+    _RunContext,
+    _StreamBridge,
+    _TrailBuilder,
+)
 
 if TYPE_CHECKING:
-    from agno.run.base import RunContext
-    from agno.run.workflow import WorkflowRunOutput
-    from agno.session.workflow import WorkflowSession
-    from agno.workflow.types import StepOutput, WorkflowExecutionInput
+    from agno.workflow.types import WorkflowExecutionInput
 
 
 _DEFAULT_DRIVER_INSTRUCTIONS = """You are the ORCHESTRATOR of a dynamic workflow. You do NOT produce content yourself. You delegate every meaningful sub-task to a specialist agent via the `spawn_agent` tool, then assemble their outputs into the final response.
@@ -55,97 +60,11 @@ Pattern for most tasks:
 """
 
 
-@dataclass
-class _SpawnState:
-    """Mutable state shared between the driver function and the spawn tool closure.
-
-    Carries both the running trail and the workflow execution context that each spawn
-    needs to participate in the static-path infrastructure (Step.execute → events,
-    step_executor_runs persistence, retries, error policy, history, media flow).
-    """
-
-    trail_outputs: List[Any] = field(default_factory=list)
-    executed_steps: List[ExecutedStepRecord] = field(default_factory=list)
-    # previous_step_outputs is keyed by role and grows after each successful spawn;
-    # it's what we pass into StepInput so each spawn sees what ran before it.
-    previous_step_outputs: Dict[str, "StepOutput"] = field(default_factory=dict)
-    iteration: int = 0
-    spawn_count: int = 0
-
-    # Workflow execution context (forwarded into Step.execute on each spawn):
-    workflow: Optional[Any] = None
-    workflow_run_response: Optional["WorkflowRunOutput"] = None
-    run_context: Optional["RunContext"] = None
-    workflow_session: Optional["WorkflowSession"] = None
-    execution_input: Optional["WorkflowExecutionInput"] = None
-    session_id: Optional[str] = None
-    user_id: Optional[str] = None
-    store_executor_outputs: bool = True
-    add_workflow_history_to_steps: Optional[bool] = None
-    num_history_runs: int = 3
-    background_tasks: Optional[Any] = None
-    add_dependencies_to_context: Optional[bool] = None
-    add_session_state_to_context: Optional[bool] = None
-
-    # Streaming bridge. When set (by stream_call), each event from Step.execute_stream
-    # and each StepSpawnedEvent is pushed here so the workflow's outer generator can
-    # yield it in real time. None for non-streaming runs.
-    event_sink: Optional[Callable[[Any], None]] = None
-    stream_events: bool = False
-    stream_executor_events: bool = True
-
-
-def _resolve_tools(
-    requested_names: Optional[List[str]],
-    allowed_tools: Optional[List[Union[Toolkit, Callable, Function]]],
-    allow_tool_selection: bool,
-) -> List[Union[Toolkit, Callable, Function]]:
-    """Resolve a name-list from the LLM into actual tool objects, filtered by allowed_tools.
-
-    Mirrors the Function-level whitelist filtering from PR #7387's SubAgentToolkit._resolve_tools:
-    Toolkits are decomposed so only their permitted Function members are extracted, never the
-    whole toolkit (preventing whitelist bypass).
-    """
-    if not allowed_tools:
-        return []
-
-    if not allow_tool_selection or requested_names is None:
-        return list(allowed_tools)
-
-    if not requested_names:
-        return []
-
-    permitted = set(requested_names)
-    resolved: List[Union[Toolkit, Callable, Function]] = []
-
-    for tool in allowed_tools:
-        if isinstance(tool, Toolkit):
-            for fn in tool.functions.values():
-                if fn.name in permitted:
-                    resolved.append(fn)
-        elif isinstance(tool, Function):
-            if tool.name in permitted:
-                resolved.append(tool)
-        elif callable(tool):
-            name = getattr(tool, "__name__", None)
-            if name and name in permitted:
-                resolved.append(tool)
-
-    return resolved
-
-
-def _summarize_output(content: Any, max_chars: int) -> str:
-    """Cap an agent output for return to the driver's context."""
-    if content is None:
-        return ""
-    if not isinstance(content, str):
-        try:
-            content = str(content)
-        except Exception:
-            return ""
-    if max_chars <= 0 or len(content) <= max_chars:
-        return content
-    return content[: max_chars - 3] + "..."
+def _max_steps_msg(max_steps: int) -> str:
+    return (
+        f"max_steps ({max_steps}) reached. No more agents may be spawned. "
+        "Produce your final response now based on the spawns so far."
+    )
 
 
 class DynamicWorkflowDriver:
@@ -153,24 +72,15 @@ class DynamicWorkflowDriver:
 
     Two ways to drive expansion, same `steps=driver` DX:
 
-    1. **LLM-driven (default).** The driver runs as an LLM agent with a single tool,
-       `spawn_agent`. Each spawn invents a fresh specialist agent (role, instructions,
-       tools, optional model tier), runs it, and returns a short summary back to the
-       driver. The driver iterates until it produces a final response or `max_steps`
-       is hit.
+    1. **LLM-driven (default).** The driver runs as an LLM agent with one tool,
+       `spawn_agent`. Each spawn invents a fresh specialist agent and runs it.
+       The driver iterates until it produces a final response or `max_steps` is hit.
 
            driver = DynamicWorkflowDriver(model=..., instructions="...", allowed_tools=[...])
            wf = Workflow(name="...", steps=driver)
 
     2. **Python-driven.** Pass a `custom_driver` callable `(workflow_input, spawn) -> str`.
-       The driver skips the LLM and runs your Python function instead. Same spawn semantics.
-
-           def my_driver(workflow_input, spawn):
-               a = spawn(role="researcher", instructions="...", input=workflow_input)
-               return spawn(role="summarizer", instructions="...", input=a)
-
-           driver = DynamicWorkflowDriver(model=..., custom_driver=my_driver)
-           wf = Workflow(name="...", steps=driver)
+       Same spawn semantics, called as Python instead of via the LLM.
     """
 
     def __init__(
@@ -210,6 +120,20 @@ class DynamicWorkflowDriver:
         self.name = name
         self.custom_driver = custom_driver
 
+        # The leaf handler — future composite handlers (Parallel, Loop, ...) will compose this.
+        self._agent_handler = _AgentSpawnHandler(
+            model=self.model,
+            allowed_tools=self.allowed_tools,
+            allow_tool_selection=self.allow_tool_selection,
+            model_tiers=self.model_tiers,
+            allow_model_tier_selection=self.allow_model_tier_selection,
+            step_summary_max_chars=self.step_summary_max_chars,
+            show_step_output=self.show_step_output,
+            log_step_runs=self.log_step_runs,
+        )
+
+    # ---- driver-agent instructions -----------------------------------------
+
     def _build_instructions(self) -> str:
         parts: List[str] = [_DEFAULT_DRIVER_INSTRUCTIONS]
         if self.user_instructions:
@@ -246,505 +170,21 @@ class DynamicWorkflowDriver:
                     names.append(name)
         return names
 
-    def _resolve_model(self, requested_tier: Optional[str]) -> Model:
-        """Resolve the model for a spawned agent: requested tier > driver's model."""
-        if not (self.allow_model_tier_selection and requested_tier and self.model_tiers):
-            return self.model
+    # ---- run context construction ------------------------------------------
 
-        model_id = self.model_tiers.get(requested_tier)
-        if not model_id:
-            log_warning(f"Spawned agent requested unknown model_tier '{requested_tier}', falling back to driver model")
-            return self.model
-
-        try:
-            from agno.models.utils import get_model
-
-            return get_model(model_id)  # type: ignore[return-value]
-        except Exception as e:
-            log_warning(
-                f"Failed to resolve model_tier '{requested_tier}' to a Model: {e}; falling back to driver model"
-            )
-            return self.model
-
-    def _build_spawned_agent(
-        self,
-        *,
-        role: str,
-        instructions: str,
-        tools: Optional[List[str]],
-        model_tier: Optional[str],
-    ) -> Tuple[Agent, List[str]]:
-        """Create the ephemeral specialist agent for one spawn."""
-        resolved_tools = _resolve_tools(tools, self.allowed_tools, self.allow_tool_selection)
-        resolved_model = self._resolve_model(model_tier)
-
-        agent = Agent(
-            name=role,
-            model=resolved_model,
-            instructions=instructions,
-            tools=resolved_tools if resolved_tools else None,
-            db=None,
-            telemetry=False,
-            num_history_runs=0,
-        )
-
-        resolved_tool_names = [getattr(t, "name", getattr(t, "__name__", "")) for t in resolved_tools]
-        resolved_tool_names = [n for n in resolved_tool_names if n]
-        return agent, resolved_tool_names
-
-    def _build_step_input(self, state: _SpawnState, *, spawn_input_text: str) -> StepInput:
-        """Build a StepInput for a single spawn.
-
-        The driver's per-spawn `input` argument replaces the workflow input for this step
-        (so each specialist sees its own focused task). Previous spawns are exposed through
-        `previous_step_outputs` so the specialist can reference them by role if needed.
-        Media and additional_data are forwarded from the workflow's execution_input.
-        """
-        prev = state.previous_step_outputs
-        previous_step_content = None
-        if prev:
-            last_output = list(prev.values())[-1]
-            previous_step_content = last_output.content if last_output is not None else None
-
-        ei = state.execution_input
-        return StepInput(
-            input=spawn_input_text,
-            previous_step_content=previous_step_content,
-            previous_step_outputs=dict(prev) if prev else None,
-            additional_data=ei.additional_data if ei else None,
-            images=list(ei.images or []) if ei else [],
-            videos=list(ei.videos or []) if ei else [],
-            audio=list(ei.audio or []) if ei else [],
-            files=list(ei.files or []) if ei else [],
-            workflow_session=state.workflow_session,
-        )
-
-    def _do_spawn_sync(
-        self,
-        state: _SpawnState,
-        *,
-        role: str,
-        instructions: str,
-        input: str,
-        tools: Optional[List[str]] = None,
-        model_tier: Optional[str] = None,
-        expected_output: Optional[str] = None,
-    ) -> str:
-        if state.spawn_count >= self.max_steps:
-            msg = (
-                f"max_steps ({self.max_steps}) reached. No more agents may be spawned. "
-                "Produce your final response now based on the spawns so far."
-            )
-            log_warning(f"DynamicWorkflowDriver: {msg}")
-            return msg
-
-        state.spawn_count += 1
-        iteration = state.iteration
-        state.iteration += 1
-
-        agent, resolved_tool_names = self._build_spawned_agent(
-            role=role, instructions=instructions, tools=tools, model_tier=model_tier
-        )
-
-        if self.log_step_runs:
-            log_info(
-                f"DynamicWorkflowDriver spawning [{iteration}] role='{role}' "
-                f"tools={resolved_tool_names} tier={model_tier}"
-            )
-
-        self._emit_spawned_event(
-            state,
-            iteration=iteration,
-            role=role,
-            instructions=instructions,
-            input=input,
-            tools=resolved_tool_names,
-            model_tier=model_tier,
-        )
-
-        # Route the spawn through Step.execute(_stream) so it participates in the
-        # static-path infrastructure: StepStarted/Completed events, step_executor_runs
-        # persistence (full RunOutput when store_executor_outputs=True), retries, error
-        # policy, media flow, history. The Step is ephemeral — built per spawn — but
-        # the execution machinery is identical to a static-workflow step.
-        spawn_input_text = input if not expected_output else f"{input}\n\nExpected output: {expected_output}"
-        step_input = self._build_step_input(state, spawn_input_text=spawn_input_text)
-
-        step = Step(name=role, agent=agent)
-        step.step_id = str(uuid4())
-
-        try:
-            if state.event_sink is not None:
-                # Streaming path: forward each yielded event to the sink in real time.
-                # The final StepOutput is the last item yielded.
-                from agno.workflow.types import StepOutput as _StepOutput
-
-                step_output = None
-                for ev in step.execute_stream(
-                    step_input,
-                    session_id=state.session_id,
-                    user_id=state.user_id,
-                    stream_events=state.stream_events,
-                    stream_executor_events=state.stream_executor_events,
-                    workflow_run_response=state.workflow_run_response,
-                    run_context=state.run_context,
-                    store_executor_outputs=state.store_executor_outputs,
-                    workflow_session=state.workflow_session,
-                    add_workflow_history_to_steps=state.add_workflow_history_to_steps,
-                    num_history_runs=state.num_history_runs,
-                    background_tasks=state.background_tasks,
-                    add_dependencies_to_context=state.add_dependencies_to_context,
-                    add_session_state_to_context=state.add_session_state_to_context,
-                ):
-                    if isinstance(ev, _StepOutput):
-                        step_output = ev
-                    else:
-                        state.event_sink(ev)
-                if step_output is None:
-                    raise RuntimeError(f"Step '{role}' produced no StepOutput")
-            else:
-                step_output = step.execute(
-                    step_input,
-                    session_id=state.session_id,
-                    user_id=state.user_id,
-                    workflow_run_response=state.workflow_run_response,
-                    run_context=state.run_context,
-                    store_executor_outputs=state.store_executor_outputs,
-                    workflow_session=state.workflow_session,
-                    add_workflow_history_to_steps=state.add_workflow_history_to_steps,
-                    num_history_runs=state.num_history_runs,
-                    background_tasks=state.background_tasks,
-                    add_dependencies_to_context=state.add_dependencies_to_context,
-                    add_session_state_to_context=state.add_session_state_to_context,
-                )
-        except Exception as e:
-            log_warning(f"DynamicWorkflowDriver spawn '{role}' failed: {e}")
-            return f"Error running spawned agent '{role}': {e}"
-
-        content_str = step_output.content if isinstance(step_output.content, str) else (
-            str(step_output.content) if step_output.content is not None else ""
-        )
-
-        if self.show_step_output:
-            print(f"--- DynamicWorkflow spawn [{iteration}] {role} ---")
-            print(content_str)
-            print("--- end ---")
-
-        record = ExecutedStepRecord(
-            iteration=iteration,
-            role=role,
-            instructions=instructions,
-            input=input,
-            output_content=content_str,
-            tools=resolved_tool_names or None,
-            model_tier=model_tier,
-            step_id=step.step_id,
-        )
-        state.executed_steps.append(record)
-        state.trail_outputs.append(content_str)
-        state.previous_step_outputs[role] = step_output
-
-        # Append the StepOutput to workflow_run_response.step_results so the canonical
-        # static-workflow trail is populated. Step.execute already appended the agent's
-        # full RunOutput to step_executor_runs if store_executor_outputs=True.
-        if state.workflow_run_response is not None:
-            state.workflow_run_response.step_results.append(step_output)
-
-        return _summarize_output(content_str, self.step_summary_max_chars)
-
-    async def _do_spawn_async(
-        self,
-        state: _SpawnState,
-        *,
-        role: str,
-        instructions: str,
-        input: str,
-        tools: Optional[List[str]] = None,
-        model_tier: Optional[str] = None,
-        expected_output: Optional[str] = None,
-    ) -> str:
-        if state.spawn_count >= self.max_steps:
-            msg = (
-                f"max_steps ({self.max_steps}) reached. No more agents may be spawned. "
-                "Produce your final response now based on the spawns so far."
-            )
-            log_warning(f"DynamicWorkflowDriver: {msg}")
-            return msg
-
-        state.spawn_count += 1
-        iteration = state.iteration
-        state.iteration += 1
-
-        agent, resolved_tool_names = self._build_spawned_agent(
-            role=role, instructions=instructions, tools=tools, model_tier=model_tier
-        )
-
-        if self.log_step_runs:
-            log_info(
-                f"DynamicWorkflowDriver aspawning [{iteration}] role='{role}' "
-                f"tools={resolved_tool_names} tier={model_tier}"
-            )
-
-        self._emit_spawned_event(
-            state,
-            iteration=iteration,
-            role=role,
-            instructions=instructions,
-            input=input,
-            tools=resolved_tool_names,
-            model_tier=model_tier,
-        )
-
-        # Route async spawn through Step.aexecute — same integration story as sync.
-        spawn_input_text = input if not expected_output else f"{input}\n\nExpected output: {expected_output}"
-        step_input = self._build_step_input(state, spawn_input_text=spawn_input_text)
-
-        step = Step(name=role, agent=agent)
-        step.step_id = str(uuid4())
-
-        try:
-            step_output = await step.aexecute(
-                step_input,
-                session_id=state.session_id,
-                user_id=state.user_id,
-                workflow_run_response=state.workflow_run_response,
-                run_context=state.run_context,
-                store_executor_outputs=state.store_executor_outputs,
-                workflow_session=state.workflow_session,
-                add_workflow_history_to_steps=state.add_workflow_history_to_steps,
-                num_history_runs=state.num_history_runs,
-                background_tasks=state.background_tasks,
-                add_dependencies_to_context=state.add_dependencies_to_context,
-                add_session_state_to_context=state.add_session_state_to_context,
-            )
-        except Exception as e:
-            log_warning(f"DynamicWorkflowDriver spawn '{role}' failed: {e}")
-            return f"Error running spawned agent '{role}': {e}"
-
-        content_str = step_output.content if isinstance(step_output.content, str) else (
-            str(step_output.content) if step_output.content is not None else ""
-        )
-
-        if self.show_step_output:
-            print(f"--- DynamicWorkflow spawn [{iteration}] {role} ---")
-            print(content_str)
-            print("--- end ---")
-
-        record = ExecutedStepRecord(
-            iteration=iteration,
-            role=role,
-            instructions=instructions,
-            input=input,
-            output_content=content_str,
-            tools=resolved_tool_names or None,
-            model_tier=model_tier,
-            step_id=step.step_id,
-        )
-        state.executed_steps.append(record)
-        state.trail_outputs.append(content_str)
-        state.previous_step_outputs[role] = step_output
-
-        if state.workflow_run_response is not None:
-            state.workflow_run_response.step_results.append(step_output)
-
-        return _summarize_output(content_str, self.step_summary_max_chars)
-
-    def _emit_spawned_event(
-        self,
-        state: _SpawnState,
-        *,
-        iteration: int,
-        role: str,
-        instructions: str,
-        input: str,
-        tools: List[str],
-        model_tier: Optional[str],
-    ) -> None:
-        try:
-            from agno.run.workflow import StepSpawnedEvent
-
-            wrr = state.workflow_run_response
-            event = StepSpawnedEvent(
-                iteration=iteration,
-                role=role,
-                instructions=instructions[:200],
-                input=input[:200],
-                tool_names=tools or None,
-                model_tier=model_tier,
-                run_id=wrr.run_id if wrr else None,
-                session_id=wrr.session_id if wrr else None,
-                workflow_id=wrr.workflow_id if wrr else None,
-                workflow_name=wrr.workflow_name if wrr else None,
-            )
-            if wrr is not None:
-                if wrr.events is None:
-                    wrr.events = []
-                wrr.events.append(event)
-            if state.event_sink is not None:
-                state.event_sink(event)
-        except Exception as e:
-            log_debug(f"DynamicWorkflowDriver: could not emit StepSpawnedEvent: {e}")
-
-    def _build_spawn_tool_sync(self, state: _SpawnState) -> Callable:
-        if self.allow_model_tier_selection and self.model_tiers:
-
-            def spawn_agent(
-                role: str,
-                instructions: str,
-                input: str,
-                tools: Optional[List[str]] = None,
-                model_tier: Optional[str] = None,
-                expected_output: Optional[str] = None,
-            ) -> str:
-                """Invent and run a new specialist agent.
-
-                Args:
-                    role: Short name for the spawned agent (e.g. 'researcher', 'fact_checker').
-                    instructions: Task-specific instructions the spawned agent should follow.
-                    input: The concrete task to run.
-                    tools: Subset of allowed tool names to give this agent. Omit for no tools.
-                    model_tier: Model tier label for this agent's model.
-                    expected_output: Optional hint on the desired output format.
-
-                Returns:
-                    A short summary of the spawned agent's output. The full output is stored
-                    in the workflow's executed_steps trail.
-                """
-                return self._do_spawn_sync(
-                    state,
-                    role=role,
-                    instructions=instructions,
-                    input=input,
-                    tools=tools,
-                    model_tier=model_tier,
-                    expected_output=expected_output,
-                )
-
-            return spawn_agent
-
-        def spawn_agent(
-            role: str,
-            instructions: str,
-            input: str,
-            tools: Optional[List[str]] = None,
-            expected_output: Optional[str] = None,
-        ) -> str:
-            """Invent and run a new specialist agent.
-
-            Args:
-                role: Short name for the spawned agent (e.g. 'researcher', 'fact_checker').
-                instructions: Task-specific instructions the spawned agent should follow.
-                input: The concrete task to run.
-                tools: Subset of allowed tool names to give this agent. Omit for no tools.
-                expected_output: Optional hint on the desired output format.
-
-            Returns:
-                A short summary of the spawned agent's output. The full output is stored
-                in the workflow's executed_steps trail.
-            """
-            return self._do_spawn_sync(
-                state,
-                role=role,
-                instructions=instructions,
-                input=input,
-                tools=tools,
-                expected_output=expected_output,
-            )
-
-        return spawn_agent
-
-    def _build_spawn_tool_async(self, state: _SpawnState) -> Callable:
-        if self.allow_model_tier_selection and self.model_tiers:
-
-            async def spawn_agent(
-                role: str,
-                instructions: str,
-                input: str,
-                tools: Optional[List[str]] = None,
-                model_tier: Optional[str] = None,
-                expected_output: Optional[str] = None,
-            ) -> str:
-                """Invent and run a new specialist agent (async).
-
-                Args:
-                    role: Short name for the spawned agent (e.g. 'researcher', 'fact_checker').
-                    instructions: Task-specific instructions the spawned agent should follow.
-                    input: The concrete task to run.
-                    tools: Subset of allowed tool names to give this agent. Omit for no tools.
-                    model_tier: Model tier label for this agent's model.
-                    expected_output: Optional hint on the desired output format.
-
-                Returns:
-                    A short summary of the spawned agent's output.
-                """
-                return await self._do_spawn_async(
-                    state,
-                    role=role,
-                    instructions=instructions,
-                    input=input,
-                    tools=tools,
-                    model_tier=model_tier,
-                    expected_output=expected_output,
-                )
-
-            return spawn_agent
-
-        async def spawn_agent(
-            role: str,
-            instructions: str,
-            input: str,
-            tools: Optional[List[str]] = None,
-            expected_output: Optional[str] = None,
-        ) -> str:
-            """Invent and run a new specialist agent (async).
-
-            Args:
-                role: Short name for the spawned agent (e.g. 'researcher', 'fact_checker').
-                instructions: Task-specific instructions the spawned agent should follow.
-                input: The concrete task to run.
-                tools: Subset of allowed tool names to give this agent. Omit for no tools.
-                expected_output: Optional hint on the desired output format.
-
-            Returns:
-                A short summary of the spawned agent's output.
-            """
-            return await self._do_spawn_async(
-                state,
-                role=role,
-                instructions=instructions,
-                input=input,
-                tools=tools,
-                expected_output=expected_output,
-            )
-
-        return spawn_agent
-
-    def _input_string(self, execution_input: Optional["WorkflowExecutionInput"]) -> str:
-        if execution_input is None or execution_input.input is None:
-            return ""
-        v = execution_input.input
-        if isinstance(v, str):
-            return v
-        try:
-            return str(v)
-        except Exception:
-            return ""
-
-    def _build_state(
+    def _build_ctx_trail(
         self,
         workflow: Any,
         execution_input: "WorkflowExecutionInput",
         kwargs: Dict[str, Any],
-    ) -> _SpawnState:
-        """Populate a _SpawnState with the workflow execution context.
+    ) -> "tuple[_RunContext, _TrailBuilder]":
+        """Build (_RunContext, _TrailBuilder) from the workflow's kwargs.
 
-        Pulls workflow_run_response, run_context, workflow_session, and the various
-        store_executor_outputs/history/dependency knobs out of kwargs (forwarded from
-        Workflow._execute via _call_custom_function) plus from the workflow instance.
+        _StreamBridge is built separately by the caller because streaming wires up
+        an event_sink.
         """
         wrr = kwargs.get("workflow_run_response", None)
 
-        # Workflow-level defaults (mirroring how the static path threads these into Step.execute)
         store_executor_outputs = (
             workflow.store_executor_outputs
             if workflow is not None and hasattr(workflow, "store_executor_outputs")
@@ -761,7 +201,7 @@ class DynamicWorkflowDriver:
             else 3
         )
 
-        return _SpawnState(
+        ctx = _RunContext(
             workflow=workflow,
             workflow_run_response=wrr,
             run_context=kwargs.get("run_context"),
@@ -776,36 +216,216 @@ class DynamicWorkflowDriver:
             add_dependencies_to_context=kwargs.get("add_dependencies_to_context"),
             add_session_state_to_context=kwargs.get("add_session_state_to_context"),
         )
+        trail = _TrailBuilder(max_steps=self.max_steps)
+        return ctx, trail
+
+    @staticmethod
+    def _input_string(execution_input: Optional["WorkflowExecutionInput"]) -> str:
+        if execution_input is None or execution_input.input is None:
+            return ""
+        v = execution_input.input
+        if isinstance(v, str):
+            return v
+        try:
+            return str(v)
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _finalize(ctx: _RunContext, trail: _TrailBuilder) -> None:
+        """Promote the trail onto the workflow run response."""
+        if ctx.workflow_run_response is not None:
+            ctx.workflow_run_response.executed_steps = list(trail.leaf_records)
+
+    # ---- spawn tools (LLM-facing) ------------------------------------------
+
+    def _build_spawn_agent_tool(
+        self, ctx: _RunContext, trail: _TrailBuilder, stream: _StreamBridge
+    ) -> Callable:
+        if self.allow_model_tier_selection and self.model_tiers:
+
+            def spawn_agent(
+                role: str,
+                instructions: str,
+                input: str,
+                tools: Optional[List[str]] = None,
+                model_tier: Optional[str] = None,
+                expected_output: Optional[str] = None,
+            ) -> str:
+                """Invent and run a new specialist agent.
+
+                Args:
+                    role: Short name for the spawned agent (e.g. 'researcher').
+                    instructions: Task-specific instructions for the spawned agent.
+                    input: The concrete task to run.
+                    tools: Subset of allowed tool names to give this agent.
+                    model_tier: Model tier label for this agent's model.
+                    expected_output: Optional hint on the desired output format.
+
+                Returns:
+                    A short summary of the spawned agent's output.
+                """
+                try:
+                    node = self._agent_handler.spawn(
+                        ctx, trail, stream,
+                        role=role, instructions=instructions, input=input,
+                        tools=tools, model_tier=model_tier, expected_output=expected_output,
+                    )
+                except _MaxStepsExceededError as e:
+                    msg = _max_steps_msg(e.max_steps)
+                    log_warning(f"DynamicWorkflowDriver: {msg}")
+                    return msg
+                except Exception as e:
+                    log_warning(f"DynamicWorkflowDriver spawn {role!r} failed: {e}")
+                    return f"Error running spawned agent {role!r}: {e}"
+
+                return self._agent_handler.summary_for_tool_result(node.output)
+
+            return spawn_agent
+
+        def spawn_agent(
+            role: str,
+            instructions: str,
+            input: str,
+            tools: Optional[List[str]] = None,
+            expected_output: Optional[str] = None,
+        ) -> str:
+            """Invent and run a new specialist agent.
+
+            Args:
+                role: Short name for the spawned agent (e.g. 'researcher').
+                instructions: Task-specific instructions for the spawned agent.
+                input: The concrete task to run.
+                tools: Subset of allowed tool names to give this agent.
+                expected_output: Optional hint on the desired output format.
+
+            Returns:
+                A short summary of the spawned agent's output.
+            """
+            try:
+                node = self._agent_handler.spawn(
+                    ctx, trail, stream,
+                    role=role, instructions=instructions, input=input,
+                    tools=tools, expected_output=expected_output,
+                )
+            except _MaxStepsExceededError as e:
+                msg = _max_steps_msg(e.max_steps)
+                log_warning(f"DynamicWorkflowDriver: {msg}")
+                return msg
+            except Exception as e:
+                log_warning(f"DynamicWorkflowDriver spawn {role!r} failed: {e}")
+                return f"Error running spawned agent {role!r}: {e}"
+
+            return self._agent_handler.summary_for_tool_result(node.output)
+
+        return spawn_agent
+
+    def _build_spawn_agent_tool_async(
+        self, ctx: _RunContext, trail: _TrailBuilder, stream: _StreamBridge
+    ) -> Callable:
+        if self.allow_model_tier_selection and self.model_tiers:
+
+            async def spawn_agent(
+                role: str,
+                instructions: str,
+                input: str,
+                tools: Optional[List[str]] = None,
+                model_tier: Optional[str] = None,
+                expected_output: Optional[str] = None,
+            ) -> str:
+                """Invent and run a new specialist agent (async)."""
+                try:
+                    node = await self._agent_handler.aspawn(
+                        ctx, trail, stream,
+                        role=role, instructions=instructions, input=input,
+                        tools=tools, model_tier=model_tier, expected_output=expected_output,
+                    )
+                except _MaxStepsExceededError as e:
+                    msg = _max_steps_msg(e.max_steps)
+                    log_warning(f"DynamicWorkflowDriver: {msg}")
+                    return msg
+                except Exception as e:
+                    log_warning(f"DynamicWorkflowDriver spawn {role!r} failed: {e}")
+                    return f"Error running spawned agent {role!r}: {e}"
+
+                return self._agent_handler.summary_for_tool_result(node.output)
+
+            return spawn_agent
+
+        async def spawn_agent(
+            role: str,
+            instructions: str,
+            input: str,
+            tools: Optional[List[str]] = None,
+            expected_output: Optional[str] = None,
+        ) -> str:
+            """Invent and run a new specialist agent (async)."""
+            try:
+                node = await self._agent_handler.aspawn(
+                    ctx, trail, stream,
+                    role=role, instructions=instructions, input=input,
+                    tools=tools, expected_output=expected_output,
+                )
+            except _MaxStepsExceededError as e:
+                msg = _max_steps_msg(e.max_steps)
+                log_warning(f"DynamicWorkflowDriver: {msg}")
+                return msg
+            except Exception as e:
+                log_warning(f"DynamicWorkflowDriver spawn {role!r} failed: {e}")
+                return f"Error running spawned agent {role!r}: {e}"
+
+            return self._agent_handler.summary_for_tool_result(node.output)
+
+        return spawn_agent
+
+    # ---- python-driver mode (the user-callable spawn) ----------------------
+
+    def _build_python_spawn(
+        self, ctx: _RunContext, trail: _TrailBuilder, stream: _StreamBridge
+    ) -> Callable:
+        """Build the spawn callable a custom_driver function receives.
+
+        Matches the LLM-facing tool's signature but raises on max_steps rather than
+        returning an error string (Python drivers want exceptions, not magic strings).
+        """
+
+        def spawn(
+            role: str,
+            instructions: str,
+            input: str,
+            tools: Optional[List[str]] = None,
+            model_tier: Optional[str] = None,
+            expected_output: Optional[str] = None,
+        ) -> str:
+            node = self._agent_handler.spawn(
+                ctx, trail, stream,
+                role=role, instructions=instructions, input=input,
+                tools=tools, model_tier=model_tier, expected_output=expected_output,
+            )
+            content = node.output.content if node.output is not None else ""
+            return content if isinstance(content, str) else (str(content) if content is not None else "")
+
+        return spawn
+
+    # ---- entry points (non-streaming) --------------------------------------
 
     def __call__(self, workflow: Any, execution_input: "WorkflowExecutionInput", **kwargs: Any) -> str:
-        """Run the dynamic driver. This makes a DynamicWorkflowDriver usable directly as
-        `Workflow(steps=driver)`.
-
-        - If `custom_driver` is set: runs the user's Python function with a `spawn` callable.
-        - Otherwise: runs an LLM agent with the `spawn_agent` tool. The driver iterates
-          (reasoning + spawning) until it produces a final response.
-
-        Each spawn routes through Step.execute, so it inherits the static-path infrastructure:
-        StepStarted/Completed events, full RunOutput persistence (step_executor_runs), retries,
-        error policy, media flow, and workflow-history wiring.
-        """
-        state = self._build_state(workflow, execution_input, kwargs)
-        workflow_run_response = state.workflow_run_response
-
+        """Non-streaming entry point — `Workflow(steps=driver)` calls this."""
+        ctx, trail = self._build_ctx_trail(workflow, execution_input, kwargs)
+        stream = _StreamBridge()  # inactive — no event_sink
         initial_input = self._input_string(execution_input)
 
         if self.custom_driver is not None:
-            spawn = self._build_spawn_callable_sync(state)
+            spawn = self._build_python_spawn(ctx, trail, stream)
             try:
                 result_content = self.custom_driver(initial_input, spawn)
             finally:
-                if workflow_run_response is not None:
-                    workflow_run_response.executed_steps = list(state.executed_steps)
+                self._finalize(ctx, trail)
             if result_content is None:
                 return ""
             return result_content if isinstance(result_content, str) else str(result_content)
 
-        spawn_tool = self._build_spawn_tool_sync(state)
+        spawn_tool = self._build_spawn_agent_tool(ctx, trail, stream)
         driver_agent = Agent(
             name=self.name,
             model=self.model,
@@ -815,15 +435,15 @@ class DynamicWorkflowDriver:
             telemetry=False,
             num_history_runs=0,
         )
-
         try:
             result = driver_agent.run(input=initial_input)
         finally:
-            if workflow_run_response is not None:
-                workflow_run_response.executed_steps = list(state.executed_steps)
+            self._finalize(ctx, trail)
 
         content = result.content if result else ""
         return content if isinstance(content, str) else (str(content) if content is not None else "")
+
+    # ---- entry points (streaming) ------------------------------------------
 
     def stream_call(
         self,
@@ -834,39 +454,38 @@ class DynamicWorkflowDriver:
         stream_executor_events: bool = True,
         **kwargs: Any,
     ):
-        """Generator variant of __call__ that yields workflow events in real time.
+        """Generator variant of __call__ — yields workflow events in real time.
 
-        Runs the driver on a background thread. Per-spawn events from
-        Step.execute_stream plus StepSpawnedEvents are pushed into a thread-safe queue;
-        this generator yields them in order until the driver completes.
-
-        On completion, the workflow_run_response is populated with executed_steps and
-        content (so the workflow's outer stream loop can finalize normally).
+        Driver runs on a background thread. Step.execute_stream emits per-spawn events
+        which the agent handler pushes into the stream bridge's queue. This generator
+        yields them in order until the driver completes. On completion the
+        workflow_run_response gets `content` and `executed_steps` populated so the
+        workflow's outer stream loop finalizes normally.
         """
         import queue
         import threading
 
-        state = self._build_state(workflow, execution_input, kwargs)
-        state.stream_events = stream_events
-        state.stream_executor_events = stream_executor_events
+        ctx, trail = self._build_ctx_trail(workflow, execution_input, kwargs)
         events_q: "queue.Queue[Any]" = queue.Queue()
         _SENTINEL = object()
-        state.event_sink = lambda ev: events_q.put(ev)
+        stream = _StreamBridge(
+            event_sink=lambda ev: events_q.put(ev),
+            stream_events=stream_events,
+            stream_executor_events=stream_executor_events,
+        )
 
-        workflow_run_response = state.workflow_run_response
         initial_input = self._input_string(execution_input)
-
         result_container: List[str] = [""]
         error_container: List[Optional[BaseException]] = [None]
 
         def _runner() -> None:
             try:
                 if self.custom_driver is not None:
-                    spawn = self._build_spawn_callable_sync(state)
+                    spawn = self._build_python_spawn(ctx, trail, stream)
                     out = self.custom_driver(initial_input, spawn)
                     result_container[0] = out if isinstance(out, str) else (str(out) if out is not None else "")
                 else:
-                    spawn_tool = self._build_spawn_tool_sync(state)
+                    spawn_tool = self._build_spawn_agent_tool(ctx, trail, stream)
                     driver_agent = Agent(
                         name=self.name,
                         model=self.model,
@@ -898,51 +517,29 @@ class DynamicWorkflowDriver:
         finally:
             thread.join()
 
-        if workflow_run_response is not None:
-            workflow_run_response.executed_steps = list(state.executed_steps)
-            workflow_run_response.content = result_container[0]
+        self._finalize(ctx, trail)
+        if ctx.workflow_run_response is not None:
+            ctx.workflow_run_response.content = result_container[0]
 
         if error_container[0] is not None:
             raise error_container[0]
 
-    def _build_spawn_callable_sync(self, state: _SpawnState) -> Callable:
-        """Build a plain-Python spawn callable for use by a custom_driver function."""
-
-        def spawn(
-            role: str,
-            instructions: str,
-            input: str,
-            tools: Optional[List[str]] = None,
-            model_tier: Optional[str] = None,
-            expected_output: Optional[str] = None,
-        ) -> str:
-            return self._do_spawn_sync(
-                state,
-                role=role,
-                instructions=instructions,
-                input=input,
-                tools=tools,
-                model_tier=model_tier,
-                expected_output=expected_output,
-            )
-
-        return spawn
+    # ---- async helper (kept for users who explicitly need async spawns) ----
 
     def as_async_workflow_function(self) -> Callable:
         """Return an async function suitable for `Workflow(steps=...)` in async runs.
 
         Most users should just pass the driver directly: `Workflow(steps=driver)`. The
-        synchronous `__call__` handles both `wf.run()` and `wf.arun()` correctly. Use
-        this only if you specifically want the driver-internal spawns to run on the
-        async path (await agent.arun() per spawn) inside an async workflow.
+        synchronous `__call__` handles both `wf.run()` and `wf.arun()`. Use this only
+        if you specifically want each spawn to run via `await agent.arun()`.
         """
 
         async def _driver_fn(workflow: Any, execution_input: "WorkflowExecutionInput", **kwargs: Any) -> str:
-            state = self._build_state(workflow, execution_input, kwargs)
-            workflow_run_response = state.workflow_run_response
+            ctx, trail = self._build_ctx_trail(workflow, execution_input, kwargs)
+            stream = _StreamBridge()
+            initial_input = self._input_string(execution_input)
 
-            spawn_tool = self._build_spawn_tool_async(state)
-
+            spawn_tool = self._build_spawn_agent_tool_async(ctx, trail, stream)
             driver_agent = Agent(
                 name=self.name,
                 model=self.model,
@@ -952,13 +549,10 @@ class DynamicWorkflowDriver:
                 telemetry=False,
                 num_history_runs=0,
             )
-
-            initial_input = self._input_string(execution_input)
             try:
                 result = await driver_agent.arun(input=initial_input)
             finally:
-                if workflow_run_response is not None:
-                    workflow_run_response.executed_steps = list(state.executed_steps)
+                self._finalize(ctx, trail)
 
             content = result.content if result else ""
             return content if isinstance(content, str) else (str(content) if content is not None else "")
