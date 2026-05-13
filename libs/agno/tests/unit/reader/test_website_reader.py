@@ -4,6 +4,7 @@ import pytest
 
 from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.document.base import Document
+from agno.knowledge.reader.utils.url_validation import is_host_allowed
 from agno.knowledge.reader.website_reader import WebsiteReader
 
 
@@ -293,3 +294,74 @@ def test_website_reader_default_chunk_size():
     assert reader.chunk_size == 5000
     assert reader.chunking_strategy.chunk_size == 5000
     assert isinstance(reader.chunking_strategy, FixedSizeChunking)
+
+
+# ---------------------------------------------------------------------------
+# allowed_hosts (SSRF hardening)
+# ---------------------------------------------------------------------------
+
+
+def test_allowed_hosts_default_is_none():
+    """Default behavior is unchanged: no allowlist means all hosts allowed."""
+    reader = WebsiteReader()
+    assert reader.allowed_hosts is None
+    assert is_host_allowed("https://docs.agno.com/anything", reader.allowed_hosts) is True
+    assert is_host_allowed("http://127.0.0.1:8000/admin", reader.allowed_hosts) is True
+
+
+def test_allowed_hosts_lowercases_input():
+    """Hostnames are matched case-insensitively."""
+    reader = WebsiteReader(allowed_hosts=["DOCS.AGNO.COM"])
+    assert reader.allowed_hosts == ["docs.agno.com"]
+    assert is_host_allowed("https://docs.agno.com/x", reader.allowed_hosts) is True
+    assert is_host_allowed("https://DOCS.agno.COM/x", reader.allowed_hosts) is True
+
+
+def test_allowed_hosts_rejects_unlisted():
+    reader = WebsiteReader(allowed_hosts=["docs.agno.com"])
+    assert is_host_allowed("http://127.0.0.1:8000/admin", reader.allowed_hosts) is False
+    assert is_host_allowed("http://169.254.169.254/latest/meta-data", reader.allowed_hosts) is False
+    assert is_host_allowed("http://10.0.0.5:8080/admin", reader.allowed_hosts) is False
+    # Subdomains are not implicitly allowed
+    assert is_host_allowed("https://internal.docs.agno.com/x", reader.allowed_hosts) is False
+
+
+def test_allowed_hosts_rejects_url_with_no_host():
+    reader = WebsiteReader(allowed_hosts=["docs.agno.com"])
+    assert is_host_allowed("not-a-url", reader.allowed_hosts) is False
+    assert is_host_allowed("file:///etc/passwd", reader.allowed_hosts) is False
+
+
+def test_allowed_hosts_disables_redirects_in_sync_crawl():
+    """When an allowlist is configured, httpx.get must be called with follow_redirects=False."""
+    from unittest.mock import MagicMock, patch
+
+    reader = WebsiteReader(allowed_hosts=["example.com"], max_depth=1, max_links=1)
+
+    mock_response = MagicMock()
+    mock_response.content = b"<html><body><main>ok</main></body></html>"
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("agno.knowledge.reader.website_reader.httpx.get", return_value=mock_response) as mock_get:
+        reader.crawl("https://example.com")
+        # The call must opt out of redirect-following
+        assert mock_get.called
+        _, kwargs = mock_get.call_args
+        assert kwargs.get("follow_redirects") is False
+
+
+def test_allowed_hosts_keeps_redirects_when_unset():
+    """Default behavior (no allowlist) still follows redirects."""
+    from unittest.mock import MagicMock, patch
+
+    reader = WebsiteReader(max_depth=1, max_links=1)
+
+    mock_response = MagicMock()
+    mock_response.content = b"<html><body><main>ok</main></body></html>"
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("agno.knowledge.reader.website_reader.httpx.get", return_value=mock_response) as mock_get:
+        reader.crawl("https://example.com")
+        assert mock_get.called
+        _, kwargs = mock_get.call_args
+        assert kwargs.get("follow_redirects") is True

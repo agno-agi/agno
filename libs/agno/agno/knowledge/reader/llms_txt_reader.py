@@ -16,6 +16,7 @@ from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.reader.utils.url_validation import is_host_allowed
 from agno.knowledge.types import ContentType
 from agno.utils.http import async_fetch_with_retry, fetch_with_retry
 from agno.utils.log import log_debug, log_error, log_warning
@@ -77,14 +78,6 @@ class LLMsTxtReader(Reader):
         return [ContentType.URL]
 
     # Helpers
-
-    def is_host_allowed(self, url: str) -> bool:
-        if self.allowed_hosts is None:
-            return True
-        host = urlparse(url).hostname
-        if not host:
-            return False
-        return host.lower() in self.allowed_hosts
 
     def _process_response(self, content_type: str, text: str) -> str:
         if any(t in content_type for t in ["text/plain", "text/markdown"]):
@@ -186,7 +179,7 @@ class LLMsTxtReader(Reader):
         return overview, entries
 
     def fetch_url(self, url: str) -> Optional[str]:
-        if not self.is_host_allowed(url):
+        if not is_host_allowed(url, self.allowed_hosts):
             log_debug(f"Host not in allowed_hosts: {url}")
             return None
         try:
@@ -203,7 +196,7 @@ class LLMsTxtReader(Reader):
             return None
 
     async def async_fetch_url(self, client: httpx.AsyncClient, url: str) -> Optional[str]:
-        if not self.is_host_allowed(url):
+        if not is_host_allowed(url, self.allowed_hosts):
             log_debug(f"Host not in allowed_hosts: {url}")
             return None
         try:

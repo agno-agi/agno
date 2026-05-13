@@ -11,6 +11,7 @@ from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.reader.utils.url_validation import is_host_allowed
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -37,6 +38,7 @@ class WebsiteReader(Reader):
         max_links: int = 10,
         timeout: int = 10,
         proxy: Optional[str] = None,
+        allowed_hosts: Optional[List[str]] = None,
         **kwargs,
     ):
         if chunking_strategy is None:
@@ -47,6 +49,9 @@ class WebsiteReader(Reader):
         self.max_links = max_links
         self.proxy = proxy
         self.timeout = timeout
+        self.allowed_hosts: Optional[List[str]] = (
+            [host.lower() for host in allowed_hosts] if allowed_hosts is not None else None
+        )
 
         self._visited = set()
         self._urls_to_crawl = []
@@ -180,12 +185,16 @@ class WebsiteReader(Reader):
             # - does not end with the primary domain,
             # - exceeds max depth
             # - exceeds max links
+            # - host is not in allowed_hosts (when configured)
             if (
                 current_url in self._visited
                 or not urlparse(current_url).netloc.endswith(primary_domain)
                 or (current_depth > self.max_depth and current_url != url)
                 or num_links >= self.max_links
+                or not is_host_allowed(current_url, self.allowed_hosts)
             ):
+                if not is_host_allowed(current_url, self.allowed_hosts):
+                    log_debug(f"Host not in allowed_hosts, skipping: {current_url}")
                 continue
 
             self._visited.add(current_url)
@@ -194,10 +203,13 @@ class WebsiteReader(Reader):
             try:
                 log_debug(f"Crawling: {current_url}")
 
+                # Disable redirect-following when an allowlist is set so a permitted host
+                # can't 3xx-bounce the request to an internal target.
+                follow_redirects = self.allowed_hosts is None
                 response = (
-                    httpx.get(current_url, timeout=self.timeout, proxy=self.proxy, follow_redirects=True)
+                    httpx.get(current_url, timeout=self.timeout, proxy=self.proxy, follow_redirects=follow_redirects)
                     if self.proxy
-                    else httpx.get(current_url, timeout=self.timeout, follow_redirects=True)
+                    else httpx.get(current_url, timeout=self.timeout, follow_redirects=follow_redirects)
                 )
                 response.raise_for_status()
 
@@ -295,7 +307,10 @@ class WebsiteReader(Reader):
                     or not urlparse(current_url).netloc.endswith(primary_domain)
                     or current_depth > self.max_depth
                     or num_links >= self.max_links
+                    or not is_host_allowed(current_url, self.allowed_hosts)
                 ):
+                    if not is_host_allowed(current_url, self.allowed_hosts):
+                        log_debug(f"Host not in allowed_hosts, skipping: {current_url}")
                     continue
 
                 self._visited.add(current_url)
@@ -303,7 +318,8 @@ class WebsiteReader(Reader):
 
                 try:
                     log_debug(f"Crawling asynchronously: {current_url}")
-                    response = await client.get(current_url, timeout=self.timeout, follow_redirects=True)
+                    follow_redirects = self.allowed_hosts is None
+                    response = await client.get(current_url, timeout=self.timeout, follow_redirects=follow_redirects)
                     response.raise_for_status()
 
                     soup = BeautifulSoup(response.content, "html.parser")
