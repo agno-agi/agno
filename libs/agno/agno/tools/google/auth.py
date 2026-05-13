@@ -517,7 +517,7 @@ class GoogleOAuthConfig:
 
         router = APIRouter(tags=["Google OAuth"])
         google_auth = self
-        callback_path = self._callback_path
+        callback_path: str = self._callback_path or "/google/oauth/callback"
         # Captured in closure — survives restarts, works across workers
         callback_db = resolved_db
 
