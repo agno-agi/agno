@@ -127,6 +127,28 @@ def test_gemini():
     assert slept.call_count == 2
 
 
+async def test_gemini_async():
+    pytest.importorskip("google.genai")
+    from agno.tools.models.gemini import GeminiTools
+
+    op_running = Mock(done=False, result=None)
+    op_done = Mock(done=True)
+    op_done.result = Mock(generated_videos=[])
+    client = MagicMock()
+    client.aio.models.generate_videos = AsyncMock(return_value=op_running)
+    client.aio.operations.get = AsyncMock(side_effect=[op_running, op_done])
+    with patch("agno.tools.models.gemini.Client", return_value=client):
+        tools = GeminiTools(vertexai=True, poll_interval=1, max_wait_time=10, enable_generate_video=True)
+
+    with patch("agno.tools.models.gemini.asyncio.sleep", new_callable=AsyncMock) as slept:
+        result = await tools.agenerate_video(agent=Mock(), prompt="a dog")
+
+    client.aio.models.generate_videos.assert_awaited_once()
+    assert client.aio.operations.get.await_count == 2
+    slept.assert_awaited_with(1)
+    assert "No videos were generated" in result.content
+
+
 async def test_sleep():
     from agno.tools.sleep import SleepTools
 

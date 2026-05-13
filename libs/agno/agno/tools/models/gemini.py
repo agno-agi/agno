@@ -241,8 +241,7 @@ class GeminiTools(Toolkit):
         from google.genai.types import GenerateVideosConfig
 
         try:
-            operation: GenerateVideosOperation = await asyncio.to_thread(
-                self.client.models.generate_videos,
+            operation: GenerateVideosOperation = await self.client.aio.models.generate_videos(
                 model=self.video_model,
                 prompt=prompt,
                 config=GenerateVideosConfig(enhance_prompt=True),
@@ -255,7 +254,7 @@ class GeminiTools(Toolkit):
                     return ToolResult(content=f"Failed to generate video: timed out after {self.max_wait_time} seconds")
                 await asyncio.sleep(self.poll_interval)
                 seconds_waited += self.poll_interval
-                operation = await asyncio.to_thread(self.client.operations.get, operation=operation)
+                operation = await self.client.aio.operations.get(operation=operation)
 
             result = operation.result
             if result is None or result.generated_videos is None or not result.generated_videos:
