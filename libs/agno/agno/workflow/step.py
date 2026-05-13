@@ -2144,12 +2144,7 @@ class Step:
         serialized_reqs: List[Any] = []
         if executor_response.requirements:
             for req in executor_response.requirements:
-                resolved_attr = getattr(req, "is_resolved", None)
-                try:
-                    is_resolved = resolved_attr() if callable(resolved_attr) else bool(resolved_attr)
-                except Exception:
-                    is_resolved = False
-                if is_resolved:
+                if hasattr(req, "is_resolved") and req.is_resolved():
                     continue
                 serialized_reqs.append(req.to_dict() if hasattr(req, "to_dict") else req)
 
