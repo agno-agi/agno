@@ -1091,7 +1091,14 @@ def get_workflow_router(
     ):
         kwargs = await get_request_kwargs(request, create_workflow_run)
 
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+        # For non-admin scoped callers the JWT sub wins unconditionally —
+        # the client must not be able to attribute a run to another user.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if user_id is not None and user_id != scoped_user_id:
+                log_warning("Form user_id ignored for non-admin scoped caller; using JWT sub")
+            user_id = scoped_user_id
+        elif hasattr(request.state, "user_id") and request.state.user_id is not None:
             if user_id and user_id != request.state.user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = request.state.user_id
@@ -1265,7 +1272,13 @@ def get_workflow_router(
             description="JSON object with factory-specific parameters for dynamic workflow reconstruction",
         ),
     ):
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+        # For non-admin scoped callers the JWT sub wins unconditionally.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if user_id is not None and user_id != scoped_user_id:
+                log_warning("Form user_id ignored for non-admin scoped caller; using JWT sub")
+            user_id = scoped_user_id
+        elif hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             session_id = request.state.session_id

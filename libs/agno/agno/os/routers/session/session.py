@@ -857,7 +857,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             return
 
         # Same pattern as delete_session above for admin / no-JWT callers.
-        local_kwargs: Dict[str, Any] = {"session_ids": request.session_ids}
+        local_kwargs: Dict[str, Any] = {
+            "session_ids": request.session_ids,
+            "session_types": request.session_types,
+        }
         if not is_user_scoped_db(db):
             local_kwargs["user_id"] = user_id
 

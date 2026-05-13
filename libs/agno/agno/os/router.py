@@ -403,26 +403,44 @@ def get_websocket_router(
 
                     # Force user_id from JWT for non-admin callers so the client
                     # cannot attribute a run to another user by spoofing the field.
-                    jwt_user_id = websocket_user_context.get("user_id")
-                    if jwt_user_id:
+                    if jwt_auth_enabled:
+                        jwt_user_id = websocket_user_context.get("user_id")
                         is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
-                        if is_admin:
-                            message.setdefault("user_id", jwt_user_id)
-                        else:
-                            message["user_id"] = jwt_user_id
+                        if jwt_user_id is not None:
+                            if is_admin:
+                                message.setdefault("user_id", jwt_user_id)
+                            else:
+                                message["user_id"] = jwt_user_id
+                        elif not is_admin:
+                            # JWT auth is on, caller is non-admin, and the token has
+                            # no sub — refuse rather than trust client-supplied user_id.
+                            await websocket.send_text(
+                                json.dumps(
+                                    {"event": "error", "error": "Authenticated token missing user identity (sub)"}
+                                )
+                            )
+                            continue
                     await handle_workflow_via_websocket(websocket, message, os)
 
                 elif action == "reconnect":
                     # Force user_id from JWT for non-admins so reconnecting
                     # cannot read another user's run events by swapping user_id.
-                    jwt_user_id = websocket_user_context.get("user_id")
                     is_admin = False
-                    if jwt_user_id:
+                    if jwt_auth_enabled:
+                        jwt_user_id = websocket_user_context.get("user_id")
                         is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
-                        if is_admin:
-                            message.setdefault("user_id", jwt_user_id)
-                        else:
-                            message["user_id"] = jwt_user_id
+                        if jwt_user_id is not None:
+                            if is_admin:
+                                message.setdefault("user_id", jwt_user_id)
+                            else:
+                                message["user_id"] = jwt_user_id
+                        elif not is_admin:
+                            await websocket.send_text(
+                                json.dumps(
+                                    {"event": "error", "error": "Authenticated token missing user identity (sub)"}
+                                )
+                            )
+                            continue
 
                     # Enforce workflow-level RBAC at reconnect just like
                     # start-workflow does. RBAC fires whenever JWT auth is on

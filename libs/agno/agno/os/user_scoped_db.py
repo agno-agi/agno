@@ -58,6 +58,38 @@ def _coerce_all(entities: Iterable[_TUserIdCarrier], expected_user_id: str, kind
     return [_coerce_user_id(e, expected_user_id, kind) for e in entities]
 
 
+def _filter_by_user_id(items, expected_user_id: str):
+    """Defensive post-filter for list results from backends that may not honour user_id.
+
+    When the backend is well-behaved the input already contains only matching rows,
+    so this is a no-op. When the backend ignores ``user_id`` (older implementations),
+    rows belonging to other users are dropped here, preventing cross-user leakage.
+
+    Many ``BaseDb`` list methods return ``(rows, total_count)``; both shapes are
+    handled. Total count is left unchanged because we can't recompute it
+    correctly without re-querying — backends that honour ``user_id`` already
+    report the right count, and the filter is just belt-and-braces.
+    """
+    if items is None:
+        return items
+
+    def _match(item) -> bool:
+        if isinstance(item, dict):
+            return item.get("user_id") == expected_user_id
+        return getattr(item, "user_id", None) == expected_user_id
+
+    # (rows, total_count) shape — common for paginated list endpoints
+    if isinstance(items, tuple) and len(items) == 2 and isinstance(items[0], list):
+        rows, total = items
+        return [row for row in rows if _match(row)], total
+
+    if isinstance(items, list):
+        return [row for row in items if _match(row)]
+
+    # Unknown shape (single object, dict aggregate, etc.) — pass through.
+    return items
+
+
 class UserScopedDbAdapter:
     """Adapts a BaseDb by injecting user_id into all user-scoped queries.
 
@@ -131,7 +163,13 @@ class UserScopedDbAdapter:
     # ------------------------------------------------------------------
 
     def clear_memories(self) -> None:
-        return self._db.clear_memories()
+        # Scoped callers must not wipe other users' memories. The base method
+        # takes no user_id parameter, so we refuse rather than risk a table-wide
+        # delete. Use delete_user_memories(memory_ids=...) for per-user deletes.
+        raise PermissionError(
+            "clear_memories() is not permitted on a user-scoped DB. "
+            "Use delete_user_memories(memory_ids=...) for the bound user instead."
+        )
 
     def delete_user_memory(self, memory_id: str, **kwargs) -> None:
         kwargs["user_id"] = self._user_id
@@ -170,6 +208,7 @@ class UserScopedDbAdapter:
     # ------------------------------------------------------------------
 
     def upsert_trace(self, trace: "Trace") -> None:
+        trace = _coerce_user_id(trace, self._user_id, "trace")
         return self._db.upsert_trace(trace)
 
     def get_trace(self, **kwargs):
@@ -186,11 +225,22 @@ class UserScopedDbAdapter:
 
     def get_traces(self, **kwargs):
         kwargs["user_id"] = self._user_id
-        return self._db.get_traces(**kwargs)
+        try:
+            traces = self._db.get_traces(**kwargs)
+        except TypeError:
+            kwargs.pop("user_id", None)
+            traces = self._db.get_traces(**kwargs)
+        return _filter_by_user_id(traces, self._user_id)
 
     def get_trace_stats(self, **kwargs):
         kwargs["user_id"] = self._user_id
-        return self._db.get_trace_stats(**kwargs)
+        try:
+            return self._db.get_trace_stats(**kwargs)
+        except TypeError:
+            # Backend cannot produce per-user aggregates safely; fail closed.
+            raise NotImplementedError(
+                "get_trace_stats on this backend does not accept user_id; per-user trace stats are not available."
+            )
 
     # ------------------------------------------------------------------
     # Spans (not user-scoped — no user_id column)
@@ -289,7 +339,10 @@ class AsyncUserScopedDbAdapter:
     # ------------------------------------------------------------------
 
     async def clear_memories(self) -> None:
-        return await self._db.clear_memories()
+        raise PermissionError(
+            "clear_memories() is not permitted on a user-scoped DB. "
+            "Use delete_user_memories(memory_ids=...) for the bound user instead."
+        )
 
     async def delete_user_memory(self, memory_id: str, **kwargs) -> None:
         kwargs["user_id"] = self._user_id
@@ -330,6 +383,7 @@ class AsyncUserScopedDbAdapter:
     # ------------------------------------------------------------------
 
     async def upsert_trace(self, trace: "Trace") -> None:
+        trace = _coerce_user_id(trace, self._user_id, "trace")
         return await self._db.upsert_trace(trace)
 
     async def get_trace(self, **kwargs):
@@ -345,11 +399,21 @@ class AsyncUserScopedDbAdapter:
 
     async def get_traces(self, **kwargs):
         kwargs["user_id"] = self._user_id
-        return await self._db.get_traces(**kwargs)
+        try:
+            traces = await self._db.get_traces(**kwargs)
+        except TypeError:
+            kwargs.pop("user_id", None)
+            traces = await self._db.get_traces(**kwargs)
+        return _filter_by_user_id(traces, self._user_id)
 
     async def get_trace_stats(self, **kwargs):
         kwargs["user_id"] = self._user_id
-        return await self._db.get_trace_stats(**kwargs)
+        try:
+            return await self._db.get_trace_stats(**kwargs)
+        except TypeError:
+            raise NotImplementedError(
+                "get_trace_stats on this backend does not accept user_id; per-user trace stats are not available."
+            )
 
     # ------------------------------------------------------------------
     # Spans (not user-scoped)

@@ -89,7 +89,8 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
     admin_scope_raw = getattr(request.state, "admin_scope", None)
     # Ignore non-string values (e.g. MagicMock auto-attrs in tests).
     admin_scope: Optional[str] = admin_scope_raw if isinstance(admin_scope_raw, str) else None
-    if _has_admin_scope(scopes, admin_scope=admin_scope):
+    admin_match = _has_admin_scope(scopes, admin_scope=admin_scope)
+    if admin_match:
         return None
 
     return user_id
