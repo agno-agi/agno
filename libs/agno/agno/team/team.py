@@ -126,6 +126,8 @@ class Team:
     add_session_state_to_context: bool = False
     # Set to True to give the team tools to update the session_state dynamically
     enable_agentic_state: bool = False
+    # Set to True to allow the team leader to create new agents during a run
+    enable_dynamic_agents: bool = False
     # Set to True to overwrite the stored session_state with the session_state provided in the run
     overwrite_db_session_state: bool = False
     # If True, cache the current Team session in memory for faster access
@@ -445,6 +447,7 @@ class Team:
         session_state: Optional[Dict[str, Any]] = None,
         add_session_state_to_context: bool = False,
         enable_agentic_state: bool = False,
+        enable_dynamic_agents: bool = False,
         overwrite_db_session_state: bool = False,
         resolve_in_context: bool = True,
         cache_session: bool = False,
@@ -568,6 +571,7 @@ class Team:
             session_state=session_state,
             add_session_state_to_context=add_session_state_to_context,
             enable_agentic_state=enable_agentic_state,
+            enable_dynamic_agents=enable_dynamic_agents,
             overwrite_db_session_state=overwrite_db_session_state,
             resolve_in_context=resolve_in_context,
             cache_session=cache_session,

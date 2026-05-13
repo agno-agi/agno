@@ -381,6 +381,105 @@ def _read_past_session_function(
     return Function.from_callable(read_past_session, name="read_past_session")
 
 
+def _get_create_agent_function(
+    team: "Team",
+    run_context: RunContext,
+    async_mode: bool = False,
+) -> Function:
+    from agno.team._init import _initialize_member
+    from agno.utils.callables import get_resolved_members
+    from agno.utils.team import get_member_id
+
+    def create_agent(
+        name: str,
+        role: str,
+        instructions: str,
+        description: Optional[str] = None,
+        model_id: Optional[str] = None,
+    ) -> str:
+        """Create a new specialized agent and add it to the team.
+        The agent will be available for delegation immediately after creation.
+        Created agents are instruction-only specialists without tools.
+
+        Args:
+            name: A unique, descriptive name for the agent.
+            role: A one-line description of what this agent does.
+            instructions: Detailed instructions for how the agent should behave and respond.
+            description: Optional description providing more context about the agent's capabilities.
+            model_id: Optional model identifier (e.g. "openai:gpt-4o"). If not provided, inherits the team's model.
+
+        Returns:
+            str: Confirmation message with the agent's member ID for use with delegate_task_to_member.
+        """
+        # Bootstrap run_context.members if needed
+        if run_context.members is None:
+            existing = get_resolved_members(team, run_context)
+            run_context.members = list(existing) if existing else []
+
+        # Check for duplicate names
+        for member in run_context.members:
+            if member.name and member.name.lower() == name.lower():
+                existing_id = get_member_id(member)
+                return f"An agent named '{name}' already exists with ID '{existing_id}'. Use that ID to delegate tasks."
+
+        # Build model if specified
+        agent_model = None
+        if model_id:
+            from agno.models.utils import get_model
+
+            agent_model = get_model(model_id)
+
+        # Create the agent
+        new_agent = Agent(
+            name=name,
+            role=role,
+            instructions=[instructions],
+            description=description,
+            model=agent_model,
+        )
+
+        # Initialize (sets team_id, inherits model if needed, etc.)
+        _initialize_member(team, new_agent)
+
+        # Add to run_context.members
+        run_context.members.append(new_agent)
+
+        member_id = get_member_id(new_agent)
+        log_info(f"Created dynamic agent '{name}' with ID '{member_id}'")
+        return (
+            f"Successfully created agent '{name}' with ID '{member_id}'. "
+            f"You can now delegate tasks to this agent using delegate_task_to_member with member_id='{member_id}'."
+        )
+
+    async def acreate_agent(
+        name: str,
+        role: str,
+        instructions: str,
+        description: Optional[str] = None,
+        model_id: Optional[str] = None,
+    ) -> str:
+        """Create a new specialized agent and add it to the team.
+        The agent will be available for delegation immediately after creation.
+        Created agents are instruction-only specialists without tools.
+
+        Args:
+            name: A unique, descriptive name for the agent.
+            role: A one-line description of what this agent does.
+            instructions: Detailed instructions for how the agent should behave and respond.
+            description: Optional description providing more context about the agent's capabilities.
+            model_id: Optional model identifier (e.g. "openai:gpt-4o"). If not provided, inherits the team's model.
+
+        Returns:
+            str: Confirmation message with the agent's member ID for use with delegate_task_to_member.
+        """
+        # Agent creation is CPU-only, no I/O needed
+        return create_agent(name=name, role=role, instructions=instructions, description=description, model_id=model_id)
+
+    if async_mode:
+        return Function.from_callable(acreate_agent, name="create_agent")
+    return Function.from_callable(create_agent, name="create_agent")
+
+
 def _get_delegate_task_function(
     team: "Team",
     run_response: TeamRunOutput,

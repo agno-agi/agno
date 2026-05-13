@@ -79,6 +79,7 @@ def __init__(
     session_state: Optional[Dict[str, Any]] = None,
     add_session_state_to_context: bool = False,
     enable_agentic_state: bool = False,
+    enable_dynamic_agents: bool = False,
     overwrite_db_session_state: bool = False,
     resolve_in_context: bool = True,
     cache_session: bool = False,
@@ -234,6 +235,7 @@ def __init__(
     team.session_state = session_state
     team.add_session_state_to_context = add_session_state_to_context
     team.enable_agentic_state = enable_agentic_state
+    team.enable_dynamic_agents = enable_dynamic_agents
     team.overwrite_db_session_state = overwrite_db_session_state
     team.resolve_in_context = resolve_in_context
     team.cache_session = cache_session
