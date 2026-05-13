@@ -2136,10 +2136,21 @@ class Step:
         executor_name = getattr(self.active_executor, "name", None)
         executor_type = ExecutorType.TEAM if isinstance(self.active_executor, Team) else ExecutorType.AGENT
 
-        # Serialize requirements for transport
+        # Serialize requirements for transport.
+        # Only include UNRESOLVED requirements — the agent's requirements list
+        # accumulates across pauses, so without filtering we would also include
+        # already-confirmed tool calls from previous executor pauses, causing
+        # the client to see duplicated/stale tool requests.
         serialized_reqs: List[Any] = []
         if executor_response.requirements:
             for req in executor_response.requirements:
+                resolved_attr = getattr(req, "is_resolved", None)
+                try:
+                    is_resolved = resolved_attr() if callable(resolved_attr) else bool(resolved_attr)
+                except Exception:
+                    is_resolved = False
+                if is_resolved:
+                    continue
                 serialized_reqs.append(req.to_dict() if hasattr(req, "to_dict") else req)
 
         return StepRequirement(
