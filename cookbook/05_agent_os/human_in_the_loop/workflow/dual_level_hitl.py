@@ -73,67 +73,6 @@ workflow = Workflow(
     telemetry=False,
 )
 
-
-def resolve_user_input_pause(run_output):
-    """Collect user input for step-level HITL."""
-    for req in (run_output.step_requirements or [])[-1:]:
-        if req.requires_user_input and not req.requires_executor_input:
-            console.print(f"  [dim]{req.user_input_message}[/]")
-            if req.user_input_schema:
-                user_input = {}
-                for field in req.user_input_schema:
-                    val = Prompt.ask(f"  {field.name}: {field.description}")
-                    field.value = (
-                        val  # Set value on the schema field so is_resolved works
-                    )
-                    user_input[field.name] = val
-                req.user_input = user_input
-            else:
-                req.user_input = Prompt.ask("  Your input")
-            req.confirmed = True
-
-
-def resolve_executor_pause(run_output):
-    """Resolve executor-level tool confirmation."""
-    for req in (run_output.step_requirements or [])[-1:]:
-        if req.requires_executor_input:
-            for executor_req in req.executor_requirements or []:
-                tool_exec = (
-                    executor_req.get("tool_execution", {})
-                    if isinstance(executor_req, dict)
-                    else getattr(executor_req, "tool_execution", None)
-                )
-                if tool_exec:
-                    t_name = (
-                        tool_exec.get("tool_name", "?")
-                        if isinstance(tool_exec, dict)
-                        else getattr(tool_exec, "tool_name", "?")
-                    )
-                    t_args = (
-                        tool_exec.get("tool_args", {})
-                        if isinstance(tool_exec, dict)
-                        else getattr(tool_exec, "tool_args", {})
-                    )
-                    console.print(f"  Tool: [bold blue]{t_name}({t_args})[/]")
-
-            answer = (
-                Prompt.ask("  Approve?", choices=["y", "n"], default="y")
-                .strip()
-                .lower()
-            )
-            for executor_req in req.executor_requirements or []:
-                if isinstance(executor_req, dict):
-                    executor_req["confirmation"] = answer == "y"
-                    if (
-                        "tool_execution" in executor_req
-                        and executor_req["tool_execution"]
-                    ):
-                        executor_req["tool_execution"]["confirmed"] = answer == "y"
-                else:
-                    executor_req.confirm() if answer == "y" else executor_req.reject(
-                        note="Declined"
-                    )
-
 agent_os = AgentOS(
         id="dual-level-hitl-demo",
         description="Demo: dual-level HITL workflow",
