@@ -885,9 +885,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             )
             return
 
+        # Local backends key sessions on session_id alone — session_types is
+        # only used by RemoteDb's REST contract above.
         local_kwargs: Dict[str, Any] = {
             "session_ids": request.session_ids,
-            "session_types": request.session_types,
             "user_id": effective_user_id,
         }
 
