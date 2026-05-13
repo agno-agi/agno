@@ -23,7 +23,7 @@ upsert collision path. The expectation: after the dust settles, the
 agno_traces row carries the TEAM's session_id, not the child's.
 """
 
-from typing import Any, Iterator, List
+from typing import Any, Iterator
 
 import pytest
 from opentelemetry import trace as trace_api  # type: ignore
