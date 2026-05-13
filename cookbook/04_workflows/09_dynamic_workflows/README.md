@@ -34,13 +34,11 @@ The driver populates two artifacts on the run output:
 - `03_model_tiers.py` - Cost-aware per-spawn model selection via `model_tiers` + tier hints.
 - `04_tool_whitelist.py` - `allowed_tools` + `allow_tool_selection` for per-spawn tool subsets.
 - `05_db_persistence.py` - Persist runs to Postgres and reload the `executed_steps` trail.
+- `06_streaming_events.py` - Live event stream: spawn signals, step lifecycle, agent run
+  events, and per-token content from spawned agents.
 
 ## v0 limitations
 
-- **Streaming.** `workflow.run(stream=True)` currently emits only `WorkflowStartedEvent` and
-  `WorkflowCompletedEvent` for dynamic workflows — no per-spawn events on the stream. The
-  full `executed_steps` trail and `StepSpawnedEvent`s are available on the final result.
-  Live-stream-of-spawns is a v0.1 follow-up.
 - **HITL.** Pausing inside a spawn is not supported in v0.
 - **No recursive spawning.** Spawned agents cannot themselves spawn.
 

@@ -2264,7 +2264,29 @@ class Workflow:
         yield self._handle_event(workflow_started_event, workflow_run_response)
 
         if callable(self.steps):
-            if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
+            # DynamicWorkflowDriver: prefer the dedicated streaming generator so per-spawn
+            # events (StepSpawned, StepStarted/Completed, agent RunContent, etc.) flow
+            # through the workflow's stream in real time.
+            from agno.workflow.dynamic import DynamicWorkflowDriver
+
+            if isinstance(self.steps, DynamicWorkflowDriver):
+                for event in self.steps.stream_call(
+                    self,
+                    execution_input,
+                    stream_events=stream_events,
+                    stream_executor_events=self.stream_executor_events,
+                    workflow_run_response=workflow_run_response,
+                    run_context=run_context,
+                    workflow_session=session,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    **kwargs,
+                ):
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    yield self._handle_event(event, workflow_run_response)
+                workflow_run_response.status = RunStatus.completed
+            elif iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
                 raise ValueError("Cannot use async function with synchronous execution")
             elif isgeneratorfunction(self.steps):
                 content = ""
@@ -2282,6 +2304,7 @@ class Workflow:
                     else:
                         content += str(chunk)
                 workflow_run_response.content = content
+                workflow_run_response.status = RunStatus.completed
             else:
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                 workflow_run_response.content = self._call_custom_function(
@@ -2290,7 +2313,7 @@ class Workflow:
                     workflow_run_response=workflow_run_response,
                     **kwargs,
                 )
-            workflow_run_response.status = RunStatus.completed
+                workflow_run_response.status = RunStatus.completed
 
         else:
             try:
@@ -3190,8 +3213,31 @@ class Workflow:
         yield self._handle_event(workflow_started_event, workflow_run_response, websocket_handler=websocket_handler)
 
         if callable(self.steps):
-            if iscoroutinefunction(self.steps):  # type: ignore
+            # DynamicWorkflowDriver: route to stream_call so per-spawn events
+            # (StepSpawned, StepStarted/Completed, agent RunContent, etc.) flow
+            # through the workflow's async stream in real time.
+            from agno.workflow.dynamic import DynamicWorkflowDriver
+
+            if isinstance(self.steps, DynamicWorkflowDriver):
+                for event in self.steps.stream_call(
+                    self,
+                    execution_input,
+                    stream_events=stream_events,
+                    stream_executor_events=self.stream_executor_events,
+                    workflow_run_response=workflow_run_response,
+                    run_context=run_context,
+                    workflow_session=workflow_session,
+                    background_tasks=background_tasks,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
+                    **kwargs,
+                ):
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                    yield self._handle_event(event, workflow_run_response)
+                workflow_run_response.status = RunStatus.completed
+            elif iscoroutinefunction(self.steps):  # type: ignore
                 workflow_run_response.content = await self._acall_custom_function(self.steps, execution_input, **kwargs)
+                workflow_run_response.status = RunStatus.completed
             elif isgeneratorfunction(self.steps):
                 content = ""
                 for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
@@ -3201,6 +3247,7 @@ class Workflow:
                     else:
                         content += str(chunk)
                 workflow_run_response.content = content
+                workflow_run_response.status = RunStatus.completed
             elif isasyncgenfunction(self.steps):  # type: ignore
                 content = ""
                 async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
@@ -3212,9 +3259,10 @@ class Workflow:
                     else:
                         content += str(chunk)
                 workflow_run_response.content = content
+                workflow_run_response.status = RunStatus.completed
             else:
                 workflow_run_response.content = self.steps(self, execution_input, **kwargs)
-            workflow_run_response.status = RunStatus.completed
+                workflow_run_response.status = RunStatus.completed
 
         else:
             try:
