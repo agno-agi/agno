@@ -521,10 +521,18 @@ def test_delete_by_metadata(mock_clickhouse):
     result = mock_clickhouse.delete_by_metadata({"type": "test"})
     assert result is True
 
-    # Verify the delete command was executed with proper WHERE clause
+    # Verify the delete command was executed with proper WHERE clause.
+    # Metadata keys and values are bound as named ClickHouse parameters
+    # (`k_{i}:String` / `v_{i}:String|Float64|Bool`) rather than interpolated
+    # into the SQL text, to prevent SQL injection (see issue #7866).
     mock_clickhouse.client.command.assert_called_with(
-        "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE JSONExtractString(toString(filters), 'type') = 'test'",
-        parameters={"table_name": mock_clickhouse.table_name, "database_name": mock_clickhouse.database_name},
+        "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE JSONExtractString(toString(filters), {k_0:String}) = {v_0:String}",
+        parameters={
+            "table_name": mock_clickhouse.table_name,
+            "database_name": mock_clickhouse.database_name,
+            "k_0": "type",
+            "v_0": "test",
+        },
     )
 
     # Test deletion with complex metadata
@@ -534,8 +542,15 @@ def test_delete_by_metadata(mock_clickhouse):
 
     # Verify the delete command was executed with multiple conditions
     mock_clickhouse.client.command.assert_called_with(
-        "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE JSONExtractString(toString(filters), 'cuisine') = 'Thai' AND JSONExtractBool(toString(filters), 'spicy') = true",
-        parameters={"table_name": mock_clickhouse.table_name, "database_name": mock_clickhouse.database_name},
+        "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE JSONExtractString(toString(filters), {k_0:String}) = {v_0:String} AND JSONExtractBool(toString(filters), {k_1:String}) = {v_1:Bool}",
+        parameters={
+            "table_name": mock_clickhouse.table_name,
+            "database_name": mock_clickhouse.database_name,
+            "k_0": "cuisine",
+            "v_0": "Thai",
+            "k_1": "spicy",
+            "v_1": True,
+        },
     )
 
     # Test deletion with empty metadata

@@ -1,4 +1,5 @@
 import asyncio
+import re
 from hashlib import md5
 from typing import Any, Dict, List, Optional, Union
 
@@ -17,6 +18,13 @@ from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
+
+# Safe JSON-path identifier regex used to validate metadata keys before they are
+# bound into a ClickHouse parameterized DELETE. A safe key is a simple identifier
+# (letter/underscore start, then alphanumerics/underscores) optionally followed
+# by dotted segments, each itself a simple identifier. Compiled once at module
+# load to avoid per-call regex compilation.
+_SAFE_METADATA_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 
 
 class Clickhouse(VectorDb):
@@ -679,22 +687,53 @@ class Clickhouse(VectorDb):
         Returns:
             bool: True if documents were deleted, False otherwise
         """
+        log_debug(f"ClickHouse VectorDB : Deleting documents with metadata {metadata}")
+
+        # Preserve the empty-dict early return as ``False`` without executing
+        # any DELETE. Placed before key validation so that the (vacuously
+        # empty) key set does not run through the regex.
+        if not metadata:
+            return False
+
+        # Validate every metadata key against the safe JSON-path identifier regex
+        # BEFORE any SQL is issued. This raise MUST occur outside the
+        # ``try`` / ``except Exception`` block below so that ``ValueError``
+        # propagates to the caller rather than being swallowed and converted
+        # to ``return False``.
+        for key in metadata.keys():
+            if not _SAFE_METADATA_KEY_RE.match(key):
+                raise ValueError(f"Invalid metadata key {key!r}: must match {_SAFE_METADATA_KEY_RE.pattern}")
+
         try:
-            log_debug(f"ClickHouse VectorDB : Deleting documents with metadata {metadata}")
             parameters = self._get_base_parameters()
 
-            # Build WHERE clause for metadata matching using proper ClickHouse JSON syntax
+            # Build WHERE clause for metadata matching using ClickHouse named parameter
+            # substitution. Both keys (already validated against the safe JSON-path regex
+            # above) and values are bound as typed parameters; the only Python-side
+            # interpolation in the assembled SQL is the parameter names ``k_{i}`` /
+            # ``v_{i}``, which are agent-controlled integers, not caller-controlled data.
+            # The ``isinstance`` dispatch order (``bool`` before ``int``/``float``) is
+            # preserved exactly because ``bool`` is a subclass of ``int`` in Python.
             where_conditions = []
-            for key, value in metadata.items():
+            for i, (key, value) in enumerate(metadata.items()):
+                key_param = f"k_{i}"
+                val_param = f"v_{i}"
+                parameters[key_param] = key
                 if isinstance(value, bool):
-                    where_conditions.append(f"JSONExtractBool(toString(filters), '{key}') = {str(value).lower()}")
+                    parameters[val_param] = value
+                    where_conditions.append(
+                        f"JSONExtractBool(toString(filters), {{{key_param}:String}}) = {{{val_param}:Bool}}"
+                    )
                 elif isinstance(value, (int, float)):
-                    where_conditions.append(f"JSONExtractFloat(toString(filters), '{key}') = {value}")
+                    parameters[val_param] = float(value)
+                    where_conditions.append(
+                        f"JSONExtractFloat(toString(filters), {{{key_param}:String}}) = {{{val_param}:Float64}}"
+                    )
                 else:
-                    where_conditions.append(f"JSONExtractString(toString(filters), '{key}') = '{value}'")
-
-            if not where_conditions:
-                return False
+                    parameters[val_param] = str(value)
+                    where_conditions.append(
+                        f"JSONExtractString(toString(filters), {{{key_param}:String}}) = {{{val_param}:String}}"
+                    )
 
             where_clause = " AND ".join(where_conditions)
 
