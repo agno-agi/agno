@@ -30,8 +30,8 @@ def main() -> None:
         ),
         allowed_tools=[HackerNewsTools()],
         model_tiers={
-            "fast": "gpt-5.4",
-            "powerful": "gpt-5.4",
+            "fast": "openai:gpt-5.4",
+            "powerful": "openai:gpt-5.4",
         },
         allow_model_tier_selection=True,
         tier_hints={
