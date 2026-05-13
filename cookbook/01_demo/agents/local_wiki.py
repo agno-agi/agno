@@ -2,15 +2,13 @@
 LocalWiki Agent
 ===============
 
-A read + write wiki backed by a local markdown folder, with web
-ingestion wired in. Agent sees two tools:
+A read + write wiki backed by a local markdown folder, with web ingestion wired in. Agent sees two tools:
 
   query_local_wiki(question)   — read sub-agent scoped to the wiki
   update_local_wiki(...)       — write sub-agent that can also fetch
                                  URLs via Parallel MCP and digest them
 
-Pages live under ``data/wiki/`` next to this cookbook — gitignored,
-accumulate across runs. Wipe the directory to start over.
+Pages live under ``data/wiki/`` next to this cookbook (gitignored).
 """
 
 from pathlib import Path

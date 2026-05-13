@@ -4,16 +4,14 @@ Swarm Team — same question, multiple models in parallel
 
 Broadcast-mode team. Two web-search agents — one on OpenAI gpt-5.5,
 one on Anthropic claude-opus-4-7 — answer the same question.
-The leader synthesizes both views and calls out where they agree
-or disagree.
+The leader synthesizes both views and calls out where they agree or disagree.
 
 Use case: "assemble a bunch of agents on a common problem,
-preferably mixing OpenAI and Anthropic." Different models often
+preferably mixing OpenAI and Anthropic". Different models often
 catch different angles; the leader's job is to reconcile.
 
 Both members share the same `web_provider` instance, so the Parallel MCP
-session is opened once and closed once at AgentOS shutdown (see
-``run.py`` lifespan).
+session is opened once and closed once at AgentOS shutdown (see `run.py` lifespan).
 """
 
 from agents.web_search import web_provider

@@ -2,13 +2,9 @@
 Web Search Agent
 ================
 
-Web research via Parallel's public MCP endpoint. Keyless by default
-(rate-limited); set ``PARALLEL_API_KEY`` to raise the ceiling.
+Web research via Parallel's public MCP endpoint. Keyless by default (rate-limited); set ``PARALLEL_API_KEY`` to raise the ceiling.
 
-The agent sees a single ``query_web(question)`` tool that hands off
-to a sub-agent with ``web_search`` + ``web_fetch``. The sub-agent
-does the search/fetch loop and returns a synthesized answer; the
-parent agent stays focused on the user's question.
+The agent sees a single ``query_web(question)`` tool that hands off to a sub-agent with ``web_search`` + ``web_fetch``. The sub-agent does the search/fetch loop and returns a synthesized answer; the parent agent stays focused on the user's question.
 """
 
 from agno.agent import Agent
