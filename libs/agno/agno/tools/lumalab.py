@@ -11,7 +11,7 @@ from agno.tools.function import ToolResult
 from agno.utils.log import log_error, log_info, logger
 
 try:
-    from lumaai import LumaAI  # type: ignore
+    from lumaai import AsyncLumaAI, LumaAI  # type: ignore
 except ImportError:
     raise ImportError("`lumaai` not installed. Please install using `pip install lumaai`")
 
@@ -46,6 +46,7 @@ class LumaLabTools(Toolkit):
             log_error("LUMAAI_API_KEY not set. Please set the LUMAAI_API_KEY environment variable.")
 
         self.client = LumaAI(auth_token=self.api_key)
+        self.async_client = AsyncLumaAI(auth_token=self.api_key)
 
         tools: List[Any] = []
         async_tools: List[Any] = []
@@ -219,12 +220,11 @@ class LumaLabTools(Toolkit):
             if end_image_url:
                 keyframes["frame1"] = {"type": "image", "url": end_image_url}
 
-            generation = await asyncio.to_thread(
-                self.client.generations.create,
+            generation = await self.async_client.generations.create(
                 prompt=prompt,
                 loop=loop,
                 aspect_ratio=aspect_ratio,
-                keyframes=keyframes,
+                keyframes=keyframes,  # type: ignore
             )
 
             video_id = str(uuid.uuid4())
@@ -240,7 +240,7 @@ class LumaLabTools(Toolkit):
                 if not generation or not generation.id:
                     return ToolResult(content="Failed to get generation ID")
 
-                generation = await asyncio.to_thread(self.client.generations.get, generation.id)
+                generation = await self.async_client.generations.get(generation.id)
 
                 if generation.state == "completed" and generation.assets:
                     video_url = generation.assets.video
@@ -283,7 +283,7 @@ class LumaLabTools(Toolkit):
             if keyframes is not None:
                 generation_params["keyframes"] = keyframes
 
-            generation = await asyncio.to_thread(self.client.generations.create, **generation_params)
+            generation = await self.async_client.generations.create(**generation_params)
 
             video_id = str(uuid.uuid4())
             if not self.wait_for_completion:
@@ -297,7 +297,7 @@ class LumaLabTools(Toolkit):
                 if not generation or not generation.id:
                     return ToolResult(content="Failed to get generation ID")
 
-                generation = await asyncio.to_thread(self.client.generations.get, generation.id)
+                generation = await self.async_client.generations.get(generation.id)
 
                 if generation.state == "completed" and generation.assets:
                     video_url = generation.assets.video

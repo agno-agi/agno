@@ -28,28 +28,30 @@ async def test_lumalab():
     pytest.importorskip("lumaai")
     from agno.tools.lumalab import LumaLabTools
 
-    with patch("agno.tools.lumalab.LumaAI"):
+    with patch("agno.tools.lumalab.LumaAI"), patch("agno.tools.lumalab.AsyncLumaAI"):
         assert set(LumaLabTools(api_key="k", all=True).async_functions) == {"generate_video", "image_to_video"}
 
     running = Mock(id="g1", state="dreaming", assets=None)
     done = Mock(id="g1", state="completed")
     done.assets = Mock(video="https://cdn/x.mp4")
-    client = Mock()
-    client.generations.create.return_value = running
-    client.generations.get.side_effect = [running, done]
-    with patch("agno.tools.lumalab.LumaAI", return_value=client):
+    async_client = MagicMock()
+    async_client.generations.create = AsyncMock(return_value=running)
+    async_client.generations.get = AsyncMock(side_effect=[running, done])
+    with patch("agno.tools.lumalab.LumaAI"), patch("agno.tools.lumalab.AsyncLumaAI"):
         tools = LumaLabTools(api_key="k", poll_interval=2, all=True)
+    tools.async_client = async_client
     with patch("agno.tools.lumalab.asyncio.sleep", new_callable=AsyncMock) as slept:
         result = await tools.agenerate_video(agent=Mock(), prompt="a cat")
-    assert client.generations.get.call_count == 2
+    assert async_client.generations.get.await_count == 2
     slept.assert_awaited_with(2)
     assert result.videos is not None and result.videos[0].url == "https://cdn/x.mp4"
 
-    stuck = Mock()
-    stuck.generations.create.return_value = running
-    stuck.generations.get.return_value = running
-    with patch("agno.tools.lumalab.LumaAI", return_value=stuck):
+    stuck = MagicMock()
+    stuck.generations.create = AsyncMock(return_value=running)
+    stuck.generations.get = AsyncMock(return_value=running)
+    with patch("agno.tools.lumalab.LumaAI"), patch("agno.tools.lumalab.AsyncLumaAI"):
         tools = LumaLabTools(api_key="k", poll_interval=10, max_wait_time=20, all=True)
+    tools.async_client = stuck
     with patch("agno.tools.lumalab.asyncio.sleep", new_callable=AsyncMock):
         result = await tools.agenerate_video(agent=Mock(), prompt="a cat")
     assert "timed out" in result.content.lower()
