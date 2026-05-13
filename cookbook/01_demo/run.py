@@ -67,6 +67,7 @@ agent_os = AgentOS(
     config=str(Path(__file__).parent / "config.yaml"),
     tracing=True,
     scheduler=True,
+    scheduler_base_url="http://127.0.0.1:8000",
     lifespan=lifespan,
 )
 
