@@ -21,8 +21,18 @@ by default; uploads/downloads are disabled.
    - Or pass ``credentials_path`` / ``token_path`` directly
    - Opens browser on first use, caches token to ``gdrive_token.json``
 
-Uses ``AllDrivesGoogleDriveTools`` so service accounts can see files
-inside shared folders and Shared Drives — see ``agno.context.gdrive.tools``.
+**Search scope (Shared Drive support):**
+
+By default uses ``corpora="allDrives"`` so service accounts can see files
+inside shared folders and Shared Drives. Customize with:
+
+- ``corpora="user"`` — personal Drive only (My Drive + Shared with me)
+- ``corpora="domain"`` — all files shared to user's domain
+- ``corpora="drive"`` + ``drive_id="..."`` — single Shared Drive
+- ``corpora="allDrives"`` — everything (default)
+
+When using non-"user" corpora, set ``supports_all_drives=True`` and
+``include_items_from_all_drives=True`` (both default to True).
 """
 
 from __future__ import annotations
@@ -33,7 +43,7 @@ from typing import TYPE_CHECKING
 
 from agno.agent import Agent
 from agno.context._utils import answer_from_run
-from agno.context.gdrive.tools import AllDrivesGoogleDriveTools
+from agno.tools.google.drive import GoogleDriveTools
 from agno.context.google import validate_google_credentials
 from agno.context.mode import ContextMode
 from agno.context.provider import Answer, ContextProvider, Status
@@ -52,6 +62,11 @@ class GoogleDriveContextProvider(ContextProvider):
         service_account_path: str | None = None,  # SA JSON key file
         credentials_path: str | None = None,  # OAuth client config (client_id/secret JSON)
         token_path: str | None = None,  # Cached OAuth tokens after consent
+        # Shared Drive support — passthrough to GoogleDriveTools
+        corpora: str = "allDrives",  # "user" | "domain" | "drive" | "allDrives"
+        supports_all_drives: bool = True,
+        include_items_from_all_drives: bool = True,
+        drive_id: str | None = None,  # Required when corpora="drive"
         id: str = "gdrive",
         name: str = "Google Drive",
         instructions: str | None = None,
@@ -64,9 +79,13 @@ class GoogleDriveContextProvider(ContextProvider):
         self._sa_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
         self._credentials_path = credentials_path
         self._token_path = token_path or "gdrive_token.json"
+        self._corpora = corpora
+        self._supports_all_drives = supports_all_drives
+        self._include_items_from_all_drives = include_items_from_all_drives
+        self._drive_id = drive_id
 
         self.instructions_text = instructions if instructions is not None else DEFAULT_GDRIVE_INSTRUCTIONS
-        self._tools: AllDrivesGoogleDriveTools | None = None
+        self._tools: GoogleDriveTools | None = None
         self._agent: Agent | None = None
 
     def status(self) -> Status:
@@ -119,12 +138,16 @@ class GoogleDriveContextProvider(ContextProvider):
     # Internals
     # ------------------------------------------------------------------
 
-    def _ensure_tools(self) -> AllDrivesGoogleDriveTools:
+    def _ensure_tools(self) -> GoogleDriveTools:
         if self._tools is None:
-            self._tools = AllDrivesGoogleDriveTools(
+            self._tools = GoogleDriveTools(
                 service_account_path=self._sa_path,
                 creds_path=self._credentials_path,
                 token_path=self._token_path,
+                corpora=self._corpora,
+                supports_all_drives=self._supports_all_drives,
+                include_items_from_all_drives=self._include_items_from_all_drives,
+                drive_id=self._drive_id,
             )
         return self._tools
 
