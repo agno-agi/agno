@@ -862,3 +862,12 @@ def test_check_path_restrict_false_returns_resolved_outside(basic_toolkit):
         # so sibling-prefix names like base="/tmp/foo" vs "/tmp/foobar/..." don't
         # produce a false-positive containment.
         assert not path.is_relative_to(base.resolve())
+
+
+def test_check_path_restrict_false_returns_false_on_nul_byte(basic_toolkit):
+    """Escape-hatch must honor the (bool, Path) contract, not raise on NUL."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        ok, path = basic_toolkit._check_path("name\x00", base, restrict_to_base_dir=False)
+        assert ok is False
+        assert path == base

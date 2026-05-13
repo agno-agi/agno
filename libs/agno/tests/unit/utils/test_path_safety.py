@@ -41,7 +41,7 @@ def test_absolute_path_stripped_via_name():
 def test_control_char_rejected(evil):
     """Test that filenames with control characters are rejected."""
     with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(PathSecurityError, match="control chars"):
+        with pytest.raises(PathSecurityError, match="Invalid"):
             safe_join(tmp, evil)
 
 
@@ -56,7 +56,7 @@ def test_trailing_dot_space_stripped():
 def test_empty_or_dot_only_rejected(invalid):
     """Test that empty, whitespace-only, and dot-only filenames are rejected."""
     with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(PathSecurityError, match="Invalid filename|Empty"):
+        with pytest.raises(PathSecurityError, match="Invalid filename"):
             safe_join(tmp, invalid)
 
 
@@ -78,21 +78,21 @@ def test_url_encoded_traversal_landing_inside():
 def test_drive_letter_rejected_pre_strip():
     """Test that a Windows drive letter is rejected on the raw input."""
     with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(PathSecurityError, match="drive letter or UNC"):
+        with pytest.raises(PathSecurityError, match="Invalid"):
             safe_join(tmp, "C:\\evil.txt")
 
 
 def test_unc_path_rejected_pre_strip():
     """Test that a UNC prefix is rejected on the raw input."""
     with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(PathSecurityError, match="drive letter or UNC"):
+        with pytest.raises(PathSecurityError, match="Invalid"):
             safe_join(tmp, "\\\\server\\share\\evil")
 
 
 def test_control_char_in_path_component_rejected():
     """Test that a control character in a stripped path component is caught."""
     with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(PathSecurityError, match="control chars"):
+        with pytest.raises(PathSecurityError, match="Invalid"):
             safe_join(tmp, "\x00/safe.txt")
 
 
@@ -113,63 +113,63 @@ def test_multi_segment_subpath_preserved():
 def test_traversal_subpath_rejected():
     """Test that a subpath escaping the base directory is rejected."""
     with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(PathSecurityError, match="resolves outside|symlink escape|Empty segment"):
+        with pytest.raises(PathSecurityError, match="resolves outside|Invalid"):
             safe_join_subpath(tmp, "../../escape")
 
 
 def test_absolute_subpath_rejected():
     """Test that an absolute subpath is rejected."""
     with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(PathSecurityError, match="resolves outside|symlink escape"):
+        with pytest.raises(PathSecurityError, match="resolves outside"):
             safe_join_subpath(tmp, "/etc/passwd")
 
 
 def test_control_char_subpath_rejected():
     """Test that a subpath with control characters is rejected."""
     with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(PathSecurityError, match="control chars"):
+        with pytest.raises(PathSecurityError, match="Invalid"):
             safe_join_subpath(tmp, "subdir/report\x00.json")
 
 
 def test_empty_subpath_rejected():
     """Test that an empty or whitespace-only subpath is rejected."""
     with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(PathSecurityError, match="Empty subpath"):
+        with pytest.raises(PathSecurityError, match="Invalid subpath"):
             safe_join_subpath(tmp, "")
 
 
 def test_subpath_reserved_segment_rejected():
     """Test that a Windows-reserved name in any segment is rejected."""
     with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(PathSecurityError, match="Windows reserved"):
+        with pytest.raises(PathSecurityError, match="Invalid path segment"):
             safe_join_subpath(tmp, "docs/CON.txt")
 
 
 def test_subpath_reserved_segment_with_backslash_rejected():
     """Test that backslash-separated segments are validated."""
     with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(PathSecurityError, match="Windows reserved"):
+        with pytest.raises(PathSecurityError, match="Invalid path segment"):
             safe_join_subpath(tmp, "docs\\CON")
 
 
 def test_subpath_drive_in_segment_rejected():
     """Test that a drive-prefixed subpath is rejected."""
     with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(PathSecurityError, match="must be relative|drive letter"):
+        with pytest.raises(PathSecurityError, match="must be relative|Invalid"):
             safe_join_subpath(tmp, "C:/evil.txt")
 
 
 def test_subpath_unc_rejected():
     """Test that a UNC subpath is rejected."""
     with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(PathSecurityError, match="must be relative|drive letter"):
+        with pytest.raises(PathSecurityError, match="must be relative|Invalid"):
             safe_join_subpath(tmp, "\\\\server\\share\\evil")
 
 
 def test_subpath_magicdot_segment_rejected():
     """Test that a trailing-dot segment stripping to a reserved name is rejected."""
     with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(PathSecurityError, match="Windows reserved|Empty segment"):
+        with pytest.raises(PathSecurityError, match="Invalid path segment"):
             safe_join_subpath(tmp, "docs/CON.")
 
 
@@ -193,9 +193,9 @@ def test_symlink_pointing_outside_rejected():
             (inside / "escape").symlink_to(outside)
         except OSError:
             pytest.skip("Symlink creation not permitted on this platform")
-        with pytest.raises(PathSecurityError, match="resolves outside|symlink escape"):
+        with pytest.raises(PathSecurityError, match="resolves outside"):
             safe_join(str(inside), "escape")
-        with pytest.raises(PathSecurityError, match="resolves outside|symlink escape"):
+        with pytest.raises(PathSecurityError, match="resolves outside"):
             safe_join_subpath(str(inside), "escape")
 
 
@@ -214,31 +214,20 @@ def test_symlinked_base_containment_enforced():
         assert result == (real_base / "child.txt").resolve()
 
 
-def test_security_violation_logs_error():
-    """Test that a security violation emits an error log."""
+def test_safe_join_logs_debug_on_strip():
+    """Test that safe_join logs at debug when discarding path components."""
     with tempfile.TemporaryDirectory() as tmp:
-        with patch("agno.utils.path_safety.log_error") as mock_log_error:
-            with pytest.raises(PathSecurityError):
-                safe_join(tmp, "..")
-        mock_log_error.assert_called_once()
-        assert "Security violation" in str(mock_log_error.call_args)
-
-
-def test_safe_join_logs_warning_on_strip():
-    """Test that safe_join warns when discarding path components."""
-    with tempfile.TemporaryDirectory() as tmp:
-        with patch("agno.utils.path_safety.log_warning") as mock_log_warning:
+        with patch("agno.utils.path_safety.log_debug") as mock_log_debug:
             safe_join(tmp, "subdir/report.json")
-        mock_log_warning.assert_called_once()
-        assert "discarded path components" in str(mock_log_warning.call_args)
+        assert any("discarded path components" in str(call) for call in mock_log_debug.call_args_list)
 
 
-def test_safe_join_no_warning_for_clean_basename():
-    """Test that safe_join does not warn for a clean basename."""
+def test_safe_join_no_debug_message_for_clean_basename():
+    """Test that safe_join does not log the strip notice for a clean basename."""
     with tempfile.TemporaryDirectory() as tmp:
-        with patch("agno.utils.path_safety.log_warning") as mock_log_warning:
+        with patch("agno.utils.path_safety.log_debug") as mock_log_debug:
             safe_join(tmp, "report.json")
-        mock_log_warning.assert_not_called()
+        assert not any("discarded path components" in str(call) for call in mock_log_debug.call_args_list)
 
 
 def test_safe_join_backslash_basename_extracted_on_posix():

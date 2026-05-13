@@ -9,7 +9,7 @@ from agno.media import File
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_warning, logger
-from agno.utils.path_safety import safe_join
+from agno.utils.path_safety import safe_join, sanitize_filename
 
 try:
     from reportlab.lib.pagesizes import letter
@@ -64,22 +64,9 @@ class FileGenerationTools(Toolkit):
         super().__init__(name="file_generation", tools=tools, **kwargs)
 
     def _save_file_to_disk(self, content: Union[str, bytes], filename: str) -> Tuple[Optional[str], str]:
-        """Save file to disk if ``output_directory`` is set.
-
-        Path validation is delegated to ``agno.utils.path_safety.safe_join``.
-        ``PathSecurityError`` propagates to the caller on rejection.
-
-        Returns:
-            Tuple of ``(saved_path, sanitized_basename)``. ``saved_path`` is
-            the absolute path string when written, else ``None``. The
-            sanitized basename is returned so the ``File`` artifact's
-            ``filename`` stays in sync with its ``filepath``.
-        """
+        """Save file to disk if output_directory is set. Returns (path, basename)."""
         if not self.output_directory:
-            # No write happens, but still return the sanitized basename so the
-            # File artifact's filename matches what would have been saved.
-            sanitized = Path(filename).name.rstrip(". ") or filename
-            return None, sanitized
+            return None, sanitize_filename(filename)
 
         file_path = safe_join(self.output_directory, filename)
 
@@ -100,11 +87,7 @@ class FileGenerationTools(Toolkit):
         mime_type: str,
         display_name: str,
     ) -> ToolResult:
-        """Shared post-serialization helper for the ``generate_*_file`` methods.
-
-        Generates a default filename if needed, ensures the correct extension,
-        saves to disk, builds the ``File`` artifact, and returns a ``ToolResult``.
-        """
+        """Default the filename, append the extension, save, and build the File artifact."""
         if not filename:
             filename = f"generated_file_{str(uuid4())[:8]}.{file_type}"
         elif not filename.endswith(f".{file_type}"):

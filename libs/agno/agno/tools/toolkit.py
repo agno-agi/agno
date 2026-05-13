@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from agno.exceptions import PathSecurityError
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_warning
 from agno.utils.path_safety import safe_join_subpath
 
 
@@ -348,32 +348,18 @@ class Toolkit:
         pass
 
     def _check_path(self, file_name: str, base_dir: Path, restrict_to_base_dir: bool = True) -> Tuple[bool, Path]:
-        """Check if the file path is within the base directory.
-
-        Path validation is delegated to ``agno.utils.path_safety.safe_join_subpath``.
-
-        Args:
-            file_name: The file name or relative path to check.
-            base_dir: The base directory to validate against.
-            restrict_to_base_dir: If True (default), enforce containment.
-                If False, return the resolved path without a containment check.
-
-        Returns:
-            Tuple of ``(is_safe, resolved_path)``. On rejection, returns
-            ``(False, base_dir)``.
-        """
+        """Resolve ``file_name`` inside ``base_dir``. Returns (is_safe, resolved_path)."""
         if not restrict_to_base_dir:
             try:
                 resolved = base_dir.joinpath(file_name).resolve()
                 return True, resolved
-            except OSError:
+            except (OSError, ValueError):
                 return False, base_dir
 
         try:
             resolved_path = safe_join_subpath(base_dir, file_name)
             return True, resolved_path
-        except (PathSecurityError, OSError) as e:
-            log_error(f"_check_path rejected {file_name!r}: {e}")
+        except (PathSecurityError, OSError):
             return False, base_dir
 
     def __repr__(self):

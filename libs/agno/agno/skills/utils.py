@@ -14,20 +14,7 @@ from agno.utils.path_safety import safe_join_subpath
 
 
 def is_safe_path(base_dir: Path, requested_path: str) -> bool:
-    """Check if the requested path stays within the base directory.
-
-    Wraps ``agno.utils.path_safety.safe_join_subpath``. Multi-segment paths
-    are preserved (``subdir/file.txt`` resolves to ``base_dir/subdir/file.txt``);
-    traversal and control-char inputs are rejected. Returns False on any
-    rejection.
-
-    Args:
-        base_dir: The base directory that the path must stay within.
-        requested_path: The user-provided path to validate.
-
-    Returns:
-        True if the path is safe (stays within base_dir), False otherwise.
-    """
+    """Return True if ``requested_path`` resolves inside ``base_dir``."""
     try:
         safe_join_subpath(base_dir, requested_path)
         return True

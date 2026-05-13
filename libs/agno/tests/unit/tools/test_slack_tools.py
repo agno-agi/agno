@@ -7,7 +7,6 @@ from unittest.mock import Mock, patch
 import pytest
 from slack_sdk.errors import SlackApiError
 
-from agno.exceptions import PathSecurityError
 from agno.tools.slack import SlackTools
 
 
@@ -184,17 +183,25 @@ def test_download_file_base64(slack_tools):
         assert "content_base64" in json.loads(result)
 
 
-def test_upload_file_local_path_error_on_rejection(slack_tools, tmp_path):
-    """Test that Slack upload still proceeds and surfaces the rejection via local_path_error."""
+def test_upload_file_rejected_on_dangerous_filename(slack_tools, tmp_path):
+    """Dangerous filename aborts the upload — Slack never sees the raw name."""
     slack_tools.output_directory = tmp_path
     slack_tools.client.files_upload_v2.return_value = Mock(data={"ok": True})
-    # Control char in filename → PathSecurityError from safe_join.
     result = slack_tools.upload_file("C1", b"data", "evil\x00name.bin")
     parsed = json.loads(result)
+    assert "error" in parsed
+    assert "Invalid filename" in parsed["error"]
+    slack_tools.client.files_upload_v2.assert_not_called()
+
+
+def test_upload_file_sanitizes_filename_for_slack(slack_tools, tmp_path):
+    """Path components in the filename are stripped before reaching Slack."""
+    slack_tools.output_directory = tmp_path
+    slack_tools.client.files_upload_v2.return_value = Mock(data={"ok": True})
+    result = slack_tools.upload_file("C1", b"data", "subdir/../report.bin")
+    parsed = json.loads(result)
     assert parsed["ok"] is True
-    assert "local_path_error" in parsed
-    assert "control chars" in parsed["local_path_error"]
-    assert "local_path" not in parsed
+    assert slack_tools.client.files_upload_v2.call_args[1]["filename"] == "report.bin"
 
 
 def test_download_file_dest_path_traversal_rejected(slack_tools, tmp_path):
@@ -482,8 +489,8 @@ def test_save_file_absolute_path_lands_inside_output_dir():
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")
-def test_save_file_symlink_escape_raises_path_security_error():
-    """Test that a symlink inside output_dir pointing outside raises PathSecurityError."""
+def test_save_file_symlink_escape_returns_none():
+    """A symlink inside output_dir pointing outside is dropped — no write, returns None."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         outside = Path(tmp_dir) / "outside"
         outside.mkdir()
@@ -494,16 +501,14 @@ def test_save_file_symlink_escape_raises_path_security_error():
         except OSError:
             pytest.skip("Symlink creation not permitted on this platform")
         tool = _make_slack_tools_with_output_dir(str(inside))
-        with pytest.raises(PathSecurityError, match="resolves outside|symlink escape"):
-            tool._save_file_to_disk(b"payload", "escape")
+        assert tool._save_file_to_disk(b"payload", "escape") is None
 
 
-def test_save_file_control_char_filename_raises_path_security_error():
-    """Test that a control character in the filename is rejected and SlackTools raises."""
+def test_save_file_control_char_filename_returns_none():
+    """Control characters in the filename cause _save_file_to_disk to drop the file silently."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = _make_slack_tools_with_output_dir(tmp_dir)
-        with pytest.raises(PathSecurityError, match="control chars"):
-            tool._save_file_to_disk(b"payload", "report\x00hacked.bin")
+        assert tool._save_file_to_disk(b"payload", "report\x00hacked.bin") is None
 
 
 def test_save_file_normal_filename_saves_correctly():

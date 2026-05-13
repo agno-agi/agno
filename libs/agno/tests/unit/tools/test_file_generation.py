@@ -2,7 +2,6 @@
 
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -98,19 +97,8 @@ def test_symlink_pointing_outside_rejected():
             pytest.skip("Symlink creation not permitted on this platform")
 
         tool = FileGenerationTools(output_directory=str(inside_dir))
-        with pytest.raises(PathSecurityError, match="resolves outside|symlink escape"):
+        with pytest.raises(PathSecurityError, match="resolves outside"):
             tool._save_file_to_disk("payload", "escape")
-
-
-def test_security_violation_logs_error():
-    """Security violations emit an error log via agno.utils.path_safety.log_error."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
-        with patch("agno.utils.path_safety.log_error") as mock_log_error:
-            with pytest.raises(PathSecurityError):
-                tool._save_file_to_disk("payload", "..")
-        mock_log_error.assert_called_once()
-        assert "Security violation" in str(mock_log_error.call_args)
 
 
 def test_no_output_directory_returns_none_filepath():
@@ -126,7 +114,7 @@ def test_control_char_filename_rejected():
     """Filenames containing control characters must raise PathSecurityError."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        with pytest.raises(PathSecurityError, match="control chars"):
+        with pytest.raises(PathSecurityError, match="Invalid"):
             tool._save_file_to_disk("payload", "report\nhacked.json")
 
 
@@ -208,6 +196,25 @@ def test_filename_sanitized_no_output_directory():
     artifact = result.files[0]
     assert artifact.filename == "report.json"
     assert artifact.filepath is None
+
+
+@pytest.mark.parametrize(
+    "evil",
+    [
+        "report\r\nFAKE.json",
+        "report\x00.json",
+        "CON",
+        "C:\\Windows\\evil.json",
+        "\\\\server\\share\\evil",
+    ],
+)
+def test_no_output_directory_rejects_dangerous_filename(evil):
+    """No-output-directory branch must apply the same rules as the disk branch."""
+    tool = FileGenerationTools()
+    result = tool.generate_json_file({"x": 1}, filename=evil)
+    # Wrapped in `except Exception` by the public method — surfaces as error content.
+    assert "Error" in result.content
+    assert result.files is None
 
 
 def test_filename_sanitized_subdir_collapsed():
