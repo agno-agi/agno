@@ -37,16 +37,22 @@ def main() -> None:
         db=PostgresDb(session_table="workflow_session", db_url=DB_URL),
     )
 
-    result = workflow.run(input="What is HN saying about open-source AI models?")
+    # Run the workflow with pretty CLI output (spawn panels live, plan at end).
+    workflow.print_response(
+        input="What is HN saying about open-source AI models?",
+        stream=True,
+        stream_events=True,
+    )
 
-    print("\n=== Final Briefing ===")
-    print(result.content)
-    print("\n=== Dynamic Plan (in-memory result) ===")
-    result.pretty_print_plan()
-
-    # Round-trip: reload the session from the DB and pull the same run back out.
+    # Round-trip: reload the latest session from the DB and pull the run back out.
+    # This proves executed_steps / step_results / step_executor_runs all persist.
     print("\n=== Reloaded from DB ===")
-    session = workflow.get_session(session_id=result.session_id)
+    if workflow._workflow_session is None or not workflow._workflow_session.runs:
+        print("No session in memory to reload.")
+        return
+
+    session_id = workflow._workflow_session.session_id
+    session = workflow.get_session(session_id=session_id)
     if session is None or not session.runs:
         print("Session not found or has no runs.")
         return
@@ -54,7 +60,11 @@ def main() -> None:
     reloaded = session.runs[-1]
     print(f"Reloaded run_id: {reloaded.run_id}")
     print(f"Reloaded executed_steps count: {len(reloaded.executed_steps)}")
-    reloaded.pretty_print_plan()
+    for rec in reloaded.executed_steps:
+        output_preview = (rec.output_content or "").strip().replace("\n", " ")
+        if len(output_preview) > 80:
+            output_preview = output_preview[:77] + "..."
+        print(f"  [{rec.iteration}] {rec.role}: {output_preview}")
 
 
 if __name__ == "__main__":

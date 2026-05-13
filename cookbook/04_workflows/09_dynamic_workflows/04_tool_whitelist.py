@@ -43,17 +43,12 @@ def main() -> None:
         steps=driver,
     )
 
-    result = workflow.run(
-        input="Recent developments in retrieval-augmented generation (RAG)."
+    workflow.print_response(
+        input="Recent developments in retrieval-augmented generation (RAG).",
+        stream=True,
+        stream_events=True,
     )
-
-    print("\n=== Final Briefing ===")
-    print(result.content)
-    print("\n=== Dynamic Plan (note the tools each spawn was given) ===")
-    result.pretty_print_plan()
-
-    for s in result.executed_steps:
-        print(f"  spawn[{s.iteration}] role={s.role!r} tools={s.tools!r}")
+    # Spawn panels above show the per-spawn `tools` subset the driver chose.
 
 
 if __name__ == "__main__":

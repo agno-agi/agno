@@ -17,8 +17,14 @@ from agno.workflow import DynamicWorkflowDriver, Workflow
 driver = DynamicWorkflowDriver(model=..., instructions=..., allowed_tools=[...])
 workflow = Workflow(name="...", steps=driver)
 
+# Pretty CLI output: streams spawn panels live and renders the trail at the end.
+workflow.print_response(input="...", stream=True, stream_events=True)
+
+# Or get the result object programmatically:
 result = workflow.run(input="...")
-result.pretty_print_plan()             # the steps the driver actually ran
+print(result.content)
+for s in result.executed_steps:
+    print(s.role, s.output_content[:80])
 ```
 
 The driver populates two artifacts on the run output:
@@ -36,6 +42,10 @@ The driver populates two artifacts on the run output:
 - `05_db_persistence.py` - Persist runs to Postgres and reload the `executed_steps` trail.
 - `06_streaming_events.py` - Live event stream: spawn signals, step lifecycle, agent run
   events, and per-token content from spawned agents.
+- `07_code_review.py` - Claude-Code-style agentic code review. Driver spawns specialists
+  with `Workspace` (read/edit/write/search files under a sandboxed root) and `ExaTools`
+  (web search) to audit a Python class, leave in-file `# AUDIT:` comments, and write a
+  Markdown report with concrete fix recommendations.
 
 ## v0 limitations
 

@@ -61,14 +61,11 @@ def main() -> None:
         steps=driver,
     )
 
-    result = workflow.run(
-        input="The health effects of microplastics in drinking water."
+    workflow.print_response(
+        input="The health effects of microplastics in drinking water.",
+        stream=True,
+        stream_events=True,
     )
-
-    print("\n=== Final Briefing ===")
-    print(result.content)
-    print("\n=== Dynamic Plan ===")
-    result.pretty_print_plan()
 
 
 if __name__ == "__main__":

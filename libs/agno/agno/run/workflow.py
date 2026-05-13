@@ -1082,32 +1082,3 @@ class WorkflowRunOutput:
     def has_completed(self) -> bool:
         """Check if the workflow run is completed (either successfully or with error)"""
         return self.status in [RunStatus.completed, RunStatus.error]
-
-    def pretty_print_plan(self) -> None:
-        """Print the trail of steps a dynamic workflow driver invented and ran.
-
-        For static workflows (no driver), this prints nothing. For dynamic workflows,
-        it shows one line per spawned step: iteration, role, input, output preview.
-        """
-        if not self.executed_steps:
-            return
-
-        header = f"Dynamic plan for run {self.run_id or '<no-id>'} ({len(self.executed_steps)} steps):"
-        print(header)
-        print("-" * min(len(header), 100))
-        for rec in self.executed_steps:
-            instructions = (rec.instructions or "").strip().replace("\n", " ")
-            input_preview = (rec.input or "").strip().replace("\n", " ")
-            output_preview = (rec.output_content or "").strip().replace("\n", " ")
-            if len(instructions) > 60:
-                instructions = instructions[:57] + "..."
-            if len(input_preview) > 60:
-                input_preview = input_preview[:57] + "..."
-            if len(output_preview) > 80:
-                output_preview = output_preview[:77] + "..."
-            print(f"  [{rec.iteration:>2}] {rec.role}")
-            if instructions:
-                print(f"        instructions: {instructions}")
-            if input_preview:
-                print(f"        input:        {input_preview}")
-            print(f"        output:       {output_preview}")

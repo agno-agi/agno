@@ -46,15 +46,13 @@ def main() -> None:
         steps=driver,
     )
 
-    result = workflow.run(input="What is HackerNews saying about LLM evals?")
-
-    print("\n=== Final Briefing ===")
-    print(result.content)
-    print("\n=== Dynamic Plan (note the model_tier per step) ===")
-    result.pretty_print_plan()
-
-    for s in result.executed_steps:
-        print(f"  spawn[{s.iteration}] role={s.role!r} model_tier={s.model_tier!r}")
+    workflow.print_response(
+        input="What is HackerNews saying about LLM evals?",
+        stream=True,
+        stream_events=True,
+    )
+    # Spawn panels above include the model tier picked per spawn (when set).
+    # Inspect result.executed_steps[i].model_tier in code for programmatic access.
 
 
 if __name__ == "__main__":

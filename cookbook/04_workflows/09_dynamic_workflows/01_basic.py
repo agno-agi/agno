@@ -9,7 +9,7 @@ Demonstrates:
 - minimal LLM-driven setup (just `model` + `instructions`)
 - `allowed_tools` so spawned agents can do real work
 - `max_steps` cap
-- `executed_steps` trail + `pretty_print_plan()` on the result
+- `workflow.print_response(stream=True)` — spawn panels live + dynamic plan at the end
 
 Run:
     .venvs/demo/bin/python cookbook/04_workflows/09_dynamic_workflows/01_basic.py
@@ -38,14 +38,11 @@ def main() -> None:
         steps=driver,
     )
 
-    result = workflow.run(
-        input="What is HackerNews currently discussing about AI agent frameworks?"
+    workflow.print_response(
+        input="What is HackerNews currently discussing about AI agent frameworks?",
+        stream=True,
+        stream_events=True,
     )
-
-    print("\n=== Final Briefing ===")
-    print(result.content)
-    print("\n=== Dynamic Plan (what the driver actually ran) ===")
-    result.pretty_print_plan()
 
 
 if __name__ == "__main__":
