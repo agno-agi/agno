@@ -1,35 +1,34 @@
-"""Helper for per-user data isolation via scoped DB adapters.
+"""Helpers for per-user data isolation at the route layer.
 
-When a JWT contains a user_id (sub claim), `get_user_scoped_db` wraps
-the DB instance so all user-scoped queries (sessions, memory, traces)
-are automatically filtered. Endpoints cannot accidentally leak data
-across users.
+This module exposes a small set of helpers that routers call explicitly to
+honour the opt-in ``AuthorizationConfig(user_isolation=True)`` contract:
 
-Admin users (with agent_os:admin scope) bypass scoping and see all data.
+    from agno.os.middleware.user_scope import (
+        get_scoped_user_id,    # who, if anyone, are we scoping to?
+        resolve_db_and_scope,  # fetch DB + the user_id to thread on reads
+        enforce_owner_on_entity,  # coerce/validate user_id on writes
+    )
 
-Usage in a router:
-    from agno.os.middleware.user_scope import get_user_scoped_db, get_scoped_user_id
+The framework no longer wraps the DB in an adapter. Each router endpoint
+threads ``user_id`` through the underlying ``BaseDb`` / ``AsyncBaseDb`` call
+itself. The trade is fewer moving parts and clearer dispatch, at the cost
+of a per-endpoint convention: every user-scoped read passes ``user_id``,
+every write goes through ``enforce_owner_on_entity`` before persisting.
 
-    db = await get_user_scoped_db(request, dbs, db_id)
-    # db.get_sessions() now auto-filters by user_id from the JWT
-    # db.get_traces() now auto-filters by user_id from the JWT
-    # db.get_knowledge_contents() passes through unmodified (no user_id column)
-
-    # For endpoints that thread user_id manually (agents, teams, workflows):
-    user_id = get_scoped_user_id(request)
-    # Returns None for admins (no filtering), user_id for regular users
+Admin users (with the configured ``admin_scope``) and callers running with
+isolation disabled get ``None`` from ``get_scoped_user_id`` — both helpers
+become no-ops in that case, preserving the legacy unscoped behaviour.
 """
 
-from typing import TYPE_CHECKING, Callable, List, Literal, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
 from fastapi import HTTPException, Query, Request
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.scopes import AgentOSScope
-from agno.os.user_scoped_db import AsyncUserScopedDbAdapter, UserScopedDbAdapter
 from agno.os.utils import get_db
 from agno.remote.base import RemoteDb
-from agno.utils.log import log_debug
+from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
     from agno.agent import Agent, RemoteAgent
@@ -95,52 +94,89 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
     return user_id
 
 
-async def get_user_scoped_db(
+async def resolve_db_and_scope(
     request: Request,
     dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
     db_id: Optional[str] = None,
     table: Optional[str] = None,
-) -> Union[BaseDb, AsyncBaseDb, RemoteDb]:
-    """Get a DB instance scoped to the authenticated user.
+    *,
+    fallback_user_id: Optional[str] = None,
+) -> Tuple[Union[BaseDb, AsyncBaseDb, RemoteDb], Optional[str]]:
+    """Look up the underlying DB and the ``user_id`` value to thread on reads.
 
-    If the request has a user_id in its state (set by JWT middleware)
-    and the user is NOT an admin, the returned DB will automatically
-    filter all user-scoped queries.
+    Returns a ``(db, user_id)`` tuple. ``user_id`` is the JWT sub when the
+    caller is a non-admin scoped user; otherwise it falls back to
+    ``fallback_user_id`` (typically a query-param ``user_id`` that admins use
+    to filter, or the value the legacy unscoped path expected).
 
-    Admin users (agent_os:admin scope) get the raw, unscoped DB.
+    Endpoints are expected to forward the returned ``user_id`` to the DB on
+    every user-scoped read::
 
-    For RemoteDb instances, returns the db unmodified (the remote handles
-    its own scoping via forwarded auth tokens).
+        db, user_id = await resolve_db_and_scope(request, dbs, db_id, table,
+                                                  fallback_user_id=query_user_id)
+        sessions, total = await db.get_sessions(user_id=user_id, ...)
 
-    Args:
-        request: The FastAPI request (must have request.state.user_id set by JWT middleware)
-        dbs: The dbs dict from the router
-        db_id: Optional database ID
-        table: Optional table name
-
-    Returns:
-        A user-scoped DB adapter, or the original DB if no user_id is present or user is admin.
+    No wrapping, no virtual subclasses — the DB is the concrete backend the
+    route was always going to call. ``RemoteDb`` is returned unchanged and
+    receives ``user_id`` through the same forwarding kwarg.
     """
     db = await get_db(dbs, db_id, table)
+    scoped_uid = get_scoped_user_id(request)
+    if scoped_uid is not None:
+        return db, scoped_uid
+    return db, fallback_user_id
 
-    user_id = get_scoped_user_id(request)
-    if not user_id:
-        return db
 
-    # RemoteDb handles its own auth via forwarded tokens
-    if isinstance(db, RemoteDb):
-        return db
+def apply_scope_to_kwargs(
+    request: Request,
+    kwargs: Optional[Dict[str, Any]] = None,
+    *,
+    fallback_user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return ``kwargs`` with ``user_id`` set to the right value for the caller.
 
-    # The adapters are registered as virtual subclasses of AsyncBaseDb / BaseDb
-    # (see user_scoped_db.py), so `isinstance(wrapped, AsyncBaseDb)` returns
-    # True at runtime. `cast` communicates that to mypy without inheriting
-    # every abstract method on the adapter.
-    if isinstance(db, AsyncBaseDb):
-        log_debug(f"Creating async user-scoped DB adapter for user_id={user_id}")
-        return cast(AsyncBaseDb, AsyncUserScopedDbAdapter(db, user_id))
+    Convenience for routers that prefer a single dict-spread call style::
 
-    log_debug(f"Creating user-scoped DB adapter for user_id={user_id}")
-    return cast(BaseDb, UserScopedDbAdapter(db, user_id))
+        local_kwargs = apply_scope_to_kwargs(request, {"limit": 20, ...},
+                                              fallback_user_id=query_user_id)
+        rows, total = await db.get_user_memories(**local_kwargs)
+
+    Mirrors ``resolve_db_and_scope`` — the JWT sub wins for non-admin scoped
+    callers, otherwise ``fallback_user_id`` is used (so admin / unscoped
+    callers keep their existing query-param filter behaviour).
+    """
+    out = dict(kwargs or {})
+    scoped_uid = get_scoped_user_id(request)
+    if scoped_uid is not None:
+        out["user_id"] = scoped_uid
+    elif fallback_user_id is not None:
+        out["user_id"] = fallback_user_id
+    return out
+
+
+def enforce_owner_on_entity(request: Request, entity: Any, *, kind: str = "entity") -> None:
+    """Coerce ``entity.user_id`` to the JWT sub for non-admin scoped callers.
+
+    A no-op when isolation is disabled or the caller is admin. When the
+    entity already carries a different ``user_id`` we warn loudly and rewrite
+    — this matches the pre-existing adapter behaviour and keeps a single
+    spoof attempt from poisoning storage. Routes that prefer a hard 404 on
+    mismatch can compare before persisting and raise themselves.
+    """
+    scoped_uid = get_scoped_user_id(request)
+    if scoped_uid is None:
+        return
+    current = getattr(entity, "user_id", None)
+    if current is not None and current != scoped_uid:
+        log_warning(
+            f"user_scope: {kind} arrived with user_id={current!r} but the "
+            f"caller is scoped to user_id={scoped_uid!r}. Coercing to the "
+            f"authenticated user."
+        )
+    try:
+        entity.user_id = scoped_uid  # type: ignore[attr-defined]
+    except AttributeError:
+        log_warning(f"user_scope: unable to coerce user_id on {kind} ({type(entity).__name__})")
 
 
 # ----------------------------------------------------------------------------

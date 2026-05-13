@@ -6,7 +6,7 @@ from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
-from agno.os.middleware.user_scope import get_user_scoped_db
+from agno.os.middleware.user_scope import resolve_db_and_scope
 from agno.os.routers.traces.schemas import (
     TRACE_FILTER_SCHEMA,
     FilterSchemaResponse,
@@ -138,9 +138,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         """Get list of traces with optional filters and pagination"""
         import time as time_module
 
-        # Get database scoped to the authenticated user (if JWT user_id is present).
-        # This ensures users can only see their own traces.
-        db = await get_user_scoped_db(request, dbs, db_id)
+        # Look up the DB and the user_id to thread on the query. Non-admin
+        # scoped callers get the JWT sub; admins / unscoped callers keep the
+        # query-param ``user_id`` they used before.
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, fallback_user_id=user_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -148,7 +149,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             return await db.get_traces(
                 run_id=run_id,
                 session_id=session_id,
-                user_id=user_id,
+                user_id=effective_user_id,
                 agent_id=agent_id,
                 team_id=team_id,
                 workflow_id=workflow_id,
@@ -164,7 +165,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         try:
             start_time_ms = time_module.time() * 1000
 
-            # Convert ISO datetime strings to UTC datetime objects
             start_time_dt = timestamp_to_datetime(start_time, "start_time") if start_time else None
             end_time_dt = timestamp_to_datetime(end_time, "end_time") if end_time else None
 
@@ -172,7 +172,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 traces, total_count = await db.get_traces(
                     run_id=run_id,
                     session_id=session_id,
-                    user_id=user_id,
+                    user_id=effective_user_id,
                     agent_id=agent_id,
                     team_id=team_id,
                     workflow_id=workflow_id,
@@ -186,7 +186,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 traces, total_count = db.get_traces(
                     run_id=run_id,
                     session_id=session_id,
-                    user_id=user_id,
+                    user_id=effective_user_id,
                     agent_id=agent_id,
                     team_id=team_id,
                     workflow_id=workflow_id,
@@ -356,8 +356,8 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query trace from"),
     ):
         """Get detailed trace with hierarchical span tree, or a specific span within the trace"""
-        # Get database scoped to the authenticated user
-        db = await get_user_scoped_db(request, dbs, db_id)
+        # Look up DB + the effective user_id to filter by on user-scoped reads.
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -366,20 +366,21 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 trace_id=trace_id,
                 span_id=span_id,
                 run_id=run_id,
+                user_id=effective_user_id,
                 db_id=db_id,
                 headers=headers,
             )
 
         try:
             # If span_id is provided, return just that span. Spans are not
-            # user-scoped at the DB layer (no user_id column), so we must first
-            # verify the parent trace via the scoped wrapper — otherwise a
-            # caller with a span_id from another user's trace could read it.
+            # user-scoped at the DB layer (no user_id column), so we must
+            # first verify the parent trace belongs to the caller — otherwise
+            # a span_id from another user's trace could be read.
             if span_id:
                 if isinstance(db, AsyncBaseDb):
-                    parent_trace = await db.get_trace(trace_id=trace_id, run_id=run_id)
+                    parent_trace = await db.get_trace(trace_id=trace_id, run_id=run_id, user_id=effective_user_id)
                 else:
-                    parent_trace = db.get_trace(trace_id=trace_id, run_id=run_id)
+                    parent_trace = db.get_trace(trace_id=trace_id, run_id=run_id, user_id=effective_user_id)
 
                 if parent_trace is None:
                     raise HTTPException(status_code=404, detail="Trace not found")
@@ -400,11 +401,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 return TraceNode.from_span(span, spans=None)
 
             # Otherwise, return full trace with hierarchy
-            # Get trace
             if isinstance(db, AsyncBaseDb):
-                trace = await db.get_trace(trace_id=trace_id, run_id=run_id)
+                trace = await db.get_trace(trace_id=trace_id, run_id=run_id, user_id=effective_user_id)
             else:
-                trace = db.get_trace(trace_id=trace_id, run_id=run_id)
+                trace = db.get_trace(trace_id=trace_id, run_id=run_id, user_id=effective_user_id)
 
             if trace is None:
                 raise HTTPException(status_code=404, detail="Trace not found")
@@ -497,14 +497,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         """Get trace statistics grouped by session"""
         import time as time_module
 
-        # Get database scoped to the authenticated user
-        db = await get_user_scoped_db(request, dbs, db_id)
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, fallback_user_id=user_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.get_trace_session_stats(
-                user_id=user_id,
+                user_id=effective_user_id,
                 agent_id=agent_id,
                 team_id=team_id,
                 workflow_id=workflow_id,
@@ -519,13 +518,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         try:
             start_time_ms = time_module.time() * 1000
 
-            # Convert ISO datetime strings to UTC datetime objects
             start_time_dt = timestamp_to_datetime(start_time, "start_time") if start_time else None
             end_time_dt = timestamp_to_datetime(end_time, "end_time") if end_time else None
 
             if isinstance(db, AsyncBaseDb):
                 stats_list, total_count = await db.get_trace_stats(
-                    user_id=user_id,
+                    user_id=effective_user_id,
                     agent_id=agent_id,
                     team_id=team_id,
                     workflow_id=workflow_id,
@@ -536,7 +534,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 )
             else:
                 stats_list, total_count = db.get_trace_stats(
-                    user_id=user_id,
+                    user_id=effective_user_id,
                     agent_id=agent_id,
                     team_id=team_id,
                     workflow_id=workflow_id,
@@ -636,8 +634,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         """
         import time as time_module
 
-        # Get database scoped to the authenticated user
-        db = await get_user_scoped_db(request, dbs, db_id)
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -661,6 +658,16 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
                 from_dict(body.filter)  # Validate structure; raises ValueError if invalid
                 filter_expr_dict = body.filter
+
+            # For non-admin scoped callers, AND a user_id constraint into the
+            # filter so they can't query across other users' traces. Admins /
+            # unscoped callers get the raw filter unchanged.
+            if effective_user_id is not None:
+                user_clause = {"op": "EQ", "key": "user_id", "value": effective_user_id}
+                if filter_expr_dict is None:
+                    filter_expr_dict = user_clause
+                else:
+                    filter_expr_dict = {"op": "AND", "exprs": [user_clause, filter_expr_dict]}
 
             # Branch based on group_by mode
             if body.group_by == TraceSearchGroupBy.SESSION:
