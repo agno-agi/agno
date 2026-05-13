@@ -257,11 +257,6 @@ class CodingTools(Toolkit):
         3. Checks that path-like tokens don't escape the base directory.
 
         Returns an error message if a violation is found, None if safe.
-
-        Note: this method validates SHELL COMMAND TOKENS, not file-join paths.
-        It intentionally inspects raw arguments and is NOT routed through
-        ``agno.utils.path_safety.safe_join_subpath`` — different threat model.
-        Tracked separately as future shell-command path-safety hardening.
         """
         if not self.restrict_to_base_dir:
             return None

@@ -19,32 +19,25 @@ from agno.tools.file import FileTools
 from agno.tools.file_generation import FileGenerationTools
 from agno.tools.slack import SlackTools
 
-# ---------------------------------------------------------------------------
-# Input categories
-# ---------------------------------------------------------------------------
-
-# Universally-rejected: every caller refuses these (control chars, empty/dotdot)
+# Inputs every caller rejects: control chars, empty, dot-dot.
 ALL_REJECT = [
-    "report\x00hacked.json",  # CWE-117 null byte
-    "report\nhacked",  # CWE-117 newline
-    "report\rhacked",  # CWE-117 CR
-    "",  # empty
-    "..",  # dot-dot escapes via is_relative_to and rstrip
+    "report\x00hacked.json",
+    "report\nhacked",
+    "report\rhacked",
+    "",
+    "..",
 ]
 
-# Filename-only rejection: safe_join (FileGen, Slack) refuses; safe_join_subpath
-# callers (Toolkit, is_safe_path, FileTools) sanitize or accept.
+# Inputs that safe_join rejects (filename-only); safe_join_subpath sanitizes or accepts.
 FILENAME_ONLY_REJECT = [
-    "CON",  # CWE-635 Windows reserved
-    ".",  # dot — safe_join rejects (empty after strip); subpath accepts (resolves to base)
-    "...",  # dot-only — safe_join rejects after rstrip
-    "C:\\evil.txt",  # Windows drive prefix
-    "\\\\server\\share\\evil",  # UNC prefix
+    "CON",
+    ".",
+    "...",
+    "C:\\evil.txt",
+    "\\\\server\\share\\evil",
 ]
 
-# Subpath rejection: safe_join_subpath (Toolkit, is_safe_path, FileTools)
-# refuses traversal; safe_join (FileGen, Slack) silently sanitizes via
-# Path(filename).name.
+# Inputs that safe_join_subpath rejects (traversal); safe_join sanitizes via Path.name.
 SUBPATH_ONLY_REJECT = [
     "../../escape",
     "../../../etc/passwd",
@@ -153,11 +146,11 @@ def test_safe_join_callers_sanitize_traversal(evil):
     """FileGen + Slack sanitize traversal via Path(filename).name; file lands inside output_dir."""
     with tempfile.TemporaryDirectory() as tmp:
         filegen_path, _ = _filegen(tmp)._save_file_to_disk("payload", evil)
-        if filegen_path is not None:
-            assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
+        assert filegen_path is not None
+        assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
         slack_result = _slack(tmp)._save_file_to_disk(b"payload", evil)
-        if slack_result is not None:
-            assert Path(slack_result).resolve().is_relative_to(Path(tmp).resolve())
+        assert slack_result is not None
+        assert Path(slack_result).resolve().is_relative_to(Path(tmp).resolve())
 
 
 # ---------------------------------------------------------------------------
@@ -165,75 +158,80 @@ def test_safe_join_callers_sanitize_traversal(evil):
 # ---------------------------------------------------------------------------
 
 
-class TestAdversarialAttacks:
-    """Direct attempts to defeat path safety. ALL must fail."""
+def test_adversarial_read_etc_passwd_via_filegen():
+    with tempfile.TemporaryDirectory() as tmp:
+        filegen_path, safe_name = _filegen(tmp)._save_file_to_disk("evil", "/etc/passwd")
+        # safe_join strips path components → file lands inside tmp as "passwd", NOT in /etc.
+        assert filegen_path is not None
+        assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
+        assert safe_name == "passwd"
 
-    def test_read_etc_passwd_via_filegen(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            filegen_path, safe_name = _filegen(tmp)._save_file_to_disk("evil", "/etc/passwd")
-            # safe_join strips path components → file lands inside tmp as "passwd", NOT in /etc.
-            assert filegen_path is not None
-            assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
-            assert safe_name == "passwd"
 
-    def test_write_outside_via_slack(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            result = _slack(tmp)._save_file_to_disk(b"evil", "/tmp/escape_via_slack_xyz.bin")
-            if result is not None:
-                assert Path(result).resolve().is_relative_to(Path(tmp).resolve())
-            assert not Path("/tmp/escape_via_slack_xyz.bin").exists()
+def test_adversarial_write_outside_via_slack():
+    with tempfile.TemporaryDirectory() as tmp:
+        result = _slack(tmp)._save_file_to_disk(b"evil", "/tmp/escape_via_slack_xyz.bin")
+        assert result is not None
+        assert Path(result).resolve().is_relative_to(Path(tmp).resolve())
+        assert not Path("/tmp/escape_via_slack_xyz.bin").exists()
 
-    def test_traverse_via_toolkit(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            ok, path = _toolkit()._check_path("../../escape", Path(tmp))
-            assert ok is False
-            assert path == Path(tmp)
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")
-    def test_symlink_chain_attack(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            outside = Path(tmp) / "outside"
-            outside.mkdir()
-            inside = Path(tmp) / "inside"
-            inside.mkdir()
-            try:
-                (inside / "link").symlink_to(outside)
-            except OSError:
-                pytest.skip("Symlink creation not permitted on this platform")
-            with pytest.raises(PathSecurityError):
-                _filegen(str(inside))._save_file_to_disk("payload", "link")
+def test_adversarial_traverse_via_toolkit():
+    with tempfile.TemporaryDirectory() as tmp:
+        ok, path = _toolkit()._check_path("../../escape", Path(tmp))
+        assert ok is False
+        assert path == Path(tmp)
 
-    def test_unicode_normalization_attack(self):
-        """U+FF0F FULLWIDTH SOLIDUS NFKC-normalizes; must not escape directory."""
-        with tempfile.TemporaryDirectory() as tmp:
-            filegen_path, _ = _filegen(tmp)._save_file_to_disk("payload", "．．／escape")
-            if filegen_path is not None:
-                assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
 
-    def test_url_encoded_attack(self):
-        """%2e%2e%2f is NOT decoded; treated as literal characters in filename."""
-        with tempfile.TemporaryDirectory() as tmp:
-            filegen_path, _ = _filegen(tmp)._save_file_to_disk("payload", "%2e%2e%2fescape")
-            if filegen_path is not None:
-                assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")
+def test_adversarial_symlink_chain_attack():
+    with tempfile.TemporaryDirectory() as tmp:
+        outside = Path(tmp) / "outside"
+        outside.mkdir()
+        inside = Path(tmp) / "inside"
+        inside.mkdir()
+        try:
+            (inside / "link").symlink_to(outside)
+        except OSError:
+            pytest.skip("Symlink creation not permitted on this platform")
+        with pytest.raises(PathSecurityError):
+            _filegen(str(inside))._save_file_to_disk("payload", "link")
 
-    def test_null_byte_truncation_attack(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with pytest.raises(PathSecurityError):
-                _filegen(tmp)._save_file_to_disk("payload", "report\x00.json")
 
-    def test_windows_drive_letter_attack(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with pytest.raises(PathSecurityError):
-                _filegen(tmp)._save_file_to_disk("payload", "C:\\evil.txt")
+def test_adversarial_unicode_normalization_attack():
+    """U+FF0F FULLWIDTH SOLIDUS NFKC-normalizes; must not escape directory."""
+    with tempfile.TemporaryDirectory() as tmp:
+        filegen_path, _ = _filegen(tmp)._save_file_to_disk("payload", "．．／escape")
+        assert filegen_path is not None
+        assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
 
-    def test_long_filename_handled_gracefully(self):
-        """4096-char filename: must reject or handle OSError without leaking."""
-        with tempfile.TemporaryDirectory() as tmp:
-            long_name = "a" * 4096 + ".json"
-            try:
-                filegen_path, _ = _filegen(tmp)._save_file_to_disk("payload", long_name)
-                if filegen_path is not None:
-                    assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
-            except (PathSecurityError, OSError):
-                pass  # Either rejection path is acceptable
+
+def test_adversarial_url_encoded_attack():
+    """%2e%2e%2f is NOT decoded; treated as literal characters in filename."""
+    with tempfile.TemporaryDirectory() as tmp:
+        filegen_path, _ = _filegen(tmp)._save_file_to_disk("payload", "%2e%2e%2fescape")
+        assert filegen_path is not None
+        assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
+
+
+def test_adversarial_null_byte_truncation_attack():
+    with tempfile.TemporaryDirectory() as tmp:
+        with pytest.raises(PathSecurityError):
+            _filegen(tmp)._save_file_to_disk("payload", "report\x00.json")
+
+
+def test_adversarial_windows_drive_letter_attack():
+    with tempfile.TemporaryDirectory() as tmp:
+        with pytest.raises(PathSecurityError):
+            _filegen(tmp)._save_file_to_disk("payload", "C:\\evil.txt")
+
+
+def test_adversarial_long_filename_rejected_or_oserror():
+    """A 4096-char filename must either be rejected or surface OSError — never silently land outside."""
+    with tempfile.TemporaryDirectory() as tmp:
+        long_name = "a" * 4096 + ".json"
+        try:
+            filegen_path, _ = _filegen(tmp)._save_file_to_disk("payload", long_name)
+        except (PathSecurityError, OSError):
+            return
+        assert filegen_path is not None, "implementation returned None without raising — would silently drop the file"
+        assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())

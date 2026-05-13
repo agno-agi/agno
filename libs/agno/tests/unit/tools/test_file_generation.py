@@ -188,7 +188,7 @@ def test_url_encoded_traversal_sanitized_inside_output_directory():
 
 
 def test_filename_sanitized_in_artifact_traversal():
-    """File.filename reflects the sanitized basename, not the LLM's original input (H2)."""
+    """Test that File.filename reflects the sanitized basename, not the original input."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
         result = tool.generate_json_file({"x": 1}, filename="../../../escape")
@@ -201,7 +201,7 @@ def test_filename_sanitized_in_artifact_traversal():
 
 
 def test_filename_sanitized_no_output_directory():
-    """File.filename is sanitized even when no disk write happens (H2)."""
+    """Test that File.filename is sanitized even when no disk write happens."""
     tool = FileGenerationTools()
     result = tool.generate_json_file({"x": 1}, filename="subdir/report.json")
     assert result.files is not None

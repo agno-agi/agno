@@ -350,22 +350,17 @@ class Toolkit:
     def _check_path(self, file_name: str, base_dir: Path, restrict_to_base_dir: bool = True) -> Tuple[bool, Path]:
         """Check if the file path is within the base directory.
 
-        Path-safety is delegated to ``agno.utils.path_safety.safe_join_subpath``,
-        which preserves multi-segment paths (subdir/file.txt), NFKC-normalizes
-        input, rejects control characters, resolves both base and target
-        before containment check (defeats symlinked base_dir bypasses).
+        Path validation is delegated to ``agno.utils.path_safety.safe_join_subpath``.
 
         Args:
             file_name: The file name or relative path to check.
             base_dir: The base directory to validate against.
-            restrict_to_base_dir: If True (default), enforce containment via
-                safe_join_subpath. If False, return resolved path without
-                containment check (escape-hatch for callers that intentionally
-                allow paths outside base_dir).
+            restrict_to_base_dir: If True (default), enforce containment.
+                If False, return the resolved path without a containment check.
 
         Returns:
-            Tuple of (is_safe, resolved_path). On rejection, returns
-            (False, base_dir) — same contract as before migration.
+            Tuple of ``(is_safe, resolved_path)``. On rejection, returns
+            ``(False, base_dir)``.
         """
         if not restrict_to_base_dir:
             try:

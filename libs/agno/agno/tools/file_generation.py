@@ -64,17 +64,16 @@ class FileGenerationTools(Toolkit):
         super().__init__(name="file_generation", tools=tools, **kwargs)
 
     def _save_file_to_disk(self, content: Union[str, bytes], filename: str) -> Tuple[Optional[str], str]:
-        """Save file to disk if output_directory is set.
+        """Save file to disk if ``output_directory`` is set.
 
-        Returns a tuple ``(saved_path, sanitized_basename)``:
-            - ``saved_path`` is the absolute path string when written, else ``None``.
-            - ``sanitized_basename`` is the basename that hit (or would have hit)
-              disk after ``safe_join`` sanitization. Used by the caller to keep
-              ``File.filename`` and ``File.filepath`` in sync (CWE-179 at the
-              artifact layer — single source of truth).
+        Path validation is delegated to ``agno.utils.path_safety.safe_join``.
+        ``PathSecurityError`` propagates to the caller on rejection.
 
-        Path-safety is delegated to ``agno.utils.path_safety.safe_join``. On
-        rejection ``PathSecurityError`` propagates to the caller.
+        Returns:
+            Tuple of ``(saved_path, sanitized_basename)``. ``saved_path`` is
+            the absolute path string when written, else ``None``. The
+            sanitized basename is returned so the ``File`` artifact's
+            ``filename`` stays in sync with its ``filepath``.
         """
         if not self.output_directory:
             # No write happens, but still return the sanitized basename so the
@@ -101,13 +100,10 @@ class FileGenerationTools(Toolkit):
         mime_type: str,
         display_name: str,
     ) -> ToolResult:
-        """Shared post-serialization helper for generate_*_file methods.
+        """Shared post-serialization helper for the ``generate_*_file`` methods.
 
         Generates a default filename if needed, ensures the correct extension,
-        saves to disk via ``_save_file_to_disk`` (which delegates path-safety
-        to ``safe_join``), builds the File artifact, logs the success event,
-        and returns the ToolResult with size info preserved (``len(content)``
-        characters for str, bytes for binary).
+        saves to disk, builds the ``File`` artifact, and returns a ``ToolResult``.
         """
         if not filename:
             filename = f"generated_file_{str(uuid4())[:8]}.{file_type}"

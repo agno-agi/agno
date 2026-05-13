@@ -2,18 +2,11 @@
 File Generation Tool Example
 This cookbook shows how to use the FileGenerationTool to generate various file types (JSON, CSV, PDF, TXT).
 The tool can generate files from agent responses and make them available for download or further processing.
-
-When ``output_directory`` is set, FileGenerationTools delegates filename
-validation to ``agno.utils.path_safety.safe_join``: path components are
-stripped, control characters and Windows-reserved names are rejected,
-trailing dots/spaces are trimmed, inputs are NFKC-normalized, and the
-resolved write path must stay inside the configured directory (catches
-symlink escapes). The directory is auto-created if missing.
 """
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.file_generation import FileGenerationTools
 
 # ---------------------------------------------------------------------------
@@ -22,7 +15,7 @@ from agno.tools.file_generation import FileGenerationTools
 
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     db=SqliteDb(db_file="tmp/test.db"),
     tools=[FileGenerationTools(output_directory="tmp")],
     description="You are a helpful assistant that can generate files in various formats.",

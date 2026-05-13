@@ -1,10 +1,8 @@
-"""Centralized path-safety primitives for filesystem-touching tools.
+"""Path-safety helpers for filesystem-touching tools.
 
-This module is a SECURITY BOUNDARY. Any tool that joins a directory with
-untrusted user input MUST route through one of these helpers.
+Any tool that joins a directory with untrusted user input should route
+through ``safe_join`` (filename only) or ``safe_join_subpath`` (multi-segment).
 """
-
-from __future__ import annotations
 
 import re
 import unicodedata
@@ -14,10 +12,8 @@ from typing import Union
 from agno.exceptions import PathSecurityError
 from agno.utils.log import log_error, log_warning
 
-__all__ = ["safe_join", "safe_join_subpath"]
-
-_WIN_RESERVED = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)", re.IGNORECASE)
-_WIN_DRIVE_OR_UNC = re.compile(r"^([A-Za-z]:|\\\\)")
+_WIN_RESERVED_RE = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)", re.IGNORECASE)
+_WIN_DRIVE_OR_UNC_RE = re.compile(r"^([A-Za-z]:|\\\\)")
 
 
 def _has_control_chars(text: str) -> bool:
@@ -26,25 +22,15 @@ def _has_control_chars(text: str) -> bool:
 
 
 def _has_drive_or_unc(text: str) -> bool:
-    """Cross-platform check for Windows drive letters / UNC prefixes.
-
-    Uses ``PureWindowsPath`` so the same input is rejected identically on
-    POSIX CI and Windows production. The regex is kept as a fast-path /
-    documentation of the literal patterns we reject.
-    """
-    if _WIN_DRIVE_OR_UNC.match(text):
+    """Check for Windows drive letters or UNC prefixes. Uses ``PureWindowsPath`` so the same input is rejected on POSIX and Windows."""
+    if _WIN_DRIVE_OR_UNC_RE.match(text):
         return True
     pwp = PureWindowsPath(text)
     return bool(pwp.drive) or pwp.is_absolute()
 
 
 def _validate_segment(segment: str) -> str:
-    """Per-segment validation: control chars, drive/UNC, reserved name, MagicDot.
-
-    Used by both ``safe_join`` (called once on the basename) and
-    ``safe_join_subpath`` (called per segment after splitting on ``/`` and
-    ``\\``). Returns the MagicDot-stripped segment.
-    """
+    """Validate a single path segment and return the trailing-dot-stripped form."""
     if _has_control_chars(segment):
         log_error(f"Security violation: control char in segment {segment!r}")
         raise PathSecurityError(f"Invalid segment (control chars): {segment!r}")
@@ -55,38 +41,31 @@ def _validate_segment(segment: str) -> str:
     if not stripped:
         log_error(f"Security violation: empty segment after MagicDot strip: {segment!r}")
         raise PathSecurityError(f"Empty segment after MagicDot strip: {segment!r}")
-    if _WIN_RESERVED.match(stripped):
+    if _WIN_RESERVED_RE.match(stripped):
         log_error(f"Security violation: Windows reserved name {stripped!r}")
         raise PathSecurityError(f"Segment {segment!r} is a Windows reserved name")
     return stripped
 
 
 def safe_join(directory: Union[str, Path], filename: str) -> Path:
-    """Filename-only safe join.
+    """Join ``directory`` with ``filename``, keeping only the basename.
 
-    .. warning::
-       This helper **discards all path components** from ``filename``;
-       only the basename is kept. Use :func:`safe_join_subpath` if you need
-       to preserve sub-directories (e.g. ``"reports/2024/q1.pdf"``). When
-       this helper strips components, a warning is emitted via
-       ``agno.utils.log.log_warning``.
+    Path components in ``filename`` are discarded (use ``safe_join_subpath``
+    if you need to preserve sub-directories). Use this for filenames received
+    from LLM output (FileGenerationTools, Slack uploads). When components
+    are stripped, a warning is emitted via ``log_warning``.
 
-    Strips any path components from ``filename`` (uses ``Path(filename).name``).
-    Use this for filenames received from LLM output (FileGenerationTools, Slack uploads).
+    Args:
+        directory: The base directory the file must land inside.
+        filename: The filename to join. Path components are discarded.
 
-    Validation order (CWE-179 compliant: validate before destructive transform):
-        1. NFKC normalize the raw input.
-        2. Reject control chars on the RAW input (would otherwise be hidden
-           by ``Path.name``).
-        3. Reject drive letters / UNC on the RAW input (``Path.name`` strips
-           the drive on Windows, hiding the attack).
-        4. Strip path components via ``Path(filename).name`` and reject
-           empty / dot-only basenames.
-        5. ``_validate_segment`` on the basename (control chars + drive/UNC
-           re-check + MagicDot strip + Windows reserved name).
-        6. Resolve and verify containment in ``directory``.
+    Returns:
+        The resolved file path inside ``directory``.
 
-    Returns the RESOLVED file path. Raises PathSecurityError on rejection.
+    Raises:
+        PathSecurityError: If the input contains control characters, a
+            Windows drive letter or UNC prefix, resolves to an empty or
+            dot-only name, or escapes ``directory`` (e.g. via a symlink).
     """
     base = Path(directory)
     filename = unicodedata.normalize("NFKC", filename)
@@ -99,10 +78,12 @@ def safe_join(directory: Union[str, Path], filename: str) -> Path:
     if "/" in filename or "\\" in filename:
         log_warning(
             f"safe_join discarded path components from {filename!r}; "
-            f"using basename only. Use safe_join_subpath if you need to "
-            f"preserve sub-directories."
+            "using basename only. Use safe_join_subpath if you need to "
+            "preserve sub-directories."
         )
-    safe = Path(filename).name.rstrip(". ")
+    # Normalize Windows separators so basename extraction is OS-independent
+    # (Path("a\\b").name == "b" on Windows but "a\\b" on POSIX otherwise).
+    safe = Path(filename.replace("\\", "/")).name.rstrip(". ")
     if not safe or safe.strip(".") == "":
         log_error(f"Security violation: empty/dot-only filename {filename!r}")
         raise PathSecurityError(f"Invalid filename after sanitization: {filename!r}")
@@ -111,7 +92,7 @@ def safe_join(directory: Union[str, Path], filename: str) -> Path:
     try:
         resolved_file = file_path.resolve()
         resolved_dir = base.resolve()
-    except OSError as e:
+    except (OSError, UnicodeEncodeError) as e:
         log_error(f"Security violation: cannot resolve {filename!r}: {e}")
         raise PathSecurityError(f"Cannot resolve path {filename!r}: {e}") from e
     try:
@@ -123,25 +104,25 @@ def safe_join(directory: Union[str, Path], filename: str) -> Path:
 
 
 def safe_join_subpath(directory: Union[str, Path], subpath: str) -> Path:
-    """Multi-segment safe join.
+    """Join ``directory`` with ``subpath``, preserving multi-segment paths.
 
-    Allows multi-segment subpaths (e.g., ``"docs/report.md"``) but enforces
-    containment via ``resolve()`` + ``is_relative_to()``. Use for tool callers
-    that accept relative paths into a base directory (Toolkit._check_path,
-    is_safe_path, FileTools, CodingTools).
+    Allows inputs like ``"docs/report.md"`` but enforces containment by
+    resolving both ``directory`` and the target before comparison. Use for
+    tool callers that accept relative paths into a base directory
+    (``Toolkit._check_path``, ``is_safe_path``, ``FileTools``, ``CodingTools``).
 
-    Validation order:
-        1. Reject empty/whitespace-only and NFKC-normalize.
-        2. Reject control chars on the raw subpath.
-        3. Reject absolute paths / drive letters / UNC via ``PureWindowsPath``
-           (cross-platform).
-        4. Per-segment validation (control chars, drive/UNC, MagicDot strip,
-           Windows reserved names) — applied to every non-empty / non-``.``
-           segment after splitting on both ``/`` and ``\\``.
-        5. Resolve BOTH base and target; verify containment (defeats
-           symlinked base_dir bypasses).
+    Args:
+        directory: The base directory the target must land inside.
+        subpath: A relative subpath. Segments are validated individually.
 
-    Returns the RESOLVED target path. Raises PathSecurityError on rejection.
+    Returns:
+        The resolved target path inside ``directory``.
+
+    Raises:
+        PathSecurityError: If the input is empty, contains control
+            characters, is absolute or contains a drive/UNC prefix, has a
+            Windows-reserved segment, or escapes ``directory`` (e.g. via a
+            symlink).
     """
     if not subpath or not subpath.strip():
         log_error(f"Security violation: empty subpath {subpath!r}")
@@ -154,19 +135,21 @@ def safe_join_subpath(directory: Union[str, Path], subpath: str) -> Path:
     if pwp.drive or pwp.is_absolute():
         log_error(f"Security violation: subpath must be relative: {subpath!r}")
         raise PathSecurityError(f"Subpath must be relative (no drive/absolute): {subpath!r}")
-    # Skip empty (from "//" or trailing "/"), "." (current dir), and ".." (parent).
-    # ".." is a legitimate traversal marker — the downstream resolve() +
-    # relative_to()/ValueError containment check catches actual escapes.
-    for segment in subpath.replace("\\", "/").split("/"):
+    # Normalize backslashes so segment validation and the join agree on boundaries.
+    subpath = subpath.replace("\\", "/")
+    # Preserve "", ".", ".." so the resolve + relative_to check still catches escapes.
+    cleaned_parts = []
+    for segment in subpath.split("/"):
         if segment in ("", ".", ".."):
+            cleaned_parts.append(segment)
             continue
-        _validate_segment(segment)
+        cleaned_parts.append(_validate_segment(segment))
     base = Path(directory)
-    target = base / subpath
+    target = base / "/".join(cleaned_parts)
     try:
         resolved_base = base.resolve()
         resolved_target = target.resolve()
-    except OSError as e:
+    except (OSError, UnicodeEncodeError) as e:
         log_error(f"Security violation: cannot resolve subpath {subpath!r}: {e}")
         raise PathSecurityError(f"Cannot resolve subpath {subpath!r}: {e}") from e
     try:

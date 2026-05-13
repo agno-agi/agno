@@ -1,4 +1,3 @@
-import warnings
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
@@ -266,36 +265,9 @@ class RemoteServerUnavailableError(AgnoError):
 
 
 class PathSecurityError(AgnoError):
-    """Exception raised when path validation rejects user-supplied input.
-
-    Raised for path-traversal attempts, invalid filenames after sanitization
-    (empty, ".", ".."), control characters, Windows-reserved names, drive
-    letters, UNC prefixes, and symlink-escape detection. Used by the shared
-    ``agno.utils.path_safety`` module and all tools that route through it
-    (FileGenerationTools, SlackTools, Toolkit._check_path, is_safe_path,
-    FileTools.check_escape).
-    """
+    """Exception raised when path validation rejects user-supplied input."""
 
     def __init__(self, message: str = "Path security violation"):
         super().__init__(message, status_code=400)
         self.type = "path_security_error"
         self.error_id = "path_security_error"
-
-
-def __getattr__(name: str) -> Any:
-    """PEP 562 module-level lookup — emits DeprecationWarning for legacy alias.
-
-    ``FileGenerationSecurityError`` is preserved as a literal alias of
-    ``PathSecurityError`` for one minor version. Code catching either name
-    works bidirectionally because the two refer to the same class object
-    at runtime; the warning fires when the legacy name is imported.
-    """
-    if name == "FileGenerationSecurityError":
-        warnings.warn(
-            "FileGenerationSecurityError is deprecated; use PathSecurityError instead. "
-            "The old name will be removed in a future version.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return PathSecurityError
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
