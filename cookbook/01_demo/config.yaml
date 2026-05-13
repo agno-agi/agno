@@ -1,39 +1,39 @@
 chat:
   quick_prompts:
     # ----- Agents -----
-    dash:
-      - "Who won the most F1 races in 2019?"
-      - "Show the points gap between Hamilton and Verstappen by season"
-      - "Which circuits had the most DNFs in 2020?"
+    local-wiki:
+      - "What does the wiki say about CPython's release cycle?"
+      - "Add a one-page summary of CPython's release schedule to papers/cpython-release-cycle.md. Search the web (python.org or PEP 602) and cite the source."
+      - "List the pages currently in the wiki."
 
-    gcode:
-      - "Build a command-line todo app: add, list, done, delete. Persist to JSON. Write pytest tests and run them."
-      - "Create a Python library that parses and evaluates math expressions like '2 + 3 * (4 - 1)', with tests."
-      - "Build a URL shortener with an in-memory store: shorten, resolve, list stats. Include a demo script that exercises all features."
+    git-wiki:
+      - "What does the wiki say about onboarding?"
+      - "Add or update notes/onboarding.md with two sections: Day 1 Setup, and First Week Goals. Keep it under twenty lines."
+      - "List the pages currently in the wiki."
 
-    pal:
-      - "Save a note: quarterly planning meeting moved to Friday 3pm"
-      - "What notes have I saved recently?"
-      - "Save a bookmark: https://docs.agno.com -- Agno documentation"
+    web-search:
+      - "What's the latest stable release of CPython? Cite the source."
+      - "Summarize Anthropic's most recent agent research."
+      - "What is Agno's AgentOS? Cite the docs."
 
-    scout:
-      - "What is our PTO policy?"
-      - "Find the incident response runbook"
-      - "How do I request a new laptop?"
+    code-search:
+      - "What agents are registered in this AgentOS demo?"
+      - "Where is the Agent class defined?"
+      - "How does the WikiContextProvider work?"
 
-    seek:
-      - "Research Anthropic -- products, funding, and recent developments"
-      - "Compare the top 3 AI agent frameworks"
-      - "What are the latest developments in agentic AI?"
+    researcher:
+      - "Research the CPython release cycle. Check the wiki first, then the web. File a summary under papers/ if there isn't one already."
+      - "Compare what the wiki says about agent memory with the current state of the agno.memory module."
+      - "What's new in agent research from Anthropic this year? Cite sources."
 
     # ----- Teams -----
-    research-team:
-      - "Research Anthropic comprehensively -- products, people, and market position"
-      - "What do our internal docs say about AI strategy vs industry trends?"
-      - "Research OpenAI -- enterprise products and recent developments"
+    swarm:
+      - "What is the latest stable release of CPython? Cite the source."
+      - "Summarize the current state of agentic-AI research from Anthropic."
+      - "Compare the top 3 open-source agent frameworks as of today."
 
     # ----- Workflows -----
-    daily-brief:
-      - "Generate my morning briefing"
-      - "What's on my calendar today and any important emails?"
-      - "Brief me on today's priorities"
+    brief:
+      - "Brief me on the latest CPython release cycle. File it under briefs/."
+      - "Brief me on Anthropic's most recent agent research. File it under briefs/."
+      - "Brief me on Agno's AgentOS. File it under briefs/."
