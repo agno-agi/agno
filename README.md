@@ -160,7 +160,7 @@ Read the full guide [here](https://docs.agno.com/coding-agents).
 ## Community
 
 - [X / Twitter](https://x.com/AgnoAgi) — follow for releases and demos
-- [Newsletter](https://agno.com/newsletter) — monthly updates on what's shipping
+- [Newsletter]([https://agno.com/newsletter](https://www.agno.com/the-agno-loop-newsleter) — monthly updates on what's shipping
 
 ## Contributing
 
