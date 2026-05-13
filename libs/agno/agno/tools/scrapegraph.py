@@ -25,6 +25,7 @@ from agno.utils.log import log_debug, log_error
 
 try:
     from scrapegraph_py import (
+        AsyncScrapeGraphAI,
         FetchConfig,
         HtmlFormatConfig,
         JsonFormatConfig,
@@ -71,6 +72,7 @@ class ScrapeGraphTools(Toolkit):
             log_error("SGAI_API_KEY not set. Please set the SGAI_API_KEY environment variable.")
 
         self.client: ScrapeGraphAI = ScrapeGraphAI(api_key=self.api_key)
+        self.async_client: AsyncScrapeGraphAI = AsyncScrapeGraphAI(api_key=self.api_key)
         self.render_heavy_js: bool = render_heavy_js
         self.headers: Optional[Dict[str, str]] = headers
         self.crawl_poll_interval: int = crawl_poll_interval
@@ -237,8 +239,7 @@ class ScrapeGraphTools(Toolkit):
         """
         try:
             log_debug(f"ScrapeGraph crawl start for URL: {url}")
-            start_response = await asyncio.to_thread(
-                self.client.crawl.start,
+            start_response = await self.async_client.crawl.start(
                 url,
                 formats=[JsonFormatConfig(prompt=prompt, schema=schema)],
                 max_depth=max_depth,
@@ -255,7 +256,7 @@ class ScrapeGraphTools(Toolkit):
                 if time.monotonic() > deadline:
                     return f"Error: crawl timed out after {self.crawl_max_wait}s (id={crawl_id})"
                 await asyncio.sleep(self.crawl_poll_interval)
-                status_response = await asyncio.to_thread(self.client.crawl.get, crawl_id)
+                status_response = await self.async_client.crawl.get(crawl_id)
                 if status_response.status != "success" or status_response.data is None:
                     return f"Error polling crawl {crawl_id}: {status_response.error or 'unknown error'}"
                 crawl_data = status_response.data

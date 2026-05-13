@@ -59,18 +59,23 @@ async def test_scrapegraph():
     pytest.importorskip("scrapegraph_py")
     from agno.tools.scrapegraph import ScrapeGraphTools
 
-    with patch("agno.tools.scrapegraph.ScrapeGraphAI"), patch.dict("os.environ", {"SGAI_API_KEY": "k"}):
+    with (
+        patch("agno.tools.scrapegraph.ScrapeGraphAI"),
+        patch("agno.tools.scrapegraph.AsyncScrapeGraphAI"),
+        patch.dict("os.environ", {"SGAI_API_KEY": "k"}),
+    ):
         tools = ScrapeGraphTools(all=True)
     assert "crawl" in tools.async_functions
 
     finished = Mock(id="c1", status="completed")
     finished.model_dump_json.return_value = '{"pages": []}'
-    client = Mock()
-    client.crawl.start.return_value = Mock(status="success", data=finished)
-    tools.client = client
+    async_client = MagicMock()
+    async_client.crawl.start = AsyncMock(return_value=Mock(status="success", data=finished))
+    async_client.crawl.get = AsyncMock()
+    tools.async_client = async_client
     with patch("agno.tools.scrapegraph.asyncio.sleep", new_callable=AsyncMock) as slept:
         result = await tools.acrawl("https://x.com", prompt="p", schema={"type": "object"})
-    assert not client.crawl.get.called
+    assert not async_client.crawl.get.called
     slept.assert_not_awaited()
     assert result == '{"pages": []}'
 
