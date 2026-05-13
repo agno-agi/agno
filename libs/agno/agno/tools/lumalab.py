@@ -46,7 +46,9 @@ class LumaLabTools(Toolkit):
             log_error("LUMAAI_API_KEY not set. Please set the LUMAAI_API_KEY environment variable.")
 
         self.client = LumaAI(auth_token=self.api_key)
-        self.async_client = AsyncLumaAI(auth_token=self.api_key)
+        # Async client is lazy-constructed on first async-tool call — AsyncLumaAI
+        # raises on a missing auth_token in __init__ while sync LumaAI tolerates it.
+        self.async_client: Optional[AsyncLumaAI] = None
 
         tools: List[Any] = []
         async_tools: List[Any] = []
@@ -191,6 +193,12 @@ class LumaLabTools(Toolkit):
             logger.exception("Failed to generate video")
             return ToolResult(content=f"Error: {e}")
 
+    def _aget_client(self) -> "AsyncLumaAI":
+        """Lazily construct the async LumaAI client (deferred until first async call)."""
+        if self.async_client is None:
+            self.async_client = AsyncLumaAI(auth_token=self.api_key)
+        return self.async_client
+
     async def aimage_to_video(
         self,
         agent: Agent,
@@ -220,7 +228,8 @@ class LumaLabTools(Toolkit):
             if end_image_url:
                 keyframes["frame1"] = {"type": "image", "url": end_image_url}
 
-            generation = await self.async_client.generations.create(
+            client = self._aget_client()
+            generation = await client.generations.create(
                 prompt=prompt,
                 loop=loop,
                 aspect_ratio=aspect_ratio,
@@ -240,7 +249,7 @@ class LumaLabTools(Toolkit):
                 if not generation or not generation.id:
                     return ToolResult(content="Failed to get generation ID")
 
-                generation = await self.async_client.generations.get(generation.id)
+                generation = await client.generations.get(generation.id)
 
                 if generation.state == "completed" and generation.assets:
                     video_url = generation.assets.video
@@ -283,7 +292,8 @@ class LumaLabTools(Toolkit):
             if keyframes is not None:
                 generation_params["keyframes"] = keyframes
 
-            generation = await self.async_client.generations.create(**generation_params)
+            client = self._aget_client()
+            generation = await client.generations.create(**generation_params)
 
             video_id = str(uuid.uuid4())
             if not self.wait_for_completion:
@@ -297,7 +307,7 @@ class LumaLabTools(Toolkit):
                 if not generation or not generation.id:
                     return ToolResult(content="Failed to get generation ID")
 
-                generation = await self.async_client.generations.get(generation.id)
+                generation = await client.generations.get(generation.id)
 
                 if generation.state == "completed" and generation.assets:
                     video_url = generation.assets.video

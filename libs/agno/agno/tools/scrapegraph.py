@@ -72,7 +72,10 @@ class ScrapeGraphTools(Toolkit):
             log_error("SGAI_API_KEY not set. Please set the SGAI_API_KEY environment variable.")
 
         self.client: ScrapeGraphAI = ScrapeGraphAI(api_key=self.api_key)
-        self.async_client: AsyncScrapeGraphAI = AsyncScrapeGraphAI(api_key=self.api_key)
+        # Async client is lazy-constructed on first acrawl call — matches sync's
+        # lenient handling of a missing api_key (sync ScrapeGraphAI accepts None
+        # but AsyncScrapeGraphAI raises in __init__).
+        self.async_client: Optional[AsyncScrapeGraphAI] = None
         self.render_heavy_js: bool = render_heavy_js
         self.headers: Optional[Dict[str, str]] = headers
         self.crawl_poll_interval: int = crawl_poll_interval
@@ -239,6 +242,8 @@ class ScrapeGraphTools(Toolkit):
         """
         try:
             log_debug(f"ScrapeGraph crawl start for URL: {url}")
+            if self.async_client is None:
+                self.async_client = AsyncScrapeGraphAI(api_key=self.api_key)
             start_response = await self.async_client.crawl.start(
                 url,
                 formats=[JsonFormatConfig(prompt=prompt, schema=schema)],
