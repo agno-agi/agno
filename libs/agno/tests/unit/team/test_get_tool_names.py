@@ -8,9 +8,15 @@ Regression test for: https://github.com/agno-agi/agno/issues/7039
 """
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
+from agno.run.base import RunContext
+from agno.run.team import TeamRunOutput
+from agno.session import TeamSession
 from agno.team._messages import _get_tool_names
-from agno.tools import Toolkit
+from agno.team._tools import _determine_tools_for_model
+from agno.team.team import Team
+from agno.tools import Toolkit, tool
 from agno.tools.function import Function
 
 # ---------------------------------------------------------------------------
@@ -148,3 +154,131 @@ class TestGetToolNamesAsyncMode:
         names = _get_tool_names(member, async_mode=True)
         assert "sync_tool" in names
         assert "async_tool" in names
+
+
+# ---------------------------------------------------------------------------
+# Tests — per-function instructions propagation through _determine_tools_for_model
+#
+# Verifies @tool(instructions=...) reaches team._tool_instructions whether the
+# tool is registered bare or via a Toolkit.
+# ---------------------------------------------------------------------------
+
+
+def _make_tool_run_context():
+    return RunContext(run_id="test-run", session_id="test-session")
+
+
+def _make_tool_session():
+    return TeamSession(session_id="test-session")
+
+
+def _make_tool_run_response():
+    return TeamRunOutput(run_id="test-run", session_id="test-session", team_id="test-team")
+
+
+def _make_tool_model():
+    model = MagicMock()
+    model.supports_native_structured_outputs = False
+    model.get_tools_for_api.return_value = []
+    model.add_tool.return_value = None
+    model.get_instructions_for_model = MagicMock(return_value=None)
+    model.get_system_message_for_model = MagicMock(return_value=None)
+    return model
+
+
+def _resolve(team: Team) -> None:
+    _determine_tools_for_model(
+        team=team,
+        model=_make_tool_model(),
+        run_response=_make_tool_run_response(),
+        run_context=_make_tool_run_context(),
+        team_run_context={},
+        session=_make_tool_session(),
+        async_mode=False,
+    )
+
+
+def test_bare_function_instructions_reach_team():
+    @tool(instructions="bare-rule")
+    def my_tool(x: str) -> str:
+        return x
+
+    team = Team(name="t", members=[], tools=[my_tool])
+    _resolve(team)
+
+    assert team._tool_instructions == ["bare-rule"]
+
+
+def test_toolkit_per_function_instructions_reach_team():
+    """The original bug: @tool(instructions=...) inside a Toolkit was dropped."""
+
+    class MyToolkit(Toolkit):
+        def __init__(self):
+            super().__init__(name="my_toolkit", tools=[self.my_tool])
+
+        @tool(instructions="toolkit-func-rule")
+        def my_tool(self, x: str) -> str:
+            return x
+
+    team = Team(name="t", members=[], tools=[MyToolkit()])
+    _resolve(team)
+
+    assert team._tool_instructions == ["toolkit-func-rule"]
+
+
+def test_toolkit_level_and_per_function_instructions_both_reach_team():
+    class MyToolkit(Toolkit):
+        def __init__(self):
+            super().__init__(
+                name="my_toolkit",
+                tools=[self.my_tool],
+                instructions="toolkit-level-rule",
+                add_instructions=True,
+            )
+
+        @tool(instructions="toolkit-func-rule")
+        def my_tool(self, x: str) -> str:
+            return x
+
+    team = Team(name="t", members=[], tools=[MyToolkit()])
+    _resolve(team)
+
+    assert team._tool_instructions == ["toolkit-func-rule", "toolkit-level-rule"]
+
+
+def test_toolkit_per_function_add_instructions_false_is_respected_team():
+    class MyToolkit(Toolkit):
+        def __init__(self):
+            super().__init__(name="my_toolkit", tools=[self.kept, self.dropped])
+
+        @tool(instructions="kept-rule")
+        def kept(self, x: str) -> str:
+            return x
+
+        @tool(instructions="dropped-rule", add_instructions=False)
+        def dropped(self, x: str) -> str:
+            return x
+
+    team = Team(name="t", members=[], tools=[MyToolkit()])
+    _resolve(team)
+
+    assert team._tool_instructions == ["kept-rule"]
+
+
+def test_toolkit_multiple_per_function_instructions_all_reach_team():
+    class MyToolkit(Toolkit):
+        def __init__(self):
+            super().__init__(name="my_toolkit", tools=[self.a, self.b])
+
+        @tool(instructions="rule-a")
+        def a(self, x: str) -> str:
+            return x
+
+        @tool(instructions="rule-b")
+        def b(self, x: str) -> str:
+            return x
+
+    team = Team(name="t", members=[], tools=[MyToolkit()])
+    _resolve(team)
+
+    assert team._tool_instructions == ["rule-a", "rule-b"]
