@@ -1971,9 +1971,22 @@ class Workflow:
             else:
                 # Execute the workflow with the custom executor
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)  # type: ignore[arg-type]
+                workflow_run_response.content = self._call_custom_function(
+                    self.steps,
+                    execution_input,
+                    workflow_run_response=workflow_run_response,
+                    **kwargs,
+                )  # type: ignore[arg-type]
 
             workflow_run_response.status = RunStatus.completed
+
+            # Persist the run for callable-steps workflows too (mirrors the static path's finally block)
+            if workflow_run_response.metrics:
+                workflow_run_response.metrics.stop_timer()
+            self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+            session.upsert_run(run=workflow_run_response)
+            self.save_session(session=session)
+            cleanup_run(workflow_run_response.run_id)  # type: ignore
         else:
             try:
                 # Track outputs from each step for enhanced data flow
@@ -2255,7 +2268,12 @@ class Workflow:
                 raise ValueError("Cannot use async function with synchronous execution")
             elif isgeneratorfunction(self.steps):
                 content = ""
-                for chunk in self._call_custom_function(self.steps, execution_input, **kwargs):  # type: ignore[arg-type]
+                for chunk in self._call_custom_function(
+                    self.steps,
+                    execution_input,
+                    workflow_run_response=workflow_run_response,
+                    **kwargs,
+                ):  # type: ignore[arg-type]
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     # Update the run_response with the content from the result
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
@@ -2266,7 +2284,12 @@ class Workflow:
                 workflow_run_response.content = content
             else:
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
+                workflow_run_response.content = self._call_custom_function(
+                    self.steps,
+                    execution_input,
+                    workflow_run_response=workflow_run_response,
+                    **kwargs,
+                )
             workflow_run_response.status = RunStatus.completed
 
         else:
@@ -2832,7 +2855,12 @@ class Workflow:
             content = ""
 
             if iscoroutinefunction(self.steps):  # type: ignore
-                workflow_run_response.content = await self._acall_custom_function(self.steps, execution_input, **kwargs)
+                workflow_run_response.content = await self._acall_custom_function(
+                    self.steps,
+                    execution_input,
+                    workflow_run_response=workflow_run_response,
+                    **kwargs,
+                )
             elif isgeneratorfunction(self.steps):
                 for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
@@ -2841,7 +2869,12 @@ class Workflow:
                         content += str(chunk)
                 workflow_run_response.content = content
             elif isasyncgenfunction(self.steps):  # type: ignore
-                async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
+                async_gen = await self._acall_custom_function(
+                    self.steps,
+                    execution_input,
+                    workflow_run_response=workflow_run_response,
+                    **kwargs,
+                )
                 async for chunk in async_gen:
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
@@ -2851,8 +2884,24 @@ class Workflow:
                 workflow_run_response.content = content
             else:
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
+                workflow_run_response.content = self._call_custom_function(
+                    self.steps,
+                    execution_input,
+                    workflow_run_response=workflow_run_response,
+                    **kwargs,
+                )
             workflow_run_response.status = RunStatus.completed
+
+            # Persist the run for callable-steps workflows too (mirrors the static path's finally block)
+            if workflow_run_response.metrics:
+                workflow_run_response.metrics.stop_timer()
+            self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+            workflow_session.upsert_run(run=workflow_run_response)
+            if self._has_async_db():
+                await self.asave_session(session=workflow_session)
+            else:
+                self.save_session(session=workflow_session)
+            cleanup_run(workflow_run_response.run_id)  # type: ignore
 
         else:
             try:
