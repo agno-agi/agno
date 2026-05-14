@@ -210,17 +210,19 @@ class WebsiteReader(Reader):
             try:
                 log_debug(f"Crawling: {current_url}")
 
-                # Validate each redirect target against allowed_hosts so legitimate
-                # same-host redirects still work, while a permitted host can't 3xx
-                # the request to an internal target.
                 guard = make_redirect_guard(self.allowed_hosts)
-                client_kwargs: Dict[str, Any] = {"timeout": self.timeout}
-                if self.proxy:
-                    client_kwargs["proxy"] = self.proxy
-                if guard is not None:
-                    client_kwargs["event_hooks"] = {"request": [guard]}
-                with httpx.Client(**client_kwargs) as client:
-                    response = client.get(current_url, follow_redirects=True)
+                if guard is None:
+                    response = (
+                        httpx.get(current_url, timeout=self.timeout, proxy=self.proxy, follow_redirects=True)
+                        if self.proxy
+                        else httpx.get(current_url, timeout=self.timeout, follow_redirects=True)
+                    )
+                else:
+                    client_kwargs: Dict[str, Any] = {"timeout": self.timeout, "event_hooks": {"request": [guard]}}
+                    if self.proxy:
+                        client_kwargs["proxy"] = self.proxy
+                    with httpx.Client(**client_kwargs) as client:
+                        response = client.get(current_url, follow_redirects=True)
                 response.raise_for_status()
 
                 soup = BeautifulSoup(response.content, "html.parser")
