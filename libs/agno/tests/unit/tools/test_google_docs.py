@@ -1,7 +1,8 @@
 """Unit tests for GoogleDocsTools."""
 
 import json
-from unittest.mock import MagicMock, Mock, mock_open, patch
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from google.oauth2.credentials import Credentials
@@ -93,9 +94,10 @@ class TestInitialization:
             t = GoogleDocsTools(creds=mock_credentials)
         sync_names = {f.__name__ for f in t.tools if callable(f)}
         async_pair_names = {name for _, name in t._async_tools}
-        # delete_document defaults to False - should not register in either set
-        assert "delete_document" not in sync_names
-        assert "delete_document" not in async_pair_names
+        # delete_document and export_as_pdf both default to False (destructive / filesystem write)
+        for off_by_default in ("delete_document", "export_as_pdf"):
+            assert off_by_default not in sync_names
+            assert off_by_default not in async_pair_names
 
     def test_all_flag_registers_everything(self, mock_credentials):
         with patch("agno.tools.google.docs.authenticate", lambda func: func):
@@ -184,17 +186,48 @@ class TestAppendText:
 
 
 class TestExportAsPdf:
-    def test_writes_file(self, tools, mock_drive_service):
-        # MediaIoBaseDownload constructor patched to a no-op that returns done=True
+    def test_writes_file_under_sandbox(self, tools, mock_drive_service, tmp_path):
+        tools.export_dir = tmp_path.resolve()
         with patch("agno.tools.google.docs.MediaIoBaseDownload") as mock_dl_cls:
             instance = mock_dl_cls.return_value
             instance.next_chunk.return_value = (None, True)
-            with patch("builtins.open", mock_open()) as mocked_file:
-                result = json.loads(tools.export_as_pdf(document_id="doc-id-123", output_path="/tmp/out.pdf"))
-        assert result["output_path"] == "/tmp/out.pdf"
-        assert result["bytes_written"] == 0  # empty buffer
-        mocked_file.assert_called_with("/tmp/out.pdf", "wb")
+            result = json.loads(tools.export_as_pdf(document_id="doc-id-123", filename="out.pdf"))
+        assert result["bytes_written"] == 0  # empty buffer mocked
+        assert result["path"].endswith("out.pdf")
+        assert Path(result["path"]).is_relative_to(tmp_path.resolve())
         mock_drive_service.files().export_media.assert_called_with(fileId="doc-id-123", mimeType="application/pdf")
+
+    def test_default_filename_uses_document_id(self, tools, mock_drive_service, tmp_path):
+        tools.export_dir = tmp_path.resolve()
+        with patch("agno.tools.google.docs.MediaIoBaseDownload") as mock_dl_cls:
+            instance = mock_dl_cls.return_value
+            instance.next_chunk.return_value = (None, True)
+            result = json.loads(tools.export_as_pdf(document_id="abc-123"))
+        assert result["path"].endswith("abc-123.pdf")
+
+    def test_auto_appends_pdf_extension(self, tools, mock_drive_service, tmp_path):
+        tools.export_dir = tmp_path.resolve()
+        with patch("agno.tools.google.docs.MediaIoBaseDownload") as mock_dl_cls:
+            instance = mock_dl_cls.return_value
+            instance.next_chunk.return_value = (None, True)
+            result = json.loads(tools.export_as_pdf(document_id="x", filename="my-doc"))
+        assert result["path"].endswith("my-doc.pdf")
+
+    def test_rejects_path_traversal(self, tools, tmp_path):
+        tools.export_dir = tmp_path.resolve()
+        result = json.loads(tools.export_as_pdf(document_id="x", filename="../escape.pdf"))
+        assert "error" in result
+        assert "bare name" in result["error"]
+
+    def test_rejects_absolute_path(self, tools, tmp_path):
+        tools.export_dir = tmp_path.resolve()
+        result = json.loads(tools.export_as_pdf(document_id="x", filename="/etc/passwd"))
+        assert "error" in result
+
+    def test_rejects_backslash_separator(self, tools, tmp_path):
+        tools.export_dir = tmp_path.resolve()
+        result = json.loads(tools.export_as_pdf(document_id="x", filename="..\\evil.pdf"))
+        assert "error" in result
 
 
 class TestDeleteDocument:
@@ -202,9 +235,7 @@ class TestDeleteDocument:
         result = json.loads(tools.delete_document(document_id="doc-id-123"))
         assert result["status"] == "trashed"
         assert result["documentId"] == "doc-id-123"
-        mock_drive_service.files().update.assert_called_with(
-            fileId="doc-id-123", body={"trashed": True}
-        )
+        mock_drive_service.files().update.assert_called_with(fileId="doc-id-123", body={"trashed": True})
 
 
 class TestAsyncVariants:

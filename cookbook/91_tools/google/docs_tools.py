@@ -21,6 +21,7 @@ Setup:
 4. First run opens browser for OAuth consent, saves token.json for reuse
 """
 
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.tools.google.docs import GoogleDocsTools
@@ -30,7 +31,9 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     tools=[
         GoogleDocsTools(
-            # delete_document=True,  # Destructive, enable if needed
+            # delete_document=True,                  # Trashes the doc (recoverable for 30 days)
+            # export_as_pdf=True,                    # Writes PDF to disk under export_dir; off by default
+            # export_dir="./pdfs",                   # Sandbox directory for export_as_pdf (str or Path)
         )
     ],
     instructions=[

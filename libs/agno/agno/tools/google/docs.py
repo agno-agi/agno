@@ -43,6 +43,7 @@ import asyncio
 import io
 import json
 import textwrap
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 try:
@@ -73,8 +74,9 @@ DOCS_INSTRUCTIONS = textwrap.dedent("""\
     ## Tips
     - Document IDs come from the API or from doc URLs -- never invent them
     - batch_update is the workhorse: insertText, replaceAllText, updateTextStyle, deleteContentRange
-    - export_as_pdf saves a PDF copy via Drive -- the original doc is unchanged
-    - Destructive tools (delete_document) are disabled by default""")
+    - export_as_pdf is off by default; when enabled it writes PDFs under the toolkit's
+      export_dir sandbox (bare filenames only, path separators rejected). Original doc unchanged.
+    - delete_document moves to Drive trash (recoverable for 30 days); off by default""")
 
 
 authenticate = google_authenticate("docs")
@@ -107,13 +109,16 @@ class GoogleDocsTools(GoogleToolkit):
         get_document_text: bool = True,
         batch_update: bool = True,
         append_text: bool = True,
-        export_as_pdf: bool = True,
+        export_as_pdf: bool = False,
+        export_dir: Union[str, Path] = Path("."),
         delete_document: bool = False,
         all: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         **kwargs,
     ):
+        self.export_dir = Path(export_dir).resolve()
+
         tools: List[Any] = []
         async_tools: List[Tuple[Any, str]] = []
         if all or create_document:
@@ -363,20 +368,35 @@ class GoogleDocsTools(GoogleToolkit):
         return await asyncio.to_thread(self.append_text, document_id=document_id, text=text)
 
     @authenticate
-    def export_as_pdf(self, document_id: str, output_path: str) -> str:
+    def export_as_pdf(self, document_id: str, filename: Optional[str] = None) -> str:
         """
-        Export a Google Doc as a PDF and save it to a local path.
+        Export a Google Doc as a PDF, saved under the toolkit's export_dir sandbox.
 
-        Uses the Drive API's export_media endpoint. The original document is unchanged.
+        The original document is unchanged. The caller supplies only a bare
+        filename (no directory components, no absolute paths); the toolkit
+        resolves it under ``self.export_dir`` to prevent arbitrary filesystem
+        writes. Off by default; enable via ``export_as_pdf=True``.
 
         Args:
             document_id (str): The ID of the document to export.
-            output_path (str): Local filesystem path where the PDF will be saved.
+            filename (Optional[str]): Bare filename for the PDF, e.g.
+                ``"plan.pdf"``. Defaults to ``"{document_id}.pdf"``. Path
+                separators (``/``, ``\\``) and absolute paths are rejected.
 
         Returns:
-            str: JSON string with output_path and bytes_written, or error message.
+            str: JSON string with path and bytes_written, or error message.
         """
         try:
+            safe_name = filename or f"{document_id}.pdf"
+            if any(sep in safe_name for sep in ("/", "\\", "\x00")) or Path(safe_name).is_absolute():
+                return json.dumps({"error": "filename must be a bare name, not a path"})
+            if not safe_name.lower().endswith(".pdf"):
+                safe_name += ".pdf"
+
+            target = (self.export_dir / safe_name).resolve()
+            if not target.is_relative_to(self.export_dir):
+                return json.dumps({"error": "Resolved path escapes export_dir sandbox"})
+
             drive = cast(Resource, self.drive_service)
             if drive is None:
                 return json.dumps({"error": "Drive service is not available"})
@@ -387,18 +407,18 @@ class GoogleDocsTools(GoogleToolkit):
             while not done:
                 _, done = downloader.next_chunk()
             data = buffer.getvalue()
-            with open(output_path, "wb") as f:
-                f.write(data)
-            return json.dumps({"output_path": output_path, "bytes_written": len(data)})
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            return json.dumps({"path": str(target), "bytes_written": len(data)})
         except HttpError as e:
             return json.dumps({"error": f"Google Drive API error: {e}"})
         except Exception as e:
             log_error(f"Could not export document {document_id} as PDF: {e}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def aexport_as_pdf(self, document_id: str, output_path: str) -> str:
-        """Export a Google Doc as a PDF and save it to a local path (async)."""
-        return await asyncio.to_thread(self.export_as_pdf, document_id=document_id, output_path=output_path)
+    async def aexport_as_pdf(self, document_id: str, filename: Optional[str] = None) -> str:
+        """Export a Google Doc as a PDF under export_dir sandbox (async)."""
+        return await asyncio.to_thread(self.export_as_pdf, document_id=document_id, filename=filename)
 
     @authenticate
     def delete_document(self, document_id: str) -> str:
