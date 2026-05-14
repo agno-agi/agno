@@ -6,3 +6,4 @@ openai
 rich
 sqlalchemy
 typer
+notion-client
