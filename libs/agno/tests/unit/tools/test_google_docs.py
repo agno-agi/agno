@@ -94,15 +94,17 @@ class TestInitialization:
     def test_default_destructive_off(self, mock_credentials):
         with patch("agno.tools.google.docs.authenticate", lambda func: func):
             t = GoogleDocsTools(creds=mock_credentials)
-        registered_names = {f.__name__ for f in t.tools if callable(f)}
-        # delete_document defaults to False
-        assert "delete_document" not in registered_names
-        assert "adelete_document" not in registered_names
+        sync_names = {f.__name__ for f in t.tools if callable(f)}
+        async_pair_names = {name for _, name in t._async_tools}
+        # delete_document defaults to False - should not register in either set
+        assert "delete_document" not in sync_names
+        assert "delete_document" not in async_pair_names
 
     def test_all_flag_registers_everything(self, mock_credentials):
         with patch("agno.tools.google.docs.authenticate", lambda func: func):
             t = GoogleDocsTools(creds=mock_credentials, all=True)
-        registered_names = {f.__name__ for f in t.tools if callable(f)}
+        sync_names = {f.__name__ for f in t.tools if callable(f)}
+        async_pair_names = {name for _, name in t._async_tools}
         for name in (
             "create_document",
             "get_document",
@@ -112,8 +114,8 @@ class TestInitialization:
             "export_as_pdf",
             "delete_document",
         ):
-            assert name in registered_names, f"Expected {name} in registered tools"
-            assert f"a{name}" in registered_names, f"Expected async a{name} in registered tools"
+            assert name in sync_names, f"Expected sync {name} in tools"
+            assert name in async_pair_names, f"Expected async pair for {name} in _async_tools"
 
 
 class TestCreateDocument:

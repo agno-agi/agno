@@ -43,7 +43,7 @@ import asyncio
 import io
 import json
 import textwrap
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 try:
     from google.oauth2.credentials import Credentials
@@ -115,20 +115,28 @@ class GoogleDocsTools(GoogleToolkit):
         **kwargs,
     ):
         tools: List[Any] = []
+        async_tools: List[Tuple[Any, str]] = []
         if all or create_document:
-            tools.extend([self.create_document, self.acreate_document])
+            tools.append(self.create_document)
+            async_tools.append((self.acreate_document, "create_document"))
         if all or get_document:
-            tools.extend([self.get_document, self.aget_document])
+            tools.append(self.get_document)
+            async_tools.append((self.aget_document, "get_document"))
         if all or get_document_text:
-            tools.extend([self.get_document_text, self.aget_document_text])
+            tools.append(self.get_document_text)
+            async_tools.append((self.aget_document_text, "get_document_text"))
         if all or batch_update:
-            tools.extend([self.batch_update, self.abatch_update])
+            tools.append(self.batch_update)
+            async_tools.append((self.abatch_update, "batch_update"))
         if all or append_text:
-            tools.extend([self.append_text, self.aappend_text])
+            tools.append(self.append_text)
+            async_tools.append((self.aappend_text, "append_text"))
         if all or export_as_pdf:
-            tools.extend([self.export_as_pdf, self.aexport_as_pdf])
+            tools.append(self.export_as_pdf)
+            async_tools.append((self.aexport_as_pdf, "export_as_pdf"))
         if all or delete_document:
-            tools.extend([self.delete_document, self.adelete_document])
+            tools.append(self.delete_document)
+            async_tools.append((self.adelete_document, "delete_document"))
 
         if instructions is None:
             instructions = DOCS_INSTRUCTIONS
@@ -136,6 +144,7 @@ class GoogleDocsTools(GoogleToolkit):
         super().__init__(
             name="google_docs_tools",
             tools=tools,
+            async_tools=async_tools,
             instructions=instructions,
             add_instructions=add_instructions,
             scopes=scopes,
