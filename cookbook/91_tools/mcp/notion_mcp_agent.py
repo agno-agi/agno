@@ -1,8 +1,9 @@
 """
-Notion MCP Agent - Manages your documents
+Notion MCP Agent - Manages your documents with conversation memory
 
 This example uses the official Notion MCP server (`@notionhq/notion-mcp-server`)
-over stdio with an integration token.
+over stdio with an integration token. The agent maintains conversation history
+across inputs using SQLite storage.
 
 Setup:
 1. Create an internal integration in Notion: https://www.notion.so/profile/integrations
@@ -21,6 +22,7 @@ import os
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.tools.mcp import MCPTools
 from mcp import StdioServerParameters
@@ -53,6 +55,9 @@ async def run_agent():
                 - Confirm with the user before making modifications.
             """),
             markdown=True,
+            db=SqliteDb(db_file="/tmp/notion_agent.db"),
+            add_history_to_context=True,
+            num_history_runs=5,
         )
 
         await agent.acli_app(
@@ -60,6 +65,7 @@ async def run_agent():
             stream=True,
             markdown=True,
             exit_on=["exit", "quit"],
+            session_id="notion-cli-session",
         )
 
 
