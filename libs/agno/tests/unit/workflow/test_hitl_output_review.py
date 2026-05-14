@@ -10,6 +10,7 @@ Unit tests for the 7 new HITL features:
 """
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock
 
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowRunOutput
@@ -821,3 +822,44 @@ class TestRouterOutputReviewAsync:
         run = session.runs[-1]
         assert run.status == RunStatus.completed
         assert "Deep result" in str(run.content)
+
+    async def test_acontinue_run_uses_async_cancellation_cleanup(self, monkeypatch):
+        """Async continue must await acleanup_run, not sync cleanup_run (e.g. async-only Redis manager)."""
+        import agno.workflow.workflow as wf_module
+
+        wf = _make_async_router_review_workflow("async_cleanup_acontinue")
+        run = await wf.arun("test", session_id="async_cleanup_acontinue")
+        assert run.is_paused
+        run.steps_requiring_output_review[0].confirm()
+
+        acleanup_mock = AsyncMock(return_value=None)
+        cleanup_sync_mock = MagicMock()
+        monkeypatch.setattr(wf_module, "acleanup_run", acleanup_mock)
+        monkeypatch.setattr(wf_module, "cleanup_run", cleanup_sync_mock)
+
+        run = await wf.acontinue_run(run)
+        assert run.status == RunStatus.completed
+        cleanup_sync_mock.assert_not_called()
+        acleanup_mock.assert_awaited()
+
+    async def test_acontinue_run_stream_uses_async_cancellation_cleanup(self, monkeypatch):
+        import agno.workflow.workflow as wf_module
+
+        wf = _make_async_router_review_workflow("async_cleanup_acontinue_stream")
+        async for _ in wf.arun("test", session_id="async_cleanup_acontinue_stream", stream=True, stream_events=True):
+            pass
+        session = wf.get_session(session_id="async_cleanup_acontinue_stream")
+        run = session.runs[-1]
+        assert run.is_paused
+        run.steps_requiring_output_review[0].confirm()
+
+        acleanup_mock = AsyncMock(return_value=None)
+        cleanup_sync_mock = MagicMock()
+        monkeypatch.setattr(wf_module, "acleanup_run", acleanup_mock)
+        monkeypatch.setattr(wf_module, "cleanup_run", cleanup_sync_mock)
+
+        async for _ in await wf.acontinue_run(run, stream=True, stream_events=True):
+            pass
+
+        cleanup_sync_mock.assert_not_called()
+        acleanup_mock.assert_awaited()
