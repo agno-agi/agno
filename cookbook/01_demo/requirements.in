@@ -1,0 +1,8 @@
+agno[os]
+anthropic
+fastapi[standard]
+mcp
+openai
+rich
+sqlalchemy
+typer
