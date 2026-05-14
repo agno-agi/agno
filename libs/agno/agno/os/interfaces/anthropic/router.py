@@ -47,34 +47,28 @@ def _resolve_session_id(request: Request, body_metadata: Optional[Dict[str, Any]
     return None
 
 
-def _runner_for(
-    agent: Optional[Union[Agent, RemoteAgent]],
-    team: Optional[Union[Team, RemoteTeam]],
-):
-    if agent is not None:
-        return agent
-    if team is not None:
-        return team
-    raise RuntimeError("AnthropicInterface requires an agent or a team")
+RunnerLike = Union[Agent, RemoteAgent, Team, RemoteTeam]
 
 
-def _resolved_model_id(
-    agent: Optional[Union[Agent, RemoteAgent]],
-    team: Optional[Union[Team, RemoteTeam]],
+def _resolve_runner(
+    runners: Dict[str, RunnerLike],
     requested_model: str,
     default_model: Optional[str],
-) -> str:
-    if requested_model:
-        return requested_model
-    if default_model:
-        return default_model
-    runner = _runner_for(agent, team)
-    model_obj = getattr(runner, "model", None)
-    if model_obj is not None:
-        model_id = getattr(model_obj, "id", None) or getattr(model_obj, "name", None)
-        if model_id:
-            return str(model_id)
-    return "agno-agent"
+) -> tuple[RunnerLike, str]:
+    """Look up the runner for a request.
+
+    Resolution order: exact match on `requested_model`, then `default_model`,
+    then the first registered runner. Returns (runner, resolved_model_id).
+    """
+    if not runners:
+        raise RuntimeError("AnthropicInterface has no runners registered")
+
+    if requested_model and requested_model in runners:
+        return runners[requested_model], requested_model
+    if default_model and default_model in runners:
+        return runners[default_model], default_model
+    first_id, first_runner = next(iter(runners.items()))
+    return first_runner, first_id
 
 
 def _estimate_tokens(text: str) -> int:
@@ -344,15 +338,15 @@ async def _agno_events_to_anthropic_sse(
 
 def attach_routes(
     router: APIRouter,
-    agent: Optional[Union[Agent, RemoteAgent]] = None,
-    team: Optional[Union[Team, RemoteTeam]] = None,
+    runners: Dict[str, RunnerLike],
+    display_names: Optional[Dict[str, str]] = None,
     api_key: Optional[str] = None,
     default_model: Optional[str] = None,
-    advertised_model_ids: Optional[List[str]] = None,
 ) -> APIRouter:
-    if agent is None and team is None:
-        raise ValueError("AnthropicInterface requires an agent or a team")
+    if not runners:
+        raise ValueError("AnthropicInterface requires at least one agent or team")
 
+    display_names = display_names or {}
     expected_key = resolve_api_key(api_key)
 
     @router.post("/v1/messages", name="anthropic_messages")
@@ -394,8 +388,7 @@ def attach_routes(
         session_id = _resolve_session_id(request, req.metadata)
         user_id = (req.metadata or {}).get("user_id") if req.metadata else None
 
-        runner = _runner_for(agent, team)
-        model_id = _resolved_model_id(agent, team, req.model, default_model)
+        runner, model_id = _resolve_runner(runners, req.model, default_model)
 
         if req.thinking:
             log_debug("Anthropic interface: 'thinking' request parameter is ignored; agent decides reasoning behavior.")
@@ -486,17 +479,15 @@ def attach_routes(
     async def list_models(request: Request) -> Response:
         verify_api_key(request, expected_key)
 
-        runner = _runner_for(agent, team)
-        runner_name = getattr(runner, "name", None) or getattr(runner, "agent_id", None) or "agent"
-        runner_id = getattr(runner, "agent_id", None) or getattr(runner, "team_id", None) or runner_name
         created_at = now_rfc3339()
-
-        ids = list(advertised_model_ids) if advertised_model_ids else []
-        if not ids:
-            # Claude Code's gateway discovery filters for ids starting with "claude" or "anthropic".
-            ids = [f"claude-agno-{runner_id}"]
-
-        models = [ModelInfo(id=mid, display_name=str(runner_name), created_at=created_at) for mid in ids]
+        models = [
+            ModelInfo(
+                id=model_id,
+                display_name=display_names.get(model_id, model_id),
+                created_at=created_at,
+            )
+            for model_id in runners
+        ]
         return JSONResponse(content=ModelsListResponse(data=models).model_dump())
 
     @router.get("/status")

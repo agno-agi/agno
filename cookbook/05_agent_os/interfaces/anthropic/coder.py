@@ -1,89 +1,112 @@
 """
-Coder
-=====
+Coder Agent
+============
 
-A mini clone of agno-agi/coda's Coder agent.
+Reads and edits code locally. Fetches read-only context from GitHub
+and the web when needed. Exposed via the Anthropic Messages API so
+Claude Code can use it as an upstream model.
 
-This agent writes, reads, and edits local files inside a sandboxed workspace
-directory (`tmp/coder_workspace/`). Sessions and history are persisted to a
-local SQLite database so the agent can resume across runs.
+Try it from Claude Code:
 
-The agent is exposed behind the Anthropic Messages API via `AnthropicInterface`,
-so the Anthropic Python SDK (or Claude Code with
-`ANTHROPIC_BASE_URL=http://localhost:9001`) can drive it.
-
-Try it with the Anthropic SDK:
-
-    import anthropic
-    client = anthropic.Anthropic(api_key="dev", base_url="http://localhost:9001")
-    msg = client.messages.create(
-        model="claude-agno-coder",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": "Create hello.py that prints Hello, Coder."}],
-    )
-    print(msg.content[0].text)
+    export ANTHROPIC_BASE_URL=http://localhost:9001/anthropic
+    export ANTHROPIC_AUTH_TOKEN=dev
+    export CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
+    claude
 """
 
 from pathlib import Path
 
-from agno.agent.agent import Agent
+from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIResponses
+from agno.learn import LearningMachine
+from agno.models.anthropic import Claude
 from agno.os import AgentOS
 from agno.os.interfaces.anthropic import AnthropicInterface
-from agno.tools.file import FileTools
+from agno.tools.coding import CodingTools
+from agno.tools.github import GithubTools
 from agno.tools.reasoning import ReasoningTools
+from agno.tools.websearch import WebSearchTools
 
 # ---------------------------------------------------------------------------
-# Workspace and Storage
+# Working Directory & Database
 # ---------------------------------------------------------------------------
+WORKING_DIR = Path(__file__).parent / "tmp" / "anthropicinterface"
+WORKING_DIR.mkdir(parents=True, exist_ok=True)
 
-WORKSPACE = Path("tmp/coder_workspace").resolve()
-WORKSPACE.mkdir(parents=True, exist_ok=True)
-
-db = SqliteDb(db_file="tmp/coder.db")
+db = SqliteDb(db_file="tmp/anthropic_coder.db")
 
 # ---------------------------------------------------------------------------
 # Instructions
 # ---------------------------------------------------------------------------
-
-instructions = f"""\
-You are Coder, a coding agent that writes, reads, and edits local files.
-
-## Workspace
-
-All your file operations are sandboxed to `{WORKSPACE}`. You cannot read or
-write outside this directory. Use relative paths.
+instructions = """\
+You are Coder, a local-first coding agent that reads and edits code on
+this machine.
 
 ## How You Work
 
-1. Read first. Always read before editing. Use list_files and search_content
-   to orient yourself.
-2. Edit surgically. Prefer replace_file_chunk over rewriting whole files.
-   Re-read on failure. After 3 edit failures, stop and explain.
-3. Verify. After saving a file, read it back to confirm the contents.
-4. Summarize at the end: what changed, which files, anything left to do.
+1. **Local first.** Your primary workspace is the local filesystem.
+   Read files, grep, and edit code directly. Run tests and scripts via
+   the shell tool.
+2. **Read before editing.** Always read a file before changing it.
+   Grep to orient.
+3. **Edit surgically.** Use exact text matching. Re-read on failure.
+   After 3 edit failures, stop and explain.
+4. **Verify.** Run tests after every change. No tests? Suggest them.
+5. **Use the web when stuck.** Reach for `WebSearchTools` to look up
+   docs, error messages, or APIs you don't recognize.
+
+## GitHub Usage
+
+GitHub access is read-only. Use it to fetch context — pull request
+diffs, issue descriptions, comments — not to ship work.
+
+- `get_pull_request`, `get_pull_requests`, `get_pull_request_changes`,
+  `get_pull_request_comments` to read PR context.
+- `get_issue`, `list_issues` to read issues.
+
+You do NOT create PRs, create issues, comment on issues, or push code.
+If the user wants those actions, tell them to do it themselves.
 
 ## Constraints
 
-- Never operate outside the workspace directory.
-- Never output secrets, API keys, tokens, or passwords.
-- If a request is ambiguous, ask one clarifying question before acting.
+- Never `rm -rf`, `sudo`, or `git reset --hard`.
+- Never push code, force-push, or rewrite history.
+- NEVER output .env contents, API keys, tokens, passwords, or secrets.
+
+## Communication
+
+- Summarize: what changed, tests passing, remaining work.
+- If blocked, explain what you tried and why it failed.\
 """
 
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
-
 coder = Agent(
     id="coder",
     name="Coder",
-    role="Write, read, and edit local files in a sandboxed workspace",
-    model=OpenAIResponses(id="gpt-5.4"),
+    role="Read and edit code locally; fetch read-only context from GitHub and the web",
+    model=Claude(id="claude-sonnet-4-6"),
     db=db,
+    debug_mode=True,
     instructions=instructions,
+    learning=LearningMachine(
+        user_memory=True,
+        session_context=True,
+    ),
     tools=[
-        FileTools(base_dir=WORKSPACE, all=True),
+        CodingTools(base_dir=WORKING_DIR, all=True, shell_timeout=120),
+        GithubTools(
+            include_tools=[
+                "get_pull_request",
+                "get_pull_requests",
+                "get_pull_request_changes",
+                "get_pull_request_comments",
+                "get_issue",
+                "list_issues",
+            ],
+        ),
+        WebSearchTools(),
         ReasoningTools(),
     ],
     add_datetime_to_context=True,
@@ -93,9 +116,10 @@ coder = Agent(
 )
 
 # ---------------------------------------------------------------------------
-# AgentOS
+# AgentOS + Anthropic Interface
 # ---------------------------------------------------------------------------
-
+# Set AGNO_ANTHROPIC_INTERFACE_API_KEY in your env to require a static API key
+# on every request. Omit it during development to leave the interface open.
 agent_os = AgentOS(
     agents=[coder],
     db=db,
@@ -107,6 +131,7 @@ app = agent_os.get_app()
 # ---------------------------------------------------------------------------
 # Run Example
 # ---------------------------------------------------------------------------
+
 
 if __name__ == "__main__":
     """Run your AgentOS.

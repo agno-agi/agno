@@ -12,7 +12,7 @@ agent as the upstream model.
 Try it with the Anthropic SDK:
 
     import anthropic
-    client = anthropic.Anthropic(api_key="dev", base_url="http://localhost:9001")
+    client = anthropic.Anthropic(api_key="dev", base_url="http://localhost:9001/anthropic")
     msg = client.messages.create(
         model="claude-agno-assistant",
         max_tokens=256,
