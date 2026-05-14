@@ -73,7 +73,8 @@ cookbook/07_knowledge/
 |   |-- 02_custom_chunking.py      Custom chunking strategy
 |   |-- 03_graph_rag.py            LightRAG integration
 |   |-- 04_knowledge_tools.py      Think/search/analyze tools
-|   +-- 05_knowledge_protocol.py   Custom KnowledgeProtocol
+|   |-- 05_knowledge_protocol.py   Custom KnowledgeProtocol
+|   +-- 06_semantic_cache.py       Semantic query cache for repeated retrieval
 |
 |-- 05_integrations/           Specific providers
 |   |-- readers/                   PDF, CSV, JSON, Web, etc.

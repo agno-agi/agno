@@ -17,6 +17,7 @@ Advanced knowledge patterns for power users and custom integrations.
 | [03_graph_rag.py](./03_graph_rag.py) | LightRAG knowledge graph integration |
 | [04_knowledge_tools.py](./04_knowledge_tools.py) | KnowledgeTools: think, search, analyze |
 | [05_knowledge_protocol.py](./05_knowledge_protocol.py) | Custom KnowledgeProtocol implementation |
+| [06_semantic_cache.py](./06_semantic_cache.py) | Semantic query cache for faster repeated retrieval |
 
 ## Running
 
