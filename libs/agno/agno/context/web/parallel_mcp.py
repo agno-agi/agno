@@ -23,12 +23,23 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from functools import wraps
 from os import getenv
 from typing import Any, Optional
 
 from agno.context.backend import ContextBackend
 from agno.context.provider import Status
+from agno.exceptions import StopAgentRun
 from agno.utils.log import log_info, log_warning
+
+# `agno/utils/mcp.py` formats every MCP tool failure — protocol errors
+# (402, 429, ...), timeouts, transport exceptions — with one of these
+# prefixes. Matching them deterministically catches *any* unhealthy call
+# without keyword whack-a-mole on the embedded message.
+_MCP_ERROR_PREFIXES = (
+    "Error from MCP tool",
+    "Error:",
+)
 
 _BASE_URL = "https://search.parallel.ai/mcp"
 _OAUTH_BASE_URL = "https://search.parallel.ai/mcp-oauth"
@@ -90,7 +101,7 @@ class ParallelMCPBackend(ContextBackend):
             headers=headers,
             timeout=timedelta(seconds=self.timeout_seconds),
         )
-        return MCPTools(
+        mcp_tools = MCPTools(
             server_params=server_params,
             transport="streamable-http",
             include_tools=self.include_tools,
@@ -98,6 +109,26 @@ class ParallelMCPBackend(ContextBackend):
             tool_name_prefix=self.tool_name_prefix,
             timeout_seconds=self.timeout_seconds,
         )
+        # The agent loop may initialize tools via either `_connect()` (our
+        # `asetup` path) or `initialize()` (the agent's own lazy path).
+        # Both flow through `build_tools()`, so wrap *that* to guarantee
+        # the guard installs no matter which entrypoint runs first.
+        self._wrap_build_tools(mcp_tools)
+        return mcp_tools
+
+    @staticmethod
+    def _wrap_build_tools(mcp_tools: Any) -> None:
+        """Wrap `MCPTools.build_tools` so the degraded-backend guard is
+        re-installed every time the tool list is built or refreshed."""
+        original_build_tools = mcp_tools.build_tools
+
+        @wraps(original_build_tools)
+        async def build_tools_with_guard(*args: Any, **kwargs: Any) -> Any:
+            result = await original_build_tools(*args, **kwargs)
+            ParallelMCPBackend._install_degraded_backend_guard(mcp_tools)
+            return result
+
+        mcp_tools.build_tools = build_tools_with_guard
 
     async def asetup(self) -> None:
         """Connect to the Parallel MCP server.
@@ -111,10 +142,40 @@ class ParallelMCPBackend(ContextBackend):
             return
         log_info(f"ParallelMCPBackend: connecting to {self.url} ({'keyed' if self.api_key else 'keyless'})")
         try:
+            # The guard is installed via `_wrap_build_tools` (called from
+            # `_build_tools`), so it's already wired in whether `_connect`
+            # or the agent loop's lazy `initialize()` runs first.
             await self._mcp_tools._connect()
         except Exception as exc:
             log_warning(f"ParallelMCPBackend setup failed — {type(exc).__name__}: {exc}.")
             self._mcp_tools = None
+
+    @staticmethod
+    def _install_degraded_backend_guard(mcp_tools: Any) -> None:
+        """Wrap each MCP function's entrypoint so *any* tool-call failure —
+        protocol error (402/429/...), timeout, transport exception — halts
+        the sub-agent at the tool boundary via `StopAgentRun`. Without this,
+        the LLM sees an opaque error string and either retries blindly or
+        improvises an answer from training data."""
+
+        for fn in mcp_tools.functions.values():
+            original = fn.entrypoint
+            if original is None or getattr(original, "_parallel_guard_installed", False):
+                continue
+
+            @wraps(original)
+            async def guarded(*args: Any, _original: Any = original, **kwargs: Any) -> Any:
+                result = await _original(*args, **kwargs)
+                content = getattr(result, "content", "") or ""
+                if isinstance(content, str) and content.startswith(_MCP_ERROR_PREFIXES):
+                    detail = content.strip()
+                    log_warning(f"ParallelMCPBackend: tool call failed — {detail[:200]}")
+                    message = f"Web backend unavailable: {detail}"
+                    raise StopAgentRun(message, agent_message=message)
+                return result
+
+            guarded._parallel_guard_installed = True  # type: ignore[attr-defined]
+            fn.entrypoint = guarded
 
     async def aclose(self) -> None:
         """Close the MCP session and clear the cached tool handle."""
