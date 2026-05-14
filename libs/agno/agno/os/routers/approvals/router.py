@@ -6,6 +6,7 @@ from typing import Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.approvals.schema import (
     ApprovalCountResponse,
     ApprovalResolve,
@@ -52,8 +53,6 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         a mismatch is reported as 404 (same shape as a missing approval) so the
         existence of other users' approvals is not leaked.
         """
-        from agno.os.middleware.user_scope import get_scoped_user_id
-
         approval = await _db_call("get_approval", approval_id)
         if approval is None:
             raise HTTPException(status_code=404, detail="Approval not found")
@@ -83,12 +82,10 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         page: int = Query(1, ge=1),
         _: bool = Depends(auth_dependency),
     ) -> PaginatedResponse[ApprovalResponse]:
-        # Enforce user_id from JWT if present (admins bypass — see all)
-        from agno.os.middleware.user_scope import get_scoped_user_id
-
-        scoped_user_id = get_scoped_user_id(request)
-        if scoped_user_id:
-            user_id = scoped_user_id
+        # When user_isolation is on and the caller is a non-admin, force the
+        # JWT sub. Admins / unauthenticated / isolation-off paths fall through
+        # to the original query-param ``user_id``.
+        user_id = get_scoped_user_id(request) or user_id
 
         approvals, total_count = await _db_call(
             "get_approvals",
@@ -122,13 +119,8 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         user_id: Optional[str] = Query(None),
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, int]:
-        # Enforce user_id from JWT if present (admins bypass — see all)
-        from agno.os.middleware.user_scope import get_scoped_user_id
-
-        scoped_user_id = get_scoped_user_id(request)
-        if scoped_user_id:
-            user_id = scoped_user_id
-
+        # Non-admin scoped callers only see their own pending count.
+        user_id = get_scoped_user_id(request) or user_id
         count = await _db_call("get_pending_approval_count", user_id=user_id)
         return {"count": count}
 
@@ -167,10 +159,12 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         await _load_approval_for_user(approval_id, request)
 
         now = int(time.time())
-        # Use JWT user_id as resolved_by when available (prevents spoofing)
+        # Audit trail: ``resolved_by`` records the human who clicked resolve,
+        # so we always prefer the authenticated JWT sub over a body-supplied
+        # value (which a client could spoof).
         resolved_by = body.resolved_by
         jwt_user_id = getattr(request.state, "user_id", None)
-        if jwt_user_id:
+        if jwt_user_id is not None:
             resolved_by = jwt_user_id
 
         update_kwargs: Dict[str, Any] = {
