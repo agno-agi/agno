@@ -1,16 +1,14 @@
 import json
 import os
 from hashlib import md5
-from typing import Any, Dict, FrozenSet, Final, List, Optional
+from typing import Any, Dict, Final, FrozenSet, List, Optional
 
 try:
     from topk_sdk import AsyncClient, Client
     from topk_sdk import schema as topk_schema
     from topk_sdk.data import f32_vector
-    from topk_sdk.query import LogicalExpr, Query
+    from topk_sdk.query import LogicalExpr, Query, field, filter, fn, match_tokens, select
     from topk_sdk.query import all as topk_all
-    from topk_sdk.query import field
-    from topk_sdk.query import filter, fn, match_tokens, select
     from topk_sdk.schema import FieldSpec
 except ImportError:
     raise ImportError("topk_sdk not installed. Run: pip install topk_sdk")
@@ -22,12 +20,15 @@ from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
+
 class TopK(VectorDb):
     AGNO_DOCUMENT_FIELDS: Final[tuple] = ("name", "content", "content_id", "content_hash", "usage")
     TOPK_DOCUMENT_ID_FIELD: Final[str] = "_id"
     TOPK_DOCUMENT_EMBEDDING_FIELD: Final[str] = "embedding"
     TOPK_DOCUMENT_SCORE_FIELD: Final[str] = "score"
-    SYSTEM_FIELDS: Final[FrozenSet[str]] = frozenset({TOPK_DOCUMENT_ID_FIELD, *AGNO_DOCUMENT_FIELDS, TOPK_DOCUMENT_EMBEDDING_FIELD, TOPK_DOCUMENT_SCORE_FIELD})
+    SYSTEM_FIELDS: Final[FrozenSet[str]] = frozenset(
+        {TOPK_DOCUMENT_ID_FIELD, *AGNO_DOCUMENT_FIELDS, TOPK_DOCUMENT_EMBEDDING_FIELD, TOPK_DOCUMENT_SCORE_FIELD}
+    )
 
     def __init__(
         self,
@@ -141,9 +142,10 @@ class TopK(VectorDb):
 
     def _topk_doc_to_document(self, record: Dict[str, Any]) -> Document:
         meta_data = {k: v for k, v in record.items() if k not in self.SYSTEM_FIELDS}
+        content = record.get("content")
 
         return Document(
-            content=record.get("content"),
+            content=content if isinstance(content, str) else "",
             id=record.get(self.TOPK_DOCUMENT_ID_FIELD),
             name=record.get("name"),
             meta_data=meta_data,
@@ -182,7 +184,9 @@ class TopK(VectorDb):
             q = select(*select_fields, score=fn.vector_distance("embedding", query_embedding))
             if filter_expr is not None:
                 q = q.filter(filter_expr)
-            return q.sort(field("score").boost(field("content").match_any(query_text), 0.5), asc=vector_asc).limit(limit)
+            return q.sort(field("score").boost(field("content").match_any(query_text), 0.5), asc=vector_asc).limit(
+                limit
+            )
         else:
             q = select(*select_fields, score=fn.vector_distance("embedding", query_embedding))
             if filter_expr is not None:
@@ -253,9 +257,7 @@ class TopK(VectorDb):
             True if a matching document exists, False otherwise.
         """
         try:
-            results = self.client.collection(self.collection).query(
-                filter(field("name") == name).limit(1)
-            )
+            results = self.client.collection(self.collection).query(filter(field("name") == name).limit(1))
             return len(results) > 0
         except Exception as e:
             log_error(f"Error in name_exists: {e}")
@@ -271,9 +273,7 @@ class TopK(VectorDb):
             True if a matching document exists, False otherwise.
         """
         try:
-            results = await self.async_client.collection(self.collection).query(
-                filter(field("name") == name).limit(1)
-            )
+            results = await self.async_client.collection(self.collection).query(filter(field("name") == name).limit(1))
             return len(results) > 0
         except Exception as e:
             log_error(f"Error in async_name_exists: {e}")

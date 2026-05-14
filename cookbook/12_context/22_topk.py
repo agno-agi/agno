@@ -24,7 +24,6 @@ import os
 import urllib.request
 
 import topk_sdk
-
 from agno.agent import Agent
 from agno.context.topk import TopKContextProvider, TopKProgressEvent
 from agno.models.openai import OpenAIResponses
@@ -85,7 +84,9 @@ async def main() -> None:
         markdown=True,
     )
 
-    prompt = "What Thai recipes are available? Give me a few with their key ingredients."
+    prompt = (
+        "What Thai recipes are available? Give me a few with their key ingredients."
+    )
     print(f"> {prompt}\n")
 
     async for event in agent.arun(prompt, stream=True):
