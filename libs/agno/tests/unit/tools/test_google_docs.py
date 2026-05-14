@@ -65,23 +65,20 @@ def mock_drive_service():
 
 @pytest.fixture
 def tools(mock_credentials, mock_docs_service, mock_drive_service):
-    """Bypass the auth decorator and inject mocked docs+drive services."""
-    with patch("agno.tools.google.docs.authenticate", lambda func: func):
-        with patch("agno.tools.google.docs.build") as mock_build:
-
-            def side_effect(api_name, _api_version, credentials=None):
-                if api_name == "docs":
-                    return mock_docs_service
-                if api_name == "drive":
-                    return mock_drive_service
-                return MagicMock()
-
-            mock_build.side_effect = side_effect
-            toolkit = GoogleDocsTools(creds=mock_credentials)
-            # Inject the dict service that the decorator would normally set via contextvar
-            toolkit._service_for_test = {"docs": mock_docs_service, "drive": mock_drive_service}
-            type(toolkit).service = property(lambda self: self._service_for_test)
-            yield toolkit
+    """Mirror test_google_drive.py — patch the contextvar reader so the
+    `service` property returns the mocked dict for the duration of the test.
+    All patches auto-restore on teardown."""
+    mock_service_dict = {"docs": mock_docs_service, "drive": mock_drive_service}
+    with (
+        patch(
+            "agno.tools.google.base.get_current_service",
+            return_value=mock_service_dict,
+        ),
+        patch.object(GoogleDocsTools, "_resolve_creds", return_value=mock_credentials),
+        patch.object(GoogleDocsTools, "_build_service", return_value=mock_service_dict),
+    ):
+        toolkit = GoogleDocsTools(creds=mock_credentials)
+        yield toolkit
 
 
 class TestInitialization:
