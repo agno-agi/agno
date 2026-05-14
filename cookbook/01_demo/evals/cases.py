@@ -18,6 +18,7 @@ from typing import Union
 from agents.code_search import code_search
 from agents.git_wiki import git_wiki
 from agents.local_wiki import local_wiki
+from agents.notion_wiki import notion_wiki
 from agents.researcher import researcher
 from agents.web_search import web_search
 from agno.agent import Agent
@@ -76,7 +77,7 @@ _BASE_CASES: tuple[Case, ...] = (
         input="Which agents are registered in this AgentOS demo (cookbook/01_demo)?",
         criteria=(
             "Identifies the demo agents (local-wiki, web-search, code-search, researcher; "
-            "git-wiki when env-gated). May reference cookbook/01_demo/run.py as the source."
+            "git-wiki and notion-wiki when env-gated). May reference cookbook/01_demo/run.py as the source."
         ),
         expected_tool_calls=("query_codebase",),
     ),
@@ -135,4 +136,23 @@ _GIT_WIKI_CASES: tuple[Case, ...] = (
 )
 
 
-CASES: tuple[Case, ...] = _BASE_CASES + _GIT_WIKI_CASES
+# NotionWiki case is only included when the agent is registered.
+_NOTION_WIKI_CASES: tuple[Case, ...] = (
+    (
+        Case(
+            name="notion_wiki_reports_state_honestly",
+            agent=notion_wiki,
+            input="What does the wiki say about onboarding?",
+            criteria=(
+                "Either quotes an onboarding page from the wiki, or honestly says the "
+                "wiki does not have one. Does NOT fabricate content."
+            ),
+            expected_tool_calls=("query_notion_wiki",),
+        ),
+    )
+    if notion_wiki is not None
+    else ()
+)
+
+
+CASES: tuple[Case, ...] = _BASE_CASES + _GIT_WIKI_CASES + _NOTION_WIKI_CASES

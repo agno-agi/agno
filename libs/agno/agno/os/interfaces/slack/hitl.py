@@ -257,8 +257,13 @@ class HITLHandler:
         await self.freeze_form(ctx, original_blocks, requirements)
 
         stream = await open_chat_stream(
-            self._client(), ctx.channel, ctx.thread_ts, ctx.user_id, ctx.team_id,
-            self.task_display_mode, self.buffer_size,
+            self._client(),
+            ctx.channel,
+            ctx.thread_ts,
+            ctx.user_id,
+            ctx.team_id,
+            self.task_display_mode,
+            self.buffer_size,
         )
 
         await self.post_denial_cards(stream, decisions, requirements, ctx.run_id)

@@ -11,6 +11,11 @@ chat:
       - "What do you know about agno"
       - "What's in the wiki?"
 
+    notion-wiki:
+      - "Add https://docs.agno.com/ to the wiki"
+      - "What do you know about agno"
+      - "What's in the wiki?"
+
     web-search:
       - "What's the latest stable release of CPython? Cite the source."
       - "Summarize Anthropic's most recent agent research."
