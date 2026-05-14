@@ -265,3 +265,100 @@ class TestApprovalsRouterUserIdThreading:
         app = _build_approvals_app(approvals_db, isolation=True)
         TestClient(app).get("/approvals/a-1")
         approvals_db.get_approval.assert_called_once_with("a-1")
+
+
+class TestApprovalsAdminOnlyResolve:
+    """Resolve / delete are admin-only under ``user_isolation=True``.
+
+    The approval row's ``user_id`` is the *requester*, not the approver, so
+    a non-admin scoped caller cannot resolve or delete approvals — including
+    their own. Admins, unscoped callers, and callers with isolation off keep
+    the legacy "anyone with JWT can resolve" behaviour.
+    """
+
+    def _resolve_payload(self):
+        return {"status": "approved"}
+
+    # --- non-admin under isolation: 403 even on own row ---------------
+
+    def test_resolve_forbidden_for_non_admin_under_isolation(self, approvals_db, no_security_key):
+        # The row belongs to the caller, but self-resolve is still blocked.
+        approvals_db.get_approval.return_value = {
+            "approval_id": "a-1",
+            "user_id": "jwt_alice",
+            "status": "pending",
+        }
+        app = _build_approvals_app(approvals_db, isolation=True)
+        resp = TestClient(app).post("/approvals/a-1/resolve", json=self._resolve_payload())
+        assert resp.status_code == 403
+        # Make sure we short-circuited before the DB update.
+        approvals_db.update_approval.assert_not_called()
+
+    def test_delete_forbidden_for_non_admin_under_isolation(self, approvals_db, no_security_key):
+        approvals_db.get_approval.return_value = {
+            "approval_id": "a-1",
+            "user_id": "jwt_alice",
+            "status": "pending",
+        }
+        app = _build_approvals_app(approvals_db, isolation=True)
+        resp = TestClient(app).delete("/approvals/a-1")
+        assert resp.status_code == 403
+        approvals_db.delete_approval.assert_not_called()
+
+    # --- isolation OFF: legacy behaviour preserved --------------------
+
+    def test_resolve_allowed_when_isolation_off(self, approvals_db, no_security_key):
+        approvals_db.get_approval.return_value = {
+            "approval_id": "a-1",
+            "user_id": "jwt_alice",
+            "status": "pending",
+        }
+        approvals_db.update_approval.return_value = {
+            "approval_id": "a-1",
+            "user_id": "jwt_alice",
+            "status": "approved",
+            "id": "row-1",
+            "run_id": "run-1",
+            "session_id": "sess-1",
+            "source_type": "agent",
+        }
+        app = _build_approvals_app(approvals_db, isolation=False)
+        resp = TestClient(app).post("/approvals/a-1/resolve", json=self._resolve_payload())
+        assert resp.status_code == 200
+        approvals_db.update_approval.assert_called_once()
+
+    # --- admin: allowed -----------------------------------------------
+
+    def test_resolve_allowed_for_admin(self, approvals_db, no_security_key):
+        """An admin token (``agent_os:admin`` in scopes) bypasses the gate."""
+        from starlette.middleware.base import BaseHTTPMiddleware
+        from fastapi import FastAPI
+        from agno.os.routers.approvals.router import get_approval_router
+
+        class _AdminMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request, call_next):
+                request.state.user_id = "admin-user"
+                request.state.scopes = ["agent_os:admin"]
+                request.state.user_isolation_enabled = True
+                return await call_next(request)
+
+        approvals_db.get_approval.return_value = {
+            "approval_id": "a-1",
+            "user_id": "someone-else",
+            "status": "pending",
+        }
+        approvals_db.update_approval.return_value = {
+            "approval_id": "a-1",
+            "user_id": "someone-else",
+            "status": "approved",
+            "id": "row-1",
+            "run_id": "run-1",
+            "session_id": "sess-1",
+            "source_type": "agent",
+        }
+        app = FastAPI()
+        app.include_router(get_approval_router(approvals_db, AgnoAPISettings()))
+        app.add_middleware(_AdminMiddleware)
+        resp = TestClient(app).post("/approvals/a-1/resolve", json=self._resolve_payload())
+        assert resp.status_code == 200
+        approvals_db.update_approval.assert_called_once()
