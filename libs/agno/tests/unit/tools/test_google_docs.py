@@ -59,7 +59,7 @@ def mock_docs_service():
 def mock_drive_service():
     service = MagicMock()
     files = service.files.return_value
-    files.delete.return_value.execute.return_value = {}
+    files.update.return_value.execute.return_value = {"id": "doc-id-123", "trashed": True}
     return service
 
 
@@ -198,11 +198,13 @@ class TestExportAsPdf:
 
 
 class TestDeleteDocument:
-    def test_calls_drive_delete(self, tools, mock_drive_service):
+    def test_calls_drive_update_with_trashed_true(self, tools, mock_drive_service):
         result = json.loads(tools.delete_document(document_id="doc-id-123"))
-        assert result["status"] == "deleted"
+        assert result["status"] == "trashed"
         assert result["documentId"] == "doc-id-123"
-        mock_drive_service.files().delete.assert_called_with(fileId="doc-id-123")
+        mock_drive_service.files().update.assert_called_with(
+            fileId="doc-id-123", body={"trashed": True}
+        )
 
 
 class TestAsyncVariants:

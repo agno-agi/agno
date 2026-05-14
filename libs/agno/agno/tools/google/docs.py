@@ -405,11 +405,12 @@ class GoogleDocsTools(GoogleToolkit):
         """
         Move a Google Doc to the Drive trash.
 
-        This action is destructive and is disabled by default; enable via the
-        `delete_document=True` constructor flag.
+        Uses ``drive.files().update(body={"trashed": True})`` — the document is
+        recoverable from the Drive trash for 30 days. This action is destructive
+        and is disabled by default; enable via ``delete_document=True``.
 
         Args:
-            document_id (str): The ID of the document to delete.
+            document_id (str): The ID of the document to trash.
 
         Returns:
             str: JSON string with documentId and status, or error message.
@@ -418,12 +419,12 @@ class GoogleDocsTools(GoogleToolkit):
             drive = cast(Resource, self.drive_service)
             if drive is None:
                 return json.dumps({"error": "Drive service is not available"})
-            drive.files().delete(fileId=document_id).execute()
-            return json.dumps({"documentId": document_id, "status": "deleted"})
+            drive.files().update(fileId=document_id, body={"trashed": True}).execute()
+            return json.dumps({"documentId": document_id, "status": "trashed"})
         except HttpError as e:
             return json.dumps({"error": f"Google Drive API error: {e}"})
         except Exception as e:
-            log_error(f"Could not delete document {document_id}: {e}")
+            log_error(f"Could not trash document {document_id}: {e}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     async def adelete_document(self, document_id: str) -> str:
