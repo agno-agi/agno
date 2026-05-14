@@ -162,6 +162,7 @@ mysql = ["pymysql", "asyncmy"]
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
+gemini = ["google-genai"]
 lancedb = ["lancedb>=0.26.0", "tantivy"]
 pylance = ["pylance"]
 qdrant = ["qdrant-client"]
@@ -303,6 +304,7 @@ storage = [
 vectordbs = [
   "agno[pgvector]",
   "agno[chromadb]",
+  "agno[gemini]",
   "agno[lancedb]",
   "agno[qdrant]",
   "agno[couchbase]",
