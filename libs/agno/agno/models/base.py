@@ -2155,6 +2155,8 @@ class Model(ABC):
         function_call_output: str = ""
 
         if isinstance(function_execution_result.result, (GeneratorType, collections.abc.Iterator)):
+            _has_event_content = False
+            _non_event_output = ""
             try:
                 for item in function_execution_result.result:
                     # This function yields agent/team/workflow run events
@@ -2170,6 +2172,7 @@ class Model(ABC):
                             else:
                                 # Capture output
                                 function_call_output += item.content or ""
+                            _has_event_content = True
 
                             if function_call.function.show_result and item.content is not None:
                                 yield ModelResponse(content=item.content)
@@ -2193,6 +2196,7 @@ class Model(ABC):
 
                     else:
                         function_call_output += str(item)
+                        _non_event_output += str(item)
                         if function_call.function.show_result and item is not None:
                             yield ModelResponse(content=str(item))
             except Exception as e:
@@ -2201,6 +2205,11 @@ class Model(ABC):
                 )
                 function_call.error = str(e)
                 function_call_success = False
+
+            # If we received both event content and non-event content, prefer the non-event output
+            # (clean final content from delegate_task_to_member) over accumulated streaming tokens
+            if _has_event_content and _non_event_output:
+                function_call_output = _non_event_output
 
             # For generators, re-capture updated_session_state after consumption
             # since session_state modifications were made during iteration
@@ -2685,6 +2694,8 @@ class Model(ABC):
         async def process_async_generator(result, generator_id):
             function_call_success, function_call_timer, function_call, function_execution_result = result
             function_call_output = ""
+            _has_event_content = False
+            _non_event_output = ""
 
             try:
                 async for item in function_call.result:
@@ -2702,6 +2713,7 @@ class Model(ABC):
                             else:
                                 # Capture output
                                 function_call_output += item.content or ""
+                            _has_event_content = True
 
                             if function_call.function.show_result and item.content is not None:
                                 await event_queue.put(ModelResponse(content=item.content))
@@ -2727,8 +2739,13 @@ class Model(ABC):
                     # Yield custom events emitted by the tool
                     else:
                         function_call_output += str(item)
+                        _non_event_output += str(item)
                         if function_call.function.show_result and item is not None:
                             await event_queue.put(ModelResponse(content=str(item)))
+
+                # If we received both event content and non-event content, prefer the non-event output
+                if _has_event_content and _non_event_output:
+                    function_call_output = _non_event_output
 
                 # Store the final output for this generator
                 async_generator_outputs[generator_id] = (result, function_call_output, None)
@@ -2818,6 +2835,8 @@ class Model(ABC):
                 function_call_output = async_function_call_output
                 # Events from async generators were already yielded in real-time above
             elif isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
+                _has_event_content = False
+                _non_event_output = ""
                 try:
                     for item in function_call.result:
                         # This function yields agent/team/workflow run events
@@ -2834,6 +2853,7 @@ class Model(ABC):
                                 else:
                                     # Capture output
                                     function_call_output += item.content or ""
+                                _has_event_content = True
 
                                 if function_call.function.show_result and item.content is not None:
                                     yield ModelResponse(content=item.content)
@@ -2847,6 +2867,7 @@ class Model(ABC):
                             yield item
                         else:
                             function_call_output += str(item)
+                            _non_event_output += str(item)
                             if function_call.function.show_result and item is not None:
                                 yield ModelResponse(content=str(item))
                 except Exception as e:
@@ -2855,6 +2876,10 @@ class Model(ABC):
                     )
                     function_call.error = str(e)
                     function_call_success = False
+
+                # If we received both event content and non-event content, prefer the non-event output
+                if _has_event_content and _non_event_output:
+                    function_call_output = _non_event_output
 
             # For generators (sync or async), re-capture updated_session_state after consumption
             # since session_state modifications were made during iteration

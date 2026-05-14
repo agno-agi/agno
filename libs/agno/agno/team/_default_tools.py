@@ -598,6 +598,20 @@ def _get_delegate_task_function(
                     member_agent_run_output_event.parent_run_id or run_response.run_id
                 )
                 yield member_agent_run_output_event  # type: ignore
+
+            # After the streaming loop, yield the clean final content
+            if member_agent_run_response is not None and not member_agent_run_response.is_paused:
+                try:
+                    if isinstance(member_agent_run_response.content, str):
+                        content = member_agent_run_response.content.strip()
+                        if len(content) > 0:
+                            yield content
+                    elif issubclass(type(member_agent_run_response.content), BaseModel):
+                        yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore[union-attr]
+                    elif member_agent_run_response.content is not None:
+                        yield json.dumps(member_agent_run_response.content, indent=2)
+                except Exception:
+                    pass
         else:
             member_agent_run_response = member_agent.run(  # type: ignore
                 input=member_agent_task if not history else history,  # type: ignore
@@ -657,8 +671,6 @@ def _get_delegate_task_function(
                 elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
                     yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
                 else:
-                    import json
-
                     yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
             except Exception as e:
                 yield str(e)
@@ -738,6 +750,20 @@ def _get_delegate_task_function(
                     member_agent_run_response_event, "parent_run_id", None
                 ) or (run_response.run_id if run_response is not None else None)
                 yield member_agent_run_response_event  # type: ignore
+
+            # After the streaming loop, yield the clean final content
+            if member_agent_run_response is not None and not member_agent_run_response.is_paused:
+                try:
+                    if isinstance(member_agent_run_response.content, str):
+                        content = member_agent_run_response.content.strip()
+                        if len(content) > 0:
+                            yield content
+                    elif issubclass(type(member_agent_run_response.content), BaseModel):
+                        yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore[union-attr]
+                    elif member_agent_run_response.content is not None:
+                        yield json.dumps(member_agent_run_response.content, indent=2)
+                except Exception:
+                    pass
         else:
             member_agent_run_response = await member_agent.arun(  # type: ignore
                 input=member_agent_task if not history else history,
@@ -793,8 +819,6 @@ def _get_delegate_task_function(
                 elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
                     yield member_agent_run_response.content.model_dump_json(indent=2)  # type: ignore
                 else:
-                    import json
-
                     yield json.dumps(member_agent_run_response.content, indent=2)  # type: ignore
             except Exception as e:
                 yield str(e)
@@ -868,6 +892,20 @@ def _get_delegate_task_function(
                     )
                     yield member_agent_run_response_chunk  # type: ignore
 
+                # After the streaming loop, yield the clean final content
+                if member_agent_run_response is not None and not member_agent_run_response.is_paused:
+                    try:
+                        if isinstance(member_agent_run_response.content, str):
+                            content = member_agent_run_response.content.strip()
+                            if len(content) > 0:
+                                yield f"Agent {member_agent.name}: {content}"
+                        elif issubclass(type(member_agent_run_response.content), BaseModel):
+                            yield f"Agent {member_agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore[union-attr]
+                        elif member_agent_run_response.content is not None:
+                            yield f"Agent {member_agent.name}: {json.dumps(member_agent_run_response.content, indent=2)}"
+                    except Exception:
+                        pass
+
             else:
                 member_agent_run_response = member_agent.run(  # type: ignore
                     input=member_agent_task if not history else history,
@@ -921,8 +959,6 @@ def _get_delegate_task_function(
                     elif issubclass(type(member_agent_run_response.content), BaseModel):  # type: ignore
                         yield f"Agent {member_agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
                     else:
-                        import json
-
                         yield f"Agent {member_agent.name}: {json.dumps(member_agent_run_response.content, indent=2)}"  # type: ignore
                 except Exception as e:
                     yield f"Agent {member_agent.name}: Error - {str(e)}"
@@ -996,6 +1032,24 @@ def _get_delegate_task_function(
                                 or (run_response.run_id if run_response is not None else None)
                             )
                             await queue.put(member_agent_run_output_event)
+
+                        # After the streaming loop, queue the clean final content
+                        if member_agent_run_response is not None and not member_agent_run_response.is_paused:
+                            try:
+                                if isinstance(member_agent_run_response.content, str):
+                                    _content = member_agent_run_response.content.strip()
+                                    if len(_content) > 0:
+                                        await queue.put(f"Agent {agent.name}: {_content}")
+                                elif issubclass(type(member_agent_run_response.content), BaseModel):
+                                    await queue.put(
+                                        f"Agent {agent.name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore[union-attr]
+                                    )
+                                elif member_agent_run_response.content is not None:
+                                    await queue.put(
+                                        f"Agent {agent.name}: {json.dumps(member_agent_run_response.content, indent=2)}"
+                                    )
+                            except Exception:
+                                pass
                     finally:
                         # Check if the member run is paused (HITL)
                         if member_agent_run_response is not None and member_agent_run_response.is_paused:
