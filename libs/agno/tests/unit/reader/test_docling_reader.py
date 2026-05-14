@@ -410,3 +410,9 @@ async def test_async_read_url_inherits_host_check(mock_converter):
     documents = await reader.async_read("http://127.0.0.1/x")
     assert documents == []
     mock_converter.convert.assert_not_called()
+
+
+def test_allowed_hosts_rejects_str_input():
+    """Passing a single string (instead of a list) must raise error."""
+    with pytest.raises(TypeError, match="must be a list"):
+        DoclingReader(allowed_hosts="docs.agno.com")

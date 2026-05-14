@@ -11,7 +11,7 @@ from agno.knowledge.chunking.semantic import SemanticChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
-from agno.knowledge.reader.utils.url_validation import is_host_allowed
+from agno.knowledge.reader.utils.url_validation import is_host_allowed, validate_allowed_hosts
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error, log_warning, logger
 
@@ -47,7 +47,7 @@ class WebSearchReader(Reader):
     exponential_backoff: bool = True
 
     # Optional hostname allowlist. When set, only URLs whose host is in the list are fetched.
-    # When None (default), all hosts are allowed (backwards compatible).
+    # When None (default), all hosts are allowed.
     allowed_hosts: Optional[List[str]] = None
 
     # Internal state
@@ -61,8 +61,7 @@ class WebSearchReader(Reader):
         """Initialize chunking strategy with proper chunk_size"""
         if self.chunking_strategy is None:
             self.chunking_strategy = SemanticChunking(chunk_size=self.chunk_size)
-        if self.allowed_hosts is not None:
-            self.allowed_hosts = [host.lower() for host in self.allowed_hosts]
+        self.allowed_hosts = validate_allowed_hosts(self.allowed_hosts)
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:

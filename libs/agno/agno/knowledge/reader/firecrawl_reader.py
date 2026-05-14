@@ -6,7 +6,7 @@ from agno.knowledge.chunking.semantic import SemanticChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
-from agno.knowledge.reader.utils.url_validation import is_host_allowed
+from agno.knowledge.reader.utils.url_validation import is_host_allowed, validate_allowed_hosts
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, logger
 
@@ -46,9 +46,7 @@ class FirecrawlReader(Reader):
         self.api_key = api_key
         self.params = params
         self.mode = mode
-        self.allowed_hosts: Optional[List[str]] = (
-            [host.lower() for host in allowed_hosts] if allowed_hosts is not None else None
-        )
+        self.allowed_hosts: Optional[List[str]] = validate_allowed_hosts(allowed_hosts)
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:

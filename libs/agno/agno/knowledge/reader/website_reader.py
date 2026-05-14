@@ -2,7 +2,7 @@ import asyncio
 import random
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -11,7 +11,12 @@ from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
-from agno.knowledge.reader.utils.url_validation import is_host_allowed
+from agno.knowledge.reader.utils.url_validation import (
+    is_host_allowed,
+    make_async_redirect_guard,
+    make_redirect_guard,
+    validate_allowed_hosts,
+)
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -49,9 +54,7 @@ class WebsiteReader(Reader):
         self.max_links = max_links
         self.proxy = proxy
         self.timeout = timeout
-        self.allowed_hosts: Optional[List[str]] = (
-            [host.lower() for host in allowed_hosts] if allowed_hosts is not None else None
-        )
+        self.allowed_hosts: Optional[List[str]] = validate_allowed_hosts(allowed_hosts)
 
         self._visited = set()
         self._urls_to_crawl = []
@@ -173,6 +176,10 @@ class WebsiteReader(Reader):
         crawler_result: Dict[str, str] = {}
         primary_domain = self._get_primary_domain(url)
 
+        if not is_host_allowed(url, self.allowed_hosts):
+            log_debug(f"Start URL host not in allowed_hosts, refusing to crawl: {url}")
+            return {}
+
         # Clear state so URLs from previous crawls aren't incorrectly skipped (matches async_crawl)
         self._visited = set()
         self._urls_to_crawl = [(url, starting_depth)]
@@ -203,14 +210,17 @@ class WebsiteReader(Reader):
             try:
                 log_debug(f"Crawling: {current_url}")
 
-                # Disable redirect-following when an allowlist is set so a permitted host
-                # can't 3xx-bounce the request to an internal target.
-                follow_redirects = self.allowed_hosts is None
-                response = (
-                    httpx.get(current_url, timeout=self.timeout, proxy=self.proxy, follow_redirects=follow_redirects)
-                    if self.proxy
-                    else httpx.get(current_url, timeout=self.timeout, follow_redirects=follow_redirects)
-                )
+                # Validate each redirect target against allowed_hosts so legitimate
+                # same-host redirects still work, while a permitted host can't 3xx
+                # the request to an internal target.
+                guard = make_redirect_guard(self.allowed_hosts)
+                client_kwargs: Dict[str, Any] = {"timeout": self.timeout}
+                if self.proxy:
+                    client_kwargs["proxy"] = self.proxy
+                if guard is not None:
+                    client_kwargs["event_hooks"] = {"request": [guard]}
+                with httpx.Client(**client_kwargs) as client:
+                    response = client.get(current_url, follow_redirects=True)
                 response.raise_for_status()
 
                 soup = BeautifulSoup(response.content, "html.parser")
@@ -293,12 +303,19 @@ class WebsiteReader(Reader):
         crawler_result: Dict[str, str] = {}
         primary_domain = self._get_primary_domain(url)
 
+        if not is_host_allowed(url, self.allowed_hosts):
+            log_debug(f"Start URL host not in allowed_hosts, refusing to crawl: {url}")
+            return {}
+
         # Clear previously visited URLs and URLs to crawl
         self._visited = set()
         self._urls_to_crawl = [(url, starting_depth)]
 
-        client_args = {"proxy": self.proxy} if self.proxy else {}
-        async with httpx.AsyncClient(**client_args) as client:  # type: ignore
+        client_args: Dict[str, Any] = {"proxy": self.proxy} if self.proxy else {}
+        guard = make_async_redirect_guard(self.allowed_hosts)
+        if guard is not None:
+            client_args["event_hooks"] = {"request": [guard]}
+        async with httpx.AsyncClient(**client_args) as client:
             while self._urls_to_crawl and num_links < self.max_links:
                 current_url, current_depth = self._urls_to_crawl.pop(0)
 
@@ -318,8 +335,7 @@ class WebsiteReader(Reader):
 
                 try:
                     log_debug(f"Crawling asynchronously: {current_url}")
-                    follow_redirects = self.allowed_hosts is None
-                    response = await client.get(current_url, timeout=self.timeout, follow_redirects=follow_redirects)
+                    response = await client.get(current_url, timeout=self.timeout, follow_redirects=True)
                     response.raise_for_status()
 
                     soup = BeautifulSoup(response.content, "html.parser")

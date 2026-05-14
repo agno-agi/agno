@@ -1,3 +1,5 @@
+import pytest
+
 from agno.knowledge.reader.utils.url_validation import is_host_allowed
 from agno.knowledge.reader.web_search_reader import WebSearchReader
 
@@ -63,3 +65,9 @@ def test_is_valid_url_enforces_allowlist():
     assert reader._is_valid_url("https://example.com/page") is True
     assert reader._is_valid_url("http://127.0.0.1/admin") is False
     assert reader._is_valid_url("http://169.254.169.254/latest/meta-data") is False
+
+
+def test_allowed_hosts_rejects_str_input():
+    """Passing a single string (instead of a list) must raise error."""
+    with pytest.raises(TypeError, match="must be a list"):
+        WebSearchReader(allowed_hosts="example.com")

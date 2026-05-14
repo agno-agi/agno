@@ -498,3 +498,9 @@ async def test_async_crawl_inherits_host_check():
         docs = await reader.async_crawl("http://10.0.0.5/admin")
         assert docs == []
         mock_app.assert_not_called()
+
+
+def test_allowed_hosts_rejects_str_input():
+    """Passing a single string (instead of a list) must raise error."""
+    with pytest.raises(TypeError, match="must be a list"):
+        FirecrawlReader(api_key="test", allowed_hosts="docs.agno.com")
