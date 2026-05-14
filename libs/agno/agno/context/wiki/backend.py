@@ -581,6 +581,13 @@ class NotionDatabaseBackend(WikiBackend):
     sync, ``commit_after_write`` raises ``WikiBackendError`` rather
     than overwriting. Call ``wiki.sync()`` and retry.
 
+    API version: targets Notion API ``2025-09-03`` (the notion-client
+    3.1.0 default), which routes page queries and the new-page parent
+    through *data sources* rather than the database itself. The
+    backend resolves and caches the first data source on ``setup``;
+    multi-source databases are not yet supported (a warning is logged
+    and the first source is used).
+
     Block subset (round-trip): paragraphs, H1-H3, bulleted / numbered
     lists, todos, quotes, fenced code, dividers. Other block types
     (toggles, callouts, tables, images, embeds, child pages) render as
@@ -604,6 +611,12 @@ class NotionDatabaseBackend(WikiBackend):
         path = Path(local_path).expanduser().resolve() if local_path else _default_notion_path(database_id)
         super().__init__(path=path)
         self._title_property: str | None = None
+        # Notion API ``2025-09-03`` (the notion-client 3.1.0 default) moved
+        # the property schema and page queries from databases to *data
+        # sources*. A database has one or more data sources; for the
+        # single-source case (overwhelmingly the common one) we cache the
+        # id here and route ``query`` / ``create_page`` through it.
+        self._data_source_id: str | None = None
         self._client: Any = None
 
     @property
@@ -625,17 +638,43 @@ class NotionDatabaseBackend(WikiBackend):
                 "Check that the integration is invited via the database's Connections menu. "
                 f"Underlying error: {type(exc).__name__}: {exc}"
             ) from exc
-        # Discover the title column. Every Notion database has exactly one
+        # Under API ``2025-09-03`` the database object carries a ``data_sources``
+        # list; the column schema lives on each data source, not on the database.
+        # Resolve the first source and warn on multi-source DBs (rare today).
+        data_sources = db.get("data_sources") or []
+        if not data_sources:
+            raise WikiBackendError(
+                f"NotionDatabaseBackend: database {self.database_id} has no data sources. "
+                "This usually means the integration is missing access — re-check the "
+                "database's Connections menu."
+            )
+        if len(data_sources) > 1:
+            log_warning(
+                f"NotionDatabaseBackend: database {self.database_id} has "
+                f"{len(data_sources)} data sources; using the first ({data_sources[0].get('id')}). "
+                "Multi-source databases are not yet supported."
+            )
+        self._data_source_id = data_sources[0]["id"]
+
+        try:
+            source = await client.data_sources.retrieve(data_source_id=self._data_source_id)
+        except Exception as exc:
+            raise WikiBackendError(
+                f"NotionDatabaseBackend: cannot read data source {self._data_source_id} "
+                f"on database {self.database_id}. Underlying error: {type(exc).__name__}: {exc}"
+            ) from exc
+        # Discover the title column. Every Notion data source has exactly one
         # property with type=="title"; users name it whatever they like
         # ("Name", "Title", "Page", ...) so we can't hard-code the key.
-        for prop_name, prop in (db.get("properties") or {}).items():
+        for prop_name, prop in (source.get("properties") or {}).items():
             if prop.get("type") == "title":
                 self._title_property = prop_name
                 break
         if self._title_property is None:
-            raise WikiBackendError(f"NotionDatabaseBackend: database {self.database_id} has no title property")
+            raise WikiBackendError(f"NotionDatabaseBackend: data source {self._data_source_id} has no title property")
         log_info(
-            f"NotionDatabaseBackend ready (db={self.database_id}, title_prop={self._title_property!r}) at {self.path}"
+            f"NotionDatabaseBackend ready (db={self.database_id}, "
+            f"data_source={self._data_source_id}, title_prop={self._title_property!r}) at {self.path}"
         )
 
     async def sync(self) -> None:
@@ -738,13 +777,14 @@ class NotionDatabaseBackend(WikiBackend):
         return self._client
 
     async def _query_all_pages(self, client: Any) -> list[dict[str, Any]]:
+        assert self._data_source_id is not None, "setup() must populate _data_source_id"
         pages: list[dict[str, Any]] = []
         cursor: str | None = None
         while True:
-            kwargs: dict[str, Any] = {"database_id": self.database_id, "page_size": 100}
+            kwargs: dict[str, Any] = {"data_source_id": self._data_source_id, "page_size": 100}
             if cursor:
                 kwargs["start_cursor"] = cursor
-            resp = await client.databases.query(**kwargs)
+            resp = await client.data_sources.query(**kwargs)
             pages.extend(resp.get("results", []))
             if not resp.get("has_more"):
                 break
@@ -820,9 +860,12 @@ class NotionDatabaseBackend(WikiBackend):
                 )
 
     async def _create_page(self, client: Any, title: str, blocks: list[dict[str, Any]]) -> str:
+        assert self._data_source_id is not None, "setup() must populate _data_source_id"
         first_chunk = blocks[:100]
         created = await client.pages.create(
-            parent={"database_id": self.database_id},
+            # Under API 2025-09-03 the parent for a new page in a database
+            # is the data source, not the database itself.
+            parent={"type": "data_source_id", "data_source_id": self._data_source_id},
             properties={
                 self._title_property: {  # type: ignore[dict-item]
                     "title": [{"type": "text", "text": {"content": title}}]
