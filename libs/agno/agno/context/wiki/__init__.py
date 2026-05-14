@@ -2,6 +2,8 @@ from agno.context.wiki.backend import (
     CommitSummary,
     FileSystemBackend,
     GitBackend,
+    NotionDatabaseBackend,
+    NotionPageBackend,
     WikiBackend,
     WikiBackendError,
 )
@@ -19,6 +21,8 @@ __all__ = [
     "CommitSummary",
     "FileSystemBackend",
     "GitBackend",
+    "NotionDatabaseBackend",
+    "NotionPageBackend",
     "WikiBackend",
     "WikiBackendError",
     "WikiContextProvider",
