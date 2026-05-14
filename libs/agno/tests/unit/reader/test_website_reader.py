@@ -361,8 +361,9 @@ def test_allowed_hosts_attaches_redirect_guard():
     assert get_kwargs.get("follow_redirects") is True
 
 
-def test_no_allowlist_uses_simple_httpx_get():
-    """Default behavior (no allowlist) doesn't need the event-hook plumbing."""
+def test_no_allowlist_uses_module_level_httpx_get():
+    """Default behavior (no allowlist) keeps using httpx.get directly — the
+    Client-with-event-hooks path is only for the allowlisted case."""
     from unittest.mock import MagicMock, patch
 
     reader = WebsiteReader(max_depth=1, max_links=1)
@@ -371,18 +372,12 @@ def test_no_allowlist_uses_simple_httpx_get():
     mock_response.content = b"<html><body><main>ok</main></body></html>"
     mock_response.raise_for_status = MagicMock()
 
-    mock_client = MagicMock()
-    mock_client.__enter__.return_value = mock_client
-    mock_client.get.return_value = mock_response
-
-    with patch("agno.knowledge.reader.website_reader.httpx.Client", return_value=mock_client) as mock_client_ctor:
+    with patch("agno.knowledge.reader.website_reader.httpx.get", return_value=mock_response) as mock_get:
         reader.crawl("https://example.com")
 
-    # No allowlist → no event_hooks key on the Client
-    _, kwargs = mock_client_ctor.call_args
-    assert "event_hooks" not in kwargs
-    _, get_kwargs = mock_client.get.call_args
-    assert get_kwargs.get("follow_redirects") is True
+    assert mock_get.called
+    _, kwargs = mock_get.call_args
+    assert kwargs.get("follow_redirects") is True
 
 
 def test_redirect_guard_refuses_cross_host_target():
@@ -445,15 +440,15 @@ async def test_async_crawl_blocked_start_url_returns_empty_dict():
 def test_crawl_real_network_failure_still_raises():
     """When there's no allowlist refusal, the existing
     'no content' RequestError still fires for genuine network failures."""
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import patch
 
     reader = WebsiteReader(max_depth=1, max_links=1)
 
-    # Simulate a real network failure on the start URL
-    mock_client = MagicMock()
-    mock_client.__enter__.return_value = mock_client
-    mock_client.get.side_effect = httpx.ConnectError("connection refused")
-
-    with patch("agno.knowledge.reader.website_reader.httpx.Client", return_value=mock_client):
+    # Simulate a real network failure on the start URL. No allowlist set, so
+    # the reader goes through the module-level httpx.get path.
+    with patch(
+        "agno.knowledge.reader.website_reader.httpx.get",
+        side_effect=httpx.ConnectError("connection refused"),
+    ):
         with pytest.raises(httpx.RequestError):
             reader.crawl("https://example.com")
