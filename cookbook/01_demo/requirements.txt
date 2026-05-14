@@ -8,7 +8,7 @@ annotated-doc==0.0.4
     #   typer
 annotated-types==0.7.0
     # via pydantic
-anthropic==0.101.0
+anthropic==0.102.0
     # via -r cookbook/01_demo/requirements.in
 anyio==4.13.0
     # via
@@ -89,6 +89,7 @@ httpx==0.28.1
     #   fastapi
     #   fastapi-cloud-cli
     #   mcp
+    #   notion-client
     #   openai
 httpx-sse==0.4.3
     # via mcp
@@ -119,6 +120,8 @@ mcp==1.27.1
     # via -r cookbook/01_demo/requirements.in
 mdurl==0.1.2
     # via markdown-it-py
+notion-client==3.1.0
+    # via -r cookbook/01_demo/requirements.in
 openai==2.36.0
     # via -r cookbook/01_demo/requirements.in
 openinference-instrumentation==0.1.50
