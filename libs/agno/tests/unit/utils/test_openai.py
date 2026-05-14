@@ -3,12 +3,12 @@
 import base64
 import os
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from agno.media import Audio, File, Image
-from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
+from agno.utils.openai import _extract_text_from_file, _format_file_for_message, audio_to_message, images_to_message
 
 
 # Helper function to create dummy file
@@ -405,3 +405,145 @@ def test_format_file_raw_bytes_no_filename():
     data_url = msg["file"]["file_data"]
     assert data_url.startswith("data:application/pdf;base64,")
     assert base64.b64decode(data_url.split(",", 1)[1]) == content
+
+
+# --- Tests for _extract_text_from_file --- #
+
+
+def test_extract_text_plain_text():
+    """Test text extraction from plain text content."""
+    content = b"Hello, world!\nLine two."
+    result = _extract_text_from_file(content, "text/plain", "test.txt")
+    assert result == "Hello, world!\nLine two."
+
+
+def test_extract_text_json():
+    """Test text extraction from JSON content."""
+    content = b'{"key": "value"}'
+    result = _extract_text_from_file(content, "application/json", "data.json")
+    assert result == '{"key": "value"}'
+
+
+def test_extract_text_csv():
+    """Test text extraction from CSV content."""
+    content = b"name,age\nAlice,30"
+    result = _extract_text_from_file(content, "text/csv", "data.csv")
+    assert result == "name,age\nAlice,30"
+
+
+def test_extract_text_python():
+    """Test text extraction from Python source code."""
+    content = b'def hello():\n    print("hi")'
+    result = _extract_text_from_file(content, "text/x-python", "script.py")
+    assert "def hello" in result
+
+
+def test_extract_text_unsupported_mime():
+    """Test that unsupported MIME types return None."""
+    content = b"\x00\x01\x02binary"
+    result = _extract_text_from_file(content, "application/octet-stream", "data.bin")
+    assert result is None
+
+
+def test_extract_text_none_mime_with_txt_filename():
+    """Test MIME type guessing from filename when mime_type is None."""
+    content = b"some text"
+    result = _extract_text_from_file(content, None, "readme.txt")
+    assert result == "some text"
+
+
+def test_extract_text_none_mime_none_filename():
+    """Test that None mime and None filename returns None."""
+    content = b"something"
+    result = _extract_text_from_file(content, None, None)
+    assert result is None
+
+
+def test_extract_text_decode_with_replacement():
+    """Test that invalid UTF-8 still produces output with replacement characters."""
+    content = b"valid \xff\xfe invalid"
+    result = _extract_text_from_file(content, "text/plain", "test.txt")
+    assert result is not None
+    assert "\ufffd" in result  # Replacement character
+
+
+def test_extract_text_pdf():
+    """Test text extraction from PDF content."""
+    mock_page1 = MagicMock()
+    mock_page1.extract_text.return_value = "Page one text"
+    mock_page2 = MagicMock()
+    mock_page2.extract_text.return_value = "Page two text"
+
+    mock_reader = MagicMock()
+    mock_reader.pages = [mock_page1, mock_page2]
+
+    mock_pypdf = MagicMock()
+    mock_pypdf.PdfReader.return_value = mock_reader
+
+    with patch.dict("sys.modules", {"pypdf": mock_pypdf}):
+        result = _extract_text_from_file(b"%PDF-fake", "application/pdf", "doc.pdf")
+    assert result == "Page one text\nPage two text"
+
+
+def test_extract_text_docx():
+    """Test text extraction from DOCX content."""
+    mock_para1 = MagicMock()
+    mock_para1.text = "Paragraph one"
+    mock_para2 = MagicMock()
+    mock_para2.text = "Paragraph two"
+
+    mock_doc = MagicMock()
+    mock_doc.paragraphs = [mock_para1, mock_para2]
+
+    mock_docx = MagicMock()
+    mock_docx.Document.return_value = mock_doc
+
+    with patch.dict("sys.modules", {"docx": mock_docx}):
+        result = _extract_text_from_file(
+            b"PK\x03\x04fake",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "doc.docx",
+        )
+    assert result == "Paragraph one\n\nParagraph two"
+
+
+# --- Tests for _format_file_for_message with extract_text --- #
+
+
+def test_format_file_extract_text_true():
+    """Test that extract_text=True returns a text content block."""
+    content = b"Hello from file"
+    f = File(content=content, filename="notes.txt", mime_type="text/plain")
+    msg = _format_file_for_message(f, extract_text=True)
+    assert msg["type"] == "text"
+    assert "[File: notes.txt]" in msg["text"]
+    assert "Hello from file" in msg["text"]
+
+
+def test_format_file_extract_text_fallback():
+    """Test that extract_text=True falls back to file format when extraction fails."""
+    # Use a PDF MIME type but with invalid content that will fail extraction
+    content = b"\x00\x01\x02not-a-real-pdf"
+    f = File(content=content, filename="broken.pdf", mime_type="application/pdf")
+    msg = _format_file_for_message(f, extract_text=True)
+    # Should fall back to file format since PDF extraction fails on invalid content
+    assert msg["type"] == "file"
+
+
+def test_format_file_extract_text_false_default():
+    """Test that extract_text defaults to False and preserves original behavior."""
+    content = b"text content"
+    f = File(content=content, filename="test.txt", mime_type="text/plain")
+    msg = _format_file_for_message(f)  # No extract_text param
+    assert msg["type"] == "file"  # Default behavior
+
+
+def test_format_file_extract_text_filepath(tmp_path):
+    """Test extract_text=True with a file path."""
+    p = tmp_path / "readme.md"
+    p.write_text("# Heading\nSome content")
+    f = File(filepath=str(p), mime_type="text/md")
+    msg = _format_file_for_message(f, extract_text=True)
+    assert msg["type"] == "text"
+    assert "# Heading" in msg["text"]
+    assert "Some content" in msg["text"]

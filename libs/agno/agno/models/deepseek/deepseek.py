@@ -32,6 +32,9 @@ class DeepSeek(OpenAILike):
     # Their support for structured outputs is currently broken
     supports_native_structured_outputs: bool = False
 
+    # When True, extract text from files and send as {"type": "text"} instead of {"type": "file"}.
+    extract_file_text: bool = False
+
     def _get_client_params(self) -> Dict[str, Any]:
         # Fetch API key from env if not already set
         if not self.api_key:
@@ -117,7 +120,7 @@ class DeepSeek(OpenAILike):
                 message_dict["content"] = []
             # Insert each file part before text parts
             for file in message.files:
-                file_part = _format_file_for_message(file)
+                file_part = _format_file_for_message(file, extract_text=self.extract_file_text)
                 if file_part:
                     message_dict["content"].insert(0, file_part)
 
