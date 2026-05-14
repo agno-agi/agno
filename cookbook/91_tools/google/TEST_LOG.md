@@ -135,6 +135,29 @@ Code path works correctly — would succeed with proper scopes.
 
 ---
 
+## 2026-05-14 — GoogleDocsTools cookbook (stacked on PR #7635)
+
+### docs_tools.py
+
+**Status:** PASS (manual E2E, real Google Docs + Drive API)
+
+**Configuration:** single toolkit, `GoogleDocsTools()` with default scopes (`documents`, `drive.file`), file-based token cache (`token.json`) for local dev, model `OpenAIResponses(id="gpt-5.4")`.
+
+**Test run:** first-run OAuth flow exercised the full interactive consent path — browser opened to Google consent, user approved Docs + Drive scopes, `token.json` was written, then the agent invoked the toolkit twice in sequence:
+
+1. `create_document(title="Q3 2026 Launch Plan")` — Google Docs API call succeeded, returned a valid `documentId`.
+2. `append_text(document_id=<returned-id>, text="## Goals\n1. Ship the new dashboard by end of August\n2. Migrate 100% of customers to the new auth flow\n3. Reduce p95 latency below 400ms")` — internal `get` to compute endIndex, then `batchUpdate` `insertText` at `endIndex - 1`. Succeeded.
+
+**Result:** doc was created in the tester's Drive at the standard `https://docs.google.com/document/d/<document-id>/edit` URL pattern, with the requested title and Goals section.
+
+**Invariants verified:**
+1. OAuth flow against the new `GoogleToolkit` base works correctly
+2. Per-call `service` via contextvar — no instance caching
+3. Multi-API service dict — `{"docs": ..., "drive": ...}` accessible from same toolkit
+4. Agent tool-chain reasoning — model extracted `documentId` and passed to second call
+
+---
+
 ## Historical Results
 
 ### 2026-04-14 — DB-backed OAuth token storage (PR #7376)

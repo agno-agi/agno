@@ -1,0 +1,422 @@
+"""
+Google Docs Toolset for interacting with Docs API
+
+Required Environment Variables:
+-----------------------------
+- GOOGLE_CLIENT_ID: Google OAuth client ID
+- GOOGLE_CLIENT_SECRET: Google OAuth client secret
+- GOOGLE_PROJECT_ID: Google Cloud project ID
+- GOOGLE_REDIRECT_URI: Google OAuth redirect URI (default: http://localhost)
+
+How to Get These Credentials:
+---------------------------
+1. Go to Google Cloud Console (https://console.cloud.google.com)
+2. Create a new project or select an existing one
+3. Enable the Google Docs API and Google Drive API:
+   - Go to "APIs & Services" > "Enable APIs and Services"
+   - Search for "Google Docs API" and "Google Drive API"
+   - Click "Enable" for both
+
+4. Create OAuth 2.0 credentials:
+   - Go to "APIs & Services" > "Credentials"
+   - Click "Create Credentials" > "OAuth client ID"
+   - Go through the OAuth consent screen setup
+   - Give it a name and click "Create"
+   - You'll receive:
+     * Client ID (GOOGLE_CLIENT_ID)
+     * Client Secret (GOOGLE_CLIENT_SECRET)
+
+5. Set up environment variables:
+   Create a .envrc file in your project root with:
+   ```
+   export GOOGLE_CLIENT_ID=your_client_id_here
+   export GOOGLE_CLIENT_SECRET=your_client_secret_here
+   export GOOGLE_PROJECT_ID=your_project_id_here
+   export GOOGLE_REDIRECT_URI=http://localhost
+   ```
+
+Alternatively, for Server-to-Server use cases you can use a Service Account:
+   export GOOGLE_SERVICE_ACCOUNT_FILE=path/to/service-account.json
+"""
+
+import asyncio
+import io
+import json
+import textwrap
+from typing import Any, Dict, List, Optional, Union, cast
+
+try:
+    from google.oauth2.credentials import Credentials
+    from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+    from googleapiclient.discovery import Resource, build
+    from googleapiclient.errors import HttpError
+    from googleapiclient.http import MediaIoBaseDownload
+except ImportError:
+    raise ImportError(
+        "`google-api-python-client` `google-auth-httplib2` `google-auth-oauthlib` not installed. "
+        "Please install using `pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib`"
+    )
+
+from agno.tools.google.auth import google_authenticate
+from agno.tools.google.base import GoogleToolkit
+from agno.utils.log import log_error
+
+DOCS_INSTRUCTIONS = textwrap.dedent("""\
+    You have access to Google Docs tools for creating, reading, and updating documents.
+
+    ## Key Workflow
+    - Call create_document to start a new doc; it returns documentId
+    - Use get_document_text for simple reads; use get_document for structural editing
+    - Use batch_update with structured requests for any document modification
+    - Use append_text as a convenience to add content at the end of a document
+
+    ## Tips
+    - Document IDs come from the API or from doc URLs -- never invent them
+    - batch_update is the workhorse: insertText, replaceAllText, updateTextStyle, deleteContentRange
+    - export_as_pdf saves a PDF copy via Drive -- the original doc is unchanged
+    - Destructive tools (delete_document) are disabled by default""")
+
+
+authenticate = google_authenticate("docs")
+
+
+class GoogleDocsTools(GoogleToolkit):
+    api_name = "docs"
+    api_version = "v1"
+    google_service_name = "docs"
+    default_scopes = [
+        "https://www.googleapis.com/auth/documents",
+        "https://www.googleapis.com/auth/drive.file",
+    ]
+    DEFAULT_SCOPES = default_scopes
+
+    def __init__(
+        self,
+        oauth_config: Optional[Any] = None,
+        store_token_in_db: bool = False,
+        scopes: Optional[List[str]] = None,
+        creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
+        credentials_path: Optional[str] = None,
+        token_path: Optional[str] = None,
+        service_account_path: Optional[str] = None,
+        delegated_user: Optional[str] = None,
+        oauth_port: int = 0,
+        login_hint: Optional[str] = None,
+        create_document: bool = True,
+        get_document: bool = True,
+        get_document_text: bool = True,
+        batch_update: bool = True,
+        append_text: bool = True,
+        export_as_pdf: bool = True,
+        delete_document: bool = False,
+        all: bool = False,
+        instructions: Optional[str] = None,
+        add_instructions: bool = True,
+        **kwargs,
+    ):
+        tools: List[Any] = []
+        if all or create_document:
+            tools.extend([self.create_document, self.acreate_document])
+        if all or get_document:
+            tools.extend([self.get_document, self.aget_document])
+        if all or get_document_text:
+            tools.extend([self.get_document_text, self.aget_document_text])
+        if all or batch_update:
+            tools.extend([self.batch_update, self.abatch_update])
+        if all or append_text:
+            tools.extend([self.append_text, self.aappend_text])
+        if all or export_as_pdf:
+            tools.extend([self.export_as_pdf, self.aexport_as_pdf])
+        if all or delete_document:
+            tools.extend([self.delete_document, self.adelete_document])
+
+        if instructions is None:
+            instructions = DOCS_INSTRUCTIONS
+
+        super().__init__(
+            name="google_docs_tools",
+            tools=tools,
+            instructions=instructions,
+            add_instructions=add_instructions,
+            scopes=scopes,
+            creds=creds,
+            token_path=token_path,
+            credentials_path=credentials_path,
+            service_account_path=service_account_path,
+            delegated_user=delegated_user,
+            oauth_config=oauth_config,
+            store_token_in_db=store_token_in_db,
+            oauth_port=oauth_port,
+            login_hint=login_hint,
+            **kwargs,
+        )
+
+    def _build_service(self, creds):
+        return {
+            "docs": build("docs", "v1", credentials=creds),
+            "drive": build("drive", "v3", credentials=creds),
+        }
+
+    @property
+    def docs_service(self) -> Any:
+        svc = self.service
+        return svc["docs"] if isinstance(svc, dict) else svc
+
+    @property
+    def drive_service(self) -> Any:
+        svc = self.service
+        return svc["drive"] if isinstance(svc, dict) else None
+
+    def _extract_text_from_content(self, content: List[Dict[str, Any]]) -> str:
+        parts: List[str] = []
+        for element in content:
+            paragraph = element.get("paragraph")
+            if not paragraph:
+                continue
+            for run in paragraph.get("elements", []):
+                text_run = run.get("textRun")
+                if text_run and "content" in text_run:
+                    parts.append(text_run["content"])
+        return "".join(parts)
+
+    @authenticate
+    def create_document(self, title: str) -> str:
+        """
+        Create a new Google Doc.
+
+        Args:
+            title (str): The title for the new document.
+
+        Returns:
+            str: JSON string with documentId and title, or error message.
+        """
+        try:
+            service = cast(Resource, self.docs_service)
+            doc = service.documents().create(body={"title": title}).execute()
+            return json.dumps(
+                {
+                    "documentId": doc.get("documentId"),
+                    "title": doc.get("title"),
+                    "url": f"https://docs.google.com/document/d/{doc.get('documentId')}/edit",
+                }
+            )
+        except HttpError as e:
+            return json.dumps({"error": f"Google Docs API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not create document: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def acreate_document(self, title: str) -> str:
+        """Create a new Google Doc (async)."""
+        return await asyncio.to_thread(self.create_document, title=title)
+
+    @authenticate
+    def get_document(self, document_id: str) -> str:
+        """
+        Fetch the full JSON structure of a Google Doc.
+
+        Use this when you need the body content with structural information
+        (paragraphs, indices, styles). For plain text only, prefer get_document_text.
+
+        Args:
+            document_id (str): The ID of the document to fetch.
+
+        Returns:
+            str: JSON string of the full document structure, or error message.
+        """
+        try:
+            service = cast(Resource, self.docs_service)
+            doc = service.documents().get(documentId=document_id).execute()
+            return json.dumps(doc)
+        except HttpError as e:
+            return json.dumps({"error": f"Google Docs API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not get document {document_id}: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def aget_document(self, document_id: str) -> str:
+        """Fetch the full JSON structure of a Google Doc (async)."""
+        return await asyncio.to_thread(self.get_document, document_id=document_id)
+
+    @authenticate
+    def get_document_text(self, document_id: str) -> str:
+        """
+        Fetch a Google Doc and return only its plain text body.
+
+        Args:
+            document_id (str): The ID of the document to fetch.
+
+        Returns:
+            str: JSON string with documentId, title, and text, or error message.
+        """
+        try:
+            service = cast(Resource, self.docs_service)
+            doc = service.documents().get(documentId=document_id).execute()
+            content = doc.get("body", {}).get("content", [])
+            text = self._extract_text_from_content(content)
+            return json.dumps(
+                {
+                    "documentId": doc.get("documentId"),
+                    "title": doc.get("title"),
+                    "text": text,
+                }
+            )
+        except HttpError as e:
+            return json.dumps({"error": f"Google Docs API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not get document text for {document_id}: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def aget_document_text(self, document_id: str) -> str:
+        """Fetch a Google Doc and return only its plain text body (async)."""
+        return await asyncio.to_thread(self.get_document_text, document_id=document_id)
+
+    @authenticate
+    def batch_update(self, document_id: str, requests: List[Dict[str, Any]]) -> str:
+        """
+        Apply a batch of update requests to a Google Doc.
+
+        Each request is a Docs API request object: insertText, replaceAllText,
+        updateTextStyle, deleteContentRange, insertTable, etc.
+
+        Args:
+            document_id (str): The ID of the document to update.
+            requests (List[Dict[str, Any]]): Docs API batch request objects.
+
+        Returns:
+            str: JSON string with documentId and replies, or error message.
+        """
+        if not requests:
+            return json.dumps({"error": "requests list must not be empty"})
+        try:
+            service = cast(Resource, self.docs_service)
+            result = service.documents().batchUpdate(documentId=document_id, body={"requests": requests}).execute()
+            return json.dumps(
+                {
+                    "documentId": result.get("documentId"),
+                    "replies": result.get("replies", []),
+                }
+            )
+        except HttpError as e:
+            return json.dumps({"error": f"Google Docs API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not batch update document {document_id}: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def abatch_update(self, document_id: str, requests: List[Dict[str, Any]]) -> str:
+        """Apply a batch of update requests to a Google Doc (async)."""
+        return await asyncio.to_thread(self.batch_update, document_id=document_id, requests=requests)
+
+    @authenticate
+    def append_text(self, document_id: str, text: str) -> str:
+        """
+        Append plain text to the end of a Google Doc.
+
+        Fetches the document first to determine the end index, then issues an
+        insertText request positioned at the end of the body.
+
+        Args:
+            document_id (str): The ID of the document to append to.
+            text (str): The text to append (newline characters are preserved).
+
+        Returns:
+            str: JSON string with documentId and replies, or error message.
+        """
+        if not text:
+            return json.dumps({"error": "text must not be empty"})
+        try:
+            service = cast(Resource, self.docs_service)
+            doc = service.documents().get(documentId=document_id, fields="body(content(endIndex))").execute()
+            content = doc.get("body", {}).get("content", [])
+            end_index = 1
+            for element in content:
+                idx = element.get("endIndex")
+                if isinstance(idx, int) and idx > end_index:
+                    end_index = idx
+            insert_index = max(end_index - 1, 1)
+            requests = [{"insertText": {"location": {"index": insert_index}, "text": text}}]
+            result = service.documents().batchUpdate(documentId=document_id, body={"requests": requests}).execute()
+            return json.dumps(
+                {
+                    "documentId": result.get("documentId"),
+                    "inserted_at_index": insert_index,
+                    "replies": result.get("replies", []),
+                }
+            )
+        except HttpError as e:
+            return json.dumps({"error": f"Google Docs API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not append text to document {document_id}: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def aappend_text(self, document_id: str, text: str) -> str:
+        """Append plain text to the end of a Google Doc (async)."""
+        return await asyncio.to_thread(self.append_text, document_id=document_id, text=text)
+
+    @authenticate
+    def export_as_pdf(self, document_id: str, output_path: str) -> str:
+        """
+        Export a Google Doc as a PDF and save it to a local path.
+
+        Uses the Drive API's export_media endpoint. The original document is unchanged.
+
+        Args:
+            document_id (str): The ID of the document to export.
+            output_path (str): Local filesystem path where the PDF will be saved.
+
+        Returns:
+            str: JSON string with output_path and bytes_written, or error message.
+        """
+        try:
+            drive = cast(Resource, self.drive_service)
+            if drive is None:
+                return json.dumps({"error": "Drive service is not available"})
+            request = drive.files().export_media(fileId=document_id, mimeType="application/pdf")
+            buffer = io.BytesIO()
+            downloader = MediaIoBaseDownload(buffer, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+            data = buffer.getvalue()
+            with open(output_path, "wb") as f:
+                f.write(data)
+            return json.dumps({"output_path": output_path, "bytes_written": len(data)})
+        except HttpError as e:
+            return json.dumps({"error": f"Google Drive API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not export document {document_id} as PDF: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def aexport_as_pdf(self, document_id: str, output_path: str) -> str:
+        """Export a Google Doc as a PDF and save it to a local path (async)."""
+        return await asyncio.to_thread(self.export_as_pdf, document_id=document_id, output_path=output_path)
+
+    @authenticate
+    def delete_document(self, document_id: str) -> str:
+        """
+        Move a Google Doc to the Drive trash.
+
+        This action is destructive and is disabled by default; enable via the
+        `delete_document=True` constructor flag.
+
+        Args:
+            document_id (str): The ID of the document to delete.
+
+        Returns:
+            str: JSON string with documentId and status, or error message.
+        """
+        try:
+            drive = cast(Resource, self.drive_service)
+            if drive is None:
+                return json.dumps({"error": "Drive service is not available"})
+            drive.files().delete(fileId=document_id).execute()
+            return json.dumps({"documentId": document_id, "status": "deleted"})
+        except HttpError as e:
+            return json.dumps({"error": f"Google Drive API error: {e}"})
+        except Exception as e:
+            log_error(f"Could not delete document {document_id}: {e}")
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+
+    async def adelete_document(self, document_id: str) -> str:
+        """Move a Google Doc to the Drive trash (async)."""
+        return await asyncio.to_thread(self.delete_document, document_id=document_id)
