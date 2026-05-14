@@ -1,12 +1,13 @@
-"""User-scoped database wrapper for per-user data isolation.
+"""User-scoped database adapters for per-user data isolation.
 
-Wraps a BaseDb or AsyncBaseDb and automatically injects user_id into
-every query that supports it. This ensures per-user data isolation
-structurally — endpoints cannot accidentally omit user_id filtering.
+These adapters wrap a BaseDb or AsyncBaseDb and automatically inject
+``user_id`` into queries that support it. This ensures per-user data
+isolation structurally — endpoints cannot accidentally omit user_id
+filtering.
 
 Usage:
     # In middleware:
-    scoped_db = UserScopedDb(db, user_id="user-123")
+    scoped_db = UserScopedDbAdapter(db, user_id="user-123")
     request.state.scoped_db = scoped_db
 
     # In endpoint:
@@ -34,7 +35,7 @@ _TUserIdCarrier = TypeVar("_TUserIdCarrier")
 def _coerce_user_id(entity: _TUserIdCarrier, expected_user_id: str, kind: str) -> _TUserIdCarrier:
     """Force ``entity.user_id`` to ``expected_user_id``, warning on mismatch.
 
-    The scoped wrappers only ever exist for non-admin callers, so any
+    The scoped adapters only ever exist for non-admin callers, so any
     upsert carrying a different user_id is either a bug or an attempted
     cross-user write. Rewriting the field keeps the data safe; the warning
     makes the misuse noisy during development.
@@ -42,14 +43,14 @@ def _coerce_user_id(entity: _TUserIdCarrier, expected_user_id: str, kind: str) -
     current = getattr(entity, "user_id", None)
     if current is not None and current != expected_user_id:
         log_warning(
-            f"UserScopedDb: {kind} arrived with user_id={current!r} but the wrapper is bound to "
+            f"UserScopedDbAdapter: {kind} arrived with user_id={current!r} but the adapter is bound to "
             f"user_id={expected_user_id!r}. Coercing to the bound user_id."
         )
     try:
         entity.user_id = expected_user_id  # type: ignore[attr-defined]
     except AttributeError:
         # Immutable carrier — caller is on their own; fall back to warning only.
-        log_warning(f"UserScopedDb: unable to coerce user_id on {kind} ({type(entity).__name__})")
+        log_warning(f"UserScopedDbAdapter: unable to coerce user_id on {kind} ({type(entity).__name__})")
     return entity
 
 
@@ -57,15 +58,21 @@ def _coerce_all(entities: Iterable[_TUserIdCarrier], expected_user_id: str, kind
     return [_coerce_user_id(e, expected_user_id, kind) for e in entities]
 
 
-class UserScopedDb:
-    """Wraps a BaseDb and injects user_id into all user-scoped queries.
+class UserScopedDbAdapter:
+    """Adapts a BaseDb by injecting user_id into all user-scoped queries.
 
     Methods on tables WITHOUT user_id columns (knowledge, metrics, evals,
     components, schedules, spans, culture) delegate directly without modification.
 
-    Methods on tables WITH user_id columns (sessions, memory, traces, approvals)
-    force the scoped user_id, ignoring any user_id passed by the caller.
+    Methods on tables WITH user_id columns that this adapter explicitly
+    overrides — sessions, memory, traces — force the scoped user_id and
+    ignore any user_id passed by the caller. Approvals are NOT overridden
+    here; the approval router enforces user_id at the route layer instead,
+    and approval calls fall through ``__getattr__`` to the underlying db.
     """
+
+    is_user_scoped = True
+    is_async_db = False
 
     def __init__(self, db: BaseDb, user_id: str):
         self._db = db
@@ -212,16 +219,17 @@ class UserScopedDb:
         return getattr(self._db, name)
 
 
-# Register as a virtual subclass so routers that dispatch on
-# isinstance(db, BaseDb) pick the sync path for wrapped sync backends.
-BaseDb.register(UserScopedDb)
+# Compatibility glue: existing OS routers and managers dispatch on
+# isinstance(db, BaseDb). Registering the adapter as a virtual subclass keeps
+# those sync paths working without pretending this is a true storage backend.
+BaseDb.register(UserScopedDbAdapter)
 
 
-class AsyncUserScopedDb:
-    """Async variant of UserScopedDb.
+class AsyncUserScopedDbAdapter:
+    """Adapts an AsyncBaseDb by injecting user_id into all user-scoped queries."""
 
-    Wraps an AsyncBaseDb and injects user_id into all user-scoped queries.
-    """
+    is_user_scoped = True
+    is_async_db = True
 
     def __init__(self, db: AsyncBaseDb, user_id: str):
         self._db = db
@@ -325,7 +333,7 @@ class AsyncUserScopedDb:
         return await self._db.upsert_trace(trace)
 
     async def get_trace(self, **kwargs):
-        # See UserScopedDb.get_trace — backends that don't yet accept user_id
+        # See UserScopedDbAdapter.get_trace — backends that don't yet accept user_id
         # still get isolation via a post-filter on the returned trace.
         try:
             trace = await self._db.get_trace(user_id=self._user_id, **kwargs)
@@ -367,6 +375,16 @@ class AsyncUserScopedDb:
         return getattr(self._db, name)
 
 
-# Register as a virtual subclass so routers that dispatch on
-# isinstance(db, AsyncBaseDb) pick the async path for wrapped async backends.
-AsyncBaseDb.register(AsyncUserScopedDb)
+# Compatibility glue: existing OS routers and managers dispatch on
+# isinstance(db, AsyncBaseDb). Registering the adapter as a virtual subclass
+# keeps those async paths working without pretending this is a true storage backend.
+AsyncBaseDb.register(AsyncUserScopedDbAdapter)
+
+
+def is_user_scoped_db(db: object) -> bool:
+    """Return True when ``db`` is a user-scoped adapter.
+
+    Prefer this marker check over concrete class checks so future scoped DB
+    adapters don't need every router to know their class names.
+    """
+    return getattr(db, "is_user_scoped", False) is True

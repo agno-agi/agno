@@ -1,4 +1,4 @@
-"""Helper for per-user data isolation via scoped DB wrappers.
+"""Helper for per-user data isolation via scoped DB adapters.
 
 When a JWT contains a user_id (sub claim), `get_user_scoped_db` wraps
 the DB instance so all user-scoped queries (sessions, memory, traces)
@@ -20,13 +20,13 @@ Usage in a router:
     # Returns None for admins (no filtering), user_id for regular users
 """
 
-from typing import TYPE_CHECKING, Callable, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Callable, List, Literal, Optional, Union, cast
 
 from fastapi import HTTPException, Query, Request
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.os.scopes import AgentOSScope
-from agno.os.user_scoped_db import AsyncUserScopedDb, UserScopedDb
+from agno.os.user_scoped_db import AsyncUserScopedDbAdapter, UserScopedDbAdapter
 from agno.os.utils import get_db
 from agno.remote.base import RemoteDb
 from agno.utils.log import log_debug
@@ -37,6 +37,15 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
     from agno.team import RemoteTeam, Team
     from agno.workflow import RemoteWorkflow, Workflow
+
+
+ComponentType = Literal["agents", "teams", "workflows"]
+
+# Reused error messages — referenced by route code AND tests.
+SESSION_ID_REQUIRED = "session_id is required for this action"
+WORKFLOW_ID_REQUIRED_RECONNECT = "workflow_id is required to reconnect to a workflow run"
+SESSION_ID_REQUIRED_RECONNECT = "session_id is required to reconnect to a workflow run"
+INSUFFICIENT_PERMISSIONS_WS_RECONNECT = "Insufficient permissions to reconnect to this workflow"
 
 
 def _has_admin_scope(scopes: List[str], admin_scope: Optional[str] = None) -> bool:
@@ -52,10 +61,13 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
     """Get the user_id for data scoping from the request, or None if unscoped.
 
     Returns None (meaning "no filtering") when:
-    - No user_id in the JWT
-    - The user has admin scope (admins see all data)
+    - User isolation is not enabled (the opt-in
+      ``AuthorizationConfig(user_isolation=True)`` flag is off).
+    - No user_id in the JWT.
+    - The user has admin scope (admins see all data).
 
-    Returns the user_id string when a regular (non-admin) user is authenticated.
+    Returns the user_id string only when a regular (non-admin) user is
+    authenticated AND user isolation is enabled.
 
     Use this in endpoints that thread user_id through internal method calls
     (e.g. agent.aget_run_output, aread_or_create_session).
@@ -63,6 +75,12 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
     If the operator configured a custom ``admin_scope`` on JWTMiddleware, that
     value is honoured here too (read from ``request.state.admin_scope``).
     """
+    # Opt-in gate: when user isolation is disabled, callers see the raw,
+    # unscoped DB and route-level ownership checks behave as if no JWT user
+    # were present. JWT/RBAC remain in force; they're orthogonal to scoping.
+    if not getattr(request.state, "user_isolation_enabled", False):
+        return None
+
     user_id = getattr(request.state, "user_id", None)
     if not user_id:
         return None
@@ -101,7 +119,7 @@ async def get_user_scoped_db(
         table: Optional table name
 
     Returns:
-        A user-scoped DB wrapper, or the original DB if no user_id is present or user is admin.
+        A user-scoped DB adapter, or the original DB if no user_id is present or user is admin.
     """
     db = await get_db(dbs, db_id, table)
 
@@ -113,16 +131,16 @@ async def get_user_scoped_db(
     if isinstance(db, RemoteDb):
         return db
 
-    # The wrappers are registered as virtual subclasses of AsyncBaseDb / BaseDb
+    # The adapters are registered as virtual subclasses of AsyncBaseDb / BaseDb
     # (see user_scoped_db.py), so `isinstance(wrapped, AsyncBaseDb)` returns
     # True at runtime. `cast` communicates that to mypy without inheriting
-    # every abstract method on the wrapper.
+    # every abstract method on the adapter.
     if isinstance(db, AsyncBaseDb):
-        log_debug(f"Creating async user-scoped DB wrapper for user_id={user_id}")
-        return cast(AsyncBaseDb, AsyncUserScopedDb(db, user_id))
+        log_debug(f"Creating async user-scoped DB adapter for user_id={user_id}")
+        return cast(AsyncBaseDb, AsyncUserScopedDbAdapter(db, user_id))
 
-    log_debug(f"Creating user-scoped DB wrapper for user_id={user_id}")
-    return cast(BaseDb, UserScopedDb(db, user_id))
+    log_debug(f"Creating user-scoped DB adapter for user_id={user_id}")
+    return cast(BaseDb, UserScopedDbAdapter(db, user_id))
 
 
 # ----------------------------------------------------------------------------
@@ -137,10 +155,149 @@ async def get_user_scoped_db(
 # ----------------------------------------------------------------------------
 
 
-async def _verify_run_in_session(entity, session_id: str, run_id: str, user_id: str) -> None:
-    """Raise 404 if ``run_id`` isn't in a session owned by ``user_id``."""
+_RUN_COMPONENT_FIELDS: dict[ComponentType, str] = {
+    "agents": "agent_id",
+    "teams": "team_id",
+    "workflows": "workflow_id",
+}
+
+
+def _component_field(component_type: Optional[ComponentType]) -> Optional[str]:
+    """Return the session/run attribute name for ``component_type``, or None
+    when no check was requested. An unknown component_type is treated as a
+    programmer error and triggers fail-closed at the call sites.
+    """
+    if component_type is None:
+        return None
+    if component_type not in _RUN_COMPONENT_FIELDS:
+        # Typo (e.g. "workflow" instead of "workflows") — fail closed at the
+        # call site rather than silently skipping validation.
+        raise ValueError(f"Unknown component_type: {component_type!r}")
+    return _RUN_COMPONENT_FIELDS[component_type]
+
+
+def run_matches_component(run, component_type: Optional[ComponentType], component_id: Optional[str]) -> bool:
+    """Return True if ``run`` explicitly belongs to the given path component.
+
+    Fails closed: a run that lacks the relevant component field is rejected,
+    because nested member runs inside team/workflow sessions can have
+    ambiguous attribution and must not be exposed through a sibling
+    component's route. Unknown component_type values raise (fail-closed at
+    the caller).
+    """
+    if not component_type or not component_id:
+        return True
+    field = _component_field(component_type)
+    if field is None:
+        return True
+    return getattr(run, field, None) == component_id
+
+
+def session_matches_component(session, component_type: Optional[ComponentType], component_id: Optional[str]) -> bool:
+    """Return True if ``session`` explicitly belongs to the given path component.
+
+    Fails closed (see ``run_matches_component`` for rationale). Unknown
+    component_type values raise.
+    """
+    if not component_type or not component_id:
+        return True
+    field = _component_field(component_type)
+    if field is None:
+        return True
+    return getattr(session, field, None) == component_id
+
+
+def assert_session_matches_component(
+    session,
+    component_type: ComponentType,
+    component_id: str,
+    *,
+    not_found_detail: str = "Session not found",
+) -> None:
+    """404 if ``session`` doesn't belong to the path component.
+
+    Pure attribute check (no IO) — synchronous so callers don't have to
+    ``await`` a function that can't actually suspend. Centralises the
+    open-coded ``getattr(session, "<x>_id", None) != path_id`` check used
+    across get/list/cancel/resume/continue routes and enforces fail-closed
+    semantics in one place.
+    """
+    if not session_matches_component(session, component_type, component_id):
+        raise HTTPException(status_code=404, detail=not_found_detail)
+
+
+async def verify_run_in_session(
+    entity,
+    session_id: str,
+    run_id: str,
+    user_id: str,
+    *,
+    component_type: Optional[ComponentType] = None,
+    component_id: Optional[str] = None,
+) -> None:
+    """Raise 404 if ``run_id`` isn't in a session owned by ``user_id``.
+
+    When ``component_type`` and ``component_id`` are provided, also verifies:
+      1. The loaded session belongs to that path component (a WorkflowSession
+         cannot be reached through /agents/... even if a nested agent run
+         lives inside it).
+      2. The loaded run belongs to the same path component.
+
+    Both checks fail closed when the component field is missing on the
+    session/run.
+    """
     session = await entity.aget_session(session_id=session_id, user_id=user_id)
-    if session is None or session.get_run(run_id=run_id) is None:
+    if session is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    # Session must belong to the path component before we even look at runs.
+    if not session_matches_component(session, component_type, component_id):
+        raise HTTPException(status_code=404, detail="Run not found")
+    run = session.get_run(run_id=run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if not run_matches_component(run, component_type, component_id):
+        # Mask existence — don't leak that the run lives under a different component.
+        raise HTTPException(status_code=404, detail="Run not found")
+
+
+async def verify_run_in_session_via_db(
+    db: Union["BaseDb", "AsyncBaseDb", None],
+    session_id: str,
+    run_id: str,
+    user_id: str,
+    *,
+    component_type: Optional[ComponentType] = None,
+    component_id: Optional[str] = None,
+) -> None:
+    """Raise 404 if ``run_id`` isn't in a session owned by ``user_id``.
+
+    Used by factory cancel routes that don't resolve an entity but still need
+    to verify run ownership before applying a global cancellation intent.
+
+    See ``verify_run_in_session`` for the session/run component checks.
+    """
+    if db is None:
+        # No DB to verify against — fail closed.
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    if isinstance(db, AsyncBaseDb):
+        session = await db.get_session(session_id=session_id, user_id=user_id)
+    else:
+        session = db.get_session(session_id=session_id, user_id=user_id)
+
+    if session is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    if not session_matches_component(session, component_type, component_id):
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    get_run = getattr(session, "get_run", None)
+    if get_run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    run = get_run(run_id=run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if not run_matches_component(run, component_type, component_id):
         raise HTTPException(status_code=404, detail="Run not found")
 
 
@@ -176,8 +333,15 @@ def resolve_owned_agent(os: "AgentOS") -> Callable:
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             if not session_id:
-                raise HTTPException(status_code=400, detail="session_id is required for this action")
-            await _verify_run_in_session(agent, session_id, run_id, scoped_user_id)
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
+            await verify_run_in_session(
+                agent,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="agents",
+                component_id=agent_id,
+            )
         return agent
 
     return dependency
@@ -212,8 +376,15 @@ def resolve_owned_team(os: "AgentOS") -> Callable:
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             if not session_id:
-                raise HTTPException(status_code=400, detail="session_id is required for this action")
-            await _verify_run_in_session(team, session_id, run_id, scoped_user_id)
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
+            await verify_run_in_session(
+                team,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="teams",
+                component_id=team_id,
+            )
         return team
 
     return dependency
@@ -248,8 +419,15 @@ def resolve_owned_workflow(os: "AgentOS") -> Callable:
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             if not session_id:
-                raise HTTPException(status_code=400, detail="session_id is required for this action")
-            await _verify_run_in_session(workflow, session_id, run_id, scoped_user_id)
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
+            await verify_run_in_session(
+                workflow,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="workflows",
+                component_id=workflow_id,
+            )
         return workflow
 
     return dependency

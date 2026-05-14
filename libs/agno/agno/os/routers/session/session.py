@@ -30,7 +30,7 @@ from agno.os.schema import (
     WorkflowSessionDetailSchema,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.user_scoped_db import AsyncUserScopedDb, UserScopedDb
+from agno.os.user_scoped_db import is_user_scoped_db
 from agno.remote.base import RemoteDb
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 
@@ -801,10 +801,10 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             await db.delete_session(session_id=session_id, db_id=db_id, table=table, headers=headers, user_id=user_id)
             return
 
-        # When no scoped wrapper is active (admin or no JWT), honour the query
+        # When no scoped adapter is active (admin or no JWT), honour the query
         # param user_id so operators can still target a specific user.
         local_kwargs: Dict[str, Any] = {"session_id": session_id}
-        if not isinstance(db, (UserScopedDb, AsyncUserScopedDb)):
+        if not is_user_scoped_db(db):
             local_kwargs["user_id"] = user_id
 
         if isinstance(db, AsyncBaseDb):
@@ -858,7 +858,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
         # Same pattern as delete_session above for admin / no-JWT callers.
         local_kwargs: Dict[str, Any] = {"session_ids": request.session_ids}
-        if not isinstance(db, (UserScopedDb, AsyncUserScopedDb)):
+        if not is_user_scoped_db(db):
             local_kwargs["user_id"] = user_id
 
         if isinstance(db, AsyncBaseDb):
@@ -984,14 +984,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             )
 
         # Honour query-param user_id when the caller isn't bound to a scoped
-        # wrapper (admins and unauthenticated flows). Scoped wrappers inject
+        # adapter (admins and unauthenticated flows). Scoped adapters inject
         # the JWT user_id and ignore this.
         local_kwargs: Dict[str, Any] = {
             "session_id": session_id,
             "session_type": session_type,
             "session_name": session_name,
         }
-        if not isinstance(db, (UserScopedDb, AsyncUserScopedDb)):
+        if not is_user_scoped_db(db):
             local_kwargs["user_id"] = user_id
 
         if isinstance(db, AsyncBaseDb):

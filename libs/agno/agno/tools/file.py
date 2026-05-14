@@ -1,10 +1,10 @@
 import json
 import os
-from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
 from agno.tools import Toolkit
+from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS, path_matches_exclude
 from agno.utils.log import log_debug, log_error
 
 TEXT_EXTENSIONS = {
@@ -28,68 +28,6 @@ TEXT_EXTENSIONS = {
     ".log",
     ".rst",
 }
-
-DEFAULT_EXCLUDE_PATTERNS = [
-    # Environments and secrets
-    ".venv",
-    "venv",
-    ".env*",
-    "*.env",
-    # Version control
-    ".git",
-    ".hg",
-    ".svn",
-    # Python caches and build artifacts
-    "__pycache__",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".pytest_cache",
-    ".tox",
-    ".nox",
-    ".ipynb_checkpoints",
-    "dist",
-    "build",
-    "*.egg-info",
-    # JavaScript and TypeScript
-    "node_modules",
-    ".next",
-    ".turbo",
-    ".nuxt",
-    ".svelte-kit",
-    ".docusaurus",
-    ".parcel-cache",
-    ".nyc_output",
-    "*.tsbuildinfo",
-    ".serverless",
-    # JVM (Java, Kotlin, Android, Gradle)
-    ".gradle",
-    ".kotlin",
-    "*.class",
-    # Dart and Flutter
-    ".dart_tool",
-    ".flutter-plugins",
-    ".flutter-plugins-dependencies",
-    # Swift and Xcode
-    ".build",
-    "xcuserdata",
-    "*.xcuserstate",
-    # Ruby
-    ".bundle",
-    "*.gem",
-    ".yardoc",
-    # Elixir
-    "_build",
-    ".elixir_ls",
-    # .NET / Visual Studio
-    ".vs",
-    # Infrastructure as Code (state files hidden by default for security)
-    ".terraform",
-    "*.tfstate",
-    "*.tfstate.*",
-    ".terragrunt-cache",
-    # OS artifacts
-    ".DS_Store",
-]
 
 
 def _format_size(size: int) -> str:
@@ -122,8 +60,9 @@ class FileTools(Toolkit):
     """Toolkit for read/write access to a local directory tree.
 
     By default, results from ``list_files``, ``search_files``, and ``search_content``
-    skip common noise directories (``.venv``, ``.git``, ``__pycache__``,
-    ``node_modules``, etc.). See ``DEFAULT_EXCLUDE_PATTERNS`` for the full list.
+    skip common noise directories (``.venv``, ``.venvs``, ``.context``,
+    ``.git``, ``__pycache__``, ``node_modules``, etc.). See
+    ``DEFAULT_EXCLUDE_PATTERNS`` for the full list.
 
     To customize:
     - Pass ``exclude_patterns=[...]`` with your own list of fnmatch-style patterns.
@@ -188,13 +127,7 @@ class FileTools(Toolkit):
 
     def _is_excluded(self, path: Path) -> bool:
         """Return True if any component of ``path`` (relative to ``base_dir``) matches an exclude pattern."""
-        if not self.exclude_patterns:
-            return False
-        try:
-            rel = path.relative_to(self.base_dir)
-        except ValueError:
-            return False
-        return any(fnmatch(part, pattern) for part in rel.parts for pattern in self.exclude_patterns)
+        return path_matches_exclude(path, self.base_dir, self.exclude_patterns)
 
     def check_escape(self, relative_path: str) -> Tuple[bool, Path]:
         """Check if the file path is within the base directory.
