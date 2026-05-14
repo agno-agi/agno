@@ -865,6 +865,10 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         log_debug("'enable_user_memories' has been deprecated. Use 'update_memory_on_run' instead.")
         config.pop("enable_user_memories", None)
 
+    if "num_past_session_runs" in config:
+        log_debug("'num_past_session_runs' has been deprecated. Use 'num_past_session_runs_in_search' instead.")
+        config.pop("num_past_session_runs", None)
+
     return cls(
         # --- Agent settings ---
         model=config.get("model"),
@@ -881,9 +885,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         cache_session=config.get("cache_session", False),
         search_past_sessions=config.get("search_past_sessions", False),
         num_past_sessions_to_search=config.get("num_past_sessions_to_search"),
-        num_past_session_runs_in_search=config.get(
-            "num_past_session_runs_in_search", config.get("num_past_session_runs")
-        ),
+        num_past_session_runs_in_search=config.get("num_past_session_runs_in_search"),
         enable_session_summaries=config.get("enable_session_summaries", False),
         add_session_summary_to_context=config.get("add_session_summary_to_context"),
         # session_summary_manager=config.get("session_summary_manager"),  # TODO

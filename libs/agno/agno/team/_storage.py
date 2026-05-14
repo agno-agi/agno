@@ -874,6 +874,10 @@ def from_dict(
         log_debug("'enable_user_memories' has been deprecated. Use 'update_memory_on_run' instead.")
         config.pop("enable_user_memories", None)
 
+    if "num_past_session_runs" in config:
+        log_debug("'num_past_session_runs' has been deprecated. Use 'num_past_session_runs_in_search' instead.")
+        config.pop("num_past_session_runs", None)
+
     team = cast(
         "Team",
         cls(
@@ -907,9 +911,7 @@ def from_dict(
             share_member_interactions=config.get("share_member_interactions", False),
             search_past_sessions=config.get("search_past_sessions", False),
             num_past_sessions_to_search=config.get("num_past_sessions_to_search"),
-            num_past_session_runs_in_search=config.get(
-                "num_past_session_runs_in_search", config.get("num_past_session_runs")
-            ),
+            num_past_session_runs_in_search=config.get("num_past_session_runs_in_search"),
             read_chat_history=config.get("read_chat_history", False),
             # --- System message settings ---
             system_message=config.get("system_message"),
