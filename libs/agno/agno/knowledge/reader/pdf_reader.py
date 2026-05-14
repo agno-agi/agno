@@ -4,8 +4,7 @@ from pathlib import Path
 from typing import IO, Any, List, Optional, Tuple, Union
 from uuid import uuid4
 
-from agno.knowledge.chunking.document import DocumentChunking
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyFactory, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
@@ -210,9 +209,7 @@ class BasePDFReader(Reader):
         **kwargs,
     ):
         if chunking_strategy is None:
-            chunk_size = kwargs.get("chunk_size", 5000)
-            chunking_strategy = DocumentChunking(chunk_size=chunk_size)
-
+            chunking_strategy = ChunkingStrategyFactory.create_strategy(ChunkingStrategyType.DOCUMENT_CHUNKER, **kwargs)
         if page_start_numbering_format is None:
             page_start_numbering_format = PAGE_START_NUMBERING_FORMAT_DEFAULT
         if page_end_numbering_format is None:

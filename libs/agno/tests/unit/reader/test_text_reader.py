@@ -359,3 +359,38 @@ def test_text_reader_default_chunk_size():
     assert reader.chunk_size == 5000
     assert reader.chunking_strategy.chunk_size == 5000
     assert isinstance(reader.chunking_strategy, FixedSizeChunking)
+
+
+def test_text_reader_overlap_propagation():
+    """Test that overlap is propagated to default chunking strategy"""
+    from agno.knowledge.chunking.fixed import FixedSizeChunking
+    from agno.knowledge.reader.text_reader import TextReader
+
+    reader = TextReader(chunk_size=500, overlap=50)
+    assert isinstance(reader.chunking_strategy, FixedSizeChunking)
+    assert reader.chunking_strategy.chunk_size == 500
+    assert reader.chunking_strategy.overlap == 50
+
+
+def test_text_reader_explicit_strategy_preserved():
+    """Test that explicit chunking_strategy is not overridden"""
+    from agno.knowledge.chunking.fixed import FixedSizeChunking
+    from agno.knowledge.reader.text_reader import TextReader
+
+    custom_strategy = FixedSizeChunking(chunk_size=400, overlap=40)
+    reader = TextReader(chunk_size=300, chunking_strategy=custom_strategy)
+    assert reader.chunking_strategy is custom_strategy
+    assert reader.chunking_strategy.chunk_size == 400
+    assert reader.chunking_strategy.overlap == 40
+
+
+def test_text_reader_multiple_instances_independent():
+    """Test that multiple instances don't share chunking strategies"""
+    from agno.knowledge.reader.text_reader import TextReader
+
+    reader1 = TextReader(chunk_size=500)
+    reader2 = TextReader(chunk_size=600)
+
+    assert reader1.chunking_strategy is not reader2.chunking_strategy
+    assert reader1.chunking_strategy.chunk_size == 500
+    assert reader2.chunking_strategy.chunk_size == 600

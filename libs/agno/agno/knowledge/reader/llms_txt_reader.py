@@ -12,8 +12,7 @@ try:
 except ImportError:
     raise ImportError("The `bs4` package is not installed. Please install it via `pip install beautifulsoup4`.")
 
-from agno.knowledge.chunking.fixed import FixedSizeChunking
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyFactory, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
@@ -51,8 +50,9 @@ class LLMsTxtReader(Reader):
         **kwargs,
     ):
         if chunking_strategy is None:
-            chunk_size = kwargs.get("chunk_size", 5000)
-            chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
+            chunking_strategy = ChunkingStrategyFactory.create_strategy(
+                ChunkingStrategyType.FIXED_SIZE_CHUNKER, **kwargs
+            )
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.max_urls = max_urls
         self.timeout = timeout

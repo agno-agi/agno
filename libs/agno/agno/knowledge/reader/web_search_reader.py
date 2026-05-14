@@ -7,8 +7,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from agno.knowledge.chunking.semantic import SemanticChunking
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyFactory, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
@@ -52,10 +51,11 @@ class WebSearchReader(Reader):
     # Override default chunking strategy
     chunking_strategy: Optional[ChunkingStrategy] = None
 
-    def __post_init__(self):
-        """Initialize chunking strategy with proper chunk_size"""
+    def __post_init__(self) -> None:
         if self.chunking_strategy is None:
-            self.chunking_strategy = SemanticChunking(chunk_size=self.chunk_size)
+            self.chunking_strategy = ChunkingStrategyFactory.create_strategy(
+                ChunkingStrategyType.SEMANTIC_CHUNKER, chunk_size=self.chunk_size
+            )
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:

@@ -2,7 +2,6 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
-from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyFactory, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.types import ContentType
@@ -72,13 +71,17 @@ class Reader:
 
     def chunk_document(self, document: Document) -> List[Document]:
         if self.chunking_strategy is None:
-            self.chunking_strategy = FixedSizeChunking(chunk_size=self.chunk_size)
+            self.chunking_strategy = ChunkingStrategyFactory.create_strategy(
+                ChunkingStrategyType.FIXED_SIZE_CHUNKER, chunk_size=self.chunk_size
+            )
         return self.chunking_strategy.chunk(document)
 
     async def achunk_document(self, document: Document) -> List[Document]:
         """Async version of chunk_document."""
         if self.chunking_strategy is None:
-            self.chunking_strategy = FixedSizeChunking(chunk_size=self.chunk_size)
+            self.chunking_strategy = ChunkingStrategyFactory.create_strategy(
+                ChunkingStrategyType.FIXED_SIZE_CHUNKER, chunk_size=self.chunk_size
+            )
         return await self.chunking_strategy.achunk(document)
 
     async def chunk_documents_async(self, documents: List[Document]) -> List[Document]:

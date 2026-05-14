@@ -234,6 +234,16 @@ def test_arxiv_reader_default_chunk_size():
     assert isinstance(reader.chunking_strategy, FixedSizeChunking)
 
 
+def test_arxiv_reader_overlap_propagation():
+    """Test that overlap is propagated to default chunking strategy"""
+    from agno.knowledge.chunking.fixed import FixedSizeChunking
+
+    reader = ArxivReader(chunk_size=500, overlap=50)
+    assert isinstance(reader.chunking_strategy, FixedSizeChunking)
+    assert reader.chunking_strategy.chunk_size == 500
+    assert reader.chunking_strategy.overlap == 50
+
+
 def test_arxiv_reader_explicit_strategy_preserved():
     """Test that explicit chunking_strategy is not overridden"""
     from agno.knowledge.chunking.semantic import SemanticChunking

@@ -3,21 +3,19 @@ import uuid
 from pathlib import Path
 from typing import IO, Any, List, Optional, Union
 
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyFactory, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error, log_warning
 
-# Check if MarkdownChunking is available
-MARKDOWN_CHUNKER_AVAILABLE = False
-
+# Check MarkdownChunking availability at import time (for get_supported_chunking_strategies)
 try:
-    from agno.knowledge.chunking.markdown import MarkdownChunking
+    from agno.knowledge.chunking.markdown import MarkdownChunking as _MarkdownChunking  # noqa: F401
 
     MARKDOWN_CHUNKER_AVAILABLE = True
 except ImportError:
-    pass
+    MARKDOWN_CHUNKER_AVAILABLE = False
 
 
 class MarkdownReader(Reader):
@@ -52,15 +50,15 @@ class MarkdownReader(Reader):
         description: Optional[str] = None,
         **kwargs,
     ) -> None:
-        # Create default chunking strategy with the caller's chunk_size
         if chunking_strategy is None:
-            chunk_size = kwargs.get("chunk_size", 5000)
-            if MARKDOWN_CHUNKER_AVAILABLE:
-                chunking_strategy = MarkdownChunking(chunk_size=chunk_size)
-            else:
-                from agno.knowledge.chunking.fixed import FixedSizeChunking
-
-                chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
+            try:
+                chunking_strategy = ChunkingStrategyFactory.create_strategy(
+                    ChunkingStrategyType.MARKDOWN_CHUNKER, **kwargs
+                )
+            except ImportError:
+                chunking_strategy = ChunkingStrategyFactory.create_strategy(
+                    ChunkingStrategyType.FIXED_SIZE_CHUNKER, **kwargs
+                )
 
         super().__init__(chunking_strategy=chunking_strategy, name=name, description=description, **kwargs)
 
