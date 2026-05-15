@@ -215,6 +215,8 @@ class AgentOS:
         tracing: bool = False,
         auto_provision_dbs: bool = True,
         run_hooks_in_background: bool = False,
+        expose_agent_config: bool = False,
+        stream_tool_payloads: bool = False,
         telemetry: bool = True,
         registry: Optional[Registry] = None,
         scheduler: bool = False,
@@ -248,6 +250,8 @@ class AgentOS:
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
+            expose_agent_config: If True, /agents, /teams, and workflow detail routes expose full runtime configuration
+            stream_tool_payloads: If True, SSE tool-call events include tool arguments and results
             telemetry: Whether to enable telemetry
             registry: Optional registry to use for the AgentOS
             scheduler: Whether to enable the cron scheduler
@@ -308,6 +312,8 @@ class AgentOS:
 
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
+        self.expose_agent_config = expose_agent_config
+        self.stream_tool_payloads = stream_tool_payloads
 
         # Scheduler configuration
         self._scheduler_enabled = scheduler

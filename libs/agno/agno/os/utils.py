@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Type, Union, overload
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.routing import APIRoute, APIRouter
@@ -177,11 +177,108 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
     return kwargs
 
 
-def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent]) -> str:
+TOOL_PAYLOAD_EVENT_NAMES = {
+    "ToolCallStarted",
+    "ToolCallCompleted",
+    "ToolCallError",
+    "TeamToolCallStarted",
+    "TeamToolCallCompleted",
+    "TeamToolCallError",
+}
+TOOL_PAYLOAD_FIELDS = {"content", "error", "images", "videos", "audio"}
+
+
+def _event_type_value(event_type: Any) -> str:
+    if event_type is None:
+        return ""
+    if hasattr(event_type, "value"):
+        return str(event_type.value)
+    return str(event_type)
+
+
+def _event_name(event: Any) -> str:
+    if isinstance(event, dict):
+        return _event_type_value(event.get("event"))
+    if isinstance(event, str):
+        return event
+    return _event_type_value(getattr(event, "event", event))
+
+
+def _events_to_skip_values(events_to_skip: Optional[Sequence[Any]]) -> Set[str]:
+    return {_event_type_value(event) for event in events_to_skip or []}
+
+
+def should_skip_sse_event(event: Any, events_to_skip: Optional[Sequence[Any]] = None) -> bool:
+    """Return True if an event should be omitted from the API stream."""
+    if not events_to_skip:
+        return False
+    return _event_name(event) in _events_to_skip_values(events_to_skip)
+
+
+def redact_tool_payloads(event_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove sensitive tool inputs/results from tool-call SSE payloads."""
+    event_type = _event_name(event_dict)
+    if event_type not in TOOL_PAYLOAD_EVENT_NAMES:
+        return event_dict
+
+    tool = event_dict.get("tool")
+    if isinstance(tool, dict):
+        tool.pop("tool_args", None)
+        tool.pop("result", None)
+
+    for field in TOOL_PAYLOAD_FIELDS:
+        event_dict.pop(field, None)
+
+    return event_dict
+
+
+def resolve_stream_events(component: Any, kwargs: Dict[str, Any]) -> bool:
+    """Resolve AgentOS SSE stream_events without overriding explicit component config."""
+    if "stream_events" in kwargs:
+        return kwargs.pop("stream_events")
+
+    component_stream_events = getattr(component, "stream_events", None)
+    if component_stream_events is not None:
+        return component_stream_events
+
+    return True
+
+
+def _format_sse_event_dict(event_type: str, event_dict: Dict[str, Any]) -> str:
+    from agno.utils.serialize import json_serializer
+
+    clean_json = json.dumps(event_dict, separators=(",", ":"), default=json_serializer, ensure_ascii=False)
+    return f"event: {event_type or 'message'}\ndata: {clean_json}\n\n"
+
+
+@overload
+def format_sse_event(
+    event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
+    *,
+    stream_tool_payloads: bool = True,
+    events_to_skip: None = None,
+) -> str: ...
+
+
+@overload
+def format_sse_event(
+    event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
+    *,
+    stream_tool_payloads: bool = True,
+    events_to_skip: Sequence[Any],
+) -> Optional[str]: ...
+
+
+def format_sse_event(
+    event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
+    *,
+    stream_tool_payloads: bool = True,
+    events_to_skip: Optional[Sequence[Any]] = None,
+) -> Optional[str]:
     """Parse JSON data into SSE-compliant format.
 
     Args:
-        event_dict: Dictionary containing the event data
+        event: Event object containing the event data
 
     Returns:
         SSE-formatted response:
@@ -194,24 +291,54 @@ def format_sse_event(event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRu
         data: { ... }
         ```
     """
+    if should_skip_sse_event(event, events_to_skip):
+        return None
+
     try:
         # Parse the JSON to extract the event type
         event_type = event.event or "message"
+        event_dict = event.to_dict()
+
+        if not stream_tool_payloads:
+            event_dict = redact_tool_payloads(event_dict)
 
         # Serialize to valid JSON with double quotes and no newlines
-        clean_json = event.to_json(separators=(",", ":"), indent=None)
-
-        return f"event: {event_type}\ndata: {clean_json}\n\n"
-    except json.JSONDecodeError:
+        return _format_sse_event_dict(event_type, event_dict)
+    except Exception:
         clean_json = event.to_json(separators=(",", ":"), indent=None)
         return f"event: message\ndata: {clean_json}\n\n"
+
+
+@overload
+def format_sse_event_with_index(
+    event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
+    event_index: Optional[int] = None,
+    run_id: Optional[str] = None,
+    *,
+    stream_tool_payloads: bool = True,
+    events_to_skip: None = None,
+) -> str: ...
+
+
+@overload
+def format_sse_event_with_index(
+    event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
+    event_index: Optional[int] = None,
+    run_id: Optional[str] = None,
+    *,
+    stream_tool_payloads: bool = True,
+    events_to_skip: Sequence[Any],
+) -> Optional[str]: ...
 
 
 def format_sse_event_with_index(
     event: Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent],
     event_index: Optional[int] = None,
     run_id: Optional[str] = None,
-) -> str:
+    *,
+    stream_tool_payloads: bool = True,
+    events_to_skip: Optional[Sequence[Any]] = None,
+) -> Optional[str]:
     """Format an event as SSE with injected event_index and run_id.
 
     Used by the agent/team response streamers to include reconnection metadata
@@ -225,7 +352,8 @@ def format_sse_event_with_index(
     Returns:
         SSE-formatted string with event_index in the data payload.
     """
-    from agno.utils.serialize import json_serializer
+    if should_skip_sse_event(event, events_to_skip):
+        return None
 
     try:
         event_type = event.event or "message"
@@ -236,11 +364,58 @@ def format_sse_event_with_index(
         if run_id and "run_id" not in event_dict:
             event_dict["run_id"] = run_id
 
-        clean_json = json.dumps(event_dict, separators=(",", ":"), default=json_serializer, ensure_ascii=False)
-        return f"event: {event_type}\ndata: {clean_json}\n\n"
+        if not stream_tool_payloads:
+            event_dict = redact_tool_payloads(event_dict)
+
+        return _format_sse_event_dict(event_type, event_dict)
     except Exception:
         clean_json = event.to_json(separators=(",", ":"), indent=None)
         return f"event: message\ndata: {clean_json}\n\n"
+
+
+def sanitize_sse_event(
+    sse_data: Any,
+    *,
+    stream_tool_payloads: bool = True,
+    events_to_skip: Optional[Sequence[Any]] = None,
+) -> Optional[str]:
+    """Apply AgentOS stream filtering/redaction to an already formatted SSE payload."""
+    if not isinstance(sse_data, str):
+        return format_sse_event(
+            sse_data,
+            stream_tool_payloads=stream_tool_payloads,
+            events_to_skip=events_to_skip,
+        )
+
+    if not sse_data or sse_data.startswith(":"):
+        return sse_data
+
+    event_type = ""
+    data_lines: List[str] = []
+    for line in sse_data.splitlines():
+        if line.startswith("event:"):
+            event_type = line[len("event:") :].strip()
+        elif line.startswith("data:"):
+            data_lines.append(line[len("data:") :].lstrip())
+
+    if should_skip_sse_event(event_type, events_to_skip):
+        return None
+
+    if stream_tool_payloads or not data_lines:
+        return sse_data
+
+    try:
+        event_dict = json.loads("\n".join(data_lines))
+    except json.JSONDecodeError:
+        return sse_data
+
+    if not event_type:
+        event_type = event_dict.get("event", "message")
+
+    if should_skip_sse_event(event_dict, events_to_skip):
+        return None
+
+    return _format_sse_event_dict(event_type, redact_tool_payloads(event_dict))
 
 
 async def get_db(
