@@ -20,6 +20,7 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.context.wiki import FileSystemBackend, WikiContextProvider
 from agno.models.openai import OpenAIResponses
+from agno.os import AgentOS
 
 WIKI_PATH = Path(__file__).resolve().parent / "demo-wiki"
 if WIKI_PATH.exists():
@@ -49,14 +50,19 @@ agent = Agent(
     markdown=True,
 )
 
-
-async def main() -> None:
-    print(f"\nwiki.status() = {wiki.status()}\n")
-
-    prompt = "What is our system architecture? List the tiers."
-    print(f"> {prompt}\n")
-    await agent.aprint_response(prompt, stream=True)
-
+agent_os = AgentOS(agents=[agent])
+app = agent_os.get_app()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    agent_os.serve(app="22_wiki_streaming_events:app", reload=True)
+
+# async def main() -> None:
+#     print(f"\nwiki.status() = {wiki.status()}\n")
+
+#     prompt = "What is our system architecture? List the tiers."
+#     print(f"> {prompt}\n")
+#     await agent.aprint_response(prompt, stream=True)
+
+
+# if __name__ == "__main__":
+#     asyncio.run(main())

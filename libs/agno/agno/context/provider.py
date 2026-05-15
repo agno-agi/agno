@@ -263,6 +263,7 @@ class ContextProvider(ABC):
                 # Do NOT break out of the loop, AsyncIterator needs to exit properly
                 if isinstance(event, (RunOutput, TeamRunOutput)):
                     final_output = event
+                    final_output.parent_run_id = getattr(final_output, "parent_run_id", None) or run_id
                     continue  # Don't yield RunOutput, only yield events
 
                 # Yield the sub-agent event directly

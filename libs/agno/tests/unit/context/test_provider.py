@@ -14,7 +14,23 @@ import pytest
 
 from agno.context import Answer, ContextMode, ContextProvider, Status
 from agno.context.provider import _sanitize_id
+from agno.models.response import ToolExecution
 from agno.run import RunContext
+from agno.run.agent import (
+    RunCompletedEvent,
+    RunContentEvent,
+    RunOutput,
+    RunStartedEvent,
+    ToolCallStartedEvent,
+)
+from agno.utils.events import (
+    create_model_request_started_event,
+    create_reasoning_started_event,
+    create_run_completed_event,
+    create_run_output_content_event,
+    create_run_started_event,
+    create_tool_call_started_event,
+)
 
 
 async def _collect_tool_output(tool, **kwargs) -> str:
@@ -25,6 +41,15 @@ async def _collect_tool_output(tool, **kwargs) -> str:
         if isinstance(chunk, str):
             result = chunk
     return result
+
+
+async def _collect_tool_chunks(tool, **kwargs) -> list:
+    gen = await tool.entrypoint(**kwargs)
+    chunks = []
+    async for chunk in gen:
+        chunks.append(chunk)
+    return chunks
+
 
 # ---------------------------------------------------------------------------
 # Test fixtures — minimal providers that pass / raise on demand
@@ -231,6 +256,86 @@ async def test_query_tool_includes_results_when_populated():
     payload = json.loads(out)
     assert payload["text"] == "see results"
     assert payload["results"] == [{"id": "d1", "name": "Page 1", "uri": "/p/1", "source": None, "snippet": "hello"}]
+
+
+@pytest.mark.asyncio
+async def test_query_tool_stamps_streamed_sub_agent_events_with_parent_run_id():
+    final_output = RunOutput(
+        run_id="child-run",
+        session_id="s-1",
+        agent_id="wiki-read",
+        agent_name="Wiki Read",
+        content="sub-agent answer",
+    )
+
+    class _StreamingAgent:
+        async def arun(self, *args, **kwargs):
+            yield RunStartedEvent(
+                run_id="child-run",
+                session_id="s-1",
+                agent_id="wiki-read",
+                agent_name="Wiki Read",
+            )
+            yield RunContentEvent(
+                run_id="child-run",
+                session_id="s-1",
+                agent_id="wiki-read",
+                agent_name="Wiki Read",
+                content="sub-agent answer",
+            )
+            yield ToolCallStartedEvent(
+                run_id="child-run",
+                session_id="s-1",
+                agent_id="wiki-read",
+                agent_name="Wiki Read",
+                tool=ToolExecution(tool_call_id="tool-1", tool_name="search_wiki"),
+            )
+            yield RunCompletedEvent(
+                run_id="child-run",
+                session_id="s-1",
+                agent_id="wiki-read",
+                agent_name="Wiki Read",
+                content="sub-agent answer",
+            )
+            yield final_output
+
+    class _SubAgentProvider(_EchoProvider):
+        async def _aget_query_agent(self, run_context: RunContext | None):
+            return _StreamingAgent()
+
+    query_tool = _SubAgentProvider(id="wiki")._query_tool()
+    rc = RunContext(run_id="parent-run", session_id="s-1", user_id="u-1")
+
+    chunks = await _collect_tool_chunks(query_tool, question="hello", run_context=rc)
+    event_chunks = [chunk for chunk in chunks if not isinstance(chunk, str)]
+
+    assert event_chunks
+    assert all(chunk.parent_run_id == "parent-run" for chunk in event_chunks)
+    assert final_output.parent_run_id == "parent-run"
+    assert json.loads(chunks[-1]) == {"text": "sub-agent answer"}
+
+
+def test_agent_event_factories_preserve_parent_run_id():
+    run_output = RunOutput(
+        run_id="child-run",
+        session_id="s-1",
+        agent_id="wiki-read",
+        agent_name="Wiki Read",
+        parent_run_id="parent-run",
+        content="sub-agent answer",
+    )
+    tool = ToolExecution(tool_call_id="tool-1", tool_name="search_wiki")
+
+    events = [
+        create_run_started_event(run_output),
+        create_run_output_content_event(run_output, content="delta"),
+        create_tool_call_started_event(run_output, tool),
+        create_model_request_started_event(run_output, model="gpt-test", model_provider="openai"),
+        create_reasoning_started_event(run_output),
+        create_run_completed_event(run_output),
+    ]
+
+    assert all(event.parent_run_id == "parent-run" for event in events)
 
 
 # ---------------------------------------------------------------------------
