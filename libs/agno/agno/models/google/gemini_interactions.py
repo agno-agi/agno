@@ -347,13 +347,12 @@ class GeminiInteractions(Model):
         input_turns = self._build_input(messages)
         kwargs["input"] = input_turns
 
-        # System instruction from the first system message
+        # System instruction from the last system message (consistent with gemini.py)
         system_message = None
         for msg in messages:
             if msg.role == "system":
                 if isinstance(msg.content, str):
                     system_message = msg.content
-                break
         if system_message:
             kwargs["system_instruction"] = system_message
 
