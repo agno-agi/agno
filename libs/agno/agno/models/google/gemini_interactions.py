@@ -12,7 +12,6 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from pathlib import Path
 from typing import Any, Dict, Iterator, List, Literal, Optional, Type, Union
 from uuid import uuid4
 
@@ -21,6 +20,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
+from agno.models.google.utils import media_to_content_item
 from agno.models.message import Message
 from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
@@ -55,130 +55,6 @@ try:
 except ImportError:
     AudioContent = None  # type: ignore[assignment, misc]
     ImageContent = None  # type: ignore[assignment, misc]
-
-
-def _get_mime_type(media: Union[Image, Audio, Video, File], default: str) -> str:
-    """Get the MIME type from a media object, falling back to format-based detection or default."""
-    if media.mime_type:
-        return media.mime_type
-
-    fmt = getattr(media, "format", None)
-    if fmt:
-        # Common format -> mime_type mappings
-        format_map = {
-            "png": "image/png",
-            "jpeg": "image/jpeg",
-            "jpg": "image/jpeg",
-            "webp": "image/webp",
-            "gif": "image/gif",
-            "heic": "image/heic",
-            "heif": "image/heif",
-            "mp3": "audio/mp3",
-            "wav": "audio/wav",
-            "ogg": "audio/ogg",
-            "flac": "audio/flac",
-            "aac": "audio/aac",
-            "mp4": "video/mp4",
-            "mov": "video/mov",
-            "avi": "video/avi",
-            "webm": "video/webm",
-            "pdf": "application/pdf",
-        }
-        if fmt.lower() in format_map:
-            return format_map[fmt.lower()]
-
-    # Try to detect from filepath
-    filepath = getattr(media, "filepath", None)
-    if filepath:
-        suffix = Path(str(filepath)).suffix.lower().lstrip(".")
-        if suffix:
-            format_map = {
-                "png": "image/png",
-                "jpeg": "image/jpeg",
-                "jpg": "image/jpeg",
-                "webp": "image/webp",
-                "gif": "image/gif",
-                "mp3": "audio/mp3",
-                "wav": "audio/wav",
-                "ogg": "audio/ogg",
-                "flac": "audio/flac",
-                "mp4": "video/mp4",
-                "mov": "video/mov",
-                "avi": "video/avi",
-                "webm": "video/webm",
-                "pdf": "application/pdf",
-            }
-            if suffix in format_map:
-                return format_map[suffix]
-
-    return default
-
-
-def _media_to_content_item(
-    media: Union[Image, Audio, Video, File], content_type: str, default_mime: str
-) -> Optional[Dict[str, Any]]:
-    """Convert an Agno media object to an Interactions API content item dict.
-
-    Supports three content sources: bytes/content, URL/URI, and filepath.
-    Returns a dict like {"type": "image", "data": base64_str, "mime_type": "image/jpeg"}.
-    """
-    mime_type = _get_mime_type(media, default_mime)
-    item: Dict[str, Any] = {"type": content_type, "mime_type": mime_type}
-
-    # Case 1: URL
-    url = getattr(media, "url", None)
-    if url:
-        # GCS URIs and Gemini File API URIs can be passed directly
-        if url.startswith("gs://") or "generativelanguage.googleapis.com" in url:
-            item["uri"] = url
-            return item
-        # For regular HTTP URLs, download and base64 encode
-        try:
-            import httpx
-
-            headers = {"User-Agent": "Mozilla/5.0 (compatible; agno/1.0)"}
-            response = httpx.get(url, follow_redirects=True, headers=headers)
-            response.raise_for_status()
-            item["data"] = base64.b64encode(response.content).decode("utf-8")
-            return item
-        except Exception as e:
-            log_warning(f"Failed to download {content_type} from URL {url}: {e}")
-            # Fall back to URI
-            item["uri"] = url
-            return item
-
-    # Case 2: Raw bytes content
-    content_bytes = getattr(media, "content", None)
-    if content_bytes and isinstance(content_bytes, bytes):
-        item["data"] = base64.b64encode(content_bytes).decode("utf-8")
-        return item
-
-    # Case 3: Filepath - read and base64 encode
-    filepath = getattr(media, "filepath", None)
-    if filepath:
-        try:
-            path = Path(str(filepath))
-            if path.exists() and path.is_file():
-                data = path.read_bytes()
-                item["data"] = base64.b64encode(data).decode("utf-8")
-                return item
-            else:
-                log_warning(f"File not found: {filepath}")
-                return None
-        except Exception as e:
-            log_warning(f"Failed to read file {filepath}: {e}")
-            return None
-
-    # Case 4: For File objects, check 'external' (GeminiFile)
-    external = getattr(media, "external", None)
-    if external and hasattr(external, "uri"):
-        item["uri"] = external.uri
-        if hasattr(external, "mime_type") and external.mime_type:
-            item["mime_type"] = external.mime_type
-        return item
-
-    log_warning(f"No content source found for {content_type} media object")
-    return None
 
 
 @dataclass
@@ -396,28 +272,28 @@ class GeminiInteractions(Model):
                 # Image inputs
                 if message.images:
                     for image in message.images:
-                        item = _media_to_content_item(image, "image", "image/jpeg")
+                        item = media_to_content_item(image, "image", "image/jpeg")
                         if item:
                             content_items.append(item)
 
                 # Audio inputs
                 if message.audio:
                     for audio in message.audio:
-                        item = _media_to_content_item(audio, "audio", "audio/wav")
+                        item = media_to_content_item(audio, "audio", "audio/wav")
                         if item:
                             content_items.append(item)
 
                 # Video inputs
                 if message.videos:
                     for video in message.videos:
-                        item = _media_to_content_item(video, "video", "video/mp4")
+                        item = media_to_content_item(video, "video", "video/mp4")
                         if item:
                             content_items.append(item)
 
                 # File/document inputs
                 if message.files:
                     for file in message.files:
-                        item = _media_to_content_item(file, "document", "application/pdf")
+                        item = media_to_content_item(file, "document", "application/pdf")
                         if item:
                             content_items.append(item)
 
