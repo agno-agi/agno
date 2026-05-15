@@ -35,7 +35,7 @@ from agno.agent import Agent
 from agno.models.google import GeminiInteractions
 
 agent = Agent(
-    model=GeminiInteractions(id="gemini-2.5-flash"),
+    model=GeminiInteractions(id="gemini-3-flash-preview"),
     markdown=True,
 )
 agent.print_response("Hello!")

@@ -70,14 +70,14 @@ class GeminiInteractions(Model):
         from agno.models.google import GeminiInteractions
 
         agent = Agent(
-            model=GeminiInteractions(id="gemini-2.5-flash"),
+            model=GeminiInteractions(id="gemini-3-flash-preview"),
             markdown=True,
         )
         agent.print_response("Hello!")
         ```
     """
 
-    id: str = "gemini-2.5-flash"
+    id: str = "gemini-3-flash-preview"
     name: str = "GeminiInteractions"
     provider: str = "Google"
 
