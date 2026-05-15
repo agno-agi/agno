@@ -12,6 +12,8 @@ Tests cover:
 - Serialization/deserialization of HITL requirements
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowRunOutput
 from agno.workflow.step import Step
