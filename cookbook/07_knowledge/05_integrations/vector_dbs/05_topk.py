@@ -12,7 +12,7 @@ Features:
 Setup:
     pip install topk_sdk
     export TOPK_API_KEY=your_api_key
-    export TOPK_REGION=your_region   # e.g. aws-us-east-1-elastica
+    export TOPK_REGION=your_region
 
 Get your API: https://console.topk.io
 See available regions: https://docs.topk.io/regions

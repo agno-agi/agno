@@ -4,10 +4,11 @@ from hashlib import md5
 from typing import Any, Dict, Final, FrozenSet, List, Optional
 
 try:
+    import topk_sdk.error
     from topk_sdk import AsyncClient, Client
     from topk_sdk import schema as topk_schema
     from topk_sdk.data import f32_vector
-    from topk_sdk.query import LogicalExpr, Query, field, filter, fn, match_tokens, select
+    from topk_sdk.query import Query, field, filter, fn, match_tokens, select
     from topk_sdk.query import all as topk_all
     from topk_sdk.schema import FieldSpec
 except ImportError:
@@ -120,7 +121,7 @@ class TopK(VectorDb):
         filters: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         record: Dict[str, Any] = {
-            self.TOPK_DOCUMENT_ID_FIELD: self._record_id(document, content_hash),
+            self.TOPK_DOCUMENT_ID_FIELD: self._record_id(document),
             self.TOPK_DOCUMENT_EMBEDDING_FIELD: f32_vector(document.embedding),
             "name": document.name,
             "content": document.content,
@@ -134,11 +135,8 @@ class TopK(VectorDb):
 
         return record
 
-    def _record_id(self, document: Document, content_hash: str) -> str:
-        # Include content_hash in the persisted record ID so distinct ingestions
-        # of the same source document do not overwrite each other.
-        base_id = document.id or md5(document.content.encode()).hexdigest()
-        return md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+    def _record_id(self, document: Document) -> str:
+        return document.id or md5(document.content.encode()).hexdigest()
 
     def _topk_doc_to_document(self, record: Dict[str, Any]) -> Document:
         meta_data = {k: v for k, v in record.items() if k not in self.SYSTEM_FIELDS}
@@ -153,10 +151,6 @@ class TopK(VectorDb):
             content_id=record.get("content_id"),
         )
 
-    def _build_filter_expr(self, filters: Dict[str, Any]) -> LogicalExpr:
-        exprs = [field(key) == value for key, value in filters.items()]
-        return topk_all(exprs)
-
     def _vector_score_asc(self) -> bool:
         # dot_product returns raw similarity (higher = more similar) → sort descending.
         # cosine and euclidean return a distance (lower = more similar) → sort ascending.
@@ -170,7 +164,7 @@ class TopK(VectorDb):
         filters: Optional[Dict[str, Any]] = None,
     ) -> Query:
         filter_fields = list(filters.keys()) if filters else []
-        filter_expr = self._build_filter_expr(filters) if filters else None
+        filter_expr = topk_all([field(key) == value for key, value in filters.items()]) if filters else None
         select_fields = (*self.AGNO_DOCUMENT_FIELDS, *filter_fields)
         vector_asc = self._vector_score_asc()
 
@@ -212,8 +206,10 @@ class TopK(VectorDb):
             True if the collection exists, False otherwise.
         """
         try:
-            collections = self.client.collections().list()
-            return any(c.name == self.collection for c in collections)
+            self.client.collections().get(self.collection)
+            return True
+        except topk_sdk.error.CollectionNotFoundError:
+            return False
         except Exception as e:
             log_error(f"Error checking TopK collection existence: {e}")
             return False
@@ -225,8 +221,10 @@ class TopK(VectorDb):
             True if the collection exists, False otherwise.
         """
         try:
-            collections = await self.async_client.collections().list()
-            return any(c.name == self.collection for c in collections)
+            await self.async_client.collections().get(self.collection)
+            return True
+        except topk_sdk.error.CollectionNotFoundError:
+            return False
         except Exception as e:
             log_error(f"Error checking TopK collection existence: {e}")
             return False
@@ -390,8 +388,7 @@ class TopK(VectorDb):
         """
         try:
             embedding = self.embedder.get_embedding(query)
-            filter_dict = filters if isinstance(filters, dict) else None
-            q = self._search_query(embedding, query, limit, filter_dict)
+            q = self._search_query(embedding, query, limit, filters)
             records = self.client.collection(self.collection).query(q)
             return [self._topk_doc_to_document(r) for r in records]
         except Exception as e:
@@ -411,8 +408,7 @@ class TopK(VectorDb):
         """
         try:
             embedding = await self.embedder.async_get_embedding(query)
-            filter_dict = filters if isinstance(filters, dict) else None
-            q = self._search_query(embedding, query, limit, filter_dict)
+            q = self._search_query(embedding, query, limit, filters)
             records = await self.async_client.collection(self.collection).query(q)
             return [self._topk_doc_to_document(r) for r in records]
         except Exception as e:
@@ -473,7 +469,9 @@ class TopK(VectorDb):
             True if the deletion succeeded, False otherwise.
         """
         try:
-            self.client.collection(self.collection).delete(self._build_filter_expr(metadata))
+            self.client.collection(self.collection).delete(
+                topk_all([field(key) == value for key, value in metadata.items()])
+            )
             return True
         except Exception as e:
             log_error(f"Error deleting by metadata: {e}")
@@ -526,15 +524,7 @@ def _strip_unsupported_field_types(data: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _deserialize_usage(value: Any) -> Optional[Dict[str, Any]]:
+def _deserialize_usage(value: Optional[str]) -> Optional[Dict[str, Any]]:
     if value is None:
         return None
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str):
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return None
-        return parsed if isinstance(parsed, dict) else None
-    return None
+    return json.loads(value)

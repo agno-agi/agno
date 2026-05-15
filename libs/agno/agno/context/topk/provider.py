@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from dataclasses import dataclass
 
 import topk_sdk
+import topk_sdk.error
 
 from agno.context.mode import ContextMode
 from agno.context.provider import Answer, ContextProvider, Document, Status, _sanitize_id, _serialize_answer
@@ -52,8 +54,8 @@ class TopKContextProvider(ContextProvider):
     Args:
         id: Provider identifier used to namespace tools (default ``"topk"``).
         name: Display name shown in instructions.
-        api_key: TopK API key. Falls back to ``TOPK_API_KEY`` env var.
-        region: TopK region. Falls back to ``TOPK_REGION`` env var.
+        api_key: TopK API key (or set ``TOPK_API_KEY`` env var).
+        region: TopK region (or set ``TOPK_REGION`` env var).
         host: TopK host (default ``"topk.io"``).
         mode: How a ContextProvider exposes itself to a calling agent.
     """
@@ -66,12 +68,14 @@ class TopKContextProvider(ContextProvider):
         api_key: str | None = None,
         region: str | None = None,
         host: str = "topk.io",
+        https: bool = True,
         mode: ContextMode = ContextMode.default,
     ) -> None:
         super().__init__(id=id, name=name, mode=mode, write=False)
-        self.api_key = api_key or os.environ.get("TOPK_API_KEY") or ""
-        self.region = region or os.environ.get("TOPK_REGION") or "aws-us-east-1-elastica"
+        self.api_key = api_key
+        self.region = region
         self.host = host
+        self.https = https
         self._sync_client: topk_sdk.Client | None = None
         self._async_client: topk_sdk.AsyncClient | None = None
 
@@ -81,19 +85,33 @@ class TopKContextProvider(ContextProvider):
 
     def _sync(self) -> topk_sdk.Client:
         if self._sync_client is None:
+            api_key = self.api_key or os.environ.get("TOPK_API_KEY")
+            region = self.region or os.environ.get("TOPK_REGION")
+            if not api_key:
+                raise ValueError("api_key is required or set TOPK_API_KEY env var")
+            if not region:
+                raise ValueError("region is required or set TOPK_REGION env var")
             self._sync_client = topk_sdk.Client(
-                api_key=self.api_key,
-                region=self.region,
+                api_key=api_key,
+                region=region,
                 host=self.host,
+                https=self.https,
             )
         return self._sync_client
 
     def _async(self) -> topk_sdk.AsyncClient:
         if self._async_client is None:
+            api_key = self.api_key or os.environ.get("TOPK_API_KEY")
+            region = self.region or os.environ.get("TOPK_REGION")
+            if not api_key:
+                raise ValueError("api_key is required or set TOPK_API_KEY env var")
+            if not region:
+                raise ValueError("region is required or set TOPK_REGION env var")
             self._async_client = topk_sdk.AsyncClient(
-                api_key=self.api_key,
-                region=self.region,
+                api_key=api_key,
+                region=region,
                 host=self.host,
+                https=self.https,
             )
         return self._async_client
 
@@ -103,17 +121,21 @@ class TopKContextProvider(ContextProvider):
 
     def status(self) -> Status:
         try:
-            self._sync().datasets().list()
-            return Status(ok=True)
+            self._sync().datasets().get(f"probe_{uuid.uuid4().hex}")
+        except topk_sdk.error.DatasetNotFoundError:
+            pass
         except Exception as exc:
             return Status(ok=False, detail=str(exc))
+        return Status(ok=True)
 
     async def astatus(self) -> Status:
         try:
-            await self._async().datasets().list()
-            return Status(ok=True)
+            await self._async().datasets().get(f"probe_{uuid.uuid4().hex}")
+        except topk_sdk.error.DatasetNotFoundError:
+            pass
         except Exception as exc:
             return Status(ok=False, detail=str(exc))
+        return Status(ok=True)
 
     # ------------------------------------------------------------------
     # Query
@@ -121,19 +143,17 @@ class TopKContextProvider(ContextProvider):
 
     def query(self, question: str, *, run_context: RunContext | None = None) -> Answer:
         datasets = [d.name for d in self._sync().datasets().list()]
-        topk_answer: topk_sdk.Answer | None = None
         for message in self._sync().ask(query=question, datasets=datasets):
             if isinstance(message, topk_sdk.Answer):
-                topk_answer = message
-        return _answer_from_topk(topk_answer)
+                return _answer_from_topk(message)
+        return Answer()
 
     async def aquery(self, question: str, *, run_context: RunContext | None = None) -> Answer:
         datasets = [d.name for d in await self._async().datasets().list()]
-        topk_answer: topk_sdk.Answer | None = None
         async for message in self._async().ask(query=question, datasets=datasets):
             if isinstance(message, topk_sdk.Answer):
-                topk_answer = message
-        return _answer_from_topk(topk_answer)
+                return _answer_from_topk(message)
+        return Answer()
 
     # ------------------------------------------------------------------
     # Instructions for the calling agent
@@ -171,10 +191,7 @@ class TopKContextProvider(ContextProvider):
         @tool(name=f"list_datasets_{safe_id}")
         async def _list_datasets(run_context: RunContext | None = None) -> str:
             datasets = await provider._async().datasets().list()
-            return json.dumps([
-                {"name": d.name, "description": d.description}
-                for d in datasets
-            ])
+            return json.dumps([{"name": d.name, "description": d.description} for d in datasets])
 
         return _list_datasets
 
@@ -213,7 +230,6 @@ class TopKContextProvider(ContextProvider):
             select_fields: list[str] | None = None,
             run_context: RunContext | None = None,
         ):
-            topk_answer: topk_sdk.Answer | None = None
             async for message in provider._async().ask(
                 query=question,
                 datasets=datasets,
@@ -222,8 +238,9 @@ class TopKContextProvider(ContextProvider):
                 if isinstance(message, topk_sdk.Progress):
                     yield TopKProgressEvent(update=message.update)
                 elif isinstance(message, topk_sdk.Answer):
-                    topk_answer = message
-            yield json.dumps(_serialize_answer(_answer_from_topk(topk_answer)))
+                    yield json.dumps(_serialize_answer(_answer_from_topk(message)))
+                    return
+            yield json.dumps(_serialize_answer(Answer()))
 
         return _ask
 
@@ -238,7 +255,6 @@ class TopKContextProvider(ContextProvider):
             select_fields: list[str] | None = None,
             run_context: RunContext | None = None,
         ):
-            topk_answer: topk_sdk.Answer | None = None
             async for message in provider._async().ask(
                 query=question,
                 datasets=datasets,
@@ -248,8 +264,9 @@ class TopKContextProvider(ContextProvider):
                 if isinstance(message, topk_sdk.Progress):
                     yield TopKProgressEvent(update=message.update)
                 elif isinstance(message, topk_sdk.Answer):
-                    topk_answer = message
-            yield json.dumps(_serialize_answer(_answer_from_topk(topk_answer)))
+                    yield json.dumps(_serialize_answer(_answer_from_topk(message)))
+                    return
+            yield json.dumps(_serialize_answer(Answer()))
 
         return _research
 
@@ -259,9 +276,7 @@ class TopKContextProvider(ContextProvider):
 # ------------------------------------------------------------------
 
 
-def _answer_from_topk(topk_answer: topk_sdk.Answer | None) -> Answer:
-    if topk_answer is None:
-        return Answer()
+def _answer_from_topk(topk_answer: topk_sdk.Answer) -> Answer:
     text = "\n".join(f.fact for f in topk_answer.facts) if topk_answer.facts else None
     results = [_search_result_to_doc(sr) for sr in topk_answer.refs.values()]
     return Answer(text=text, results=results)

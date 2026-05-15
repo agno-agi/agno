@@ -10,7 +10,7 @@ End-to-end example:
 
 Requires:
     TOPK_API_KEY   — TopK API key
-    TOPK_REGION    — TopK region   (e.g. "aws-us-east-1-elastica")
+    TOPK_REGION    — TopK region
     OPENAI_API_KEY — OpenAI API key
 
 Get your API: https://console.topk.io
@@ -24,6 +24,7 @@ import os
 import urllib.request
 
 import topk_sdk
+import topk_sdk.error
 from agno.agent import Agent
 from agno.context.topk import TopKContextProvider, TopKProgressEvent
 from agno.models.openai import OpenAIResponses
@@ -38,7 +39,7 @@ def setup_dataset(client: topk_sdk.Client) -> None:
     try:
         client.datasets().create(DATASET_NAME)
         print(f"Created dataset '{DATASET_NAME}'")
-    except Exception:
+    except topk_sdk.error.DatasetAlreadyExistsError:
         print(f"Dataset '{DATASET_NAME}' already exists, skipping create")
 
     # Set a description — the agent reads this from list_datasets to decide
@@ -62,7 +63,7 @@ def setup_dataset(client: topk_sdk.Client) -> None:
         metadata={"source": PDF_URL},
     )
 
-    print("Waiting for indexing to complete...")
+    print("Waiting for document to be processed...")
     client.dataset(DATASET_NAME).wait_for_handle(handle)
     print("Dataset ready.\n")
 
@@ -70,10 +71,8 @@ def setup_dataset(client: topk_sdk.Client) -> None:
 async def main() -> None:
     client = topk_sdk.Client(
         api_key=os.environ["TOPK_API_KEY"],
-        region=os.environ.get("TOPK_REGION", "aws-us-east-1-elastica"),
+        region=os.environ["TOPK_REGION"],
     )
-
-    setup_dataset(client)
 
     topk = TopKContextProvider()
 
@@ -83,6 +82,8 @@ async def main() -> None:
         instructions=topk.instructions(),
         markdown=True,
     )
+
+    setup_dataset(client)
 
     prompt = (
         "What Thai recipes are available? Give me a few with their key ingredients."
