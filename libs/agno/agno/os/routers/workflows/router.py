@@ -1,5 +1,6 @@
 import asyncio
 import json
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union
 from uuid import uuid4
 
@@ -23,9 +24,18 @@ from agno.os.auth import (
     get_auth_token_from_request,
     get_authentication_dependency,
     require_resource_access,
-    validate_websocket_token,
 )
 from agno.os.managers import event_buffer, websocket_manager
+from agno.os.middleware.user_scope import (
+    SESSION_ID_REQUIRED,
+    SESSION_ID_REQUIRED_RECONNECT,
+    WORKFLOW_ID_REQUIRED_RECONNECT,
+    assert_session_matches_component,
+    get_scoped_user_id,
+    run_matches_component,
+    verify_run_in_session,
+    verify_run_in_session_via_db,
+)
 from agno.os.routers.workflows.schema import WorkflowResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -66,6 +76,23 @@ async def handle_workflow_via_websocket(
         user_message = message.get("message", "")
         user_id = message.get("user_id")
         factory_input = message.get("factory_input")
+
+        # Defense-in-depth: if the caller authenticated via JWT, ensure user_id
+        # matches the JWT sub for non-admin callers. The WS dispatcher in
+        # router.py already forces this, but the handler should not trust a
+        # client-supplied user_id if called from any other code path.
+        if ws_user_context:
+            jwt_user_id = ws_user_context.get("user_id")
+            if jwt_user_id:
+                from agno.os.scopes import AgentOSScope
+
+                scopes = ws_user_context.get("scopes", [])
+                admin_scope = AgentOSScope.ADMIN.value
+                is_admin = admin_scope in scopes
+                if is_admin:
+                    user_id = user_id or jwt_user_id
+                else:
+                    user_id = jwt_user_id
 
         if not workflow_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
@@ -171,7 +198,28 @@ async def handle_workflow_via_websocket(
         await websocket.send_text(json.dumps(error_payload))
 
 
-async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: "AgentOS"):
+@dataclass
+class WebSocketAuthContext:
+    """Per-connection auth state derived once when the WebSocket opens.
+
+    Passed to handler functions alongside the (untrusted) client message so
+    handlers don't need to read internal flags out of the client payload.
+    """
+
+    jwt_enabled: bool = False
+    is_admin: bool = False
+    # Opt-in per-user isolation. When False (default), ownership checks added
+    # by the user-scoped-DB work stay dormant — RBAC still applies but the
+    # handler treats reconnect as session-id-optional.
+    user_isolation_enabled: bool = False
+
+
+async def handle_workflow_subscription(
+    websocket: WebSocket,
+    message: dict,
+    os: "AgentOS",
+    ws_auth: Optional[WebSocketAuthContext] = None,
+):
     """
     Handle subscription/reconnection to an existing workflow run.
 
@@ -181,11 +229,65 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
         run_id = message.get("run_id")
         workflow_id = message.get("workflow_id")
         session_id = message.get("session_id")
+        user_id = message.get("user_id")
         last_event_index = message.get("last_event_index")  # 0-based index of last received event
+        # Auth context is set by the WS dispatcher in router.py; default to
+        # "no JWT, no isolation" for callers that bypass the dispatcher.
+        ctx = ws_auth or WebSocketAuthContext()
+        jwt_enabled = ctx.jwt_enabled
+        is_admin = ctx.is_admin
+        user_isolation_enabled = ctx.user_isolation_enabled
 
         if not run_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required for subscription"}))
             return
+
+        # Non-admin JWT callers must prove session ownership before any replay or
+        # live-event subscription — but only when per-user isolation is enabled.
+        # The buffer path is keyed solely on run_id, so without this check (when
+        # isolation is on) a caller with workflows:run could read another user's
+        # run events by guessing the run_id. With isolation off, RBAC alone
+        # governs reconnect access.
+        if jwt_enabled and user_isolation_enabled and not is_admin and user_id:
+            if not session_id:
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "event": "error",
+                            "error": SESSION_ID_REQUIRED_RECONNECT,
+                        }
+                    )
+                )
+                return
+            # workflow_id is required so the session/run component check has
+            # something to validate against. Defense-in-depth: the WS dispatch
+            # in router.py already rejects missing workflow_id at reconnect
+            # for JWT callers, but the handler must not silently fall back to
+            # an unconstrained check if a future caller skips that path.
+            if not workflow_id:
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "event": "error",
+                            "error": WORKFLOW_ID_REQUIRED_RECONNECT,
+                        }
+                    )
+                )
+                return
+
+            try:
+                await verify_run_in_session_via_db(
+                    os.db,
+                    session_id,
+                    run_id,
+                    user_id,
+                    component_type="workflows",
+                    component_id=workflow_id,
+                )
+            except HTTPException:
+                # Mask existence of another user's run.
+                await websocket.send_text(json.dumps({"event": "error", "error": f"Run {run_id} not found"}))
+                return
 
         # Check if run exists in event buffer
         buffer_status = event_buffer.get_run_status(run_id)
@@ -204,7 +306,7 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
                 except FactoryContextRequired:
                     workflow = None
                 if workflow and isinstance(workflow, Workflow):
-                    workflow_run = await workflow.aget_run_output(run_id, session_id)
+                    workflow_run = await workflow.aget_run_output(run_id, session_id, user_id=user_id)
 
                     if workflow_run:
                         # Run exists in DB - send all events from DB
@@ -341,12 +443,18 @@ async def handle_workflow_subscription(websocket: WebSocket, message: dict, os: 
         )
 
 
-async def handle_workflow_continue_via_websocket(websocket: WebSocket, message: dict, os: "AgentOS"):
+async def handle_workflow_continue_via_websocket(
+    websocket: WebSocket,
+    message: dict,
+    os: "AgentOS",
+    ws_auth: Optional[WebSocketAuthContext] = None,
+):
     """Handle continuing a paused workflow run via WebSocket"""
     try:
         workflow_id = message.get("workflow_id")
         run_id = message.get("run_id")
         session_id = message.get("session_id")
+        user_id = message.get("user_id")
         step_requirements_data = message.get("step_requirements")
 
         if not workflow_id:
@@ -355,6 +463,31 @@ async def handle_workflow_continue_via_websocket(websocket: WebSocket, message: 
         if not run_id:
             await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required"}))
             return
+
+        # Enforce ownership for non-admin callers when user isolation is enabled.
+        # Mirrors the HTTP cancel/resume routes: a non-admin caller must own
+        # both the session and the run before we even fetch the paused state.
+        if ws_auth and ws_auth.jwt_enabled and ws_auth.user_isolation_enabled and not ws_auth.is_admin and user_id:
+            if not session_id:
+                await websocket.send_text(json.dumps({"event": "error", "error": SESSION_ID_REQUIRED}))
+                return
+            # Prefer the factory's db when this workflow_id is a factory entry;
+            # only fall back to os.db when no factory-specific db is configured.
+            # This matches the pattern the HTTP cancel/resume routes use.
+            factory = find_factory_by_id(workflow_id, os.workflows)
+            check_db = getattr(factory, "db", None) or os.db
+            try:
+                await verify_run_in_session_via_db(
+                    check_db,
+                    session_id,
+                    run_id,
+                    user_id,
+                    component_type="workflows",
+                    component_id=workflow_id,
+                )
+            except HTTPException:
+                await websocket.send_text(json.dumps({"event": "error", "error": f"Run {run_id} not found"}))
+                return
 
         workflow = get_workflow_by_id(
             workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
@@ -369,7 +502,7 @@ async def handle_workflow_continue_via_websocket(websocket: WebSocket, message: 
             return
 
         # Load the paused run
-        existing_run = await workflow.aget_run_output(run_id=run_id, session_id=session_id)
+        existing_run = await workflow.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
         if existing_run is None:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Run {run_id} not found"}))
             return
@@ -650,6 +783,7 @@ async def _resume_stream_generator(
     run_id: str,
     last_event_index: Optional[int],
     session_id: Optional[str],
+    user_id: Optional[str] = None,
 ) -> AsyncGenerator:
     """SSE generator for the /resume endpoint.
 
@@ -666,7 +800,7 @@ async def _resume_stream_generator(
         # PATH 3: Not in buffer -- fall back to database
         if session_id and not isinstance(workflow, RemoteWorkflow):
             try:
-                run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id)
+                run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
             except Exception as e:
                 error = {"event": "error", "error": f"Failed to fetch run from database: {str(e)}"}
                 yield f"event: error\ndata: {json.dumps(error)}\n\n"
@@ -812,150 +946,6 @@ async def _resume_stream_generator(
         sse_subscriber_manager.unsubscribe(run_id, queue)
 
 
-def get_websocket_router(
-    os: "AgentOS",
-    settings: AgnoAPISettings = AgnoAPISettings(),
-) -> APIRouter:
-    """
-    Create WebSocket router with support for both legacy (os_security_key) and JWT authentication.
-
-    WebSocket endpoints handle authentication internally via message-based auth.
-    Authentication methods (in order of precedence):
-    1. JWT tokens - if JWTMiddleware is configured (via app.state.jwt_middleware)
-    2. Legacy bearer token - if settings.os_security_key is set
-    3. No authentication - if neither is configured
-
-    The JWT middleware instance is accessed from app.state.jwt_middleware, which is set
-    by AgentOS when authorization is enabled. This allows reusing the same validation
-    logic and loaded keys as the HTTP middleware.
-
-    Args:
-        os: The AgentOS instance
-        settings: API settings (includes os_security_key for legacy auth)
-    """
-    ws_router = APIRouter()
-
-    @ws_router.websocket(
-        "/workflows/ws",
-        name="workflow_websocket",
-    )
-    async def workflow_websocket_endpoint(websocket: WebSocket):
-        """WebSocket endpoint for receiving real-time workflow events"""
-        # Check if JWT validator is configured (set by AgentOS when authorization=True)
-        jwt_validator = getattr(websocket.app.state, "jwt_validator", None)
-        jwt_auth_enabled = jwt_validator is not None
-
-        # Determine auth requirements - JWT takes precedence over legacy
-        requires_auth = jwt_auth_enabled or bool(settings.os_security_key)
-
-        await websocket_manager.connect(websocket, requires_auth=requires_auth)
-
-        # Store user context from JWT auth
-        websocket_user_context: Dict[str, Any] = {}
-
-        try:
-            while True:
-                data = await websocket.receive_text()
-                message = json.loads(data)
-                action = message.get("action")
-
-                # Handle authentication first
-                if action == "authenticate":
-                    token = message.get("token")
-                    if not token:
-                        await websocket.send_text(json.dumps({"event": "auth_error", "error": "Token is required"}))
-                        continue
-
-                    if jwt_auth_enabled and jwt_validator:
-                        # Use JWT validator for token validation
-                        try:
-                            payload = jwt_validator.validate_token(token)
-                            claims = jwt_validator.extract_claims(payload)
-                            await websocket_manager.authenticate_websocket(websocket)
-
-                            # Store user context from JWT
-                            websocket_user_context["user_id"] = claims["user_id"]
-                            websocket_user_context["scopes"] = claims["scopes"]
-                            websocket_user_context["payload"] = payload
-
-                            # Include user info in auth success message
-                            await websocket.send_text(
-                                json.dumps(
-                                    {
-                                        "event": "authenticated",
-                                        "message": "JWT authentication successful.",
-                                        "user_id": claims["user_id"],
-                                    }
-                                )
-                            )
-                        except Exception as e:
-                            error_msg = str(e) if str(e) else "Invalid token"
-                            error_type = "expired" if "expired" in error_msg.lower() else "invalid_token"
-                            await websocket.send_text(
-                                json.dumps(
-                                    {
-                                        "event": "auth_error",
-                                        "error": error_msg,
-                                        "error_type": error_type,
-                                    }
-                                )
-                            )
-                        continue
-                    elif validate_websocket_token(token, settings):
-                        # Legacy os_security_key authentication
-                        await websocket_manager.authenticate_websocket(websocket)
-                    else:
-                        await websocket.send_text(json.dumps({"event": "auth_error", "error": "Invalid token"}))
-                    continue
-
-                # Check authentication for all other actions (only when required)
-                elif requires_auth and not websocket_manager.is_authenticated(websocket):
-                    auth_type = "JWT" if jwt_auth_enabled else "bearer token"
-                    await websocket.send_text(
-                        json.dumps(
-                            {
-                                "event": "auth_required",
-                                "error": f"Authentication required. Send authenticate action with valid {auth_type}.",
-                            }
-                        )
-                    )
-                    continue
-
-                # Handle authenticated actions
-                elif action == "ping":
-                    await websocket.send_text(json.dumps({"event": "pong"}))
-
-                elif action == "start-workflow":
-                    # Always override caller-supplied user_id with the JWT subject
-                    if websocket_user_context and websocket_user_context.get("user_id"):
-                        message["user_id"] = websocket_user_context["user_id"]
-                    # Handle workflow execution directly via WebSocket
-                    await handle_workflow_via_websocket(websocket, message, os, ws_user_context=websocket_user_context)
-
-                elif action == "reconnect":
-                    # Subscribe/reconnect to an existing workflow run
-                    await handle_workflow_subscription(websocket, message, os)
-
-                elif action == "continue-workflow":
-                    # Always override caller-supplied user_id with the JWT subject
-                    if websocket_user_context and websocket_user_context.get("user_id"):
-                        message["user_id"] = websocket_user_context["user_id"]
-                    # Continue a paused workflow run
-                    await handle_workflow_continue_via_websocket(websocket, message, os)
-
-                else:
-                    await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))
-
-        except Exception as e:
-            if "1012" not in str(e) and "1001" not in str(e):
-                logger.exception("WebSocket error")
-        finally:
-            # Clean up the websocket connection
-            await websocket_manager.disconnect_websocket(websocket)
-
-    return ws_router
-
-
 def get_workflow_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -1008,12 +998,20 @@ def get_workflow_router(
     async def get_workflows(request: Request) -> List[WorkflowSummaryResponse]:
         # Filter workflows based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
-            from agno.os.auth import filter_resources_by_access, get_accessible_resources
+            from agno.os.auth import (
+                build_insufficient_permissions_detail,
+                filter_resources_by_access,
+                get_accessible_resources,
+            )
 
             # Check if user has any workflow scopes at all
             accessible_ids = get_accessible_resources(request, "workflows")
             if not accessible_ids:
-                raise HTTPException(status_code=403, detail="Insufficient permissions")
+                required_scopes = getattr(request.state, "required_scopes", None)
+                raise HTTPException(
+                    status_code=403,
+                    detail=build_insufficient_permissions_detail(required_scopes),
+                )
 
             accessible_workflows = filter_resources_by_access(request, os.workflows or [], "workflows")
         else:
@@ -1150,7 +1148,12 @@ def get_workflow_router(
     ):
         kwargs = await get_request_kwargs(request, create_workflow_run)
 
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+        # Scoped non-admin callers always get their JWT sub as user_id.
+        # Admins and unscoped callers fall through to middleware/form values.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            user_id = scoped_user_id
+        elif hasattr(request.state, "user_id") and request.state.user_id is not None:
             if user_id and user_id != request.state.user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = request.state.user_id
@@ -1349,8 +1352,26 @@ def get_workflow_router(
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Continue is not supported for remote workflows")
 
+        # Ownership check before status validation — see continue_agent_run.
+        # Non-admin callers must own the session AND the run must belong to
+        # this workflow (per-resource RBAC).
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if not session_id:
+                raise HTTPException(status_code=400, detail="session_id is required to continue a run")
+            await verify_run_in_session(
+                workflow,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="workflows",
+                component_id=workflow_id,
+            )
+
         # Load existing run and validate it's paused
-        existing_run = await workflow.aget_run_output(run_id=run_id, session_id=session_id)
+        existing_run = await workflow.aget_run_output(
+            run_id=run_id, session_id=session_id, user_id=scoped_user_id or user_id
+        )
         if existing_run is None:
             raise HTTPException(status_code=404, detail="Run not found")
 
@@ -1380,13 +1401,17 @@ def get_workflow_router(
                     status_code=400, detail=f"Invalid structure or content for step_requirements: {str(e)}"
                 )
 
+        # Force JWT user_id for non-admin callers so a spoofed user_id cannot
+        # attribute the continued run to another user.
+        effective_user_id = scoped_user_id if scoped_user_id is not None else user_id
+
         if stream:
             return StreamingResponse(
                 workflow_continue_response_streamer(
                     workflow,
                     run_id=run_id,
                     session_id=session_id,
-                    user_id=user_id,
+                    user_id=effective_user_id,
                     step_requirements=parsed_requirements,
                     background_tasks=background_tasks,
                 ),
@@ -1394,6 +1419,8 @@ def get_workflow_router(
             )
         else:
             try:
+                # Ownership already verified above; acontinue_run loads the run
+                # via {session_id, run_id} which we've proven the caller owns.
                 run_response = await workflow.acontinue_run(  # type: ignore[call-overload]
                     run_id=run_id,
                     session_id=session_id,
@@ -1423,11 +1450,35 @@ def get_workflow_router(
         },
         dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
     )
-    async def cancel_workflow_run(workflow_id: str, run_id: str):
-        # Factory workflows: cancel is static, no workflow instance needed
+    async def cancel_workflow_run(
+        request: Request,
+        workflow_id: str,
+        run_id: str,
+        session_id: Optional[str] = Query(
+            default=None,
+            description="Session ID the run belongs to. Required for non-admin JWT users.",
+        ),
+    ):
+        # Factory workflows: cancel is static, no workflow instance needed.
+        # Non-admin callers must still prove session ownership before we apply
+        # a global cancellation intent keyed solely on run_id.
         factory = find_factory_by_id(workflow_id, os.workflows)
         if factory:
             from agno.run.cancel import acancel_run
+
+            scoped_user_id = get_scoped_user_id(request)
+            if scoped_user_id is not None:
+                if not session_id:
+                    raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
+                check_db = getattr(factory, "db", None) or os.db
+                await verify_run_in_session_via_db(
+                    check_db,
+                    session_id,
+                    run_id,
+                    scoped_user_id,
+                    component_type="workflows",
+                    component_id=workflow_id,
+                )
 
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
@@ -1441,6 +1492,21 @@ def get_workflow_router(
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
+
+        # Ownership check: non-admin JWT callers must supply a session_id and the
+        # run must live in a session they own. Admins / unauthenticated bypass.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if not session_id:
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
+            await verify_run_in_session(
+                workflow,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="workflows",
+                component_id=workflow_id,
+            )
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
@@ -1475,11 +1541,36 @@ def get_workflow_router(
         dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
     )
     async def resume_workflow_run_stream(
+        request: Request,
         workflow_id: str,
         run_id: str,
         last_event_index: Optional[int] = Form(None, description="Index of last event received by client (0-based)"),
         session_id: Optional[str] = Form(None, description="Session ID for database fallback"),
     ):
+        # Ownership check up-front (see resume_agent_run_stream for rationale).
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if not session_id:
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
+
+        factory = find_factory_by_id(workflow_id, os.workflows)
+        if factory:
+            if scoped_user_id is not None:
+                assert session_id is not None
+                check_db = getattr(factory, "db", None) or os.db
+                await verify_run_in_session_via_db(
+                    check_db,
+                    session_id,
+                    run_id,
+                    scoped_user_id,
+                    component_type="workflows",
+                    component_id=workflow_id,
+                )
+            raise HTTPException(
+                status_code=400,
+                detail="Stream resumption is not supported for factory workflows",
+            )
+
         workflow = get_workflow_by_id(
             workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
         )
@@ -1488,8 +1579,19 @@ def get_workflow_router(
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Stream resumption is not supported for remote workflows")
 
+        if scoped_user_id is not None:
+            assert session_id is not None
+            await verify_run_in_session(
+                workflow,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="workflows",
+                component_id=workflow_id,
+            )
+
         return StreamingResponse(
-            _resume_stream_generator(workflow, run_id, last_event_index, session_id),
+            _resume_stream_generator(workflow, run_id, last_event_index, session_id, user_id=scoped_user_id),
             media_type="text/event-stream",
         )
 
@@ -1509,9 +1611,9 @@ def get_workflow_router(
         dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
     )
     async def get_workflow_run(
+        request: Request,
         workflow_id: str,
         run_id: str,
-        request: Request,
         session_id: str = Query(..., description="Session ID for the run"),
         factory_input: Optional[str] = Query(
             None,
@@ -1549,8 +1651,23 @@ def get_workflow_router(
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Run polling is not supported for remote workflows")
 
-        run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id)
+        user_id = get_scoped_user_id(request)
+
+        # Verify session belongs to this workflow BEFORE loading the run.
+        # See get_agent_run for the cross-component bypass this blocks.
+        if hasattr(workflow, "aget_session"):
+            session = await workflow.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+            if session is None:
+                raise HTTPException(status_code=404, detail="Run not found")
+            assert_session_matches_component(session, "workflows", workflow_id, not_found_detail="Run not found")
+
+        run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
         if run_output is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        # Per-resource RBAC: the run must explicitly belong to the path workflow.
+        # Fail closed when workflow_id is missing.
+        if not run_matches_component(run_output, "workflows", workflow_id):
             raise HTTPException(status_code=404, detail="Run not found")
 
         return run_output.to_dict()
@@ -1584,7 +1701,10 @@ def get_workflow_router(
     ):
         from agno.os.schema import WorkflowRunSchema
 
-        user_id = getattr(request.state, "user_id", None)
+        # Non-admin callers must only see runs from sessions they own. Admins
+        # (scoped_user_id is None) bypass and can list runs for any session.
+        scoped_user_id = get_scoped_user_id(request)
+        user_id = scoped_user_id if scoped_user_id is not None else getattr(request.state, "user_id", None)
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and query params, using request state")
@@ -1603,11 +1723,28 @@ def get_workflow_router(
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Run listing is not supported for remote workflows")
 
-        session = await workflow.aread_or_create_session(session_id=session_id)
+        # Read-only session lookup (no create) so we don't manufacture a session
+        # for a user who shouldn't see it. For non-admins, scope by user_id so
+        # mismatched ownership returns 404, not a leak.
+        lookup_user_id = scoped_user_id if scoped_user_id is not None else None
+        session = await workflow.aget_session(session_id=session_id, user_id=lookup_user_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Per-resource RBAC: the session must explicitly belong to this workflow.
+        # Fail closed when workflow_id is missing — an agent/team session
+        # must not be reachable through a workflow route.
+        assert_session_matches_component(session, "workflows", workflow_id)
+
         runs = session.runs or []
 
+        # Filter to runs that belong to this workflow. Workflow sessions can
+        # carry nested member runs whose workflow_id is unset; fail closed
+        # rather than leaking those.
         result = []
         for run in runs:
+            if not run_matches_component(run, "workflows", workflow_id):
+                continue
             run_dict = run.to_dict()
             if status and run_dict.get("status") != status:
                 continue
