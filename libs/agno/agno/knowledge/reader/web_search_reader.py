@@ -2,7 +2,7 @@ import asyncio
 import random
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Literal, Optional, Set
+from typing import Any, Dict, List, Literal, Optional, Set
 from urllib.parse import urlparse
 
 import httpx
@@ -11,7 +11,12 @@ from agno.knowledge.chunking.semantic import SemanticChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
-from agno.knowledge.reader.utils.url_validation import is_host_allowed, validate_allowed_hosts
+from agno.knowledge.reader.utils.url_validation import (
+    is_host_allowed,
+    make_async_redirect_guard,
+    make_redirect_guard,
+    validate_allowed_hosts,
+)
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error, log_warning, logger
 
@@ -180,15 +185,17 @@ class WebSearchReader(Reader):
     def _fetch_url_content(self, url: str) -> Optional[str]:
         """Fetch content from a URL with retry logic"""
         headers = {"User-Agent": self.user_agent}
-        # Disable redirect-following when an allowlist is set so a permitted host
-        # can't 3xx-bounce the request to an internal target.
-        follow_redirects = self.allowed_hosts is None
+        guard = make_redirect_guard(self.allowed_hosts)
 
         for attempt in range(self.max_retries):
             try:
-                response = httpx.get(
-                    url, headers=headers, timeout=self.request_timeout, follow_redirects=follow_redirects
-                )
+                if guard is None:
+                    response = httpx.get(url, headers=headers, timeout=self.request_timeout, follow_redirects=True)
+                else:
+                    # Per-redirect host check: follow redirects but validate each hop's
+                    # target against the allowlist via the request event hook.
+                    with httpx.Client(timeout=self.request_timeout, event_hooks={"request": [guard]}) as client:
+                        response = client.get(url, headers=headers, follow_redirects=True)
                 response.raise_for_status()
 
                 # Check if it's HTML content
@@ -306,9 +313,12 @@ class WebSearchReader(Reader):
 
             try:
                 headers = {"User-Agent": self.user_agent}
-                follow_redirects = self.allowed_hosts is None
-                async with httpx.AsyncClient(timeout=self.request_timeout) as client:
-                    response = await client.get(url, headers=headers, follow_redirects=follow_redirects)
+                guard = make_async_redirect_guard(self.allowed_hosts)
+                client_kwargs: Dict[str, Any] = {"timeout": self.request_timeout}
+                if guard is not None:
+                    client_kwargs["event_hooks"] = {"request": [guard]}
+                async with httpx.AsyncClient(**client_kwargs) as client:
+                    response = await client.get(url, headers=headers, follow_redirects=True)
                     response.raise_for_status()
 
                     content_type = response.headers.get("content-type", "").lower()

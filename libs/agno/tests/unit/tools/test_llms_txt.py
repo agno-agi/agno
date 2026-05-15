@@ -631,9 +631,7 @@ def test_reader_fetch_url_returns_none_when_redirect_target_disallowed():
     mock_client.__enter__.return_value = mock_client
     # Simulate the hook firing inside client.get(...) when httpx re-issues the
     # request to the disallowed redirect target.
-    mock_client.get.side_effect = httpx.RequestError(
-        "Host not in allowed_hosts: 127.0.0.1", request=MagicMock()
-    )
+    mock_client.get.side_effect = httpx.RequestError("Host not in allowed_hosts: 127.0.0.1", request=MagicMock())
 
     with patch("agno.knowledge.reader.llms_txt_reader.httpx.Client", return_value=mock_client):
         result = reader.fetch_url("https://docs.agno.com/old")

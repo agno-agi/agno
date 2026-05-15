@@ -193,6 +193,7 @@ class LLMsTxtReader(Reader):
                     max_retries=1,
                     proxy=self.proxy,
                     timeout=self.timeout,
+                    follow_redirects=True,
                 )
             else:
                 # Per-redirect host check: follow redirects but validate each hop's
@@ -220,6 +221,7 @@ class LLMsTxtReader(Reader):
                     client=client,
                     max_retries=1,
                     timeout=self.timeout,
+                    follow_redirects=True,
                 )
             else:
                 # Build a local client so we can attach the per-redirect host-check hook

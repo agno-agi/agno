@@ -41,7 +41,7 @@ knowledge = Knowledge(
 )
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.4"),
     knowledge=knowledge,
     search_knowledge=True,
     markdown=True,
