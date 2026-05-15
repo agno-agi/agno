@@ -21,6 +21,13 @@ from agno.workflow.types import (
     StepRequirement,
 )
 
+from .router_output_review_fixtures import (
+    _deep_fn,
+    _make_async_router_review_workflow,
+    _make_router_review_workflow,
+    _quick_fn,
+)
+
 # =============================================================================
 # Test OnReject.retry
 # =============================================================================
@@ -431,13 +438,6 @@ class TestStepOutputIterationReview:
 # =============================================================================
 # Router post-execution output review
 # =============================================================================
-
-from .router_output_review_fixtures import (
-    _deep_fn,
-    _make_async_router_review_workflow,
-    _make_router_review_workflow,
-    _quick_fn,
-)
 
 
 class TestRouterOutputReviewFields:
