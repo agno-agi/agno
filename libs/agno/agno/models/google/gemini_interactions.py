@@ -108,7 +108,7 @@ class GeminiInteractions(Model):
     background: Optional[bool] = None  # Offload to background execution
 
     # Thinking configuration
-    thinking_level: Optional[str] = None  # "low", "high"
+    thinking_level: Optional[Literal["minimal", "low", "medium", "high"]] = None
 
     # Built-in tools
     search: bool = False
@@ -120,9 +120,6 @@ class GeminiInteractions(Model):
 
     # Timeout in seconds
     timeout: Optional[float] = None
-
-    # Cumulative token counts in streaming
-    collect_metrics_on_completion: bool = True
 
     # Client parameters
     api_key: Optional[str] = None
@@ -594,7 +591,9 @@ class GeminiInteractions(Model):
             if isinstance(delta, DeltaText):
                 model_response.content = delta.text or ""
             elif isinstance(delta, DeltaThoughtSummary):
-                model_response.reasoning_content = getattr(delta, "content", "") or ""
+                summary_content = getattr(delta, "content", None)
+                if summary_content and isinstance(summary_content, TextContent):
+                    model_response.reasoning_content = summary_content.text or ""
             elif isinstance(delta, DeltaThoughtSignature):
                 if delta.signature:
                     model_response.provider_data = {"thought_signature": delta.signature}
