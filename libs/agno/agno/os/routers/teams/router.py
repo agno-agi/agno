@@ -1235,12 +1235,20 @@ def get_team_router(
         """Return the list of all Teams present in the contextual OS"""
         # Filter teams based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
-            from agno.os.auth import filter_resources_by_access, get_accessible_resources
+            from agno.os.auth import (
+                build_insufficient_permissions_detail,
+                filter_resources_by_access,
+                get_accessible_resources,
+            )
 
             # Check if user has any team scopes at all
             accessible_ids = get_accessible_resources(request, "teams")
             if not accessible_ids:
-                raise HTTPException(status_code=403, detail="Insufficient permissions")
+                required_scopes = getattr(request.state, "required_scopes", None)
+                raise HTTPException(
+                    status_code=403,
+                    detail=build_insufficient_permissions_detail(required_scopes),
+                )
 
             accessible_teams = filter_resources_by_access(request, os.teams or [], "teams")
         else:
