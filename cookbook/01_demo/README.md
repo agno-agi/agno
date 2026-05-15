@@ -10,6 +10,7 @@ For a production-ready version of this demo, see the [agent-platform-railway](ht
 |-------|--------------|---------|
 | **LocalWiki** | Read + write a local markdown wiki. Ingest URLs via the web — "add a page about X" fetches, digests, and files in one update call. | `WikiContextProvider(FileSystemBackend, web=ParallelMCPBackend)` |
 | **GitWiki** *(env-gated)* | Same as LocalWiki, but the wiki lives in a real git repo. Auto-commits and pushes after each write. Registered when `WIKI_REPO_URL` + `WIKI_GITHUB_TOKEN` are set. | `WikiContextProvider(GitBackend, web=ParallelMCPBackend)` |
+| **NotionWiki** *(env-gated)* | Same as LocalWiki, but the wiki is a Notion database (one row per page). Writes round-trip through Notion blocks; the database is the source of truth. Registered when `NOTION_API_KEY` + `NOTION_DATABASE_ID` are set. | `WikiContextProvider(NotionDatabaseBackend, web=ParallelMCPBackend)` |
 | **WebSearch** | Keyless web research via Parallel MCP. Returns answers with cited URLs. | `WebContextProvider(ParallelMCPBackend)` |
 | **CodeSearch** | Answers questions about this repository — file paths, line numbers. | `WorkspaceContextProvider` |
 | **Researcher** | Composes WebSearch + LocalWiki + CodeSearch on one agent. Checks the wiki first, searches the web, queries the codebase, and files findings back into the wiki. | composition of the three providers above |
@@ -50,6 +51,10 @@ export PARALLEL_API_KEY="..."    # optional — raises rate ceiling on Parallel 
 # Optional — enables the GitWiki agent
 export WIKI_REPO_URL="https://github.com/<owner>/<repo>.git"
 export WIKI_GITHUB_TOKEN="ghp_..."   # PAT with contents:write
+
+# Optional — enables the NotionWiki agent
+export NOTION_API_KEY="ntn_..."          # integration token
+export NOTION_DATABASE_ID="..."          # UUID from the database URL
 ```
 
 ### 4. Serve

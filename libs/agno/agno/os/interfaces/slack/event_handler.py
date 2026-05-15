@@ -249,8 +249,13 @@ class SlackEventHandler:
 
     async def _open_chat_stream(self, client: AsyncWebClient, ctx: EventContext) -> Any:
         return await open_chat_stream(
-            client, ctx.channel_id, ctx.thread_id, ctx.user, ctx.team_id,
-            self.task_display_mode, self.buffer_size,
+            client,
+            ctx.channel_id,
+            ctx.thread_id,
+            ctx.user,
+            ctx.team_id,
+            self.task_display_mode,
+            self.buffer_size,
         )
 
     async def _set_thread_title(self, client: AsyncWebClient, ctx: EventContext, state: StreamState) -> None:
@@ -259,9 +264,7 @@ class SlackEventHandler:
         state.title_set = True
         title = ctx.message_text[:50].strip() or "New conversation"
         try:
-            await client.assistant_threads_setTitle(
-                channel_id=ctx.channel_id, thread_ts=ctx.thread_id, title=title
-            )
+            await client.assistant_threads_setTitle(channel_id=ctx.channel_id, thread_ts=ctx.thread_id, title=title)
         except Exception:
             pass
 
@@ -291,7 +294,9 @@ class SlackEventHandler:
 
         return new_stream
 
-    async def _finalize_stream(self, client: AsyncWebClient, ctx: EventContext, state: StreamState, stream: Any) -> None:
+    async def _finalize_stream(
+        self, client: AsyncWebClient, ctx: EventContext, state: StreamState, stream: Any
+    ) -> None:
         final_status: TaskStatus = state.terminal_status or "complete"
         completion_chunks = state.resolve_all_pending(final_status) if state.task_cards else []
         stop_kwargs: Dict[str, Any] = {}
@@ -336,7 +341,9 @@ class SlackEventHandler:
                     break
 
                 if len(state.task_cards) >= _STREAM_CARD_LIMIT:
-                    stream = await self._rotate_stream(client, ctx, state, stream, state.flush() if state.has_content() else "")
+                    stream = await self._rotate_stream(
+                        client, ctx, state, stream, state.flush() if state.has_content() else ""
+                    )
 
                 if state.has_content():
                     await self._set_thread_title(client, ctx, state)
