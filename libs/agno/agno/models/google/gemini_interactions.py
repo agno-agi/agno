@@ -4,7 +4,7 @@ Gemini Interactions model class.
 Uses Google's Interactions API for server-side conversation history management,
 typed execution steps, and efficient multi-turn conversations.
 
-Requires `google-genai>=1.55.0`.
+Requires `google-genai>=2.0.0`.
 """
 
 import json
@@ -29,15 +29,16 @@ try:
     from google import genai
     from google.genai import Client as GeminiClient
     from google.genai._interactions import types as interaction_types
-    from google.genai._interactions.types.content_delta import (
-        DeltaFunctionCallDelta,
-        DeltaTextDelta,
-        DeltaThoughtSignatureDelta,
-        DeltaThoughtSummaryDelta,
+    from google.genai._interactions.types.function_call_step import FunctionCallStep
+    from google.genai._interactions.types.model_output_step import ModelOutputStep
+    from google.genai._interactions.types.step_delta import (
+        DeltaArgumentsDelta,
+        DeltaText,
+        DeltaThoughtSignature,
+        DeltaThoughtSummary,
     )
-    from google.genai._interactions.types.function_call_content import FunctionCallContent
     from google.genai._interactions.types.text_content import TextContent
-    from google.genai._interactions.types.thought_content import ThoughtContent
+    from google.genai._interactions.types.thought_step import ThoughtStep
     from google.oauth2.service_account import Credentials
 except ImportError:
     raise ImportError(
@@ -237,18 +238,30 @@ class GeminiInteractions(Model):
         turns: List[Dict[str, Any]] = []
 
         for message in messages:
-            role = message.role
-            if role == "system":
+            original_role = message.role
+            if original_role == "system":
                 # System messages are passed via system_instruction param, skip here
                 continue
 
-            # Map roles
+            content: List[Dict[str, Any]] = []
+
+            # Handle tool results (must be from "user" role in Interactions API)
+            if original_role == "tool" and message.tool_call_id:
+                content = [
+                    {
+                        "type": "function_result",
+                        "call_id": message.tool_call_id,
+                        "name": message.tool_name or "",
+                        "result": message.content or "",
+                    }
+                ]
+                turns.append({"role": "user", "content": content})
+                continue
+
+            # Map roles for non-tool messages
+            role = original_role
             if role == "assistant":
                 role = "model"
-            elif role == "tool":
-                role = "model"
-
-            content: List[Dict[str, Any]] = []
 
             # Handle text content
             if message.content and isinstance(message.content, str):
@@ -273,19 +286,8 @@ class GeminiInteractions(Model):
                         }
                     )
 
-            # Handle tool results
-            if message.role == "tool" and message.tool_call_id:
-                content = [
-                    {
-                        "type": "function_result",
-                        "call_id": message.tool_call_id,
-                        "name": message.tool_name or "",
-                        "result": message.content or "",
-                    }
-                ]
-
             if content:
-                turns.append({"role": role if role != "tool" else "user", "content": content})
+                turns.append({"role": role, "content": content})
 
         return turns
 
@@ -374,63 +376,63 @@ class GeminiInteractions(Model):
         if hasattr(interaction, "id") and interaction.id:
             self._previous_interaction_id = interaction.id
 
-        # Parse outputs (list of Turn objects)
-        if not hasattr(interaction, "outputs") or not interaction.outputs:
+        # Parse steps from the interaction
+        steps = getattr(interaction, "steps", None)
+        if not steps:
+            # Store interaction ID in provider_data
+            if model_response.provider_data is None:
+                model_response.provider_data = {}
+            model_response.provider_data["interaction_id"] = self._previous_interaction_id
             return model_response
 
-        for turn in interaction.outputs:
-            if not hasattr(turn, "content") or not turn.content:
-                continue
+        for step in steps:
+            if isinstance(step, ModelOutputStep):
+                # ModelOutputStep contains a list of content items (TextContent, ImageContent, etc.)
+                if step.content:
+                    for content_item in step.content:
+                        if isinstance(content_item, TextContent):
+                            text = content_item.text or ""
+                            if model_response.content is None:
+                                model_response.content = text
+                            else:
+                                model_response.content += text
 
-            contents = turn.content
-            if isinstance(contents, str):
-                if model_response.content is None:
-                    model_response.content = contents
+            elif isinstance(step, ThoughtStep):
+                # ThoughtStep.summary is Optional[List[TextContent | ImageContent]]
+                if step.summary:
+                    for summary_item in step.summary:
+                        if isinstance(summary_item, TextContent):
+                            text = summary_item.text or ""
+                            if text:
+                                if model_response.reasoning_content is None:
+                                    model_response.reasoning_content = text
+                                else:
+                                    model_response.reasoning_content += text
+                if step.signature:
+                    if model_response.provider_data is None:
+                        model_response.provider_data = {}
+                    model_response.provider_data["thought_signature"] = step.signature
+
+            elif isinstance(step, FunctionCallStep):
+                args = step.arguments
+                if isinstance(args, dict):
+                    args_str = json.dumps(args)
+                elif args is not None:
+                    args_str = str(args)
                 else:
-                    model_response.content += contents
-                continue
+                    args_str = ""
 
-            for content_item in contents:
-                if isinstance(content_item, TextContent):
-                    text = content_item.text or ""
-                    if model_response.content is None:
-                        model_response.content = text
-                    else:
-                        model_response.content += text
-
-                elif isinstance(content_item, ThoughtContent):
-                    summary = content_item.summary or ""
-                    if summary:
-                        if model_response.reasoning_content is None:
-                            model_response.reasoning_content = summary
-                        else:
-                            model_response.reasoning_content += summary
-                    # Track thought signature
-                    if content_item.signature:
-                        if model_response.provider_data is None:
-                            model_response.provider_data = {}
-                        model_response.provider_data["thought_signature"] = content_item.signature
-
-                elif isinstance(content_item, FunctionCallContent):
-                    args = content_item.arguments
-                    if isinstance(args, dict):
-                        args_str = json.dumps(args)
-                    elif args is not None:
-                        args_str = str(args)
-                    else:
-                        args_str = ""
-
-                    tool_call = {
-                        "id": content_item.id or str(uuid4()),
-                        "type": "function",
-                        "function": {
-                            "name": content_item.name or "",
-                            "arguments": args_str,
-                        },
-                    }
-                    if content_item.signature:
-                        tool_call["thought_signature"] = content_item.signature
-                    model_response.tool_calls.append(tool_call)
+                tool_call = {
+                    "id": step.id or str(uuid4()),
+                    "type": "function",
+                    "function": {
+                        "name": step.name or "",
+                        "arguments": args_str,
+                    },
+                }
+                if step.signature:
+                    tool_call["thought_signature"] = step.signature
+                model_response.tool_calls.append(tool_call)
 
         # Parse usage metrics
         if hasattr(interaction, "usage") and interaction.usage:
@@ -505,7 +507,7 @@ class GeminiInteractions(Model):
             for event in stream:
                 model_response = ModelResponse()
 
-                if isinstance(event, interaction_types.InteractionStartEvent):
+                if isinstance(event, interaction_types.InteractionCreatedEvent):
                     # Track interaction ID from the start event
                     if event.interaction and hasattr(event.interaction, "id"):
                         self._previous_interaction_id = event.interaction.id
@@ -513,43 +515,26 @@ class GeminiInteractions(Model):
                     model_response.role = "assistant"
                     yield model_response
 
-                elif isinstance(event, interaction_types.ContentDelta):
+                elif isinstance(event, interaction_types.StepDelta):
                     delta = event.delta
-                    if isinstance(delta, DeltaTextDelta):
+                    if isinstance(delta, DeltaText):
                         model_response.content = delta.text or ""
-                    elif isinstance(delta, DeltaThoughtSummaryDelta):
+                    elif isinstance(delta, DeltaThoughtSummary):
                         model_response.reasoning_content = getattr(delta, "content", "") or ""
-                    elif isinstance(delta, DeltaThoughtSignatureDelta):
+                    elif isinstance(delta, DeltaThoughtSignature):
                         if delta.signature:
                             model_response.provider_data = {"thought_signature": delta.signature}
-                    elif isinstance(delta, DeltaFunctionCallDelta):
-                        # Function call deltas contain partial information
-                        if delta.name:
-                            args = delta.arguments
-                            if isinstance(args, dict):
-                                args_str = json.dumps(args)
-                            elif args is not None:
-                                args_str = str(args)
-                            else:
-                                args_str = ""
-                            tool_call = {
-                                "id": delta.id or str(uuid4()),
-                                "type": "function",
-                                "function": {
-                                    "name": delta.name,
-                                    "arguments": args_str,
-                                },
-                            }
-                            if delta.signature:
-                                tool_call["thought_signature"] = delta.signature
-                            model_response.tool_calls.append(tool_call)
+                    elif isinstance(delta, DeltaArgumentsDelta):
+                        # Arguments delta for function calls - accumulated by caller
+                        if delta.arguments:
+                            model_response.provider_data = {"arguments_delta": delta.arguments}
                     yield model_response
 
-                elif isinstance(event, interaction_types.ContentStart):
-                    # Content start signals a new content block
-                    content_item = event.content
-                    if isinstance(content_item, FunctionCallContent):
-                        args = content_item.arguments
+                elif isinstance(event, interaction_types.StepStart):
+                    # StepStart signals a new step beginning
+                    step = event.step
+                    if isinstance(step, FunctionCallStep):
+                        args = step.arguments
                         if isinstance(args, dict):
                             args_str = json.dumps(args)
                         elif args is not None:
@@ -557,19 +542,19 @@ class GeminiInteractions(Model):
                         else:
                             args_str = ""
                         tool_call = {
-                            "id": content_item.id or str(uuid4()),
+                            "id": step.id or str(uuid4()),
                             "type": "function",
                             "function": {
-                                "name": content_item.name or "",
+                                "name": step.name or "",
                                 "arguments": args_str,
                             },
                         }
-                        if content_item.signature:
-                            tool_call["thought_signature"] = content_item.signature
+                        if step.signature:
+                            tool_call["thought_signature"] = step.signature
                         model_response.tool_calls.append(tool_call)
                         yield model_response
 
-                elif isinstance(event, interaction_types.InteractionCompleteEvent):
+                elif isinstance(event, interaction_types.InteractionCompletedEvent):
                     # Final event with complete interaction and usage
                     if event.interaction:
                         if hasattr(event.interaction, "usage") and event.interaction.usage:
@@ -640,48 +625,31 @@ class GeminiInteractions(Model):
             async for event in stream:
                 model_response = ModelResponse()
 
-                if isinstance(event, interaction_types.InteractionStartEvent):
+                if isinstance(event, interaction_types.InteractionCreatedEvent):
                     if event.interaction and hasattr(event.interaction, "id"):
                         self._previous_interaction_id = event.interaction.id
                         model_response.provider_data = {"interaction_id": event.interaction.id}
                     model_response.role = "assistant"
                     yield model_response
 
-                elif isinstance(event, interaction_types.ContentDelta):
+                elif isinstance(event, interaction_types.StepDelta):
                     delta = event.delta
-                    if isinstance(delta, DeltaTextDelta):
+                    if isinstance(delta, DeltaText):
                         model_response.content = delta.text or ""
-                    elif isinstance(delta, DeltaThoughtSummaryDelta):
+                    elif isinstance(delta, DeltaThoughtSummary):
                         model_response.reasoning_content = getattr(delta, "content", "") or ""
-                    elif isinstance(delta, DeltaThoughtSignatureDelta):
+                    elif isinstance(delta, DeltaThoughtSignature):
                         if delta.signature:
                             model_response.provider_data = {"thought_signature": delta.signature}
-                    elif isinstance(delta, DeltaFunctionCallDelta):
-                        if delta.name:
-                            args = delta.arguments
-                            if isinstance(args, dict):
-                                args_str = json.dumps(args)
-                            elif args is not None:
-                                args_str = str(args)
-                            else:
-                                args_str = ""
-                            tool_call = {
-                                "id": delta.id or str(uuid4()),
-                                "type": "function",
-                                "function": {
-                                    "name": delta.name,
-                                    "arguments": args_str,
-                                },
-                            }
-                            if delta.signature:
-                                tool_call["thought_signature"] = delta.signature
-                            model_response.tool_calls.append(tool_call)
+                    elif isinstance(delta, DeltaArgumentsDelta):
+                        if delta.arguments:
+                            model_response.provider_data = {"arguments_delta": delta.arguments}
                     yield model_response
 
-                elif isinstance(event, interaction_types.ContentStart):
-                    content_item = event.content
-                    if isinstance(content_item, FunctionCallContent):
-                        args = content_item.arguments
+                elif isinstance(event, interaction_types.StepStart):
+                    step = event.step
+                    if isinstance(step, FunctionCallStep):
+                        args = step.arguments
                         if isinstance(args, dict):
                             args_str = json.dumps(args)
                         elif args is not None:
@@ -689,19 +657,19 @@ class GeminiInteractions(Model):
                         else:
                             args_str = ""
                         tool_call = {
-                            "id": content_item.id or str(uuid4()),
+                            "id": step.id or str(uuid4()),
                             "type": "function",
                             "function": {
-                                "name": content_item.name or "",
+                                "name": step.name or "",
                                 "arguments": args_str,
                             },
                         }
-                        if content_item.signature:
-                            tool_call["thought_signature"] = content_item.signature
+                        if step.signature:
+                            tool_call["thought_signature"] = step.signature
                         model_response.tool_calls.append(tool_call)
                         yield model_response
 
-                elif isinstance(event, interaction_types.InteractionCompleteEvent):
+                elif isinstance(event, interaction_types.InteractionCompletedEvent):
                     if event.interaction:
                         if hasattr(event.interaction, "usage") and event.interaction.usage:
                             usage = event.interaction.usage

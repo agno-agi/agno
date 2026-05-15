@@ -1,0 +1,735 @@
+"""Unit tests for GeminiInteractions model class."""
+
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from agno.models.google.gemini_interactions import GeminiInteractions
+from agno.models.message import Message
+
+
+class TestGetClient:
+    """Tests for client initialization."""
+
+    def test_get_client_with_api_key(self):
+        model = GeminiInteractions(api_key="test-key")
+
+        with patch("agno.models.google.gemini_interactions.genai.Client") as mock_client_cls:
+            model.get_client()
+            _, kwargs = mock_client_cls.call_args
+            assert kwargs["api_key"] == "test-key"
+
+    def test_get_client_vertexai(self):
+        model = GeminiInteractions(vertexai=True, project_id="test-project", location="us-central1")
+
+        with patch("agno.models.google.gemini_interactions.genai.Client") as mock_client_cls:
+            model.get_client()
+            _, kwargs = mock_client_cls.call_args
+            assert kwargs["vertexai"] is True
+            assert kwargs["project"] == "test-project"
+            assert kwargs["location"] == "us-central1"
+
+    def test_get_client_with_credentials(self):
+        mock_credentials = MagicMock()
+        model = GeminiInteractions(vertexai=True, project_id="proj", location="loc", credentials=mock_credentials)
+
+        with patch("agno.models.google.gemini_interactions.genai.Client") as mock_client_cls:
+            model.get_client()
+            _, kwargs = mock_client_cls.call_args
+            assert kwargs["credentials"] == mock_credentials
+
+    def test_get_client_caches_instance(self):
+        model = GeminiInteractions(api_key="test-key")
+
+        with patch("agno.models.google.gemini_interactions.genai.Client") as mock_client_cls:
+            client1 = model.get_client()
+            client2 = model.get_client()
+            assert client1 is client2
+            mock_client_cls.assert_called_once()
+
+    def test_get_client_timeout_configuration(self):
+        model = GeminiInteractions(api_key="test-key", timeout=30.0)
+
+        with patch("agno.models.google.gemini_interactions.genai.Client") as mock_client_cls:
+            model.get_client()
+            _, kwargs = mock_client_cls.call_args
+            assert kwargs["http_options"]["timeout"] == 30000
+
+
+class TestFormatTools:
+    """Tests for tool formatting."""
+
+    def _make_model(self):
+        return GeminiInteractions(api_key="test-key")
+
+    def test_no_tools(self):
+        model = self._make_model()
+        result = model._format_tools(None)
+        assert result == []
+
+    def test_function_tools(self):
+        model = self._make_model()
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "description": "Get weather for a city",
+                    "parameters": {"type": "object", "properties": {"city": {"type": "string"}}},
+                },
+            }
+        ]
+        result = model._format_tools(tools)
+        assert len(result) == 1
+        assert result[0]["type"] == "function"
+        assert result[0]["name"] == "get_weather"
+        assert result[0]["description"] == "Get weather for a city"
+        assert result[0]["parameters"] == {"type": "object", "properties": {"city": {"type": "string"}}}
+
+    def test_builtin_search_tool(self):
+        model = GeminiInteractions(api_key="test-key", search=True)
+        result = model._format_tools(None)
+        assert {"type": "google_search"} in result
+
+    def test_builtin_url_context_tool(self):
+        model = GeminiInteractions(api_key="test-key", url_context=True)
+        result = model._format_tools(None)
+        assert {"type": "url_context"} in result
+
+    def test_builtin_and_function_tools_combined(self):
+        model = GeminiInteractions(api_key="test-key", search=True, url_context=True)
+        tools = [
+            {
+                "type": "function",
+                "function": {"name": "my_func", "description": "A function", "parameters": {}},
+            }
+        ]
+        result = model._format_tools(tools)
+        assert len(result) == 3
+        assert result[0] == {"type": "google_search"}
+        assert result[1] == {"type": "url_context"}
+        assert result[2]["name"] == "my_func"
+
+
+class TestBuildInput:
+    """Tests for message formatting into interaction turns."""
+
+    def _make_model(self):
+        return GeminiInteractions(api_key="test-key")
+
+    def test_user_message(self):
+        model = self._make_model()
+        messages = [Message(role="user", content="Hello")]
+        turns = model._build_input(messages)
+        assert len(turns) == 1
+        assert turns[0]["role"] == "user"
+        assert turns[0]["content"] == [{"type": "text", "text": "Hello"}]
+
+    def test_system_message_skipped(self):
+        model = self._make_model()
+        messages = [
+            Message(role="system", content="You are helpful"),
+            Message(role="user", content="Hi"),
+        ]
+        turns = model._build_input(messages)
+        assert len(turns) == 1
+        assert turns[0]["role"] == "user"
+
+    def test_assistant_message_mapped_to_model(self):
+        model = self._make_model()
+        messages = [Message(role="assistant", content="I can help")]
+        turns = model._build_input(messages)
+        assert turns[0]["role"] == "model"
+
+    def test_tool_call_message(self):
+        model = self._make_model()
+        messages = [
+            Message(
+                role="assistant",
+                content=None,
+                tool_calls=[
+                    {
+                        "id": "call_123",
+                        "type": "function",
+                        "function": {"name": "get_weather", "arguments": '{"city": "Paris"}'},
+                    }
+                ],
+            )
+        ]
+        turns = model._build_input(messages)
+        assert len(turns) == 1
+        content = turns[0]["content"]
+        assert len(content) == 1
+        assert content[0]["type"] == "function_call"
+        assert content[0]["id"] == "call_123"
+        assert content[0]["name"] == "get_weather"
+        assert content[0]["arguments"] == {"city": "Paris"}
+
+    def test_tool_result_message(self):
+        model = self._make_model()
+        messages = [Message(role="tool", content="Sunny, 25C", tool_call_id="call_123", tool_name="get_weather")]
+        turns = model._build_input(messages)
+        assert len(turns) == 1
+        assert turns[0]["role"] == "user"
+        content = turns[0]["content"]
+        assert content[0]["type"] == "function_result"
+        assert content[0]["call_id"] == "call_123"
+        assert content[0]["name"] == "get_weather"
+        assert content[0]["result"] == "Sunny, 25C"
+
+    def test_tool_call_with_invalid_json_arguments(self):
+        model = self._make_model()
+        messages = [
+            Message(
+                role="assistant",
+                content=None,
+                tool_calls=[
+                    {
+                        "id": "call_456",
+                        "type": "function",
+                        "function": {"name": "func", "arguments": "not valid json"},
+                    }
+                ],
+            )
+        ]
+        turns = model._build_input(messages)
+        content = turns[0]["content"]
+        assert content[0]["arguments"] == {}
+
+    def test_multi_turn_conversation(self):
+        model = self._make_model()
+        messages = [
+            Message(role="system", content="Be helpful"),
+            Message(role="user", content="Hi"),
+            Message(role="assistant", content="Hello!"),
+            Message(role="user", content="How are you?"),
+        ]
+        turns = model._build_input(messages)
+        assert len(turns) == 3  # system is skipped
+        assert turns[0]["role"] == "user"
+        assert turns[1]["role"] == "model"
+        assert turns[2]["role"] == "user"
+
+
+class TestGetRequestKwargs:
+    """Tests for request parameter building."""
+
+    def _make_model(self, **kwargs):
+        return GeminiInteractions(api_key="test-key", **kwargs)
+
+    def test_basic_request(self):
+        model = self._make_model()
+        messages = [Message(role="user", content="Hello")]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["model"] == "gemini-3-flash-preview"
+        assert "input" in kwargs
+        assert "system_instruction" not in kwargs
+
+    def test_system_instruction_extracted(self):
+        model = self._make_model()
+        messages = [
+            Message(role="system", content="You are a poet"),
+            Message(role="user", content="Write a haiku"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["system_instruction"] == "You are a poet"
+
+    def test_generation_config(self):
+        model = self._make_model(temperature=0.5, top_p=0.9, max_output_tokens=100)
+        messages = [Message(role="user", content="Hi")]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["generation_config"]["temperature"] == 0.5
+        assert kwargs["generation_config"]["top_p"] == 0.9
+        assert kwargs["generation_config"]["max_output_tokens"] == 100
+
+    def test_generation_config_omitted_when_empty(self):
+        model = self._make_model()
+        messages = [Message(role="user", content="Hi")]
+        kwargs = model._get_request_kwargs(messages)
+        assert "generation_config" not in kwargs
+
+    def test_tools_included(self):
+        model = self._make_model()
+        tools = [
+            {
+                "type": "function",
+                "function": {"name": "func", "description": "desc", "parameters": {}},
+            }
+        ]
+        messages = [Message(role="user", content="Hi")]
+        kwargs = model._get_request_kwargs(messages, tools=tools)
+        assert "tools" in kwargs
+        assert kwargs["tools"][0]["name"] == "func"
+
+    def test_store_parameter(self):
+        model = self._make_model(store=False)
+        messages = [Message(role="user", content="Hi")]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["store"] is False
+
+    def test_previous_interaction_id(self):
+        model = self._make_model()
+        model._previous_interaction_id = "interactions/abc123"
+        messages = [Message(role="user", content="Hi")]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["previous_interaction_id"] == "interactions/abc123"
+
+    def test_thinking_config(self):
+        model = self._make_model(thinking_level="high", thinking_budget=2000)
+        messages = [Message(role="user", content="Hi")]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["generation_config"]["thinking_level"] == "high"
+        assert kwargs["generation_config"]["thinking_budget"] == 2000
+
+    def test_response_modalities(self):
+        model = self._make_model(response_modalities=["text", "image"])
+        messages = [Message(role="user", content="Hi")]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["response_modalities"] == ["text", "image"]
+
+
+class TestParseInteractionResponse:
+    """Tests for parsing Interaction API responses."""
+
+    def _make_model(self):
+        return GeminiInteractions(api_key="test-key")
+
+    def _make_model_output_step(self, text):
+        """Create a mock ModelOutputStep with TextContent."""
+        from agno.models.google.gemini_interactions import ModelOutputStep, TextContent
+
+        mock_text = MagicMock(spec=TextContent)
+        mock_text.text = text
+        mock_text.__class__ = TextContent
+
+        mock_step = MagicMock(spec=ModelOutputStep)
+        mock_step.content = [mock_text]
+        mock_step.__class__ = ModelOutputStep
+        return mock_step
+
+    def _make_thought_step(self, summary_text, signature=None):
+        from agno.models.google.gemini_interactions import TextContent, ThoughtStep
+
+        # ThoughtStep.summary is List[TextContent | ImageContent]
+        mock_summary_item = MagicMock(spec=TextContent)
+        mock_summary_item.text = summary_text
+        mock_summary_item.__class__ = TextContent
+
+        mock_step = MagicMock(spec=ThoughtStep)
+        mock_step.summary = [mock_summary_item]
+        mock_step.signature = signature
+        mock_step.__class__ = ThoughtStep
+        return mock_step
+
+    def _make_function_call_step(self, call_id, name, arguments, signature=None):
+        from agno.models.google.gemini_interactions import FunctionCallStep
+
+        mock_step = MagicMock(spec=FunctionCallStep)
+        mock_step.id = call_id
+        mock_step.name = name
+        mock_step.arguments = arguments
+        mock_step.signature = signature
+        mock_step.__class__ = FunctionCallStep
+        return mock_step
+
+    def test_parse_text_response(self):
+        model = self._make_model()
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/test123"
+        mock_interaction.steps = [self._make_model_output_step("Hello, world!")]
+        mock_interaction.usage = None
+
+        response = model._parse_interaction_response(mock_interaction)
+        assert response.role == "assistant"
+        assert response.content == "Hello, world!"
+        assert model._previous_interaction_id == "interactions/test123"
+
+    def test_parse_function_call_response(self):
+        model = self._make_model()
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/test456"
+        mock_interaction.steps = [self._make_function_call_step("call_1", "get_weather", {"city": "Paris"})]
+        mock_interaction.usage = None
+
+        response = model._parse_interaction_response(mock_interaction)
+        assert len(response.tool_calls) == 1
+        assert response.tool_calls[0]["id"] == "call_1"
+        assert response.tool_calls[0]["function"]["name"] == "get_weather"
+        assert response.tool_calls[0]["function"]["arguments"] == '{"city": "Paris"}'
+
+    def test_parse_thought_response(self):
+        model = self._make_model()
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/thought1"
+        mock_interaction.steps = [
+            self._make_thought_step("Let me think about this...", signature="sig123"),
+            self._make_model_output_step("Here is my answer."),
+        ]
+        mock_interaction.usage = None
+
+        response = model._parse_interaction_response(mock_interaction)
+        assert response.reasoning_content == "Let me think about this..."
+        assert response.content == "Here is my answer."
+        assert response.provider_data["thought_signature"] == "sig123"
+
+    def test_parse_usage_metrics(self):
+        model = self._make_model()
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/metrics1"
+        mock_interaction.steps = [self._make_model_output_step("Hello")]
+
+        mock_usage = MagicMock()
+        mock_usage.total_input_tokens = 10
+        mock_usage.total_output_tokens = 20
+        mock_usage.total_tokens = 30
+        mock_interaction.usage = mock_usage
+
+        response = model._parse_interaction_response(mock_interaction)
+        assert response.response_usage is not None
+        assert response.response_usage.input_tokens == 10
+        assert response.response_usage.output_tokens == 20
+        assert response.response_usage.total_tokens == 30
+
+    def test_parse_empty_response(self):
+        model = self._make_model()
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/empty1"
+        mock_interaction.steps = []
+        mock_interaction.usage = None
+
+        response = model._parse_interaction_response(mock_interaction)
+        assert response.role == "assistant"
+        assert response.content is None
+        assert response.tool_calls == []
+
+    def test_interaction_id_tracked(self):
+        model = self._make_model()
+        assert model._previous_interaction_id is None
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/first"
+        mock_interaction.steps = []
+        mock_interaction.usage = None
+
+        model._parse_interaction_response(mock_interaction)
+        assert model._previous_interaction_id == "interactions/first"
+
+    def test_multiple_function_calls(self):
+        model = self._make_model()
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/multi"
+        mock_interaction.steps = [
+            self._make_function_call_step("call_1", "func_a", {"x": 1}),
+            self._make_function_call_step("call_2", "func_b", {"y": 2}),
+        ]
+        mock_interaction.usage = None
+
+        response = model._parse_interaction_response(mock_interaction)
+        assert len(response.tool_calls) == 2
+        assert response.tool_calls[0]["function"]["name"] == "func_a"
+        assert response.tool_calls[1]["function"]["name"] == "func_b"
+
+    def test_function_call_with_signature(self):
+        model = self._make_model()
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/sig"
+        mock_interaction.steps = [
+            self._make_function_call_step("call_1", "func", {"x": 1}, signature="thought_sig_abc"),
+        ]
+        mock_interaction.usage = None
+
+        response = model._parse_interaction_response(mock_interaction)
+        assert response.tool_calls[0]["thought_signature"] == "thought_sig_abc"
+
+    def test_parse_none_usage_fields(self):
+        """Usage fields that are None should default to 0."""
+        model = self._make_model()
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/nullusage"
+        mock_interaction.steps = [self._make_model_output_step("Hi")]
+
+        mock_usage = MagicMock()
+        mock_usage.total_input_tokens = None
+        mock_usage.total_output_tokens = None
+        mock_usage.total_tokens = None
+        mock_interaction.usage = mock_usage
+
+        response = model._parse_interaction_response(mock_interaction)
+        assert response.response_usage.input_tokens == 0
+        assert response.response_usage.output_tokens == 0
+        assert response.response_usage.total_tokens == 0
+
+
+class TestInvoke:
+    """Tests for the invoke method."""
+
+    def _make_model(self):
+        return GeminiInteractions(api_key="test-key")
+
+    def test_invoke_calls_interactions_create(self):
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/invoke1"
+        mock_interaction.steps = []
+        mock_interaction.usage = None
+        mock_client.interactions.create.return_value = mock_interaction
+
+        messages = [Message(role="user", content="Hello")]
+        assistant_message = Message(role="assistant")
+
+        model.invoke(messages, assistant_message)
+
+        mock_client.interactions.create.assert_called_once()
+        call_kwargs = mock_client.interactions.create.call_args[1]
+        assert call_kwargs["model"] == "gemini-3-flash-preview"
+        assert "input" in call_kwargs
+
+    def test_invoke_passes_tools(self):
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/tools1"
+        mock_interaction.steps = []
+        mock_interaction.usage = None
+        mock_client.interactions.create.return_value = mock_interaction
+
+        tools = [
+            {
+                "type": "function",
+                "function": {"name": "search", "description": "Search", "parameters": {}},
+            }
+        ]
+        messages = [Message(role="user", content="Hello")]
+        assistant_message = Message(role="assistant")
+
+        model.invoke(messages, assistant_message, tools=tools)
+
+        call_kwargs = mock_client.interactions.create.call_args[1]
+        assert "tools" in call_kwargs
+        assert call_kwargs["tools"][0]["name"] == "search"
+
+    def test_invoke_error_raises_model_provider_error(self):
+        from agno.exceptions import ModelProviderError
+
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+        mock_client.interactions.create.side_effect = Exception("API error")
+
+        messages = [Message(role="user", content="Hello")]
+        assistant_message = Message(role="assistant")
+
+        with pytest.raises(ModelProviderError, match="API error"):
+            model.invoke(messages, assistant_message)
+
+    def test_invoke_tracks_interaction_id(self):
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/tracked1"
+        mock_interaction.steps = []
+        mock_interaction.usage = None
+        mock_client.interactions.create.return_value = mock_interaction
+
+        messages = [Message(role="user", content="Hello")]
+        assistant_message = Message(role="assistant")
+
+        model.invoke(messages, assistant_message)
+        assert model._previous_interaction_id == "interactions/tracked1"
+
+
+class TestInvokeAsync:
+    """Tests for the async invoke method."""
+
+    def _make_model(self):
+        return GeminiInteractions(api_key="test-key")
+
+    @pytest.mark.asyncio
+    async def test_ainvoke_calls_interactions_create(self):
+        from unittest.mock import AsyncMock
+
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/async1"
+        mock_interaction.steps = []
+        mock_interaction.usage = None
+        mock_client.aio.interactions.create = AsyncMock(return_value=mock_interaction)
+
+        messages = [Message(role="user", content="Hello")]
+        assistant_message = Message(role="assistant")
+
+        await model.ainvoke(messages, assistant_message)
+
+        mock_client.aio.interactions.create.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_ainvoke_error_raises_model_provider_error(self):
+        from unittest.mock import AsyncMock
+
+        from agno.exceptions import ModelProviderError
+
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+        mock_client.aio.interactions.create = AsyncMock(side_effect=Exception("Async error"))
+
+        messages = [Message(role="user", content="Hello")]
+        assistant_message = Message(role="assistant")
+
+        with pytest.raises(ModelProviderError, match="Async error"):
+            await model.ainvoke(messages, assistant_message)
+
+
+class TestInvokeStream:
+    """Tests for streaming invoke."""
+
+    def _make_model(self):
+        return GeminiInteractions(api_key="test-key")
+
+    def test_invoke_stream_sets_stream_param(self):
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+        mock_client.interactions.create.return_value = iter([])
+
+        messages = [Message(role="user", content="Hello")]
+        assistant_message = Message(role="assistant")
+
+        list(model.invoke_stream(messages, assistant_message))
+
+        call_kwargs = mock_client.interactions.create.call_args[1]
+        assert call_kwargs["stream"] is True
+
+    def test_invoke_stream_handles_text_delta(self):
+        from agno.models.google.gemini_interactions import DeltaText, interaction_types
+
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        # Create a mock StepDelta event with DeltaText
+        mock_event = MagicMock(spec=interaction_types.StepDelta)
+        mock_event.__class__ = interaction_types.StepDelta
+        mock_delta = MagicMock(spec=DeltaText)
+        mock_delta.__class__ = DeltaText
+        mock_delta.text = "Hello"
+        mock_event.delta = mock_delta
+
+        mock_client.interactions.create.return_value = iter([mock_event])
+
+        messages = [Message(role="user", content="Hi")]
+        assistant_message = Message(role="assistant")
+
+        responses = list(model.invoke_stream(messages, assistant_message))
+        assert any(r.content == "Hello" for r in responses)
+
+    def test_invoke_stream_handles_interaction_created(self):
+        from agno.models.google.gemini_interactions import interaction_types
+
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        mock_event = MagicMock(spec=interaction_types.InteractionCreatedEvent)
+        mock_event.__class__ = interaction_types.InteractionCreatedEvent
+        mock_event.interaction = MagicMock()
+        mock_event.interaction.id = "interactions/stream1"
+
+        mock_client.interactions.create.return_value = iter([mock_event])
+
+        messages = [Message(role="user", content="Hi")]
+        assistant_message = Message(role="assistant")
+
+        responses = list(model.invoke_stream(messages, assistant_message))
+        assert model._previous_interaction_id == "interactions/stream1"
+        assert any(r.role == "assistant" for r in responses)
+
+    def test_invoke_stream_handles_function_call_step_start(self):
+        from agno.models.google.gemini_interactions import FunctionCallStep, interaction_types
+
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        # Create a StepStart with FunctionCallStep
+        mock_step = MagicMock(spec=FunctionCallStep)
+        mock_step.__class__ = FunctionCallStep
+        mock_step.id = "call_stream_1"
+        mock_step.name = "get_weather"
+        mock_step.arguments = {"city": "London"}
+        mock_step.signature = None
+
+        mock_event = MagicMock(spec=interaction_types.StepStart)
+        mock_event.__class__ = interaction_types.StepStart
+        mock_event.step = mock_step
+
+        mock_client.interactions.create.return_value = iter([mock_event])
+
+        messages = [Message(role="user", content="Weather?")]
+        assistant_message = Message(role="assistant")
+
+        responses = list(model.invoke_stream(messages, assistant_message))
+        tool_responses = [r for r in responses if r.tool_calls]
+        assert len(tool_responses) == 1
+        assert tool_responses[0].tool_calls[0]["function"]["name"] == "get_weather"
+
+    def test_invoke_stream_error_raises_model_provider_error(self):
+        from agno.exceptions import ModelProviderError
+
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+        mock_client.interactions.create.side_effect = Exception("Stream error")
+
+        messages = [Message(role="user", content="Hello")]
+        assistant_message = Message(role="assistant")
+
+        with pytest.raises(ModelProviderError, match="Stream error"):
+            list(model.invoke_stream(messages, assistant_message))
+
+
+class TestToDict:
+    """Tests for model serialization."""
+
+    def test_basic_serialization(self):
+        model = GeminiInteractions(api_key="test-key")
+        d = model.to_dict()
+        assert d["id"] == "gemini-3-flash-preview"
+        assert d["name"] == "GeminiInteractions"
+        assert d["provider"] == "Google"
+
+    def test_serialization_with_params(self):
+        model = GeminiInteractions(
+            api_key="test-key",
+            temperature=0.7,
+            search=True,
+            store=False,
+        )
+        d = model.to_dict()
+        assert d["temperature"] == 0.7
+        assert d["search"] is True
+        assert d["store"] is False
+
+    def test_none_values_excluded(self):
+        model = GeminiInteractions(api_key="test-key")
+        d = model.to_dict()
+        assert "temperature" not in d
+        assert "thinking_budget" not in d
