@@ -18,7 +18,6 @@ agent = Agent(
     model=GeminiInteractions(
         id="gemini-3-flash-preview",
         thinking_level="high",
-        include_thoughts=True,
     ),
     markdown=True,
 )
