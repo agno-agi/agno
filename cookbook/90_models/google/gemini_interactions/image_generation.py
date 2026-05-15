@@ -5,9 +5,8 @@ Gemini Interactions - Image Generation
 Example showing image generation with the Interactions API.
 Uses response_modalities=["text", "image"] to enable image output.
 
-Note: Image generation support depends on the model.
-Not all models support image output through the Interactions API.
-Check the Google AI docs for the latest supported models.
+Note: Image generation requires a model that supports image output,
+such as gemini-3.1-flash-image-preview.
 """
 
 from agno.agent import Agent
@@ -19,7 +18,7 @@ from agno.models.google import GeminiInteractions
 
 agent = Agent(
     model=GeminiInteractions(
-        id="gemini-3-flash-preview",
+        id="gemini-3.1-flash-image-preview",
         response_modalities=["text", "image"],
     ),
     markdown=True,
@@ -40,7 +39,7 @@ if __name__ == "__main__":
                     f.write(content)
                 print(f"Saved image to {filepath}")
     else:
-        print("No images generated (model may not support image output)")
+        print("No images generated")
 
     if response.content:
         print(f"Response: {response.content}")

@@ -10,7 +10,7 @@ Requires `google-genai>=2.0.0`.
 import base64
 import json
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Literal, Optional, Type, Union
@@ -219,14 +219,11 @@ class GeminiInteractions(Model):
 
     supports_native_structured_outputs: bool = True
 
-    # Generation parameters
+    # Generation parameters (must match GenerationConfigParam in the SDK)
     temperature: Optional[float] = None
     top_p: Optional[float] = None
-    top_k: Optional[int] = None
     max_output_tokens: Optional[int] = None
     stop_sequences: Optional[list[str]] = None
-    presence_penalty: Optional[float] = None
-    frequency_penalty: Optional[float] = None
     seed: Optional[int] = None
     response_modalities: Optional[list[str]] = None
 
@@ -235,13 +232,12 @@ class GeminiInteractions(Model):
     background: Optional[bool] = None  # Offload to background execution
 
     # Thinking configuration
-    thinking_budget: Optional[int] = None
-    include_thoughts: Optional[bool] = None
     thinking_level: Optional[str] = None  # "low", "high"
 
     # Built-in tools
     search: bool = False
     url_context: bool = False
+    code_execution: bool = False
 
     # Inference tier: "flex" (lower cost, higher latency), "standard", or "priority" (lowest latency)
     service_tier: Optional[Literal["flex", "standard", "priority"]] = None
@@ -263,8 +259,19 @@ class GeminiInteractions(Model):
     # Client instance
     client: Optional[GeminiClient] = None
 
-    # Track interaction ID for multi-turn conversations
-    _previous_interaction_id: Optional[str] = field(default=None, init=False, repr=False)
+    def _get_previous_interaction_id(self, messages: List[Message]) -> Optional[str]:
+        """Extract the previous interaction ID from message provider_data.
+
+        Walks messages in reverse to find the most recent assistant message
+        with an interaction_id. This avoids storing state at instance level,
+        which would be unsafe if two concurrent agents share the same model.
+        """
+        for msg in reversed(messages):
+            if msg.role == "assistant" and msg.provider_data:
+                iid = msg.provider_data.get("interaction_id")
+                if iid:
+                    return iid
+        return None
 
     def get_client(self) -> GeminiClient:
         """Returns an instance of the GeminiClient."""
@@ -316,17 +323,13 @@ class GeminiInteractions(Model):
             {
                 "search": self.search,
                 "url_context": self.url_context,
+                "code_execution": self.code_execution,
                 "temperature": self.temperature,
                 "top_p": self.top_p,
-                "top_k": self.top_k,
                 "max_output_tokens": self.max_output_tokens,
                 "stop_sequences": self.stop_sequences,
-                "presence_penalty": self.presence_penalty,
-                "frequency_penalty": self.frequency_penalty,
                 "seed": self.seed,
                 "response_modalities": self.response_modalities,
-                "thinking_budget": self.thinking_budget,
-                "include_thoughts": self.include_thoughts,
                 "thinking_level": self.thinking_level,
                 "store": self.store,
                 "background": self.background,
@@ -441,6 +444,8 @@ class GeminiInteractions(Model):
 
                 if content_items:
                     steps.append({"type": "user_input", "content": content_items})
+                else:
+                    log_warning("Skipping user message with no usable content (all media may have failed to load)")
 
             # Assistant messages with tool calls become FunctionCallSteps
             elif message.role == "assistant":
@@ -500,30 +505,23 @@ class GeminiInteractions(Model):
         if system_message:
             kwargs["system_instruction"] = system_message
 
-        # Previous interaction for multi-turn
-        if self._previous_interaction_id:
-            kwargs["previous_interaction_id"] = self._previous_interaction_id
+        # Previous interaction for multi-turn (read from message provider_data)
+        previous_interaction_id = self._get_previous_interaction_id(messages)
+        if previous_interaction_id:
+            kwargs["previous_interaction_id"] = previous_interaction_id
 
-        # Generation config
+        # Generation config (only params supported by the Interactions API SDK)
         generation_config: Dict[str, Any] = {}
         if self.temperature is not None:
             generation_config["temperature"] = self.temperature
         if self.top_p is not None:
             generation_config["top_p"] = self.top_p
-        if self.top_k is not None:
-            generation_config["top_k"] = self.top_k
         if self.max_output_tokens is not None:
             generation_config["max_output_tokens"] = self.max_output_tokens
         if self.stop_sequences is not None:
             generation_config["stop_sequences"] = self.stop_sequences
-        if self.presence_penalty is not None:
-            generation_config["presence_penalty"] = self.presence_penalty
-        if self.frequency_penalty is not None:
-            generation_config["frequency_penalty"] = self.frequency_penalty
         if self.seed is not None:
             generation_config["seed"] = self.seed
-        if self.thinking_budget is not None:
-            generation_config["thinking_budget"] = self.thinking_budget
         if self.thinking_level is not None:
             generation_config["thinking_level"] = self.thinking_level
         if generation_config:
@@ -553,6 +551,8 @@ class GeminiInteractions(Model):
             all_tools.append({"type": "google_search"})
         if self.url_context:
             all_tools.append({"type": "url_context"})
+        if self.code_execution:
+            all_tools.append({"type": "code_execution"})
         if all_tools:
             kwargs["tools"] = all_tools
 
@@ -573,9 +573,8 @@ class GeminiInteractions(Model):
         model_response = ModelResponse()
         model_response.role = "assistant"
 
-        # Track the interaction ID for multi-turn
-        if hasattr(interaction, "id") and interaction.id:
-            self._previous_interaction_id = interaction.id
+        # Extract interaction ID for multi-turn (stored in provider_data, not instance)
+        interaction_id = getattr(interaction, "id", None)
 
         # Parse steps from the interaction
         steps = getattr(interaction, "steps", None)
@@ -583,7 +582,7 @@ class GeminiInteractions(Model):
             # Store interaction ID in provider_data
             if model_response.provider_data is None:
                 model_response.provider_data = {}
-            model_response.provider_data["interaction_id"] = self._previous_interaction_id
+            model_response.provider_data["interaction_id"] = interaction_id
             return model_response
 
         for step in steps:
@@ -659,7 +658,7 @@ class GeminiInteractions(Model):
         # Store interaction ID in provider_data
         if model_response.provider_data is None:
             model_response.provider_data = {}
-        model_response.provider_data["interaction_id"] = self._previous_interaction_id
+        model_response.provider_data["interaction_id"] = interaction_id
 
         return model_response
 
@@ -671,8 +670,9 @@ class GeminiInteractions(Model):
         if image_data:
             try:
                 content_bytes = base64.b64decode(image_data)
-            except Exception:
-                content_bytes = image_data.encode("utf-8") if isinstance(image_data, str) else image_data
+            except Exception as e:
+                log_warning(f"Failed to decode image data from model response: {e}")
+                return None
             return Image(content=content_bytes, mime_type=mime_type, id=str(uuid4()))
 
         uri = getattr(content_item, "uri", None)
@@ -689,8 +689,9 @@ class GeminiInteractions(Model):
         if audio_data:
             try:
                 content_bytes = base64.b64decode(audio_data)
-            except Exception:
-                content_bytes = audio_data.encode("utf-8") if isinstance(audio_data, str) else audio_data
+            except Exception as e:
+                log_warning(f"Failed to decode audio data from model response: {e}")
+                return None
             return Audio(content=content_bytes, mime_type=mime_type, id=str(uuid4()))
 
         uri = getattr(content_item, "uri", None)
@@ -762,7 +763,6 @@ class GeminiInteractions(Model):
 
                 if isinstance(event, interaction_types.InteractionCreatedEvent):
                     if event.interaction and hasattr(event.interaction, "id"):
-                        self._previous_interaction_id = event.interaction.id
                         model_response.provider_data = {"interaction_id": event.interaction.id}
                     model_response.role = "assistant"
                     yield model_response
@@ -824,7 +824,9 @@ class GeminiInteractions(Model):
                                 total_tokens=getattr(usage, "total_tokens", 0) or 0,
                             )
                         if hasattr(event.interaction, "id") and event.interaction.id:
-                            self._previous_interaction_id = event.interaction.id
+                            if model_response.provider_data is None:
+                                model_response.provider_data = {}
+                            model_response.provider_data["interaction_id"] = event.interaction.id
                     yield model_response
 
             assistant_message.metrics.stop_timer()
@@ -890,7 +892,6 @@ class GeminiInteractions(Model):
 
                 if isinstance(event, interaction_types.InteractionCreatedEvent):
                     if event.interaction and hasattr(event.interaction, "id"):
-                        self._previous_interaction_id = event.interaction.id
                         model_response.provider_data = {"interaction_id": event.interaction.id}
                     model_response.role = "assistant"
                     yield model_response
@@ -949,7 +950,9 @@ class GeminiInteractions(Model):
                                 total_tokens=getattr(usage, "total_tokens", 0) or 0,
                             )
                         if hasattr(event.interaction, "id") and event.interaction.id:
-                            self._previous_interaction_id = event.interaction.id
+                            if model_response.provider_data is None:
+                                model_response.provider_data = {}
+                            model_response.provider_data["interaction_id"] = event.interaction.id
                     yield model_response
 
             assistant_message.metrics.stop_timer()

@@ -101,6 +101,12 @@ class TestFormatTools:
         kwargs = model._get_request_kwargs(messages)
         assert {"type": "url_context"} in kwargs["tools"]
 
+    def test_builtin_code_execution_tool_added_in_request_kwargs(self):
+        model = GeminiInteractions(api_key="test-key", code_execution=True)
+        messages = [Message(role="user", content="Hi")]
+        kwargs = model._get_request_kwargs(messages)
+        assert {"type": "code_execution"} in kwargs["tools"]
+
     def test_function_object_tools(self):
         """_format_tools handles Function objects from the agent."""
         from agno.tools.function import Function
@@ -275,19 +281,28 @@ class TestGetRequestKwargs:
         kwargs = model._get_request_kwargs(messages)
         assert kwargs["store"] is False
 
-    def test_previous_interaction_id(self):
+    def test_previous_interaction_id_from_provider_data(self):
+        """Previous interaction ID is read from assistant message provider_data."""
         model = self._make_model()
-        model._previous_interaction_id = "interactions/abc123"
-        messages = [Message(role="user", content="Hi")]
+        messages = [
+            Message(role="user", content="First message"),
+            Message(role="assistant", content="Response", provider_data={"interaction_id": "interactions/abc123"}),
+            Message(role="user", content="Follow up"),
+        ]
         kwargs = model._get_request_kwargs(messages)
         assert kwargs["previous_interaction_id"] == "interactions/abc123"
 
+    def test_no_previous_interaction_id_on_first_turn(self):
+        model = self._make_model()
+        messages = [Message(role="user", content="Hi")]
+        kwargs = model._get_request_kwargs(messages)
+        assert "previous_interaction_id" not in kwargs
+
     def test_thinking_config(self):
-        model = self._make_model(thinking_level="high", thinking_budget=2000)
+        model = self._make_model(thinking_level="high")
         messages = [Message(role="user", content="Hi")]
         kwargs = model._get_request_kwargs(messages)
         assert kwargs["generation_config"]["thinking_level"] == "high"
-        assert kwargs["generation_config"]["thinking_budget"] == 2000
 
     def test_response_modalities(self):
         model = self._make_model(response_modalities=["text", "image"])
@@ -351,7 +366,7 @@ class TestParseInteractionResponse:
         response = model._parse_interaction_response(mock_interaction)
         assert response.role == "assistant"
         assert response.content == "Hello, world!"
-        assert model._previous_interaction_id == "interactions/test123"
+        assert response.provider_data["interaction_id"] == "interactions/test123"
 
     def test_parse_function_call_response(self):
         model = self._make_model()
@@ -415,17 +430,16 @@ class TestParseInteractionResponse:
         assert response.content is None
         assert response.tool_calls == []
 
-    def test_interaction_id_tracked(self):
+    def test_interaction_id_in_provider_data(self):
         model = self._make_model()
-        assert model._previous_interaction_id is None
 
         mock_interaction = MagicMock()
         mock_interaction.id = "interactions/first"
         mock_interaction.steps = []
         mock_interaction.usage = None
 
-        model._parse_interaction_response(mock_interaction)
-        assert model._previous_interaction_id == "interactions/first"
+        response = model._parse_interaction_response(mock_interaction)
+        assert response.provider_data["interaction_id"] == "interactions/first"
 
     def test_multiple_function_calls(self):
         model = self._make_model()
@@ -541,7 +555,7 @@ class TestInvoke:
         with pytest.raises(ModelProviderError, match="API error"):
             model.invoke(messages, assistant_message)
 
-    def test_invoke_tracks_interaction_id(self):
+    def test_invoke_returns_interaction_id_in_provider_data(self):
         model = self._make_model()
         mock_client = MagicMock()
         model.client = mock_client
@@ -555,8 +569,8 @@ class TestInvoke:
         messages = [Message(role="user", content="Hello")]
         assistant_message = Message(role="assistant")
 
-        model.invoke(messages, assistant_message)
-        assert model._previous_interaction_id == "interactions/tracked1"
+        response = model.invoke(messages, assistant_message)
+        assert response.provider_data["interaction_id"] == "interactions/tracked1"
 
 
 class TestInvokeAsync:
@@ -665,7 +679,9 @@ class TestInvokeStream:
         assistant_message = Message(role="assistant")
 
         responses = list(model.invoke_stream(messages, assistant_message))
-        assert model._previous_interaction_id == "interactions/stream1"
+        assert any(
+            r.provider_data and r.provider_data.get("interaction_id") == "interactions/stream1" for r in responses
+        )
         assert any(r.role == "assistant" for r in responses)
 
     def test_invoke_stream_handles_function_call_with_argument_deltas(self):
@@ -756,7 +772,7 @@ class TestToDict:
         model = GeminiInteractions(api_key="test-key")
         d = model.to_dict()
         assert "temperature" not in d
-        assert "thinking_budget" not in d
+        assert "thinking_level" not in d
 
     def test_service_tier_serialization(self):
         model = GeminiInteractions(api_key="test-key", service_tier="flex")

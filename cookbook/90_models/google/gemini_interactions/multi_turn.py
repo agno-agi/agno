@@ -9,6 +9,7 @@ This enables implicit caching and reduces token costs.
 """
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.google import GeminiInteractions
 
 # ---------------------------------------------------------------------------
@@ -18,6 +19,7 @@ from agno.models.google import GeminiInteractions
 agent = Agent(
     model=GeminiInteractions(id="gemini-3-flash-preview"),
     add_history_to_context=True,
+    db=SqliteDb(db_file="tmp/data.db"),
     markdown=True,
 )
 
