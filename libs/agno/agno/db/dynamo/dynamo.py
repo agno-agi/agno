@@ -2384,21 +2384,32 @@ class DynamoDb(BaseDb):
                     "KeyConditionExpression": "run_id = :run_id",
                     "ExpressionAttributeValues": expression_values,
                     "ScanIndexForward": False,  # Descending order
-                    "Limit": 1,
                 }
                 if filter_parts:
+                    # DynamoDB applies Limit BEFORE FilterExpression. With
+                    # Limit=1 the newest non-matching row hides older matching
+                    # rows on subsequent pages, so paginate until we find a
+                    # match (per-run_id trace counts are tiny — typically 1).
                     query_kwargs["FilterExpression"] = " AND ".join(filter_parts)
                     query_kwargs["ExpressionAttributeNames"] = expression_names
+                else:
+                    # Fast path: no filter, just grab the newest item.
+                    query_kwargs["Limit"] = 1
 
-                response = self.client.query(**query_kwargs)
-                items = response.get("Items", [])
-                if items:
-                    trace_data = deserialize_from_dynamodb_item(items[0])
-                    # Use stored values (default to 0 if not present)
-                    trace_data.setdefault("total_spans", 0)
-                    trace_data.setdefault("error_count", 0)
-                    return Trace.from_dict(trace_data)
-                return None
+                while True:
+                    response = self.client.query(**query_kwargs)
+                    items = response.get("Items", [])
+                    if items:
+                        # Already FilterExpression-matched + DESC-sorted by
+                        # start_time, so the first item is the newest match.
+                        trace_data = deserialize_from_dynamodb_item(items[0])
+                        trace_data.setdefault("total_spans", 0)
+                        trace_data.setdefault("error_count", 0)
+                        return Trace.from_dict(trace_data)
+                    last_evaluated = response.get("LastEvaluatedKey")
+                    if not last_evaluated:
+                        return None
+                    query_kwargs["ExclusiveStartKey"] = last_evaluated
 
             else:
                 log_debug("get_trace called without any filter parameters")
