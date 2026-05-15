@@ -190,12 +190,19 @@ class TestTraceRouterUserIdThreading:
         assert resp.status_code == 200
         assert trace_db.get_traces.call_args.kwargs["user_id"] == "alice"
 
-    def test_get_trace_isolation_on_forces_jwt_sub(self, trace_db, no_security_key):
+    def test_get_trace_does_not_pass_user_id(self, trace_db, no_security_key):
+        """``trace_id`` is a unique key — a trace already belongs to one
+        owner, so ``get_trace`` doesn't accept ``user_id`` / ``session_id`` /
+        ``agent_id`` filters. Authorization for the detail endpoint is
+        carried by the list endpoint (which scopes trace_id discovery to
+        the caller). The router must not pass extra kwargs that don't exist
+        in ``BaseDb.get_trace`` — otherwise non-sqlite backends TypeError."""
         app = _build_trace_app(trace_db, isolation=True)
-        # 404 is fine — we just want the call assertion.
         TestClient(app).get("/traces/trace-1")
         kwargs = trace_db.get_trace.call_args.kwargs
-        assert kwargs["user_id"] == "jwt_alice"
+        assert "user_id" not in kwargs
+        assert "session_id" not in kwargs
+        assert "agent_id" not in kwargs
         assert kwargs["trace_id"] == "trace-1"
 
     def test_trace_stats_isolation_on_forces_jwt_sub(self, trace_db, no_security_key):
