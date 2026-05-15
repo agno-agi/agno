@@ -18,7 +18,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.media import Audio, File, Image, Video
+from agno.media import Audio, Image
 from agno.models.base import Model
 from agno.models.google.utils import media_to_content_item
 from agno.models.message import Message
