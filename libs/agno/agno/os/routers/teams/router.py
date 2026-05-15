@@ -27,6 +27,14 @@ from agno.os.auth import (
     require_resource_access,
 )
 from agno.os.managers import event_buffer, sse_subscriber_manager
+from agno.os.middleware.user_scope import (
+    SESSION_ID_REQUIRED,
+    assert_session_matches_component,
+    get_scoped_user_id,
+    run_matches_component,
+    verify_run_in_session,
+    verify_run_in_session_via_db,
+)
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.schema import (
     BadRequestResponse,
@@ -201,6 +209,7 @@ async def _resume_stream_generator(
     run_id: str,
     last_event_index: Optional[int],
     session_id: Optional[str],
+    user_id: Optional[str] = None,
 ) -> AsyncGenerator:
     """SSE generator for the /resume endpoint.
 
@@ -215,7 +224,7 @@ async def _resume_stream_generator(
         # PATH 3: Not in buffer -- fall back to database
         if session_id and not isinstance(team, RemoteTeam):
             try:
-                run_output = await team.aget_run_output(run_id=run_id, session_id=session_id)
+                run_output = await team.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
             except Exception as e:
                 error = {"event": "error", "error": f"Failed to fetch run from database: {str(e)}"}
                 yield f"event: error\ndata: {json.dumps(error)}\n\n"
@@ -569,7 +578,12 @@ def get_team_router(
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
 
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+        # Scoped non-admin callers always get their JWT sub as user_id.
+        # Admins and unscoped callers fall through to middleware/form values.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            user_id = scoped_user_id
+        elif hasattr(request.state, "user_id") and request.state.user_id is not None:
             if user_id and user_id != request.state.user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = request.state.user_id
@@ -793,13 +807,34 @@ def get_team_router(
         dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
     )
     async def cancel_team_run(
+        request: Request,
         team_id: str,
         run_id: str,
+        session_id: Optional[str] = Query(
+            default=None,
+            description="Session ID the run belongs to. Required for non-admin JWT users.",
+        ),
     ):
-        # Factory teams: cancel is static, no team instance needed
+        # Factory teams: cancel is static, no team instance needed.
+        # Non-admin callers must still prove session ownership before we apply
+        # a global cancellation intent keyed solely on run_id.
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
             from agno.team._run import acancel_run
+
+            scoped_user_id = get_scoped_user_id(request)
+            if scoped_user_id is not None:
+                if not session_id:
+                    raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
+                check_db = getattr(factory, "db", None) or os.db
+                await verify_run_in_session_via_db(
+                    check_db,
+                    session_id,
+                    run_id,
+                    scoped_user_id,
+                    component_type="teams",
+                    component_id=team_id,
+                )
 
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
@@ -811,6 +846,21 @@ def get_team_router(
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
+
+        # Ownership check: non-admin JWT callers must supply a session_id and the
+        # run must live in a session they own. Admins / unauthenticated bypass.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if not session_id:
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
+            await verify_run_in_session(
+                team,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="teams",
+                component_id=team_id,
+            )
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
@@ -845,19 +895,55 @@ def get_team_router(
         dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
     )
     async def resume_team_run_stream(
+        request: Request,
         team_id: str,
         run_id: str,
         last_event_index: Optional[int] = Form(None, description="Index of last event received by client (0-based)"),
         session_id: Optional[str] = Form(None, description="Session ID for database fallback"),
     ):
+        # Ownership check up-front (see resume_agent_run_stream for rationale).
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            if not session_id:
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
+
+        factory = find_factory_by_id(team_id, os.teams)
+        if factory:
+            if scoped_user_id is not None:
+                assert session_id is not None
+                check_db = getattr(factory, "db", None) or os.db
+                await verify_run_in_session_via_db(
+                    check_db,
+                    session_id,
+                    run_id,
+                    scoped_user_id,
+                    component_type="teams",
+                    component_id=team_id,
+                )
+            raise HTTPException(
+                status_code=400,
+                detail="Stream resumption is not supported for factory teams",
+            )
+
         team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
         if isinstance(team, RemoteTeam):
             raise HTTPException(status_code=400, detail="Stream resumption is not supported for remote teams")
 
+        if scoped_user_id is not None:
+            assert session_id is not None
+            await verify_run_in_session(
+                team,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="teams",
+                component_id=team_id,
+            )
+
         return StreamingResponse(
-            _resume_stream_generator(team, run_id, last_event_index, session_id),
+            _resume_stream_generator(team, run_id, last_event_index, session_id, user_id=scoped_user_id),
             media_type="text/event-stream",
         )
 
@@ -964,9 +1050,24 @@ def get_team_router(
                 detail="session_id is required to continue a run",
             )
 
+        # Ownership check before status validation — see continue_agent_run.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None and not isinstance(team, RemoteTeam):
+            assert session_id
+            await verify_run_in_session(
+                team,
+                session_id,
+                run_id,
+                scoped_user_id,
+                component_type="teams",
+                component_id=team_id,
+            )
+
         # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
         if session_id and not isinstance(team, RemoteTeam):
-            existing_run = await team.aget_run_output(run_id=run_id, session_id=session_id)
+            existing_run = await team.aget_run_output(
+                run_id=run_id, session_id=session_id, user_id=scoped_user_id or user_id
+            )
             if existing_run is not None:
                 is_paused = getattr(existing_run, "is_paused", False)
                 if not is_paused:
@@ -1140,12 +1241,20 @@ def get_team_router(
         """Return the list of all Teams present in the contextual OS"""
         # Filter teams based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
-            from agno.os.auth import filter_resources_by_access, get_accessible_resources
+            from agno.os.auth import (
+                build_insufficient_permissions_detail,
+                filter_resources_by_access,
+                get_accessible_resources,
+            )
 
             # Check if user has any team scopes at all
             accessible_ids = get_accessible_resources(request, "teams")
             if not accessible_ids:
-                raise HTTPException(status_code=403, detail="Insufficient permissions")
+                required_scopes = getattr(request.state, "required_scopes", None)
+                raise HTTPException(
+                    status_code=403,
+                    detail=build_insufficient_permissions_detail(required_scopes),
+                )
 
             accessible_teams = filter_resources_by_access(request, os.teams or [], "teams")
         else:
@@ -1293,6 +1402,7 @@ def get_team_router(
         dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
     )
     async def get_team_run(
+        request: Request,
         team_id: str,
         run_id: str,
         session_id: str = Query(..., description="Session ID for the run"),
@@ -1317,8 +1427,24 @@ def get_team_router(
             if isinstance(team, RemoteTeam):
                 raise HTTPException(status_code=400, detail="Run polling is not supported for remote teams")
 
-        run_output = await team.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
+        user_id = get_scoped_user_id(request)
+
+        # Verify session belongs to this team BEFORE loading the run. See
+        # get_agent_run for the cross-component bypass this blocks.
+        if hasattr(team, "aget_session"):
+            session = await team.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+            if session is None:
+                raise HTTPException(status_code=404, detail="Run not found")
+            assert_session_matches_component(session, "teams", team_id, not_found_detail="Run not found")
+
+        run_output = await team.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
         if run_output is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+
+        # Per-resource RBAC: the run must explicitly belong to the path team.
+        # Fail closed when team_id is missing (e.g. a nested agent run within
+        # the team's session).
+        if not run_matches_component(run_output, "teams", team_id):
             raise HTTPException(status_code=404, detail="Run not found")
 
         return run_output.to_dict()
@@ -1339,12 +1465,12 @@ def get_team_router(
         dependencies=[Depends(require_resource_access("teams", "run", "team_id"))],
     )
     async def list_team_runs(
+        request: Request,
         team_id: str,
         session_id: str = Query(..., description="Session ID to list runs for"),
         status: Optional[str] = Query(None, description="Filter by run status (PENDING, RUNNING, COMPLETED, ERROR)"),
     ):
         from agno.os.schema import TeamRunSchema
-        from agno.team._storage import _aread_or_create_session
 
         # Factory teams
         factory = find_factory_by_id(team_id, os.teams)
@@ -1366,11 +1492,29 @@ def get_team_router(
             if isinstance(team, RemoteTeam):
                 raise HTTPException(status_code=400, detail="Run listing is not supported for remote teams")
 
-        session = await _aread_or_create_session(team, session_id=session_id)  # type: ignore[arg-type]
+        # Read-only session lookup so we don't manufacture a session for a
+        # user/team that shouldn't own it.
+        user_id = get_scoped_user_id(request)
+        if not hasattr(team, "aget_session"):
+            raise HTTPException(status_code=501, detail="This team does not support run listing")
+        session = await team.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Per-resource RBAC: the session must explicitly belong to this team.
+        # Fail closed when team_id is missing — an agent/workflow session
+        # must not be reachable through a team route.
+        assert_session_matches_component(session, "teams", team_id)
+
         runs = session.runs or []
 
+        # Filter to runs that belong to this team. Team sessions can contain
+        # nested agent runs from members, so fail closed when the run's
+        # team_id doesn't explicitly match the path team.
         result = []
         for run in runs:
+            if not run_matches_component(run, "teams", team_id):
+                continue
             run_dict = run.to_dict()
             if status and run_dict.get("status") != status:
                 continue
