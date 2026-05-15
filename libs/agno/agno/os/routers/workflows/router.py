@@ -1358,7 +1358,7 @@ def get_workflow_router(
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None:
             if not session_id:
-                raise HTTPException(status_code=400, detail="session_id is required to continue a run")
+                raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
             await verify_run_in_session(
                 workflow,
                 session_id,
