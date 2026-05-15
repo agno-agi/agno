@@ -127,7 +127,7 @@ def test_whitespace_only_filename_rejected():
 
 
 def test_trailing_dot_space_trimmed():
-    """Trailing dots and spaces must be stripped (Windows MagicDot defense)."""
+    """Trailing dots and spaces in the filename must be stripped."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
         tool._save_file_to_disk("payload", "report.json. ")

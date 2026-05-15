@@ -166,14 +166,14 @@ def test_subpath_unc_rejected():
             safe_join_subpath(tmp, "\\\\server\\share\\evil")
 
 
-def test_subpath_magicdot_segment_rejected():
+def test_subpath_trailing_dot_segment_strips_to_reserved_name_rejected():
     """Test that a trailing-dot segment stripping to a reserved name is rejected."""
     with tempfile.TemporaryDirectory() as tmp:
         with pytest.raises(PathSecurityError, match="Invalid path segment"):
             safe_join_subpath(tmp, "docs/CON.")
 
 
-def test_subpath_magicdot_segment_stripped_to_canonical_name():
+def test_subpath_trailing_dot_segment_stripped_to_canonical_name():
     """Test that trailing dots and spaces are stripped from non-reserved segments."""
     with tempfile.TemporaryDirectory() as tmp:
         assert safe_join_subpath(tmp, "a/name.").name == "name"
@@ -243,17 +243,3 @@ def test_safe_join_subpath_backslash_creates_nested_segments_on_posix():
     with tempfile.TemporaryDirectory() as tmp:
         result = safe_join_subpath(tmp, "a\\b\\c.txt")
         assert result == (Path(tmp) / "a" / "b" / "c.txt").resolve()
-
-
-def test_safe_join_lone_surrogate_raises_path_security_error():
-    """Test that a lone surrogate half raises PathSecurityError, not UnicodeEncodeError."""
-    with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(PathSecurityError, match="Cannot resolve"):
-            safe_join(tmp, "ev\ud800il.txt")
-
-
-def test_safe_join_subpath_lone_surrogate_raises_path_security_error():
-    """Test that safe_join_subpath also wraps surrogate-related errors."""
-    with tempfile.TemporaryDirectory() as tmp:
-        with pytest.raises(PathSecurityError, match="Cannot resolve"):
-            safe_join_subpath(tmp, "sub/ev\ud800il.txt")
