@@ -687,6 +687,7 @@ class TestInvokeStream:
         mock_start = MagicMock(spec=interaction_types.StepStart)
         mock_start.__class__ = interaction_types.StepStart
         mock_start.step = mock_step
+        mock_start.index = 0
 
         # DeltaArgumentsDelta with the actual arguments
         mock_delta = MagicMock(spec=DeltaArgumentsDelta)
@@ -696,10 +697,12 @@ class TestInvokeStream:
         mock_delta_event = MagicMock(spec=interaction_types.StepDelta)
         mock_delta_event.__class__ = interaction_types.StepDelta
         mock_delta_event.delta = mock_delta
+        mock_delta_event.index = 0
 
         # StepStop to emit the complete tool call
         mock_stop = MagicMock(spec=interaction_types.StepStop)
         mock_stop.__class__ = interaction_types.StepStop
+        mock_stop.index = 0
 
         mock_client.interactions.create.return_value = iter([mock_start, mock_delta_event, mock_stop])
 

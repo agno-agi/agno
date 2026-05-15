@@ -105,7 +105,6 @@ class GeminiInteractions(Model):
 
     # Interactions API specific parameters
     store: Optional[bool] = None  # Whether to persist interactions server-side (default: True)
-    background: Optional[bool] = None  # Offload to background execution
 
     # Thinking configuration
     thinking_level: Optional[Literal["minimal", "low", "medium", "high"]] = None
@@ -187,7 +186,6 @@ class GeminiInteractions(Model):
                 "response_modalities": self.response_modalities,
                 "thinking_level": self.thinking_level,
                 "store": self.store,
-                "background": self.background,
                 "service_tier": self.service_tier,
             }
         )
@@ -411,11 +409,9 @@ class GeminiInteractions(Model):
         if self.service_tier is not None:
             kwargs["service_tier"] = self.service_tier
 
-        # Store and background
+        # Store
         if self.store is not None:
             kwargs["store"] = self.store
-        if self.background is not None:
-            kwargs["background"] = self.background
 
         return kwargs
 
@@ -573,7 +569,7 @@ class GeminiInteractions(Model):
             stream_event: A streaming event from the Interactions API.
             assistant_message: The assistant message being built (for metrics).
             stream_state: Mutable state dict tracking pending tool calls across events.
-                Keys: "pending_tool_call" (Optional[Dict]), "pending_args_buffer" (str).
+                Keys: "pending_calls" (Dict[int, Dict]) keyed by step index.
 
         Returns:
             Tuple of (ModelResponse, updated stream_state).
@@ -597,13 +593,15 @@ class GeminiInteractions(Model):
                 if delta.signature:
                     model_response.provider_data = {"thought_signature": delta.signature}
             elif isinstance(delta, DeltaArgumentsDelta):
-                if delta.arguments:
-                    stream_state["pending_args_buffer"] += delta.arguments
+                idx = stream_event.index
+                if delta.arguments and idx in stream_state["pending_calls"]:
+                    stream_state["pending_calls"][idx]["args_buffer"] += delta.arguments
 
         elif isinstance(stream_event, interaction_types.StepStart):
             step = stream_event.step
             if isinstance(step, FunctionCallStep):
-                stream_state["pending_tool_call"] = {
+                idx = stream_event.index
+                tool_call = {
                     "id": step.id or str(uuid4()),
                     "type": "function",
                     "function": {
@@ -612,19 +610,17 @@ class GeminiInteractions(Model):
                     },
                 }
                 if step.signature:
-                    stream_state["pending_tool_call"]["thought_signature"] = step.signature
+                    tool_call["thought_signature"] = step.signature
                 args = step.arguments
-                if isinstance(args, dict) and args:
-                    stream_state["pending_args_buffer"] = json.dumps(args)
-                else:
-                    stream_state["pending_args_buffer"] = ""
+                args_buffer = json.dumps(args) if isinstance(args, dict) and args else ""
+                stream_state["pending_calls"][idx] = {"tool_call": tool_call, "args_buffer": args_buffer}
 
         elif isinstance(stream_event, interaction_types.StepStop):
-            if stream_state.get("pending_tool_call") is not None:
-                stream_state["pending_tool_call"]["function"]["arguments"] = stream_state["pending_args_buffer"] or "{}"
-                model_response.tool_calls.append(stream_state["pending_tool_call"])
-                stream_state["pending_tool_call"] = None
-                stream_state["pending_args_buffer"] = ""
+            idx = stream_event.index
+            pending = stream_state["pending_calls"].pop(idx, None)
+            if pending is not None:
+                pending["tool_call"]["function"]["arguments"] = pending["args_buffer"] or "{}"
+                model_response.tool_calls.append(pending["tool_call"])
 
         elif isinstance(stream_event, interaction_types.InteractionCompletedEvent):
             if stream_event.interaction:
@@ -689,7 +685,7 @@ class GeminiInteractions(Model):
         try:
             assistant_message.metrics.start_timer()
             stream = self.get_client().interactions.create(**request_kwargs)
-            stream_state: Dict[str, Any] = {"pending_tool_call": None, "pending_args_buffer": ""}
+            stream_state: Dict[str, Any] = {"pending_calls": {}}
 
             for event in stream:
                 model_response, stream_state = self._parse_provider_response_delta(
@@ -750,7 +746,7 @@ class GeminiInteractions(Model):
         try:
             assistant_message.metrics.start_timer()
             stream = await self.get_client().aio.interactions.create(**request_kwargs)
-            stream_state: Dict[str, Any] = {"pending_tool_call": None, "pending_args_buffer": ""}
+            stream_state: Dict[str, Any] = {"pending_calls": {}}
 
             async for event in stream:
                 model_response, stream_state = self._parse_provider_response_delta(
