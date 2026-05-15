@@ -21,7 +21,7 @@ from agno.exceptions import ModelProviderError
 from agno.media import Audio, Image
 from agno.models.base import Model
 from agno.models.google.utils import media_to_content_item
-from agno.models.message import Message
+from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
@@ -485,6 +485,25 @@ class GeminiInteractions(Model):
                                 model_response.content = text
                             else:
                                 model_response.content += text
+                            # Extract citations from annotations
+                            annotations = getattr(content_item, "annotations", None)
+                            if annotations:
+                                for annotation in annotations:
+                                    ann_type = getattr(annotation, "type", None)
+                                    if ann_type == "url_citation":
+                                        if model_response.citations is None:
+                                            model_response.citations = Citations(raw=[], urls=[])
+                                        if model_response.citations.raw is None:
+                                            model_response.citations.raw = []
+                                        model_response.citations.raw.append(annotation)
+                                        if model_response.citations.urls is None:
+                                            model_response.citations.urls = []
+                                        model_response.citations.urls.append(
+                                            UrlCitation(
+                                                url=getattr(annotation, "url", None),
+                                                title=getattr(annotation, "title", None),
+                                            )
+                                        )
                         elif ImageContent is not None and isinstance(content_item, ImageContent):
                             image = self._parse_image_content(content_item)
                             if image:
@@ -539,6 +558,8 @@ class GeminiInteractions(Model):
                 input_tokens=getattr(usage, "total_input_tokens", 0) or 0,
                 output_tokens=getattr(usage, "total_output_tokens", 0) or 0,
                 total_tokens=getattr(usage, "total_tokens", 0) or 0,
+                cache_read_tokens=getattr(usage, "total_cached_tokens", 0) or 0,
+                reasoning_tokens=getattr(usage, "total_thought_tokens", 0) or 0,
             )
 
         if model_response.provider_data is None:
@@ -615,6 +636,8 @@ class GeminiInteractions(Model):
                         input_tokens=getattr(usage, "total_input_tokens", 0) or 0,
                         output_tokens=getattr(usage, "total_output_tokens", 0) or 0,
                         total_tokens=getattr(usage, "total_tokens", 0) or 0,
+                        cache_read_tokens=getattr(usage, "total_cached_tokens", 0) or 0,
+                        reasoning_tokens=getattr(usage, "total_thought_tokens", 0) or 0,
                     )
                 if hasattr(stream_event.interaction, "id") and stream_event.interaction.id:
                     if model_response.provider_data is None:
