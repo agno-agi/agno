@@ -34,8 +34,13 @@ def get_mime_type(media: Union[Image, Audio, Video, File], default: str) -> str:
         return media.mime_type
 
     fmt = getattr(media, "format", None)
-    if fmt and fmt.lower() in FORMAT_TO_MIME:
-        return FORMAT_TO_MIME[fmt.lower()]
+    if fmt:
+        if fmt.lower() in FORMAT_TO_MIME:
+            return FORMAT_TO_MIME[fmt.lower()]
+        # For formats not in the map, infer from the default MIME category
+        # e.g. default="audio/mp3" + fmt="m4a" -> "audio/m4a"
+        category = default.split("/")[0] if "/" in default else "application"
+        return f"{category}/{fmt.lower()}"
 
     filepath = getattr(media, "filepath", None)
     if filepath:
