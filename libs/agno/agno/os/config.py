@@ -15,7 +15,10 @@ class AuthorizationConfig(BaseModel):
     audience: Optional[str] = None
     admin_scope: Optional[str] = None
     # Opt-in per-user data isolation. When True, AgentOS:
-    #   - wraps the DB in a per-request UserScopedDbAdapter
+    #   - threads the JWT sub as ``user_id`` on every user-scoped DB read
+    #     (sessions, memory, traces) for non-admin callers
+    #   - coerces ``user_id`` on writes (sessions / memories / traces) so a
+    #     non-admin caller cannot persist rows attributed to another user
     #   - enforces session/run ownership on cancel/resume/continue routes
     #   - requires session_id (and workflow_id on WS reconnect) for non-admins
     # When False (default) JWT/RBAC still apply, but routes operate on the

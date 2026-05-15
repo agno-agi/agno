@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.6.5"
+version = "2.6.6"
 description = "The programming language for agentic software."
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -238,7 +238,7 @@ models = [
   "agno[ibm]",
   # "agno[litellm]",  # Temporarily disabled - litellm compromised on PyPI (March 24, 2026)
   "agno[meta]",
-  "agno[mistral]",
+  # "agno[mistral]",  # Temporarily disabled - mistralai quarantined on PyPI (May 12, 2026)
   "agno[ollama]",
   "agno[openai]",
   "agno[portkey]"

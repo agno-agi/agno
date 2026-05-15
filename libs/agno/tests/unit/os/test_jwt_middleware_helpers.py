@@ -589,7 +589,7 @@ class _FakeState:
 @pytest.mark.asyncio
 async def test_dispatch_sets_user_isolation_enabled_on_request_state():
     """Once the middleware processes a JWT, request.state should carry the
-    flag so downstream helpers (get_scoped_user_id, get_user_scoped_db)
+    flag so downstream helpers (get_scoped_user_id, resolve_db_and_scope)
     can short-circuit when isolation is off."""
     from datetime import UTC, datetime, timedelta
     from types import SimpleNamespace
