@@ -1,9 +1,10 @@
 """Logic used by the AG-UI router."""
 
+import base64
 import json
 import uuid
 from collections.abc import Iterator
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple, Union
 
 from ag_ui.core import (
@@ -27,6 +28,7 @@ from ag_ui.core import (
 from ag_ui.core.types import Message as AGUIMessage
 from pydantic import BaseModel
 
+from agno.media import Audio, File, Image, Video
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import ReasoningCompletedEvent as AgentReasoningCompletedEvent
 from agno.run.agent import ReasoningContentDeltaEvent as AgentReasoningContentDeltaEvent
@@ -153,8 +155,201 @@ class EventBuffer:
         self.reasoning_step_count = 0
 
 
-def extract_agui_user_input(messages: List[AGUIMessage]) -> str:
-    """Extract the last user message content from AG-UI messages.
+def _format_from_mime_type(mime_type: Optional[str]) -> Optional[str]:
+    if mime_type and "/" in mime_type:
+        return mime_type.split("/")[-1]
+    return None
+
+
+def _decode_agui_base64_content(value: str) -> Tuple[Optional[bytes], Optional[str]]:
+    """Decode an AG-UI base64 value and return bytes plus any data URL MIME type."""
+    mime_type = None
+    encoded_value = value
+
+    if value.startswith("data:") and "," in value:
+        metadata, encoded_value = value.split(",", 1)
+        if metadata.startswith("data:"):
+            mime_type = metadata[5:].split(";", 1)[0] or None
+
+    try:
+        return base64.b64decode(encoded_value), mime_type
+    except Exception:
+        log_warning("Failed to decode AG-UI data source. Content part will be ignored.")
+        return None, mime_type
+
+
+def _safe_file_mime_type(mime_type: Optional[str]) -> Optional[str]:
+    if mime_type in File.valid_mime_types():
+        return mime_type
+    return None
+
+
+@dataclass
+class AGUIUserInputMedia:
+    """Media extracted from an AG-UI user message."""
+
+    images: List[Image] = field(default_factory=list)
+    audio: List[Audio] = field(default_factory=list)
+    videos: List[Video] = field(default_factory=list)
+    files: List[File] = field(default_factory=list)
+
+
+def _extract_agui_image(part: Any) -> Optional[Image]:
+    """Convert a single AG-UI image input content part into an Agno Image."""
+    source = getattr(part, "source", None)
+    if source is None:
+        return None
+
+    source_type = getattr(source, "type", None)
+    value = getattr(source, "value", None)
+    if not value:
+        return None
+
+    mime_type = getattr(source, "mime_type", None)
+    if source_type == "url":
+        return Image(url=value, mime_type=mime_type, format=_format_from_mime_type(mime_type))
+
+    if source_type == "data":
+        content, data_url_mime_type = _decode_agui_base64_content(value)
+        if content is None:
+            return None
+
+        image_mime_type = mime_type or data_url_mime_type
+        return Image(content=content, mime_type=image_mime_type, format=_format_from_mime_type(image_mime_type))
+
+    return None
+
+
+def _extract_agui_audio(part: Any) -> Optional[Audio]:
+    """Convert a single AG-UI audio input content part into an Agno Audio."""
+    source = getattr(part, "source", None)
+    if source is None:
+        return None
+
+    source_type = getattr(source, "type", None)
+    value = getattr(source, "value", None)
+    if not value:
+        return None
+
+    mime_type = getattr(source, "mime_type", None)
+    if source_type == "url":
+        return Audio(url=value, mime_type=mime_type, format=_format_from_mime_type(mime_type))
+
+    if source_type == "data":
+        content, data_url_mime_type = _decode_agui_base64_content(value)
+        if content is None:
+            return None
+
+        audio_mime_type = mime_type or data_url_mime_type
+        return Audio(content=content, mime_type=audio_mime_type, format=_format_from_mime_type(audio_mime_type))
+
+    return None
+
+
+def _extract_agui_video(part: Any) -> Optional[Video]:
+    """Convert a single AG-UI video input content part into an Agno Video."""
+    source = getattr(part, "source", None)
+    if source is None:
+        return None
+
+    source_type = getattr(source, "type", None)
+    value = getattr(source, "value", None)
+    if not value:
+        return None
+
+    mime_type = getattr(source, "mime_type", None)
+    if source_type == "url":
+        return Video(url=value, mime_type=mime_type, format=_format_from_mime_type(mime_type))
+
+    if source_type == "data":
+        content, data_url_mime_type = _decode_agui_base64_content(value)
+        if content is None:
+            return None
+
+        video_mime_type = mime_type or data_url_mime_type
+        return Video(content=content, mime_type=video_mime_type, format=_format_from_mime_type(video_mime_type))
+
+    return None
+
+
+def _extract_agui_file(part: Any) -> Optional[File]:
+    """Convert a single AG-UI document input content part into an Agno File."""
+    source = getattr(part, "source", None)
+    if source is None:
+        return None
+
+    source_type = getattr(source, "type", None)
+    value = getattr(source, "value", None)
+    if not value:
+        return None
+
+    mime_type = getattr(source, "mime_type", None)
+    safe_mime_type = _safe_file_mime_type(mime_type)
+    file_format = _format_from_mime_type(mime_type)
+
+    if source_type == "url":
+        return File(url=value, mime_type=safe_mime_type, format=file_format)
+
+    if source_type == "data":
+        content, data_url_mime_type = _decode_agui_base64_content(value)
+        if content is None:
+            return None
+
+        file_mime_type = mime_type or data_url_mime_type
+        return File(
+            content=content,
+            mime_type=_safe_file_mime_type(file_mime_type),
+            format=_format_from_mime_type(file_mime_type),
+        )
+
+    return None
+
+
+def _extract_agui_binary(part: Any, media: AGUIUserInputMedia) -> None:
+    """Route AG-UI binary input content into the matching Agno media bucket."""
+    mime_type = getattr(part, "mime_type", None)
+    binary_id = getattr(part, "id", None)
+    url = getattr(part, "url", None)
+    data = getattr(part, "data", None)
+    filename = getattr(part, "filename", None)
+    content = None
+    data_url_mime_type = None
+
+    if data:
+        content, data_url_mime_type = _decode_agui_base64_content(data)
+        if content is None:
+            return
+
+    binary_mime_type = mime_type or data_url_mime_type
+    media_format = _format_from_mime_type(binary_mime_type)
+    content_kwargs: Dict[str, Any]
+    if url:
+        content_kwargs = {"url": url}
+    elif content is not None:
+        content_kwargs = {"content": content}
+    else:
+        return
+
+    if binary_mime_type and binary_mime_type.startswith("image/"):
+        media.images.append(Image(id=binary_id, mime_type=binary_mime_type, format=media_format, **content_kwargs))
+    elif binary_mime_type and binary_mime_type.startswith("audio/"):
+        media.audio.append(Audio(id=binary_id, mime_type=binary_mime_type, format=media_format, **content_kwargs))
+    elif binary_mime_type and binary_mime_type.startswith("video/"):
+        media.videos.append(Video(id=binary_id, mime_type=binary_mime_type, format=media_format, **content_kwargs))
+    else:
+        media.files.append(
+            File(
+                id=binary_id,
+                mime_type=_safe_file_mime_type(binary_mime_type),
+                filename=filename,
+                format=media_format,
+                **content_kwargs,
+            )
+        )
+
+
+def extract_agui_user_input_and_media(messages: List[AGUIMessage]) -> Tuple[str, AGUIUserInputMedia]:
+    """Extract the last user message text and media parts from AG-UI messages.
 
     AG-UI frontends send the full conversation history on every request.
     The agent manages its own history via session DB, so we only need the
@@ -164,16 +359,46 @@ def extract_agui_user_input(messages: List[AGUIMessage]) -> str:
         if msg.role == "user" and msg.content is not None:
             # UserMessage.content is Union[str, List[InputContent]]
             if isinstance(msg.content, str):
-                return msg.content
-            # Multimodal: extract text parts
+                return msg.content, AGUIUserInputMedia()
+            # Multimodal: extract text and image parts
             if isinstance(msg.content, list):
                 text_parts = []
+                media = AGUIUserInputMedia()
                 for part in msg.content:
                     if hasattr(part, "type") and part.type == "text" and hasattr(part, "text"):
                         text_parts.append(part.text)
-                if text_parts:
-                    return "\n".join(text_parts)
-    return ""
+                    elif hasattr(part, "type") and part.type == "image":
+                        image = _extract_agui_image(part)
+                        if image is not None:
+                            media.images.append(image)
+                    elif hasattr(part, "type") and part.type == "audio":
+                        audio = _extract_agui_audio(part)
+                        if audio is not None:
+                            media.audio.append(audio)
+                    elif hasattr(part, "type") and part.type == "video":
+                        video = _extract_agui_video(part)
+                        if video is not None:
+                            media.videos.append(video)
+                    elif hasattr(part, "type") and part.type == "document":
+                        file = _extract_agui_file(part)
+                        if file is not None:
+                            media.files.append(file)
+                    elif hasattr(part, "type") and part.type == "binary":
+                        _extract_agui_binary(part, media)
+                return "\n".join(text_parts), media
+    return "", AGUIUserInputMedia()
+
+
+def extract_agui_user_input_and_images(messages: List[AGUIMessage]) -> Tuple[str, List[Image]]:
+    """Extract the last user message text and image parts from AG-UI messages."""
+    user_input, media = extract_agui_user_input_and_media(messages)
+    return user_input, media.images
+
+
+def extract_agui_user_input(messages: List[AGUIMessage]) -> str:
+    """Extract the last user message text from AG-UI messages."""
+    user_input, _ = extract_agui_user_input_and_media(messages)
+    return user_input
 
 
 def extract_team_response_chunk_content(response: TeamRunContentEvent) -> str:
