@@ -26,7 +26,7 @@ from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.gemini import inject_agno_client_header
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from google import genai
@@ -42,7 +42,6 @@ try:
     )
     from google.genai._interactions.types.text_content import TextContent
     from google.genai._interactions.types.thought_step import ThoughtStep
-    from google.oauth2.service_account import Credentials
 except ImportError:
     raise ImportError(
         "`google-genai` not installed or not at the latest version. "
@@ -198,7 +197,8 @@ class GeminiInteractions(Model):
     - Typed execution steps (text, function_call, thought, etc.)
     - Background execution support for long-running tasks
 
-    Note: The Interactions API is experimental and may change in future versions.
+    Note: The Interactions API is experimental, requires a Gemini API key,
+    and is not available on Vertex AI.
 
     Example:
         ```python
@@ -249,11 +249,7 @@ class GeminiInteractions(Model):
     collect_metrics_on_completion: bool = True
 
     # Client parameters
-    credentials: Optional[Credentials] = None
     api_key: Optional[str] = None
-    vertexai: bool = False
-    project_id: Optional[str] = None
-    location: Optional[str] = None
     client_params: Optional[Dict[str, Any]] = None
 
     # Client instance
@@ -274,33 +270,19 @@ class GeminiInteractions(Model):
         return None
 
     def get_client(self) -> GeminiClient:
-        """Returns an instance of the GeminiClient."""
+        """Returns an instance of the GeminiClient.
+
+        Note: The Interactions API requires a Gemini API key and is not available on Vertex AI.
+        """
         if self.client:
             return self.client
 
         client_params: Dict[str, Any] = {}
-        vertexai = self.vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
 
-        if not vertexai:
-            self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
-            if not self.api_key:
-                log_error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
-            client_params["api_key"] = self.api_key
-        else:
-            log_info("Using Vertex AI API")
-            client_params["vertexai"] = True
-            project_id = self.project_id or getenv("GOOGLE_CLOUD_PROJECT")
-            if not project_id:
-                log_error("GOOGLE_CLOUD_PROJECT not set. Please set the GOOGLE_CLOUD_PROJECT environment variable.")
-            location = self.location or getenv("GOOGLE_CLOUD_LOCATION")
-            if not location:
-                log_error("GOOGLE_CLOUD_LOCATION not set. Please set the GOOGLE_CLOUD_LOCATION environment variable.")
-            client_params["project"] = project_id
-            client_params["location"] = location
-            if self.credentials:
-                client_params["credentials"] = self.credentials
-
-        client_params = {k: v for k, v in client_params.items() if v is not None}
+        self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
+        if not self.api_key:
+            log_error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
+        client_params["api_key"] = self.api_key
 
         if self.timeout is not None:
             http_options = client_params.get("http_options", {})
@@ -334,9 +316,6 @@ class GeminiInteractions(Model):
                 "store": self.store,
                 "background": self.background,
                 "service_tier": self.service_tier,
-                "vertexai": self.vertexai,
-                "project_id": self.project_id,
-                "location": self.location,
             }
         )
         return {k: v for k, v in model_dict.items() if v is not None}

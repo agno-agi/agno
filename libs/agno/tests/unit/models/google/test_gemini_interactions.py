@@ -21,25 +21,6 @@ class TestGetClient:
             _, kwargs = mock_client_cls.call_args
             assert kwargs["api_key"] == "test-key"
 
-    def test_get_client_vertexai(self):
-        model = GeminiInteractions(vertexai=True, project_id="test-project", location="us-central1")
-
-        with patch("agno.models.google.gemini_interactions.genai.Client") as mock_client_cls:
-            model.get_client()
-            _, kwargs = mock_client_cls.call_args
-            assert kwargs["vertexai"] is True
-            assert kwargs["project"] == "test-project"
-            assert kwargs["location"] == "us-central1"
-
-    def test_get_client_with_credentials(self):
-        mock_credentials = MagicMock()
-        model = GeminiInteractions(vertexai=True, project_id="proj", location="loc", credentials=mock_credentials)
-
-        with patch("agno.models.google.gemini_interactions.genai.Client") as mock_client_cls:
-            model.get_client()
-            _, kwargs = mock_client_cls.call_args
-            assert kwargs["credentials"] == mock_credentials
-
     def test_get_client_caches_instance(self):
         model = GeminiInteractions(api_key="test-key")
 
