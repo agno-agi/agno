@@ -6,12 +6,10 @@ import json
 import re
 from enum import Enum
 from os import getenv
-from typing import Any, Dict, Iterable, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Union
 
-import jwt
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
-from jwt import PyJWK
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from agno.os.auth import INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
@@ -22,6 +20,9 @@ from agno.os.scopes import (
     has_required_scopes,
 )
 from agno.utils.log import log_debug, log_warning
+
+if TYPE_CHECKING:
+    from jwt import PyJWK
 
 
 class TokenSource(str, Enum):
@@ -109,8 +110,8 @@ class JWTValidator:
         if env_key and env_key not in self.verification_keys:
             self.verification_keys.append(env_key)
 
-        # JWKS configuration - load keys from JWKS file or environment variable
-        self.jwks_keys: Dict[str, PyJWK] = {}  # kid -> PyJWK mapping
+        # JWKS configuration - load keys from JWKS file or environment variable.
+        self.jwks_keys: "Dict[str, PyJWK]" = {}
 
         # Try jwks_file parameter first
         if jwks_file:
@@ -153,6 +154,8 @@ class JWTValidator:
         Args:
             jwks_data: Parsed JWKS dictionary with "keys" array
         """
+        from jwt import PyJWK
+
         keys = jwks_data.get("keys", [])
         if not keys:
             log_warning("JWKS contains no keys")
@@ -188,6 +191,8 @@ class JWTValidator:
             jwt.ExpiredSignatureError: If token has expired
             jwt.InvalidTokenError: If token is invalid
         """
+        import jwt
+
         decode_options: Dict[str, Any] = {}
         decode_kwargs: Dict[str, Any] = {
             "algorithms": [self.algorithm],
@@ -677,6 +682,8 @@ class JWTMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process the request: extract JWT, validate, and check RBAC scopes."""
+        import jwt
+
         # Ensure the JWT auth config is accessible on app.state for WebSocket
         # endpoints (which don't flow through this middleware) and any other
         # components that need it outside the middleware chain. This handles
