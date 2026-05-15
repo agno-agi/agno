@@ -402,25 +402,22 @@ class BaseDb(ABC):
         self,
         trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
     ):
-        """Get a single trace by trace_id or other filters.
+        """Get a single trace by trace_id (or run_id).
+
+        A trace_id deterministically identifies one trace, which already
+        belongs to one agent / team / workflow / session / user. Adding any of
+        those as filters would just narrow a unique lookup redundantly — they
+        don't belong here. Ownership / authorization checks live at the route
+        layer (compare ``trace.user_id`` to the caller after fetching).
 
         Args:
             trace_id: The unique trace identifier.
-            run_id: Filter by run ID (returns first match).
-            session_id: Filter by session ID (returns first match).
-            user_id: Filter by user ID (returns first match).
-            agent_id: Filter by agent ID (returns first match).
+            run_id: Fallback lookup when the caller has run_id but not trace_id
+                (one trace per run, so this is also a unique alternative key).
 
         Returns:
             Optional[Trace]: The trace if found, None otherwise.
-
-        Note:
-            If multiple filters are provided, trace_id takes precedence.
-            For other filters, the most recent trace is returned.
         """
         raise NotImplementedError
 
@@ -1403,25 +1400,16 @@ class AsyncBaseDb(ABC):
         self,
         trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
     ):
-        """Get a single trace by trace_id or other filters.
+        """Async variant of ``BaseDb.get_trace`` — see that docstring for the
+        rationale on why no other filters are accepted here.
 
         Args:
             trace_id: The unique trace identifier.
-            run_id: Filter by run ID (returns first match).
-            session_id: Filter by session ID (returns first match).
-            user_id: Filter by user ID (returns first match).
-            agent_id: Filter by agent ID (returns first match).
+            run_id: Fallback unique-alternative-key lookup.
 
         Returns:
             Optional[Trace]: The trace if found, None otherwise.
-
-        Note:
-            If multiple filters are provided, trace_id takes precedence.
-            For other filters, the most recent trace is returned.
         """
         raise NotImplementedError
 
