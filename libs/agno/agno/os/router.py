@@ -403,9 +403,13 @@ def get_websocket_router(
 
                 elif action == "start-workflow":
                     # Enforce workflow-level RBAC whenever JWT auth is enabled.
-                    # Missing/empty scopes must deny, matching HTTP middleware semantics.
+                    # Check RBAC unconditionally — do not skip when workflow_id
+                    # is absent, otherwise an unauthenticated-scope caller can
+                    # bypass the permission gate by omitting workflow_id and
+                    # letting the downstream handler reject it *after* any
+                    # side-effects.
                     workflow_id = message.get("workflow_id")
-                    if jwt_auth_enabled and workflow_id:
+                    if jwt_auth_enabled:
                         user_scopes = websocket_user_context.get("scopes", [])
                         if not has_required_scopes(
                             user_scopes,
