@@ -1,9 +1,11 @@
 """Unit tests for GeminiInteractions model class."""
 
+import base64
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agno.media import Audio, File, Image, Video
 from agno.models.google.gemini_interactions import GeminiInteractions
 from agno.models.message import Message
 
@@ -755,3 +757,271 @@ class TestToDict:
         d = model.to_dict()
         assert "temperature" not in d
         assert "thinking_budget" not in d
+
+    def test_service_tier_serialization(self):
+        model = GeminiInteractions(api_key="test-key", service_tier="flex")
+        d = model.to_dict()
+        assert d["service_tier"] == "flex"
+
+
+class TestMultimodalInput:
+    """Tests for multimodal input support in _build_input."""
+
+    def _make_model(self):
+        return GeminiInteractions(api_key="test-key")
+
+    def test_image_from_bytes(self):
+        model = self._make_model()
+        img_bytes = b"\x89PNG\r\n\x1a\n"
+        messages = [Message(role="user", content="What is this?", images=[Image(content=img_bytes)])]
+        steps = model._build_input(messages)
+        assert len(steps) == 1
+        content = steps[0]["content"]
+        assert len(content) == 2  # text + image
+        assert content[0]["type"] == "text"
+        image_item = content[1]
+        assert image_item["type"] == "image"
+        assert image_item["mime_type"] == "image/jpeg"
+        assert image_item["data"] == base64.b64encode(img_bytes).decode("utf-8")
+
+    def test_image_from_url(self):
+        model = self._make_model()
+        messages = [
+            Message(
+                role="user",
+                content="Describe this",
+                images=[Image(url="https://example.com/img.png", mime_type="image/png")],
+            )
+        ]
+        steps = model._build_input(messages)
+        image_item = steps[0]["content"][1]
+        assert image_item["type"] == "image"
+        assert image_item["uri"] == "https://example.com/img.png"
+        assert image_item["mime_type"] == "image/png"
+
+    def test_audio_from_bytes(self):
+        model = self._make_model()
+        audio_bytes = b"RIFF\x00\x00\x00\x00WAVEfmt "
+        messages = [
+            Message(role="user", content="Transcribe", audio=[Audio(content=audio_bytes, mime_type="audio/wav")])
+        ]
+        steps = model._build_input(messages)
+        audio_item = steps[0]["content"][1]
+        assert audio_item["type"] == "audio"
+        assert audio_item["mime_type"] == "audio/wav"
+        assert audio_item["data"] == base64.b64encode(audio_bytes).decode("utf-8")
+
+    def test_video_from_url(self):
+        model = self._make_model()
+        messages = [
+            Message(
+                role="user",
+                content="What happens in this video?",
+                videos=[Video(url="https://example.com/video.mp4")],
+            )
+        ]
+        steps = model._build_input(messages)
+        video_item = steps[0]["content"][1]
+        assert video_item["type"] == "video"
+        assert video_item["uri"] == "https://example.com/video.mp4"
+
+    def test_document_from_bytes(self):
+        model = self._make_model()
+        pdf_bytes = b"%PDF-1.4 fake content"
+        messages = [
+            Message(
+                role="user",
+                content="Summarize this document",
+                files=[File(content=pdf_bytes, mime_type="application/pdf")],
+            )
+        ]
+        steps = model._build_input(messages)
+        doc_item = steps[0]["content"][1]
+        assert doc_item["type"] == "document"
+        assert doc_item["mime_type"] == "application/pdf"
+
+    def test_multiple_media_types_combined(self):
+        model = self._make_model()
+        messages = [
+            Message(
+                role="user",
+                content="Compare these",
+                images=[Image(content=b"img1"), Image(content=b"img2")],
+                audio=[Audio(content=b"audio1", mime_type="audio/mp3")],
+            )
+        ]
+        steps = model._build_input(messages)
+        content = steps[0]["content"]
+        # 1 text + 2 images + 1 audio
+        assert len(content) == 4
+        assert content[0]["type"] == "text"
+        assert content[1]["type"] == "image"
+        assert content[2]["type"] == "image"
+        assert content[3]["type"] == "audio"
+
+    def test_image_only_no_text(self):
+        """Message with only images and no text content."""
+        model = self._make_model()
+        messages = [Message(role="user", content=None, images=[Image(content=b"imgdata")])]
+        steps = model._build_input(messages)
+        assert len(steps) == 1
+        content = steps[0]["content"]
+        assert len(content) == 1
+        assert content[0]["type"] == "image"
+
+
+class TestMultimodalOutput:
+    """Tests for multimodal output parsing."""
+
+    def _make_model(self):
+        return GeminiInteractions(api_key="test-key")
+
+    def test_parse_image_output(self):
+        from agno.models.google.gemini_interactions import ImageContent, ModelOutputStep
+
+        if ImageContent is None:
+            pytest.skip("ImageContent not available in SDK")
+
+        model = self._make_model()
+
+        img_data = base64.b64encode(b"fake_png_data").decode("utf-8")
+        mock_img = MagicMock(spec=ImageContent)
+        mock_img.__class__ = ImageContent
+        mock_img.data = img_data
+        mock_img.mime_type = "image/png"
+        mock_img.uri = None
+
+        mock_step = MagicMock(spec=ModelOutputStep)
+        mock_step.__class__ = ModelOutputStep
+        mock_step.content = [mock_img]
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/img_out"
+        mock_interaction.steps = [mock_step]
+        mock_interaction.usage = None
+
+        response = model._parse_interaction_response(mock_interaction)
+        assert response.images is not None
+        assert len(response.images) == 1
+        assert response.images[0].content == b"fake_png_data"
+        assert response.images[0].mime_type == "image/png"
+
+    def test_parse_audio_output(self):
+        from agno.models.google.gemini_interactions import AudioContent, ModelOutputStep
+
+        if AudioContent is None:
+            pytest.skip("AudioContent not available in SDK")
+
+        model = self._make_model()
+
+        audio_data = base64.b64encode(b"fake_wav_data").decode("utf-8")
+        mock_audio = MagicMock(spec=AudioContent)
+        mock_audio.__class__ = AudioContent
+        mock_audio.data = audio_data
+        mock_audio.mime_type = "audio/wav"
+        mock_audio.uri = None
+
+        mock_step = MagicMock(spec=ModelOutputStep)
+        mock_step.__class__ = ModelOutputStep
+        mock_step.content = [mock_audio]
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/audio_out"
+        mock_interaction.steps = [mock_step]
+        mock_interaction.usage = None
+
+        response = model._parse_interaction_response(mock_interaction)
+        assert response.audio is not None
+        assert response.audio.content == b"fake_wav_data"
+        assert response.audio.mime_type == "audio/wav"
+
+    def test_parse_mixed_text_and_image_output(self):
+        from agno.models.google.gemini_interactions import ImageContent, ModelOutputStep, TextContent
+
+        if ImageContent is None:
+            pytest.skip("ImageContent not available in SDK")
+
+        model = self._make_model()
+
+        mock_text = MagicMock(spec=TextContent)
+        mock_text.__class__ = TextContent
+        mock_text.text = "Here is the generated image:"
+
+        img_data = base64.b64encode(b"generated_image").decode("utf-8")
+        mock_img = MagicMock(spec=ImageContent)
+        mock_img.__class__ = ImageContent
+        mock_img.data = img_data
+        mock_img.mime_type = "image/png"
+        mock_img.uri = None
+
+        mock_step = MagicMock(spec=ModelOutputStep)
+        mock_step.__class__ = ModelOutputStep
+        mock_step.content = [mock_text, mock_img]
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/mixed"
+        mock_interaction.steps = [mock_step]
+        mock_interaction.usage = None
+
+        response = model._parse_interaction_response(mock_interaction)
+        assert response.content == "Here is the generated image:"
+        assert response.images is not None
+        assert len(response.images) == 1
+
+
+class TestServiceTier:
+    """Tests for service_tier (flex/priority inference)."""
+
+    def test_service_tier_in_request_kwargs(self):
+        model = GeminiInteractions(api_key="test-key", service_tier="flex")
+        messages = [Message(role="user", content="Hi")]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["service_tier"] == "flex"
+
+    def test_priority_tier_in_request_kwargs(self):
+        model = GeminiInteractions(api_key="test-key", service_tier="priority")
+        messages = [Message(role="user", content="Hi")]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["service_tier"] == "priority"
+
+    def test_no_service_tier_by_default(self):
+        model = GeminiInteractions(api_key="test-key")
+        messages = [Message(role="user", content="Hi")]
+        kwargs = model._get_request_kwargs(messages)
+        assert "service_tier" not in kwargs
+
+
+class TestStructuredOutput:
+    """Tests for structured output / response_format."""
+
+    def test_pydantic_model_response_format(self):
+        from pydantic import BaseModel as PydanticModel
+
+        class MovieReview(PydanticModel):
+            title: str
+            rating: int
+            summary: str
+
+        model = GeminiInteractions(api_key="test-key")
+        messages = [Message(role="user", content="Review The Matrix")]
+        kwargs = model._get_request_kwargs(messages, response_format=MovieReview)
+        assert kwargs["response_format"]["type"] == "text"
+        assert kwargs["response_format"]["mime_type"] == "application/json"
+        assert "schema" in kwargs["response_format"]
+        schema = kwargs["response_format"]["schema"]
+        assert "title" in schema["properties"]
+        assert "rating" in schema["properties"]
+        assert "summary" in schema["properties"]
+
+    def test_dict_response_format_passthrough(self):
+        model = GeminiInteractions(api_key="test-key")
+        messages = [Message(role="user", content="Hi")]
+        custom_format = {"type": "text", "json_schema": {"type": "object"}}
+        kwargs = model._get_request_kwargs(messages, response_format=custom_format)
+        assert kwargs["response_format"] == custom_format
+
+    def test_no_response_format_by_default(self):
+        model = GeminiInteractions(api_key="test-key")
+        messages = [Message(role="user", content="Hi")]
+        kwargs = model._get_request_kwargs(messages)
+        assert "response_format" not in kwargs

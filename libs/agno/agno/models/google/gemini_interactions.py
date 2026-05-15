@@ -7,23 +7,26 @@ typed execution steps, and efficient multi-turn conversations.
 Requires `google-genai>=2.0.0`.
 """
 
+import base64
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Type, Union
+from pathlib import Path
+from typing import Any, Dict, Iterator, List, Literal, Optional, Type, Union
 from uuid import uuid4
 
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
+from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.gemini import inject_agno_client_header
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
     from google import genai
@@ -45,6 +48,138 @@ except ImportError:
         "`google-genai` not installed or not at the latest version. "
         "Please install it using `pip install -U google-genai`"
     )
+
+# Lazy imports for content types used in output parsing
+try:
+    from google.genai._interactions.types.audio_content import AudioContent
+    from google.genai._interactions.types.image_content import ImageContent
+except ImportError:
+    AudioContent = None  # type: ignore[assignment, misc]
+    ImageContent = None  # type: ignore[assignment, misc]
+
+
+def _get_mime_type(media: Union[Image, Audio, Video, File], default: str) -> str:
+    """Get the MIME type from a media object, falling back to format-based detection or default."""
+    if media.mime_type:
+        return media.mime_type
+
+    fmt = getattr(media, "format", None)
+    if fmt:
+        # Common format -> mime_type mappings
+        format_map = {
+            "png": "image/png",
+            "jpeg": "image/jpeg",
+            "jpg": "image/jpeg",
+            "webp": "image/webp",
+            "gif": "image/gif",
+            "heic": "image/heic",
+            "heif": "image/heif",
+            "mp3": "audio/mp3",
+            "wav": "audio/wav",
+            "ogg": "audio/ogg",
+            "flac": "audio/flac",
+            "aac": "audio/aac",
+            "mp4": "video/mp4",
+            "mov": "video/mov",
+            "avi": "video/avi",
+            "webm": "video/webm",
+            "pdf": "application/pdf",
+        }
+        if fmt.lower() in format_map:
+            return format_map[fmt.lower()]
+
+    # Try to detect from filepath
+    filepath = getattr(media, "filepath", None)
+    if filepath:
+        suffix = Path(str(filepath)).suffix.lower().lstrip(".")
+        if suffix:
+            format_map = {
+                "png": "image/png",
+                "jpeg": "image/jpeg",
+                "jpg": "image/jpeg",
+                "webp": "image/webp",
+                "gif": "image/gif",
+                "mp3": "audio/mp3",
+                "wav": "audio/wav",
+                "ogg": "audio/ogg",
+                "flac": "audio/flac",
+                "mp4": "video/mp4",
+                "mov": "video/mov",
+                "avi": "video/avi",
+                "webm": "video/webm",
+                "pdf": "application/pdf",
+            }
+            if suffix in format_map:
+                return format_map[suffix]
+
+    return default
+
+
+def _media_to_content_item(
+    media: Union[Image, Audio, Video, File], content_type: str, default_mime: str
+) -> Optional[Dict[str, Any]]:
+    """Convert an Agno media object to an Interactions API content item dict.
+
+    Supports three content sources: bytes/content, URL/URI, and filepath.
+    Returns a dict like {"type": "image", "data": base64_str, "mime_type": "image/jpeg"}.
+    """
+    mime_type = _get_mime_type(media, default_mime)
+    item: Dict[str, Any] = {"type": content_type, "mime_type": mime_type}
+
+    # Case 1: URL
+    url = getattr(media, "url", None)
+    if url:
+        # GCS URIs and Gemini File API URIs can be passed directly
+        if url.startswith("gs://") or "generativelanguage.googleapis.com" in url:
+            item["uri"] = url
+            return item
+        # For regular HTTP URLs, download and base64 encode
+        try:
+            import httpx
+
+            headers = {"User-Agent": "Mozilla/5.0 (compatible; agno/1.0)"}
+            response = httpx.get(url, follow_redirects=True, headers=headers)
+            response.raise_for_status()
+            item["data"] = base64.b64encode(response.content).decode("utf-8")
+            return item
+        except Exception as e:
+            log_warning(f"Failed to download {content_type} from URL {url}: {e}")
+            # Fall back to URI
+            item["uri"] = url
+            return item
+
+    # Case 2: Raw bytes content
+    content_bytes = getattr(media, "content", None)
+    if content_bytes and isinstance(content_bytes, bytes):
+        item["data"] = base64.b64encode(content_bytes).decode("utf-8")
+        return item
+
+    # Case 3: Filepath - read and base64 encode
+    filepath = getattr(media, "filepath", None)
+    if filepath:
+        try:
+            path = Path(str(filepath))
+            if path.exists() and path.is_file():
+                data = path.read_bytes()
+                item["data"] = base64.b64encode(data).decode("utf-8")
+                return item
+            else:
+                log_warning(f"File not found: {filepath}")
+                return None
+        except Exception as e:
+            log_warning(f"Failed to read file {filepath}: {e}")
+            return None
+
+    # Case 4: For File objects, check 'external' (GeminiFile)
+    external = getattr(media, "external", None)
+    if external and hasattr(external, "uri"):
+        item["uri"] = external.uri
+        if hasattr(external, "mime_type") and external.mime_type:
+            item["mime_type"] = external.mime_type
+        return item
+
+    log_warning(f"No content source found for {content_type} media object")
+    return None
 
 
 @dataclass
@@ -107,6 +242,9 @@ class GeminiInteractions(Model):
     # Built-in tools
     search: bool = False
     url_context: bool = False
+
+    # Inference tier: "flex" (lower cost, higher latency), "standard", or "priority" (lowest latency)
+    service_tier: Optional[Literal["flex", "standard", "priority"]] = None
 
     # Timeout in seconds
     timeout: Optional[float] = None
@@ -192,6 +330,7 @@ class GeminiInteractions(Model):
                 "thinking_level": self.thinking_level,
                 "store": self.store,
                 "background": self.background,
+                "service_tier": self.service_tier,
                 "vertexai": self.vertexai,
                 "project_id": self.project_id,
                 "location": self.location,
@@ -246,9 +385,16 @@ class GeminiInteractions(Model):
         """Build the input steps for the Interactions API.
 
         The v2.x SDK uses a step_list format:
-        - UserInputStep: {"type": "user_input", "content": [{"type": "text", "text": "..."}]}
+        - UserInputStep: {"type": "user_input", "content": [{"type": "text", "text": "..."}, ...]}
         - FunctionCallStep: {"type": "function_call", "id": "...", "name": "...", "arguments": {...}}
         - FunctionResultStep: {"type": "function_result", "call_id": "...", "result": "...", "name": "..."}
+
+        Content items within a UserInputStep can be:
+        - TextContentParam: {"type": "text", "text": "..."}
+        - ImageContentParam: {"type": "image", "data": base64, "mime_type": "image/jpeg"}
+        - AudioContentParam: {"type": "audio", "data": base64, "mime_type": "audio/wav"}
+        - VideoContentParam: {"type": "video", "data": base64, "mime_type": "video/mp4"}
+        - DocumentContentParam: {"type": "document", "data": base64, "mime_type": "application/pdf"}
         """
         steps: List[Dict[str, Any]] = []
 
@@ -260,8 +406,39 @@ class GeminiInteractions(Model):
             # User messages become UserInputStep
             if message.role == "user":
                 content_items: List[Dict[str, Any]] = []
+
+                # Text content
                 if message.content and isinstance(message.content, str):
                     content_items.append({"type": "text", "text": message.content})
+
+                # Image inputs
+                if message.images:
+                    for image in message.images:
+                        item = _media_to_content_item(image, "image", "image/jpeg")
+                        if item:
+                            content_items.append(item)
+
+                # Audio inputs
+                if message.audio:
+                    for audio in message.audio:
+                        item = _media_to_content_item(audio, "audio", "audio/wav")
+                        if item:
+                            content_items.append(item)
+
+                # Video inputs
+                if message.videos:
+                    for video in message.videos:
+                        item = _media_to_content_item(video, "video", "video/mp4")
+                        if item:
+                            content_items.append(item)
+
+                # File/document inputs
+                if message.files:
+                    for file in message.files:
+                        item = _media_to_content_item(file, "document", "application/pdf")
+                        if item:
+                            content_items.append(item)
+
                 if content_items:
                     steps.append({"type": "user_input", "content": content_items})
 
@@ -356,10 +533,18 @@ class GeminiInteractions(Model):
         if self.response_modalities:
             kwargs["response_modalities"] = self.response_modalities
 
-        # Response format
-        if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
-            kwargs["response_format"] = response_format.model_json_schema()
-            kwargs["response_mime_type"] = "application/json"
+        # Response format (structured output)
+        if response_format is not None:
+            if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+                # Pydantic model -> TextResponseFormatParam with JSON schema
+                kwargs["response_format"] = {
+                    "type": "text",
+                    "mime_type": "application/json",
+                    "schema": response_format.model_json_schema(),
+                }
+            elif isinstance(response_format, dict):
+                # Raw dict passed through (could be TextResponseFormatParam, etc.)
+                kwargs["response_format"] = response_format
 
         # Tools - already formatted by _format_tools() via the base class before invoke() is called
         # Add built-in tools that are model-specific (not from the agent's tool list)
@@ -370,6 +555,10 @@ class GeminiInteractions(Model):
             all_tools.append({"type": "url_context"})
         if all_tools:
             kwargs["tools"] = all_tools
+
+        # Service tier (flex/standard/priority)
+        if self.service_tier is not None:
+            kwargs["service_tier"] = self.service_tier
 
         # Store and background
         if self.store is not None:
@@ -408,6 +597,18 @@ class GeminiInteractions(Model):
                                 model_response.content = text
                             else:
                                 model_response.content += text
+                        elif ImageContent is not None and isinstance(content_item, ImageContent):
+                            # Image output from the model (e.g. image generation)
+                            image = self._parse_image_content(content_item)
+                            if image:
+                                if model_response.images is None:
+                                    model_response.images = []
+                                model_response.images.append(image)
+                        elif AudioContent is not None and isinstance(content_item, AudioContent):
+                            # Audio output from the model (e.g. TTS)
+                            audio = self._parse_audio_content(content_item)
+                            if audio:
+                                model_response.audio = audio
 
             elif isinstance(step, ThoughtStep):
                 # ThoughtStep.summary is Optional[List[TextContent | ImageContent]]
@@ -461,6 +662,42 @@ class GeminiInteractions(Model):
         model_response.provider_data["interaction_id"] = self._previous_interaction_id
 
         return model_response
+
+    def _parse_image_content(self, content_item: Any) -> Optional[Image]:
+        """Parse an ImageContent response item into an Agno Image."""
+        image_data = getattr(content_item, "data", None)
+        mime_type = getattr(content_item, "mime_type", None) or "image/png"
+
+        if image_data:
+            try:
+                content_bytes = base64.b64decode(image_data)
+            except Exception:
+                content_bytes = image_data.encode("utf-8") if isinstance(image_data, str) else image_data
+            return Image(content=content_bytes, mime_type=mime_type, id=str(uuid4()))
+
+        uri = getattr(content_item, "uri", None)
+        if uri:
+            return Image(url=uri, mime_type=mime_type, id=str(uuid4()))
+
+        return None
+
+    def _parse_audio_content(self, content_item: Any) -> Optional[Audio]:
+        """Parse an AudioContent response item into an Agno Audio."""
+        audio_data = getattr(content_item, "data", None)
+        mime_type = getattr(content_item, "mime_type", None) or "audio/wav"
+
+        if audio_data:
+            try:
+                content_bytes = base64.b64decode(audio_data)
+            except Exception:
+                content_bytes = audio_data.encode("utf-8") if isinstance(audio_data, str) else audio_data
+            return Audio(content=content_bytes, mime_type=mime_type, id=str(uuid4()))
+
+        uri = getattr(content_item, "uri", None)
+        if uri:
+            return Audio(url=uri, mime_type=mime_type, id=str(uuid4()))
+
+        return None
 
     def _parse_provider_response(self, response: Any, **kwargs: Any) -> ModelResponse:
         """Parse a raw Interaction response. Delegates to _parse_interaction_response."""

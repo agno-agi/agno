@@ -8,6 +8,7 @@ The Interactions API is a new primitive that provides:
 - **Implicit caching** - Prior turns are cached server-side for lower costs and latency
 - **Typed execution steps** - Responses contain discriminated content types for better observability
 - **Background execution** - Support for long-running tasks
+- **Multimodal I/O** - Image, audio, video, and document inputs; image and audio generation
 
 ## Setup
 
@@ -16,7 +17,7 @@ pip install -U google-genai
 export GOOGLE_API_KEY=your-api-key
 ```
 
-Requires `google-genai>=1.55.0`.
+Requires `google-genai>=2.0.0`.
 
 ## Examples
 
@@ -27,6 +28,12 @@ Requires `google-genai>=1.55.0`.
 | `multi_turn.py` | Multi-turn conversation with server-side history |
 | `thinking.py` | Reasoning/thinking mode |
 | `search.py` | Built-in Google Search tool |
+| `image_understanding.py` | Image analysis from URLs, files, and bytes |
+| `image_generation.py` | Generate images with response_modalities |
+| `audio_understanding.py` | Audio analysis and transcription |
+| `video_understanding.py` | Video analysis from URLs |
+| `document_processing.py` | PDF document processing |
+| `structured_output.py` | Structured JSON output with Pydantic schemas |
 
 ## Usage
 
@@ -39,6 +46,46 @@ agent = Agent(
     markdown=True,
 )
 agent.print_response("Hello!")
+```
+
+### Image Understanding
+
+```python
+from agno.media import Image
+
+agent.print_response(
+    "What is in this image?",
+    images=[Image(url="https://example.com/photo.jpg")],
+)
+```
+
+### Structured Output
+
+```python
+from pydantic import BaseModel
+
+class MovieReview(BaseModel):
+    title: str
+    rating: float
+
+agent = Agent(
+    model=GeminiInteractions(id="gemini-3-flash-preview"),
+    output_schema=MovieReview,
+)
+```
+
+### Inference Tiers
+
+```python
+# Lower cost, higher latency
+agent = Agent(
+    model=GeminiInteractions(id="gemini-3-flash-preview", service_tier="flex"),
+)
+
+# Lowest latency
+agent = Agent(
+    model=GeminiInteractions(id="gemini-3-flash-preview", service_tier="priority"),
+)
 ```
 
 ## Notes
