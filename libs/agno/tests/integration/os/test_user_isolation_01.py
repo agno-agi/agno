@@ -5,8 +5,15 @@ Validates that:
 - Admin users (agent_os:admin scope) see all data
 - User_id from the JWT cannot be spoofed via query parameters
 - Endpoints without auth return unfiltered data
+- Review-identified gaps stay closed (run listing, SSE resume, custom
+  admin_scope propagation, memory act-on-behalf, factory cancel,
+  continue-run ownership, cross-component RBAC, WS reconnect, etc.)
+
+The "review gap" classes live alongside the original isolation tests so
+there's one canonical place to add new isolation regressions.
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -16,13 +23,26 @@ from fastapi.testclient import TestClient
 from agno.agent.agent import Agent
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
+from agno.os.middleware.user_scope import (
+    INSUFFICIENT_PERMISSIONS_WS_RECONNECT,
+    WORKFLOW_ID_REQUIRED_RECONNECT,
+)
+from agno.team.team import Team
+from agno.workflow.step import Step
+from agno.workflow.workflow import Workflow
 
 JWT_SECRET = "test-secret-for-isolation"
 TEST_OS_ID = "test-isolation-os"
+CUSTOM_ADMIN_SCOPE = "custom:admin"
 
 
 def create_token(user_id: str, scopes: list[str] | None = None) -> str:
-    """Create a JWT token for the given user."""
+    """Create a JWT token for the given user.
+
+    Default scopes cover agents / teams / workflows / sessions / memories /
+    traces — the union needed by the test classes in this file. Pass
+    ``scopes=[...]`` explicitly to test narrower-scope behaviour.
+    """
     payload = {
         "sub": user_id,
         "aud": TEST_OS_ID,
@@ -30,6 +50,10 @@ def create_token(user_id: str, scopes: list[str] | None = None) -> str:
         or [
             "agents:read",
             "agents:run",
+            "teams:read",
+            "teams:run",
+            "workflows:read",
+            "workflows:run",
             "sessions:read",
             "sessions:write",
             "memories:read",
@@ -62,10 +86,33 @@ def test_agent(shared_db):
 
 
 @pytest.fixture
-def client(test_agent):
+def test_team(shared_db, test_agent: Agent):
+    return Team(name="test-team", id="test-team", members=[test_agent], db=shared_db)
+
+
+@pytest.fixture
+def test_workflow(shared_db, test_agent: Agent):
+    return Workflow(
+        name="test-workflow",
+        id="test-workflow",
+        steps=[Step(name="step1", description="noop", agent=test_agent)],
+        db=shared_db,
+    )
+
+
+@pytest.fixture
+def client(test_agent, test_team, test_workflow):
+    """Default isolation-enabled client with one agent, team, and workflow.
+
+    The team and workflow are registered so the review-gap tests (workflow
+    run listing, continue-run, factory cancel, etc.) can exercise their
+    endpoints. The original session / trace / memory tests are unaffected.
+    """
     agent_os = AgentOS(
         id=TEST_OS_ID,
         agents=[test_agent],
+        teams=[test_team],
+        workflows=[test_workflow],
         authorization=True,
         authorization_config=AuthorizationConfig(
             verification_keys=[JWT_SECRET],
@@ -75,6 +122,28 @@ def client(test_agent):
     )
     app = agent_os.get_app()
     return TestClient(app)
+
+
+@pytest.fixture
+def custom_admin_client(test_agent):
+    """Client with ``admin_scope`` configured to a non-default value.
+
+    Used by the custom-admin-scope propagation tests below — they need the
+    middleware to recognise ``custom:admin`` (rather than the framework
+    default ``agent_os:admin``) as the bypass scope.
+    """
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[JWT_SECRET],
+            algorithm="HS256",
+            admin_scope=CUSTOM_ADMIN_SCOPE,
+            user_isolation=True,
+        ),
+    )
+    return TestClient(agent_os.get_app())
 
 
 # --- Session isolation ---

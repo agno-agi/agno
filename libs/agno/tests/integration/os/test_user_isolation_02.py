@@ -1,7 +1,6 @@
 """Integration tests for review-identified gaps in per-user data isolation.
 
 Covers:
-- Trace span detail leak (CRITICAL)
 - Workflow run listing scoping (CRITICAL)
 - SSE resume ownership (CRITICAL)
 - Custom admin_scope propagation through request.state (HIGH)
@@ -124,15 +123,24 @@ def custom_admin_client(test_agent):
 
 
 # ---------------------------------------------------------------------------
-# Finding 1 — Trace span detail leak
+# Traces list scoping
 # ---------------------------------------------------------------------------
 
 
-class TestTraceSpanLeak:
-    """A user with trace_id+span_id of another user's trace must get 404."""
+class TestTraceListScoping:
+    """``GET /traces`` must only return traces owned by the caller.
 
-    def _insert_trace_and_span(self, db, *, trace_id: str, span_id: str, user_id: str):
-        from agno.tracing.schemas import Span, Trace
+    The single-trace detail endpoint (``GET /traces/{trace_id}``) does NOT
+    enforce row-level ownership: a unique ``trace_id`` is sufficient — see
+    the design notes at the top of this file. The list endpoint is where
+    isolation actually matters, because that's how non-admin callers
+    discover which trace_ids exist at all. If the list endpoint leaked
+    other users' rows, every downstream "knew the trace_id" assumption
+    falls apart.
+    """
+
+    def _insert_trace(self, db, *, trace_id: str, user_id: str):
+        from agno.tracing.schemas import Trace
 
         now = datetime.now(UTC)
         trace = Trace(
@@ -142,70 +150,65 @@ class TestTraceSpanLeak:
             start_time=now,
             end_time=now,
             duration_ms=0,
-            total_spans=1,
+            total_spans=0,
             error_count=0,
-            run_id="run-1",
-            session_id="session-1",
+            run_id=f"run-{trace_id}",
+            session_id=f"session-{trace_id}",
             user_id=user_id,
             agent_id="test-agent",
             team_id=None,
             workflow_id=None,
             created_at=now,
         )
-        span = Span(
-            span_id=span_id,
-            trace_id=trace_id,
-            parent_span_id=None,
-            name="root",
-            span_kind="INTERNAL",
-            status_code="OK",
-            status_message=None,
-            start_time=now,
-            end_time=now,
-            duration_ms=0,
-            attributes={},
-            created_at=now,
-        )
         db.upsert_trace(trace)
-        db.create_span(span)
 
-    def test_user_cannot_fetch_span_from_other_users_trace(self, client, shared_db):
-        self._insert_trace_and_span(
-            shared_db,
-            trace_id="trace-user-a",
-            span_id="span-user-a",
-            user_id="user-a",
+    def test_user_only_sees_own_traces(self, client, shared_db):
+        """A non-admin caller listing traces gets only their own rows."""
+        self._insert_trace(shared_db, trace_id="trace-a-1", user_id="user-a")
+        self._insert_trace(shared_db, trace_id="trace-a-2", user_id="user-a")
+        self._insert_trace(shared_db, trace_id="trace-b-1", user_id="user-b")
+
+        token_a = make_token("user-a")
+        resp = client.get("/traces", headers=auth_header(token_a))
+        assert resp.status_code == 200, resp.text
+
+        returned_ids = {row["trace_id"] for row in resp.json()["data"]}
+        assert returned_ids == {"trace-a-1", "trace-a-2"}, (
+            f"user-a's list should only contain their traces, got {returned_ids}"
         )
+
+    def test_user_cannot_filter_to_another_users_traces(self, client, shared_db):
+        """A non-admin caller passing ``?user_id=other`` is ignored — the JWT
+        sub wins. Without this, knowing another user's id (just an email or
+        UUID, not a secret) would be enough to enumerate their traces."""
+        self._insert_trace(shared_db, trace_id="trace-other-1", user_id="user-a")
 
         token_b = make_token("user-b")
-        resp = client.get(
-            "/traces/trace-user-a?span_id=span-user-a",
-            headers=auth_header(token_b),
-        )
-        # Parent-trace check fires first: the user does not own the trace,
-        # so the scoped wrapper post-filters it to None and the route 404s
-        # before ever touching the span.
-        assert resp.status_code == 404, resp.text
+        resp = client.get("/traces?user_id=user-a", headers=auth_header(token_b))
+        assert resp.status_code == 200, resp.text
 
-    def test_admin_can_fetch_span_from_any_users_trace(self, client, shared_db):
-        """Sanity check: admins still see all spans (no regression)."""
-        self._insert_trace_and_span(
-            shared_db,
-            trace_id="trace-admin-test",
-            span_id="span-admin-test",
-            user_id="user-a",
+        returned_ids = {row["trace_id"] for row in resp.json()["data"]}
+        assert "trace-other-1" not in returned_ids, (
+            f"query-param user_id must not override the JWT sub; got {returned_ids}"
         )
+
+    def test_admin_sees_all_traces(self, client, shared_db):
+        """Admins keep the unscoped operator view — no regression."""
+        self._insert_trace(shared_db, trace_id="trace-admin-a", user_id="user-a")
+        self._insert_trace(shared_db, trace_id="trace-admin-b", user_id="user-b")
 
         admin_token = make_token("admin-1", scopes=["agent_os:admin"])
-        resp = client.get(
-            "/traces/trace-admin-test?span_id=span-admin-test",
-            headers=auth_header(admin_token),
-        )
+        resp = client.get("/traces", headers=auth_header(admin_token))
         assert resp.status_code == 200, resp.text
+
+        returned_ids = {row["trace_id"] for row in resp.json()["data"]}
+        assert {"trace-admin-a", "trace-admin-b"}.issubset(returned_ids), (
+            f"admin should see all traces; got {returned_ids}"
+        )
 
 
 # ---------------------------------------------------------------------------
-# Finding 2 — Workflow run listing
+# Workflow run listing
 # ---------------------------------------------------------------------------
 
 
