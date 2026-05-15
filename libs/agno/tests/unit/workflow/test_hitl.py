@@ -25,6 +25,8 @@ from agno.workflow.types import (
     UserInputField,
 )
 
+from .test_hitl_output_review import _make_async_router_review_workflow
+
 # =============================================================================
 # Test Step Functions
 # =============================================================================
@@ -1307,28 +1309,12 @@ class TestConditionOnRejectWorkflowIntegration:
 
     async def test_acontinue_run_uses_async_cancellation_cleanup(self, monkeypatch):
         """Async continue must await acleanup_run, not sync cleanup_run (e.g. async-only Redis manager)."""
-        from agno.db.sqlite import SqliteDb
-        from agno.workflow.condition import Condition
-        from agno.workflow.workflow import Workflow
         import agno.workflow.workflow as wf_module
 
-        def if_step_func(step_input: StepInput) -> StepOutput:
-            return StepOutput(content="IF branch executed")
-
-        wf = Workflow(
-            name="test_workflow",
-            steps=[
-                Condition(
-                    name="critical_condition",
-                    steps=[Step(name="if_step", executor=if_step_func)],
-                    requires_confirmation=True,
-                )
-            ],
-            db=SqliteDb(db_file="tmp/test_async_cleanup_acontinue.db"),
-        )
+        wf = _make_async_router_review_workflow("async_cleanup_acontinue")
         run = await wf.arun("test", session_id="async_cleanup_acontinue")
         assert run.is_paused
-        run.steps_requiring_confirmation[0].confirm()
+        run.steps_requiring_output_review[0].confirm()
 
         acleanup_mock = AsyncMock(return_value=None)
         cleanup_sync_mock = MagicMock()
@@ -1341,31 +1327,15 @@ class TestConditionOnRejectWorkflowIntegration:
         acleanup_mock.assert_awaited()
 
     async def test_acontinue_run_stream_uses_async_cancellation_cleanup(self, monkeypatch):
-        from agno.db.sqlite import SqliteDb
-        from agno.workflow.condition import Condition
-        from agno.workflow.workflow import Workflow
         import agno.workflow.workflow as wf_module
 
-        def if_step_func(step_input: StepInput) -> StepOutput:
-            return StepOutput(content="IF branch executed")
-
-        wf = Workflow(
-            name="test_workflow",
-            steps=[
-                Condition(
-                    name="critical_condition",
-                    steps=[Step(name="if_step", executor=if_step_func)],
-                    requires_confirmation=True,
-                )
-            ],
-            db=SqliteDb(db_file="tmp/test_async_cleanup_acontinue_stream.db"),
-        )
+        wf = _make_async_router_review_workflow("async_cleanup_acontinue_stream")
         async for _ in wf.arun("test", session_id="async_cleanup_acontinue_stream", stream=True, stream_events=True):
             pass
         session = wf.get_session(session_id="async_cleanup_acontinue_stream")
         run = session.runs[-1]
         assert run.is_paused
-        run.steps_requiring_confirmation[0].confirm()
+        run.steps_requiring_output_review[0].confirm()
 
         acleanup_mock = AsyncMock(return_value=None)
         cleanup_sync_mock = MagicMock()
