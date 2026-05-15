@@ -2185,13 +2185,17 @@ class MongoDb(BaseDb):
                                 "else": {"$max": ["$end_time", trace_dict.get("end_time")]},
                             }
                         },
-                        # Preserve existing non-null context values using $ifNull
-                        "run_id": {"$ifNull": [trace.run_id, "$run_id"]},
-                        "session_id": {"$ifNull": [trace.session_id, "$session_id"]},
-                        "user_id": {"$ifNull": [trace.user_id, "$user_id"]},
-                        "agent_id": {"$ifNull": [trace.agent_id, "$agent_id"]},
-                        "team_id": {"$ifNull": [trace.team_id, "$team_id"]},
-                        "workflow_id": {"$ifNull": [trace.workflow_id, "$workflow_id"]},
+                        # Preserve existing non-null context values: $ifNull returns
+                        # the first non-null arg, so put the existing field first.
+                        # Otherwise a later upsert from a child span (e.g. a post-hook
+                        # agent's run with a different session_id) would overwrite
+                        # the trace's already-correct context.
+                        "run_id": {"$ifNull": ["$run_id", trace.run_id]},
+                        "session_id": {"$ifNull": ["$session_id", trace.session_id]},
+                        "user_id": {"$ifNull": ["$user_id", trace.user_id]},
+                        "agent_id": {"$ifNull": ["$agent_id", trace.agent_id]},
+                        "team_id": {"$ifNull": ["$team_id", trace.team_id]},
+                        "workflow_id": {"$ifNull": ["$workflow_id", trace.workflow_id]},
                     }
                 },
                 {

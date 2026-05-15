@@ -74,7 +74,23 @@ lists the exact scopes it requires.
 5. Click **Save Changes**.
 6. Go to **Install App** and click **Reinstall to Workspace** to apply the new events.
 
-### 5. Set Environment Variables
+### 5. Enable Interactivity (required for HITL)
+
+If you're using Human-in-the-Loop (HITL) features like `hitl_confirmation.py`,
+`hitl_user_input.py`, or `hitl_incident_commander.py`, you must enable Interactivity:
+
+1. In the sidebar, click **Interactivity & Shortcuts**.
+2. Toggle **Interactivity** to **On**.
+3. Set **Request URL** to your tunnel URL + `/slack/interactions`:
+   ```
+   https://<your-tunnel>/slack/interactions
+   ```
+4. Click **Save Changes**.
+
+> Without this, button clicks (Approve/Deny) and form submissions won't work.
+> The server must be running for Slack to verify the URL.
+
+### 6. Set Environment Variables
 
 ```bash
 export SLACK_TOKEN="xoxb-..."               # Bot User OAuth Token from step 3
@@ -82,7 +98,7 @@ export SLACK_SIGNING_SECRET="..."           # Signing Secret from step 1
 export OPENAI_API_KEY="sk-..."              # Or whichever model provider you use
 ```
 
-### 6. Start a Tunnel
+### 7. Start a Tunnel
 
 Slack needs a public URL to deliver events. Use [ngrok](https://ngrok.com/)
 or [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/):
@@ -92,11 +108,14 @@ ngrok http 7777
 # or: cloudflared tunnel --url http://localhost:7777
 ```
 
-Copy the public HTTPS URL and paste it into the Event Subscriptions Request URL
-(step 4.3). The free ngrok tier gives you a random subdomain that changes on
-restart — update the Request URL each time.
+Copy the public HTTPS URL and paste it into:
+- Event Subscriptions Request URL (step 4.3)
+- Interactivity Request URL (step 5.3) — if using HITL features
 
-### 7. Run an Example
+The free ngrok tier gives you a random subdomain that changes on restart —
+update both Request URLs each time.
+
+### 8. Run an Example
 
 ```bash
 .venvs/demo/bin/python cookbook/05_agent_os/interfaces/slack/basic.py
@@ -118,6 +137,18 @@ render as progress cards in Slack's plan display.
 
 - `streaming_deep_research.py` — Deep research agent with 7 toolkits.
 - `reasoning_agent.py` — Agent with step-by-step reasoning display.
+
+### Human-in-the-Loop (HITL)
+
+These examples pause execution for human approval or input. Requires Interactivity
+to be enabled (step 5).
+
+- `hitl_simple.py` — Basic confirmation flow (Approve/Deny).
+- `hitl_confirmation.py` — Confirmation with detailed tool arguments display.
+- `hitl_user_input.py` — User provides priority and component via Slack form.
+- `hitl_user_feedback.py` — Multi-choice feedback questions.
+- `hitl_external_execution.py` — Human runs a command and pastes output.
+- `hitl_incident_commander.py` — Full incident response flow with all HITL types.
 
 ### Teams and Workflows
 
@@ -144,6 +175,7 @@ render as progress cards in Slack's plan display.
 | No plan-mode task cards | `slack_sdk` older than 3.40.0 | Run `pip install "slack_sdk>=3.40.0"` |
 | No suggested prompts | `assistant_thread_started` event missing | Add it in Event Subscriptions (step 4) |
 | Bot only responds to DMs, not channels | Missing `message.channels` event | Add channel events in Event Subscriptions |
+| HITL buttons don't work | Interactivity not enabled | Enable Interactivity and set Request URL (step 5) |
 | `SLACK_SIGNING_SECRET is not set` | Missing env var | Export `SLACK_SIGNING_SECRET` before running |
 | 403 on event webhook | Invalid signing secret | Check the secret matches Basic Information page |
 | URL verification fails | Server not running or wrong signing secret | Start the server (step 7) before setting the Request URL |
