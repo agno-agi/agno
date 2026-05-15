@@ -25,8 +25,6 @@ from agno.workflow.types import (
     UserInputField,
 )
 
-from .test_hitl_output_review import _make_async_router_review_workflow
-
 # =============================================================================
 # Test Step Functions
 # =============================================================================
@@ -1307,14 +1305,35 @@ class TestConditionOnRejectWorkflowIntegration:
         # final_step should have executed
         assert "final_step" in step_names or "Final step executed" in str(run_output.content)
 
-    async def test_acontinue_run_uses_async_cancellation_cleanup(self, monkeypatch):
-        """Async continue must await acleanup_run, not sync cleanup_run (e.g. async-only Redis manager)."""
+
+class TestAsyncContinueCleanup:
+    """Regression tests for #7912: async continue paths must await acleanup_run, not the sync variant.
+
+    A sync cleanup_run cannot handle async-only cancellation managers (e.g. async Redis),
+    so _acontinue_execute and _acontinue_execute_stream must call acleanup_run.
+    """
+
+    @staticmethod
+    def _make_confirmation_workflow(session_id: str):
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.workflow import Workflow
+
+        def confirm_step(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="confirmed step ran")
+
+        return Workflow(
+            name="test_async_cleanup_workflow",
+            steps=[Step(name="confirm_step", executor=confirm_step, requires_confirmation=True)],
+            db=SqliteDb(db_file=f"tmp/{session_id}.db"),
+        )
+
+    async def test_acontinue_run_awaits_acleanup_run(self, monkeypatch):
         import agno.workflow.workflow as wf_module
 
-        wf = _make_async_router_review_workflow("async_cleanup_acontinue")
+        wf = self._make_confirmation_workflow("async_cleanup_acontinue")
         run = await wf.arun("test", session_id="async_cleanup_acontinue")
         assert run.is_paused
-        run.steps_requiring_output_review[0].confirm()
+        run.steps_requiring_confirmation[0].confirm()
 
         acleanup_mock = AsyncMock(return_value=None)
         cleanup_sync_mock = MagicMock()
@@ -1326,16 +1345,16 @@ class TestConditionOnRejectWorkflowIntegration:
         cleanup_sync_mock.assert_not_called()
         acleanup_mock.assert_awaited()
 
-    async def test_acontinue_run_stream_uses_async_cancellation_cleanup(self, monkeypatch):
+    async def test_acontinue_run_stream_awaits_acleanup_run(self, monkeypatch):
         import agno.workflow.workflow as wf_module
 
-        wf = _make_async_router_review_workflow("async_cleanup_acontinue_stream")
+        wf = self._make_confirmation_workflow("async_cleanup_acontinue_stream")
         async for _ in wf.arun("test", session_id="async_cleanup_acontinue_stream", stream=True, stream_events=True):
             pass
         session = wf.get_session(session_id="async_cleanup_acontinue_stream")
         run = session.runs[-1]
         assert run.is_paused
-        run.steps_requiring_output_review[0].confirm()
+        run.steps_requiring_confirmation[0].confirm()
 
         acleanup_mock = AsyncMock(return_value=None)
         cleanup_sync_mock = MagicMock()
