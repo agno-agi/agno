@@ -2615,12 +2615,18 @@ class MySQLDb(BaseDb):
         self,
         trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
     ):
         """Get a single trace by trace_id or other filters.
 
         Args:
             trace_id: The unique trace identifier.
             run_id: Filter by run ID (returns first match).
+            session_id: Filter by session ID (returns first match).
+            user_id: Filter by user ID (returns first match).
+            agent_id: Filter by agent ID (returns first match).
 
         Returns:
             Optional[Trace]: The trace if found, None otherwise.
@@ -2650,6 +2656,14 @@ class MySQLDb(BaseDb):
                 else:
                     log_debug("get_trace called without any filter parameters")
                     return None
+
+                # Apply additional filters
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
 
                 # Order by most recent and get first result
                 stmt = stmt.order_by(table.c.start_time.desc()).limit(1)

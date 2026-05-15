@@ -1579,12 +1579,18 @@ class SurrealDb(BaseDb):
         self,
         trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
     ):
         """Get a single trace by trace_id or other filters.
 
         Args:
             trace_id: The unique trace identifier.
             run_id: Filter by run ID (returns first match).
+            session_id: Filter by session ID (returns first match).
+            user_id: Filter by user ID (returns first match).
+            agent_id: Filter by agent ID (returns first match).
 
         Returns:
             Optional[Trace]: The trace if found, None otherwise.
@@ -1597,17 +1603,39 @@ class SurrealDb(BaseDb):
             table = self._get_table("traces", create_table_if_not_found=False)
             spans_table = self._get_table("spans", create_table_if_not_found=False)
 
+            # Build optional AND clauses applied to both lookup paths.
+            extra_conditions = []
+            extra_params: Dict[str, Any] = {}
+            if user_id is not None:
+                extra_conditions.append("user_id = $user_id")
+                extra_params["user_id"] = user_id
+            if session_id is not None:
+                extra_conditions.append("session_id = $session_id")
+                extra_params["session_id"] = session_id
+            if agent_id is not None:
+                extra_conditions.append("agent_id = $agent_id")
+                extra_params["agent_id"] = agent_id
+            extra_where = (" AND " + " AND ".join(extra_conditions)) if extra_conditions else ""
+
             if trace_id:
                 record = RecordID(table, trace_id)
-                trace_data = self._query_one("SELECT * FROM ONLY $record", {"record": record}, dict)
+                if extra_conditions:
+                    query = dedent(f"""
+                        SELECT * FROM {table}
+                        WHERE id = $record{extra_where}
+                        LIMIT 1
+                    """)
+                    trace_data = self._query_one(query, {"record": record, **extra_params}, dict)
+                else:
+                    trace_data = self._query_one("SELECT * FROM ONLY $record", {"record": record}, dict)
             elif run_id:
                 query = dedent(f"""
                     SELECT * FROM {table}
-                    WHERE run_id = $run_id
+                    WHERE run_id = $run_id{extra_where}
                     ORDER BY start_time DESC
                     LIMIT 1
                 """)
-                trace_data = self._query_one(query, {"run_id": run_id}, dict)
+                trace_data = self._query_one(query, {"run_id": run_id, **extra_params}, dict)
             else:
                 log_debug("get_trace called without any filter parameters")
                 return None

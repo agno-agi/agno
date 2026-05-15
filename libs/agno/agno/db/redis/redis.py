@@ -1821,12 +1821,18 @@ class RedisDb(BaseDb):
         self,
         trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
     ):
         """Get a single trace by trace_id or other filters.
 
         Args:
             trace_id: The unique trace identifier.
             run_id: Filter by run ID (returns first match).
+            session_id: Filter by session ID (returns first match).
+            user_id: Filter by user ID (returns first match).
+            agent_id: Filter by agent ID (returns first match).
 
         Returns:
             Optional[Trace]: The trace if found, None otherwise.
@@ -1838,9 +1844,18 @@ class RedisDb(BaseDb):
         try:
             from agno.tracing.schemas import Trace as TraceSchema
 
+            def _matches_additional_filters(t: Dict[str, Any]) -> bool:
+                if user_id is not None and t.get("user_id") != user_id:
+                    return False
+                if session_id is not None and t.get("session_id") != session_id:
+                    return False
+                if agent_id is not None and t.get("agent_id") != agent_id:
+                    return False
+                return True
+
             if trace_id:
                 result = self._get_record("traces", trace_id)
-                if result:
+                if result and _matches_additional_filters(result):
                     # Calculate total_spans and error_count
                     all_spans = self._get_all_records("spans")
                     trace_spans = [s for s in all_spans if s.get("trace_id") == trace_id]
@@ -1851,7 +1866,7 @@ class RedisDb(BaseDb):
 
             elif run_id:
                 all_traces = self._get_all_records("traces")
-                matching = [t for t in all_traces if t.get("run_id") == run_id]
+                matching = [t for t in all_traces if t.get("run_id") == run_id and _matches_additional_filters(t)]
                 if matching:
                     # Sort by start_time descending and get most recent
                     matching.sort(key=lambda x: x.get("start_time", ""), reverse=True)

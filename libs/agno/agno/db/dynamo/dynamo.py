@@ -2306,12 +2306,18 @@ class DynamoDb(BaseDb):
         self,
         trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
     ):
         """Get a single trace by trace_id or other filters.
 
         Args:
             trace_id: The unique trace identifier.
             run_id: Filter by run ID (returns first match).
+            session_id: Filter by session ID (returns first match).
+            user_id: Filter by user ID (returns first match).
+            agent_id: Filter by agent ID (returns first match).
 
         Returns:
             Optional[Trace]: The trace if found, None otherwise.
@@ -2327,6 +2333,15 @@ class DynamoDb(BaseDb):
             if table_name is None:
                 return None
 
+            def _matches_additional_filters(trace_data: Dict[str, Any]) -> bool:
+                if user_id is not None and trace_data.get("user_id") != user_id:
+                    return False
+                if session_id is not None and trace_data.get("session_id") != session_id:
+                    return False
+                if agent_id is not None and trace_data.get("agent_id") != agent_id:
+                    return False
+                return True
+
             if trace_id:
                 # Direct lookup by primary key
                 response = self.client.get_item(
@@ -2336,21 +2351,46 @@ class DynamoDb(BaseDb):
                 item = response.get("Item")
                 if item:
                     trace_data = deserialize_from_dynamodb_item(item)
+                    if not _matches_additional_filters(trace_data):
+                        return None
                     trace_data.setdefault("total_spans", 0)
                     trace_data.setdefault("error_count", 0)
                     return Trace.from_dict(trace_data)
                 return None
 
             elif run_id:
-                # Query using GSI
-                response = self.client.query(
-                    TableName=table_name,
-                    IndexName="run_id-start_time-index",
-                    KeyConditionExpression="run_id = :run_id",
-                    ExpressionAttributeValues={":run_id": {"S": run_id}},
-                    ScanIndexForward=False,  # Descending order
-                    Limit=1,
-                )
+                # Query using GSI. Apply user_id/session_id/agent_id as a
+                # FilterExpression so DynamoDB drops non-matching items before
+                # returning the page.
+                filter_parts: List[str] = []
+                expression_values: Dict[str, Any] = {":run_id": {"S": run_id}}
+                expression_names: Dict[str, str] = {}
+                if user_id is not None:
+                    filter_parts.append("#user_id = :user_id")
+                    expression_names["#user_id"] = "user_id"
+                    expression_values[":user_id"] = {"S": user_id}
+                if session_id is not None:
+                    filter_parts.append("#session_id = :session_id")
+                    expression_names["#session_id"] = "session_id"
+                    expression_values[":session_id"] = {"S": session_id}
+                if agent_id is not None:
+                    filter_parts.append("#agent_id = :agent_id")
+                    expression_names["#agent_id"] = "agent_id"
+                    expression_values[":agent_id"] = {"S": agent_id}
+
+                query_kwargs: Dict[str, Any] = {
+                    "TableName": table_name,
+                    "IndexName": "run_id-start_time-index",
+                    "KeyConditionExpression": "run_id = :run_id",
+                    "ExpressionAttributeValues": expression_values,
+                    "ScanIndexForward": False,  # Descending order
+                    "Limit": 1,
+                }
+                if filter_parts:
+                    query_kwargs["FilterExpression"] = " AND ".join(filter_parts)
+                    query_kwargs["ExpressionAttributeNames"] = expression_names
+
+                response = self.client.query(**query_kwargs)
                 items = response.get("Items", [])
                 if items:
                     trace_data = deserialize_from_dynamodb_item(items[0])

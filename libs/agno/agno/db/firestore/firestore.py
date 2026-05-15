@@ -1974,12 +1974,18 @@ class FirestoreDb(BaseDb):
         self,
         trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
     ):
         """Get a single trace by trace_id or other filters.
 
         Args:
             trace_id: The unique trace identifier.
             run_id: Filter by run ID (returns first match).
+            session_id: Filter by session ID (returns first match).
+            user_id: Filter by user ID (returns first match).
+            agent_id: Filter by agent ID (returns first match).
 
         Returns:
             Optional[Trace]: The trace if found, None otherwise.
@@ -1996,19 +2002,27 @@ class FirestoreDb(BaseDb):
                 return None
 
             if trace_id:
-                docs = collection_ref.where(filter=FieldFilter("trace_id", "==", trace_id)).limit(1).stream()
+                query = collection_ref.where(filter=FieldFilter("trace_id", "==", trace_id))
             elif run_id:
-                from google.cloud.firestore import Query
-
-                docs = (
-                    collection_ref.where(filter=FieldFilter("run_id", "==", run_id))
-                    .order_by("start_time", direction=Query.DESCENDING)
-                    .limit(1)
-                    .stream()
-                )
+                query = collection_ref.where(filter=FieldFilter("run_id", "==", run_id))
             else:
                 log_debug("get_trace called without any filter parameters")
                 return None
+
+            # Apply additional filters
+            if user_id is not None:
+                query = query.where(filter=FieldFilter("user_id", "==", user_id))
+            if session_id is not None:
+                query = query.where(filter=FieldFilter("session_id", "==", session_id))
+            if agent_id is not None:
+                query = query.where(filter=FieldFilter("agent_id", "==", agent_id))
+
+            if run_id and not trace_id:
+                from google.cloud.firestore import Query
+
+                query = query.order_by("start_time", direction=Query.DESCENDING)
+
+            docs = query.limit(1).stream()
 
             for doc in docs:
                 trace_data = doc.to_dict()

@@ -1458,12 +1458,18 @@ class JsonDb(BaseDb):
         self,
         trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
     ):
         """Get a single trace by trace_id or other filters.
 
         Args:
             trace_id: The unique trace identifier.
             run_id: Filter by run ID (returns first match).
+            session_id: Filter by session ID (returns first match).
+            user_id: Filter by user ID (returns first match).
+            agent_id: Filter by agent ID (returns first match).
 
         Returns:
             Optional[Trace]: The trace if found, None otherwise.
@@ -1486,6 +1492,17 @@ class JsonDb(BaseDb):
                     break
                 elif run_id and t.get("run_id") == run_id:
                     filtered.append(t)
+
+            if not filtered:
+                return None
+
+            # Apply additional filters
+            if user_id is not None:
+                filtered = [t for t in filtered if t.get("user_id") == user_id]
+            if session_id is not None:
+                filtered = [t for t in filtered if t.get("session_id") == session_id]
+            if agent_id is not None:
+                filtered = [t for t in filtered if t.get("agent_id") == agent_id]
 
             if not filtered:
                 return None
