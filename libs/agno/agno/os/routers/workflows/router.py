@@ -464,15 +464,19 @@ async def handle_workflow_continue_via_websocket(
             await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required"}))
             return
 
-        # Enforce ownership for non-admin callers when user isolation is enabled
+        # Enforce ownership for non-admin callers when user isolation is enabled.
+        # Mirrors the HTTP cancel/resume routes: a non-admin caller must own
+        # both the session and the run before we even fetch the paused state.
         if ws_auth and ws_auth.jwt_enabled and ws_auth.user_isolation_enabled and not ws_auth.is_admin and user_id:
             if not session_id:
                 await websocket.send_text(json.dumps({"event": "error", "error": SESSION_ID_REQUIRED}))
                 return
+            # Prefer the factory's db when this workflow_id is a factory entry;
+            # only fall back to os.db when no factory-specific db is configured.
+            # This matches the pattern the HTTP cancel/resume routes use.
+            factory = find_factory_by_id(workflow_id, os.workflows)
+            check_db = getattr(factory, "db", None) or os.db
             try:
-                from agno.os.utils import get_db
-
-                check_db = get_db(os)
                 await verify_run_in_session_via_db(
                     check_db,
                     session_id,
