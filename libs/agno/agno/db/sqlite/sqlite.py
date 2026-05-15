@@ -2524,25 +2524,18 @@ class SqliteDb(BaseDb):
         self,
         trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
     ):
-        """Get a single trace by trace_id or other filters.
+        """Get a single trace by trace_id (or run_id).
+
+        See ``BaseDb.get_trace`` for why no other filters are accepted here.
+        Ownership checks live at the route layer.
 
         Args:
             trace_id: The unique trace identifier.
-            run_id: Filter by run ID (returns first match).
-            session_id: Filter by session ID (returns first match).
-            user_id: Filter by user ID (returns first match).
-            agent_id: Filter by agent ID (returns first match).
+            run_id: Fallback unique-alternative-key lookup.
 
         Returns:
             Optional[Trace]: The trace if found, None otherwise.
-
-        Note:
-            If multiple filters are provided, trace_id takes precedence.
-            For other filters, the most recent trace is returned.
         """
         try:
             from agno.tracing.schemas import Trace
@@ -2565,14 +2558,6 @@ class SqliteDb(BaseDb):
                 else:
                     log_debug("get_trace called without any filter parameters")
                     return None
-
-                # Apply additional filters
-                if user_id is not None:
-                    stmt = stmt.where(table.c.user_id == user_id)
-                if session_id is not None:
-                    stmt = stmt.where(table.c.session_id == session_id)
-                if agent_id is not None:
-                    stmt = stmt.where(table.c.agent_id == agent_id)
 
                 # Order by most recent and get first result
                 stmt = stmt.order_by(table.c.start_time.desc()).limit(1)

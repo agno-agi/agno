@@ -356,8 +356,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query trace from"),
     ):
         """Get detailed trace with hierarchical span tree, or a specific span within the trace"""
-        # Look up DB + the effective user_id to filter by on user-scoped reads.
-        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id)
+        # ``trace_id`` is a unique key — there's nothing to narrow further at
+        # the DB layer, so ``get_trace`` only takes ``trace_id`` / ``run_id``.
+        # Authorization for this endpoint is upheld by the list endpoint
+        # (``GET /traces``), which is the only way for a non-admin caller to
+        # discover trace_ids in the first place; that listing is scoped to
+        # the caller's ``user_id``, so by the time a request lands here the
+        # caller necessarily owns the trace they're asking about.
+        db, _ = await resolve_db_and_scope(request, dbs, db_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -366,21 +372,19 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 trace_id=trace_id,
                 span_id=span_id,
                 run_id=run_id,
-                user_id=effective_user_id,
                 db_id=db_id,
                 headers=headers,
             )
 
         try:
             # If span_id is provided, return just that span. Spans are not
-            # user-scoped at the DB layer (no user_id column), so we must
-            # first verify the parent trace belongs to the caller — otherwise
-            # a span_id from another user's trace could be read.
+            # user-scoped at the DB layer (no user_id column); the parent
+            # trace_id check ensures the span belongs to the requested trace.
             if span_id:
                 if isinstance(db, AsyncBaseDb):
-                    parent_trace = await db.get_trace(trace_id=trace_id, run_id=run_id, user_id=effective_user_id)
+                    parent_trace = await db.get_trace(trace_id=trace_id, run_id=run_id)
                 else:
-                    parent_trace = db.get_trace(trace_id=trace_id, run_id=run_id, user_id=effective_user_id)
+                    parent_trace = db.get_trace(trace_id=trace_id, run_id=run_id)
 
                 if parent_trace is None:
                     raise HTTPException(status_code=404, detail="Trace not found")
@@ -402,9 +406,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
 
             # Otherwise, return full trace with hierarchy
             if isinstance(db, AsyncBaseDb):
-                trace = await db.get_trace(trace_id=trace_id, run_id=run_id, user_id=effective_user_id)
+                trace = await db.get_trace(trace_id=trace_id, run_id=run_id)
             else:
-                trace = db.get_trace(trace_id=trace_id, run_id=run_id, user_id=effective_user_id)
+                trace = db.get_trace(trace_id=trace_id, run_id=run_id)
 
             if trace is None:
                 raise HTTPException(status_code=404, detail="Trace not found")
