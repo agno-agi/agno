@@ -1047,7 +1047,7 @@ def get_team_router(
         if (session_id is None or session_id == "") and not isinstance(team, RemoteTeam):
             raise HTTPException(
                 status_code=400,
-                detail="session_id is required to continue a run",
+                detail=SESSION_ID_REQUIRED,
             )
 
         # Ownership check before status validation — see continue_agent_run.
