@@ -61,6 +61,13 @@ dev = [
   "fakeredis",
   "xlwt",
   "types-greenlet",
+  # Required for tests that exercise AgentOS routers — opentelemetry-sdk is
+  # pulled in at module import by agno.tracing.schemas, and aiosqlite /
+  # greenlet are used by AsyncSqliteDb regression coverage (greenlet is a
+  # transitive runtime requirement of SQLAlchemy's async dispatch).
+  "opentelemetry-sdk",
+  "aiosqlite",
+  "greenlet",
 ]
 
 os = ["fastapi[standard]", "uvicorn", "sqlalchemy", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "croniter>=1.3", "pytz>=2023.3"]
@@ -365,7 +372,8 @@ integration-tests = [
     "yfinance",
     "sqlalchemy",
     "Pillow",
-    "fastmcp"
+    "fastmcp",
+    "PyJWT"
 ]
 
 # Dependencies for demo application
