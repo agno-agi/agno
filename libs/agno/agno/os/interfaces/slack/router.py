@@ -35,6 +35,7 @@ _IGNORED_SUBTYPES = frozenset(
     }
 )
 
+
 class SlackEventResponse(BaseModel):
     status: str = Field(default="ok")
 
