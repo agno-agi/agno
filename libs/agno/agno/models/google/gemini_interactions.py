@@ -199,25 +199,24 @@ class GeminiInteractions(Model):
         )
         return {k: v for k, v in model_dict.items() if v is not None}
 
-    def _format_tools(self, tools: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    def _format_tools(self, tools: Optional[List[Any]] = None) -> List[Dict[str, Any]]:
         """Format tools for the Interactions API.
 
         The Interactions API uses a flat list of tool definitions with a `type` discriminator.
         Functions use `{"type": "function", "name": ..., "description": ..., "parameters": ...}`.
+
+        This method receives raw tool objects (Function instances or dicts) from the base class,
+        converts them to the Interactions API format.
         """
+        from agno.tools.function import Function
+
         formatted_tools: List[Dict[str, Any]] = []
 
-        # Built-in tools
-        if self.search:
-            formatted_tools.append({"type": "google_search"})
-        if self.url_context:
-            formatted_tools.append({"type": "url_context"})
-
-        # User-defined function tools
         if tools:
-            for tool_def in tools:
-                if tool_def.get("type") == "function":
-                    func = tool_def.get("function", {})
+            for tool in tools:
+                # Convert Function objects to Interactions API format
+                if isinstance(tool, Function):
+                    func = tool.to_dict()
                     formatted_tools.append(
                         {
                             "type": "function",
@@ -226,70 +225,78 @@ class GeminiInteractions(Model):
                             "parameters": func.get("parameters"),
                         }
                     )
+                elif isinstance(tool, dict):
+                    if tool.get("type") == "function":
+                        func = tool.get("function", {})
+                        formatted_tools.append(
+                            {
+                                "type": "function",
+                                "name": func.get("name"),
+                                "description": func.get("description"),
+                                "parameters": func.get("parameters"),
+                            }
+                        )
+                    else:
+                        # Pass through other dict-based tools (builtins)
+                        formatted_tools.append(tool)
 
         return formatted_tools
 
-    def _build_input(self, messages: List[Message]) -> List[Dict[str, Any]]:
-        """Build the input turns for the Interactions API.
+    def _build_input(self, messages: List[Message]) -> Union[str, List[Dict[str, Any]]]:
+        """Build the input steps for the Interactions API.
 
-        If we have a previous_interaction_id, we only send new messages since the last interaction.
-        Otherwise, we send the full conversation history.
+        The v2.x SDK uses a step_list format:
+        - UserInputStep: {"type": "user_input", "content": [{"type": "text", "text": "..."}]}
+        - FunctionCallStep: {"type": "function_call", "id": "...", "name": "...", "arguments": {...}}
+        - FunctionResultStep: {"type": "function_result", "call_id": "...", "result": "...", "name": "..."}
         """
-        turns: List[Dict[str, Any]] = []
+        steps: List[Dict[str, Any]] = []
 
         for message in messages:
-            original_role = message.role
-            if original_role == "system":
+            if message.role == "system":
                 # System messages are passed via system_instruction param, skip here
                 continue
 
-            content: List[Dict[str, Any]] = []
+            # User messages become UserInputStep
+            if message.role == "user":
+                content_items: List[Dict[str, Any]] = []
+                if message.content and isinstance(message.content, str):
+                    content_items.append({"type": "text", "text": message.content})
+                if content_items:
+                    steps.append({"type": "user_input", "content": content_items})
 
-            # Handle tool results (must be from "user" role in Interactions API)
-            if original_role == "tool" and message.tool_call_id:
-                content = [
+            # Assistant messages with tool calls become FunctionCallSteps
+            elif message.role == "assistant":
+                if message.tool_calls:
+                    for tool_call in message.tool_calls:
+                        func = tool_call.get("function", {})
+                        args = func.get("arguments", "{}")
+                        if isinstance(args, str):
+                            try:
+                                args = json.loads(args)
+                            except json.JSONDecodeError:
+                                args = {}
+                        steps.append(
+                            {
+                                "type": "function_call",
+                                "id": tool_call.get("id", str(uuid4())),
+                                "name": func.get("name", ""),
+                                "arguments": args,
+                            }
+                        )
+
+            # Tool result messages become FunctionResultSteps
+            elif message.role == "tool" and message.tool_call_id:
+                steps.append(
                     {
                         "type": "function_result",
                         "call_id": message.tool_call_id,
                         "name": message.tool_name or "",
                         "result": message.content or "",
                     }
-                ]
-                turns.append({"role": "user", "content": content})
-                continue
+                )
 
-            # Map roles for non-tool messages
-            role = original_role
-            if role == "assistant":
-                role = "model"
-
-            # Handle text content
-            if message.content and isinstance(message.content, str):
-                content.append({"type": "text", "text": message.content})
-
-            # Handle tool calls (assistant messages with tool calls)
-            if message.tool_calls:
-                for tool_call in message.tool_calls:
-                    func = tool_call.get("function", {})
-                    args = func.get("arguments", "{}")
-                    if isinstance(args, str):
-                        try:
-                            args = json.loads(args)
-                        except json.JSONDecodeError:
-                            args = {}
-                    content.append(
-                        {
-                            "type": "function_call",
-                            "id": tool_call.get("id", str(uuid4())),
-                            "name": func.get("name", ""),
-                            "arguments": args,
-                        }
-                    )
-
-            if content:
-                turns.append({"role": role, "content": content})
-
-        return turns
+        return steps
 
     def _get_request_kwargs(
         self,
@@ -354,10 +361,15 @@ class GeminiInteractions(Model):
             kwargs["response_format"] = response_format.model_json_schema()
             kwargs["response_mime_type"] = "application/json"
 
-        # Tools
-        formatted_tools = self._format_tools(tools)
-        if formatted_tools:
-            kwargs["tools"] = formatted_tools
+        # Tools - already formatted by _format_tools() via the base class before invoke() is called
+        # Add built-in tools that are model-specific (not from the agent's tool list)
+        all_tools = list(tools) if tools else []
+        if self.search:
+            all_tools.append({"type": "google_search"})
+        if self.url_context:
+            all_tools.append({"type": "url_context"})
+        if all_tools:
+            kwargs["tools"] = all_tools
 
         # Store and background
         if self.store is not None:
@@ -504,11 +516,14 @@ class GeminiInteractions(Model):
             assistant_message.metrics.start_timer()
             stream = self.get_client().interactions.create(**request_kwargs)
 
+            # Track pending function call during streaming - arguments arrive incrementally
+            pending_tool_call: Optional[Dict[str, Any]] = None
+            pending_args_buffer: str = ""
+
             for event in stream:
                 model_response = ModelResponse()
 
                 if isinstance(event, interaction_types.InteractionCreatedEvent):
-                    # Track interaction ID from the start event
                     if event.interaction and hasattr(event.interaction, "id"):
                         self._previous_interaction_id = event.interaction.id
                         model_response.provider_data = {"interaction_id": event.interaction.id}
@@ -519,43 +534,50 @@ class GeminiInteractions(Model):
                     delta = event.delta
                     if isinstance(delta, DeltaText):
                         model_response.content = delta.text or ""
+                        yield model_response
                     elif isinstance(delta, DeltaThoughtSummary):
                         model_response.reasoning_content = getattr(delta, "content", "") or ""
+                        yield model_response
                     elif isinstance(delta, DeltaThoughtSignature):
                         if delta.signature:
                             model_response.provider_data = {"thought_signature": delta.signature}
+                            yield model_response
                     elif isinstance(delta, DeltaArgumentsDelta):
-                        # Arguments delta for function calls - accumulated by caller
+                        # Accumulate argument deltas into the pending tool call
                         if delta.arguments:
-                            model_response.provider_data = {"arguments_delta": delta.arguments}
-                    yield model_response
+                            pending_args_buffer += delta.arguments
 
                 elif isinstance(event, interaction_types.StepStart):
-                    # StepStart signals a new step beginning
                     step = event.step
                     if isinstance(step, FunctionCallStep):
-                        args = step.arguments
-                        if isinstance(args, dict):
-                            args_str = json.dumps(args)
-                        elif args is not None:
-                            args_str = str(args)
-                        else:
-                            args_str = ""
-                        tool_call = {
+                        # Start a new pending tool call - arguments will come via DeltaArgumentsDelta
+                        pending_tool_call = {
                             "id": step.id or str(uuid4()),
                             "type": "function",
                             "function": {
                                 "name": step.name or "",
-                                "arguments": args_str,
+                                "arguments": "",
                             },
                         }
                         if step.signature:
-                            tool_call["thought_signature"] = step.signature
-                        model_response.tool_calls.append(tool_call)
+                            pending_tool_call["thought_signature"] = step.signature
+                        # Initialize args buffer with any args already present
+                        args = step.arguments
+                        if isinstance(args, dict) and args:
+                            pending_args_buffer = json.dumps(args)
+                        else:
+                            pending_args_buffer = ""
+
+                elif isinstance(event, interaction_types.StepStop):
+                    # Emit the complete tool call when the step finishes
+                    if pending_tool_call is not None:
+                        pending_tool_call["function"]["arguments"] = pending_args_buffer or "{}"
+                        model_response.tool_calls.append(pending_tool_call)
+                        pending_tool_call = None
+                        pending_args_buffer = ""
                         yield model_response
 
                 elif isinstance(event, interaction_types.InteractionCompletedEvent):
-                    # Final event with complete interaction and usage
                     if event.interaction:
                         if hasattr(event.interaction, "usage") and event.interaction.usage:
                             usage = event.interaction.usage
@@ -622,6 +644,10 @@ class GeminiInteractions(Model):
             assistant_message.metrics.start_timer()
             stream = await self.get_client().aio.interactions.create(**request_kwargs)
 
+            # Track pending function call during streaming - arguments arrive incrementally
+            pending_tool_call: Optional[Dict[str, Any]] = None
+            pending_args_buffer: str = ""
+
             async for event in stream:
                 model_response = ModelResponse()
 
@@ -636,37 +662,44 @@ class GeminiInteractions(Model):
                     delta = event.delta
                     if isinstance(delta, DeltaText):
                         model_response.content = delta.text or ""
+                        yield model_response
                     elif isinstance(delta, DeltaThoughtSummary):
                         model_response.reasoning_content = getattr(delta, "content", "") or ""
+                        yield model_response
                     elif isinstance(delta, DeltaThoughtSignature):
                         if delta.signature:
                             model_response.provider_data = {"thought_signature": delta.signature}
+                            yield model_response
                     elif isinstance(delta, DeltaArgumentsDelta):
+                        # Accumulate argument deltas into the pending tool call
                         if delta.arguments:
-                            model_response.provider_data = {"arguments_delta": delta.arguments}
-                    yield model_response
+                            pending_args_buffer += delta.arguments
 
                 elif isinstance(event, interaction_types.StepStart):
                     step = event.step
                     if isinstance(step, FunctionCallStep):
-                        args = step.arguments
-                        if isinstance(args, dict):
-                            args_str = json.dumps(args)
-                        elif args is not None:
-                            args_str = str(args)
-                        else:
-                            args_str = ""
-                        tool_call = {
+                        pending_tool_call = {
                             "id": step.id or str(uuid4()),
                             "type": "function",
                             "function": {
                                 "name": step.name or "",
-                                "arguments": args_str,
+                                "arguments": "",
                             },
                         }
                         if step.signature:
-                            tool_call["thought_signature"] = step.signature
-                        model_response.tool_calls.append(tool_call)
+                            pending_tool_call["thought_signature"] = step.signature
+                        args = step.arguments
+                        if isinstance(args, dict) and args:
+                            pending_args_buffer = json.dumps(args)
+                        else:
+                            pending_args_buffer = ""
+
+                elif isinstance(event, interaction_types.StepStop):
+                    if pending_tool_call is not None:
+                        pending_tool_call["function"]["arguments"] = pending_args_buffer or "{}"
+                        model_response.tool_calls.append(pending_tool_call)
+                        pending_tool_call = None
+                        pending_args_buffer = ""
                         yield model_response
 
                 elif isinstance(event, interaction_types.InteractionCompletedEvent):

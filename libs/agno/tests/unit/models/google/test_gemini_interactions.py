@@ -86,29 +86,33 @@ class TestFormatTools:
         assert result[0]["description"] == "Get weather for a city"
         assert result[0]["parameters"] == {"type": "object", "properties": {"city": {"type": "string"}}}
 
-    def test_builtin_search_tool(self):
+    def test_builtin_search_tool_added_in_request_kwargs(self):
+        """Built-in tools are added in _get_request_kwargs, not _format_tools."""
         model = GeminiInteractions(api_key="test-key", search=True)
-        result = model._format_tools(None)
-        assert {"type": "google_search"} in result
+        messages = [Message(role="user", content="Hi")]
+        kwargs = model._get_request_kwargs(messages)
+        assert {"type": "google_search"} in kwargs["tools"]
 
-    def test_builtin_url_context_tool(self):
+    def test_builtin_url_context_tool_added_in_request_kwargs(self):
         model = GeminiInteractions(api_key="test-key", url_context=True)
-        result = model._format_tools(None)
-        assert {"type": "url_context"} in result
+        messages = [Message(role="user", content="Hi")]
+        kwargs = model._get_request_kwargs(messages)
+        assert {"type": "url_context"} in kwargs["tools"]
 
-    def test_builtin_and_function_tools_combined(self):
-        model = GeminiInteractions(api_key="test-key", search=True, url_context=True)
-        tools = [
-            {
-                "type": "function",
-                "function": {"name": "my_func", "description": "A function", "parameters": {}},
-            }
-        ]
-        result = model._format_tools(tools)
-        assert len(result) == 3
-        assert result[0] == {"type": "google_search"}
-        assert result[1] == {"type": "url_context"}
-        assert result[2]["name"] == "my_func"
+    def test_function_object_tools(self):
+        """_format_tools handles Function objects from the agent."""
+        from agno.tools.function import Function
+
+        def dummy_func(x: str) -> str:
+            """A dummy function."""
+            return x
+
+        func = Function(name="dummy", description="A dummy function", entrypoint=dummy_func)
+        model = self._make_model()
+        result = model._format_tools([func])
+        assert len(result) == 1
+        assert result[0]["type"] == "function"
+        assert result[0]["name"] == "dummy"
 
 
 class TestBuildInput:
@@ -120,10 +124,10 @@ class TestBuildInput:
     def test_user_message(self):
         model = self._make_model()
         messages = [Message(role="user", content="Hello")]
-        turns = model._build_input(messages)
-        assert len(turns) == 1
-        assert turns[0]["role"] == "user"
-        assert turns[0]["content"] == [{"type": "text", "text": "Hello"}]
+        steps = model._build_input(messages)
+        assert len(steps) == 1
+        assert steps[0]["type"] == "user_input"
+        assert steps[0]["content"] == [{"type": "text", "text": "Hello"}]
 
     def test_system_message_skipped(self):
         model = self._make_model()
@@ -131,15 +135,16 @@ class TestBuildInput:
             Message(role="system", content="You are helpful"),
             Message(role="user", content="Hi"),
         ]
-        turns = model._build_input(messages)
-        assert len(turns) == 1
-        assert turns[0]["role"] == "user"
+        steps = model._build_input(messages)
+        assert len(steps) == 1
+        assert steps[0]["type"] == "user_input"
 
-    def test_assistant_message_mapped_to_model(self):
+    def test_assistant_message_without_tool_calls_skipped(self):
+        """Assistant messages without tool calls produce no steps (text responses are not re-sent)."""
         model = self._make_model()
         messages = [Message(role="assistant", content="I can help")]
-        turns = model._build_input(messages)
-        assert turns[0]["role"] == "model"
+        steps = model._build_input(messages)
+        assert len(steps) == 0
 
     def test_tool_call_message(self):
         model = self._make_model()
@@ -156,26 +161,22 @@ class TestBuildInput:
                 ],
             )
         ]
-        turns = model._build_input(messages)
-        assert len(turns) == 1
-        content = turns[0]["content"]
-        assert len(content) == 1
-        assert content[0]["type"] == "function_call"
-        assert content[0]["id"] == "call_123"
-        assert content[0]["name"] == "get_weather"
-        assert content[0]["arguments"] == {"city": "Paris"}
+        steps = model._build_input(messages)
+        assert len(steps) == 1
+        assert steps[0]["type"] == "function_call"
+        assert steps[0]["id"] == "call_123"
+        assert steps[0]["name"] == "get_weather"
+        assert steps[0]["arguments"] == {"city": "Paris"}
 
     def test_tool_result_message(self):
         model = self._make_model()
         messages = [Message(role="tool", content="Sunny, 25C", tool_call_id="call_123", tool_name="get_weather")]
-        turns = model._build_input(messages)
-        assert len(turns) == 1
-        assert turns[0]["role"] == "user"
-        content = turns[0]["content"]
-        assert content[0]["type"] == "function_result"
-        assert content[0]["call_id"] == "call_123"
-        assert content[0]["name"] == "get_weather"
-        assert content[0]["result"] == "Sunny, 25C"
+        steps = model._build_input(messages)
+        assert len(steps) == 1
+        assert steps[0]["type"] == "function_result"
+        assert steps[0]["call_id"] == "call_123"
+        assert steps[0]["name"] == "get_weather"
+        assert steps[0]["result"] == "Sunny, 25C"
 
     def test_tool_call_with_invalid_json_arguments(self):
         model = self._make_model()
@@ -192,23 +193,30 @@ class TestBuildInput:
                 ],
             )
         ]
-        turns = model._build_input(messages)
-        content = turns[0]["content"]
-        assert content[0]["arguments"] == {}
+        steps = model._build_input(messages)
+        assert steps[0]["type"] == "function_call"
+        assert steps[0]["arguments"] == {}
 
     def test_multi_turn_conversation(self):
         model = self._make_model()
         messages = [
             Message(role="system", content="Be helpful"),
             Message(role="user", content="Hi"),
-            Message(role="assistant", content="Hello!"),
+            Message(
+                role="assistant",
+                content=None,
+                tool_calls=[{"id": "c1", "type": "function", "function": {"name": "f", "arguments": "{}"}}],
+            ),
+            Message(role="tool", content="result", tool_call_id="c1", tool_name="f"),
             Message(role="user", content="How are you?"),
         ]
-        turns = model._build_input(messages)
-        assert len(turns) == 3  # system is skipped
-        assert turns[0]["role"] == "user"
-        assert turns[1]["role"] == "model"
-        assert turns[2]["role"] == "user"
+        steps = model._build_input(messages)
+        # system skipped, assistant with tool_calls -> function_call, tool -> function_result, user -> user_input
+        assert len(steps) == 4
+        assert steps[0]["type"] == "user_input"
+        assert steps[1]["type"] == "function_call"
+        assert steps[2]["type"] == "function_result"
+        assert steps[3]["type"] == "user_input"
 
 
 class TestGetRequestKwargs:
@@ -250,11 +258,9 @@ class TestGetRequestKwargs:
 
     def test_tools_included(self):
         model = self._make_model()
+        # Tools are already formatted by _format_tools before reaching _get_request_kwargs
         tools = [
-            {
-                "type": "function",
-                "function": {"name": "func", "description": "desc", "parameters": {}},
-            }
+            {"type": "function", "name": "func", "description": "desc", "parameters": {}},
         ]
         messages = [Message(role="user", content="Hi")]
         kwargs = model._get_request_kwargs(messages, tools=tools)
@@ -506,11 +512,9 @@ class TestInvoke:
         mock_interaction.usage = None
         mock_client.interactions.create.return_value = mock_interaction
 
+        # Tools passed to invoke() are already formatted by _format_tools (Interactions API format)
         tools = [
-            {
-                "type": "function",
-                "function": {"name": "search", "description": "Search", "parameters": {}},
-            }
+            {"type": "function", "name": "search", "description": "Search", "parameters": {}},
         ]
         messages = [Message(role="user", content="Hello")]
         assistant_message = Message(role="assistant")
@@ -662,26 +666,43 @@ class TestInvokeStream:
         assert model._previous_interaction_id == "interactions/stream1"
         assert any(r.role == "assistant" for r in responses)
 
-    def test_invoke_stream_handles_function_call_step_start(self):
-        from agno.models.google.gemini_interactions import FunctionCallStep, interaction_types
+    def test_invoke_stream_handles_function_call_with_argument_deltas(self):
+        from agno.models.google.gemini_interactions import (
+            DeltaArgumentsDelta,
+            FunctionCallStep,
+            interaction_types,
+        )
 
         model = self._make_model()
         mock_client = MagicMock()
         model.client = mock_client
 
-        # Create a StepStart with FunctionCallStep
+        # StepStart with FunctionCallStep (arguments initially empty)
         mock_step = MagicMock(spec=FunctionCallStep)
         mock_step.__class__ = FunctionCallStep
         mock_step.id = "call_stream_1"
         mock_step.name = "get_weather"
-        mock_step.arguments = {"city": "London"}
+        mock_step.arguments = {}
         mock_step.signature = None
 
-        mock_event = MagicMock(spec=interaction_types.StepStart)
-        mock_event.__class__ = interaction_types.StepStart
-        mock_event.step = mock_step
+        mock_start = MagicMock(spec=interaction_types.StepStart)
+        mock_start.__class__ = interaction_types.StepStart
+        mock_start.step = mock_step
 
-        mock_client.interactions.create.return_value = iter([mock_event])
+        # DeltaArgumentsDelta with the actual arguments
+        mock_delta = MagicMock(spec=DeltaArgumentsDelta)
+        mock_delta.__class__ = DeltaArgumentsDelta
+        mock_delta.arguments = '{"city": "London"}'
+
+        mock_delta_event = MagicMock(spec=interaction_types.StepDelta)
+        mock_delta_event.__class__ = interaction_types.StepDelta
+        mock_delta_event.delta = mock_delta
+
+        # StepStop to emit the complete tool call
+        mock_stop = MagicMock(spec=interaction_types.StepStop)
+        mock_stop.__class__ = interaction_types.StepStop
+
+        mock_client.interactions.create.return_value = iter([mock_start, mock_delta_event, mock_stop])
 
         messages = [Message(role="user", content="Weather?")]
         assistant_message = Message(role="assistant")
@@ -690,6 +711,7 @@ class TestInvokeStream:
         tool_responses = [r for r in responses if r.tool_calls]
         assert len(tool_responses) == 1
         assert tool_responses[0].tool_calls[0]["function"]["name"] == "get_weather"
+        assert tool_responses[0].tool_calls[0]["function"]["arguments"] == '{"city": "London"}'
 
     def test_invoke_stream_error_raises_model_provider_error(self):
         from agno.exceptions import ModelProviderError
