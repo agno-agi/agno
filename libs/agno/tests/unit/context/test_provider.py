@@ -16,6 +16,16 @@ from agno.context import Answer, ContextMode, ContextProvider, Status
 from agno.context.provider import _sanitize_id
 from agno.run import RunContext
 
+
+async def _collect_tool_output(tool, **kwargs) -> str:
+    """Collect final string output from a generator tool."""
+    gen = await tool.entrypoint(**kwargs)
+    result = ""
+    async for chunk in gen:
+        if isinstance(chunk, str):
+            result = chunk
+    return result
+
 # ---------------------------------------------------------------------------
 # Test fixtures — minimal providers that pass / raise on demand
 # ---------------------------------------------------------------------------
@@ -169,7 +179,7 @@ def test_mode_agent_silently_ignores_read_false():
 async def test_query_tool_serializes_answer_text():
     p = _EchoProvider(id="e")
     query_tool = p._query_tool()
-    out = await query_tool.entrypoint(question="hello")
+    out = await _collect_tool_output(query_tool, question="hello")
     payload = json.loads(out)
     # Empty `results` is omitted — no provider populates Document
     # results today, and shipping `"results": []` on every call is
@@ -181,7 +191,7 @@ async def test_query_tool_serializes_answer_text():
 async def test_query_tool_catches_aquery_exceptions():
     p = _RaisingQueryProvider(id="e")
     query_tool = p._query_tool()
-    out = await query_tool.entrypoint(question="hello")
+    out = await _collect_tool_output(query_tool, question="hello")
     payload = json.loads(out)
     # Error is reported as a string — the calling agent sees it but
     # isn't crashed.
@@ -199,7 +209,7 @@ async def test_query_tool_omits_both_when_answer_is_empty():
             return Answer()
 
     tool_ = _DocsOnly(id="e")._query_tool()
-    out = await tool_.entrypoint(question="hello")
+    out = await _collect_tool_output(tool_, question="hello")
     payload = json.loads(out)
     assert payload == {}
 
@@ -217,7 +227,7 @@ async def test_query_tool_includes_results_when_populated():
             )
 
     tool_ = _WithDocs(id="e")._query_tool()
-    out = await tool_.entrypoint(question="hello")
+    out = await _collect_tool_output(tool_, question="hello")
     payload = json.loads(out)
     assert payload["text"] == "see results"
     assert payload["results"] == [{"id": "d1", "name": "Page 1", "uri": "/p/1", "source": None, "snippet": "hello"}]
@@ -280,7 +290,7 @@ async def test_query_tool_forwards_run_context_to_aquery():
     rc = RunContext(run_id="r-1", user_id="u-1", session_id="s-1", metadata={"action_token": "xoxa-abc"})
     # Framework would normally inject run_context via Function._run_context;
     # calling the entrypoint directly with run_context= simulates that path.
-    await query_tool.entrypoint(question="hello", run_context=rc)
+    await _collect_tool_output(query_tool, question="hello", run_context=rc)
     assert captured["run_context"] is rc
 
 

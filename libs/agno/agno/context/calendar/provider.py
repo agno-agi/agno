@@ -205,6 +205,9 @@ class GoogleCalendarContextProvider(ContextProvider):
             self._write_toolkit = self._build_write_toolkit()
         return self._write_toolkit
 
+    async def _aget_query_agent(self, run_context):
+        return self._ensure_read_agent()
+
     def _ensure_read_agent(self) -> Agent:
         if self._read_agent is None:
             self._read_agent = Agent(

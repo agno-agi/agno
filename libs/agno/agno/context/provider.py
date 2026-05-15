@@ -35,13 +35,16 @@ import json
 import re
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
 
 from agno.context.mode import ContextMode
 from agno.run import RunContext
+from agno.run.agent import RunOutput
+from agno.team._response import TeamRunOutput
 from agno.tools import tool
 
 if TYPE_CHECKING:
+    from agno.agent import Agent
     from agno.models.base import Model
 
 
@@ -86,6 +89,7 @@ class ContextProvider(ABC):
         write: bool = True,
         query_tool_name: str | None = None,
         update_tool_name: str | None = None,
+        stream_sub_agent_events: bool = True,
     ) -> None:
         if not read and not write:
             raise ValueError(
@@ -105,6 +109,7 @@ class ContextProvider(ABC):
         self.write = write
         self.query_tool_name = query_tool_name or f"query_{_sanitize_id(id)}"
         self.update_tool_name = update_tool_name or f"update_{_sanitize_id(id)}"
+        self.stream_sub_agent_events = stream_sub_agent_events
 
     @abstractmethod
     def query(self, question: str, *, run_context: RunContext | None = None) -> Answer: ...
@@ -181,6 +186,10 @@ class ContextProvider(ABC):
     # Internals
     # ------------------------------------------------------------------
 
+    async def _aget_query_agent(self, run_context: RunContext | None) -> "Agent | None":
+        """Override to return the sub-agent for streaming; None falls back to aquery()."""
+        return None
+
     def _run_kwargs_for_sub_agent(self, run_context: RunContext | None) -> dict:
         """Extract kwargs to pass to a sub-agent ``arun()`` from the
         caller's RunContext.
@@ -224,12 +233,48 @@ class ContextProvider(ABC):
         provider = self
 
         @tool(name=self.query_tool_name)
-        async def _query(question: str, run_context: RunContext | None = None) -> str:
+        async def _query(question: str, run_context: RunContext | None = None):
             try:
-                answer = await provider.aquery(question, run_context=run_context)
+                agent = await provider._aget_query_agent(run_context)
             except Exception as exc:
-                return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
-            return json.dumps(_serialize_answer(answer))
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                return
+
+            if agent is None:
+                try:
+                    answer = await provider.aquery(question, run_context=run_context)
+                except Exception as exc:
+                    yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                    return
+                yield json.dumps(_serialize_answer(answer))
+                return
+
+            kwargs = provider._run_kwargs_for_sub_agent(run_context)
+            run_id = run_context.run_id if run_context else None
+            final_output: Union[RunOutput, TeamRunOutput, None] = None
+
+            async for event in agent.arun(
+                question,
+                stream=True,
+                stream_events=provider.stream_sub_agent_events,
+                yield_run_output=True,
+                **kwargs,
+            ):
+                # Do NOT break out of the loop, AsyncIterator needs to exit properly
+                if isinstance(event, (RunOutput, TeamRunOutput)):
+                    final_output = event
+                    continue  # Don't yield RunOutput, only yield events
+
+                # Yield the sub-agent event directly
+                event.parent_run_id = getattr(event, "parent_run_id", None) or run_id
+                yield event
+
+            # Convert final output to JSON answer
+            if final_output is not None:
+                from agno.context._utils import answer_from_run
+
+                answer = answer_from_run(final_output)
+                yield json.dumps(_serialize_answer(answer))
 
         return _query
 
