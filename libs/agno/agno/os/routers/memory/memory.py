@@ -10,10 +10,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
 from agno.models.utils import get_model
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
-from agno.os.middleware.user_scope import (
-    get_scoped_user_id,
-    resolve_db_and_scope,
-)
+from agno.os.middleware.user_scope import get_scoped_user_id, resolve_db_and_scope
 from agno.os.routers.memory.schemas import (
     DeleteMemoriesRequest,
     OptimizeMemoriesRequest,
@@ -94,16 +91,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to use for memory storage"),
         table: Optional[str] = Query(default=None, description="Table to use for memory storage"),
     ) -> UserMemorySchema:
-        # Force payload.user_id to the JWT user for non-admin callers. Admins
-        # (get_scoped_user_id returns None) may create on behalf of anyone.
-        scoped_user_id = get_scoped_user_id(request)
-        if scoped_user_id is not None:
-            payload.user_id = scoped_user_id
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=payload.user_id)
+        # Scoped callers get their JWT sub; admins/unscoped get the payload value.
+        if effective_user_id is not None:
+            payload.user_id = effective_user_id
 
         if payload.user_id is None:
             raise HTTPException(status_code=400, detail="User ID is required")
-
-        db, _ = await resolve_db_and_scope(request, dbs, db_id, table)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -207,13 +201,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
-        db, _ = await resolve_db_and_scope(http_request, dbs, db_id, table)
-
-        # Non-admin callers may only act on their own memories. Admins keep
-        # act-on-behalf semantics (the user_id in the body is honoured).
-        scoped_user_id = get_scoped_user_id(http_request)
-        if scoped_user_id is not None:
-            request.user_id = scoped_user_id
+        db, effective_user_id = await resolve_db_and_scope(
+            http_request, dbs, db_id, table, fallback_user_id=request.user_id
+        )
+        if effective_user_id is not None:
+            request.user_id = effective_user_id
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(http_request)
@@ -489,16 +481,24 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to use for update"),
         table: Optional[str] = Query(default=None, description="Table to use for update"),
     ) -> UserMemorySchema:
-        # Force payload.user_id to the JWT user for non-admin callers. Admins
-        # (get_scoped_user_id returns None) may update memories belonging to anyone.
-        scoped_user_id = get_scoped_user_id(request)
-        if scoped_user_id is not None:
-            payload.user_id = scoped_user_id
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=payload.user_id)
+        if effective_user_id is not None:
+            payload.user_id = effective_user_id
 
         if payload.user_id is None:
             raise HTTPException(status_code=400, detail="User ID is required")
 
-        db, _ = await resolve_db_and_scope(request, dbs, db_id, table)
+        # For scoped callers, verify the existing memory belongs to them
+        # before allowing the upsert. Without this, a caller could overwrite
+        # another user's memory_id by supplying it in the path.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None and not isinstance(db, RemoteDb):
+            if isinstance(db, AsyncBaseDb):
+                existing = await cast(AsyncBaseDb, db).get_user_memory(memory_id=memory_id, user_id=scoped_user_id)
+            else:
+                existing = db.get_user_memory(memory_id=memory_id, user_id=scoped_user_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="Memory not found")
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -673,14 +673,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         from agno.memory import MemoryManager
         from agno.memory.strategies.types import MemoryOptimizationStrategyType
 
-        # Non-admin callers may only optimize their own memories. Admins keep
-        # act-on-behalf semantics.
-        scoped_user_id = get_scoped_user_id(http_request)
-        if scoped_user_id is not None:
-            request.user_id = scoped_user_id
-
         try:
-            db, _ = await resolve_db_and_scope(http_request, dbs, db_id, table)
+            db, effective_user_id = await resolve_db_and_scope(
+                http_request, dbs, db_id, table, fallback_user_id=request.user_id
+            )
+            if effective_user_id is not None:
+                request.user_id = effective_user_id
 
             if isinstance(db, RemoteDb):
                 auth_token = get_auth_token_from_request(http_request)

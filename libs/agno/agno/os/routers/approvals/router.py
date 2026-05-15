@@ -171,15 +171,11 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         # Admin-only resolve when user_isolation is on. ``get_scoped_user_id``
         # returns a non-None value precisely when the caller is a non-admin
         # authenticated user under ``AuthorizationConfig(user_isolation=True)``
-        # — admins and isolation-off / no-JWT callers fall through and keep
-        # the legacy behaviour. Self-approve is disallowed in this mode
-        # because the row's ``user_id`` is the requester, not the approver.
+        # - admins and isolation-off / no-JWT callers fall through and keep
+        # the legacy behaviour. Return 404 (not 403) to avoid leaking the
+        # existence of the approval to non-admin callers.
         if get_scoped_user_id(request) is not None:
-            raise HTTPException(status_code=403, detail="Only an admin may resolve this approval")
-
-        # Owner check — non-admin callers cannot resolve other users' approvals.
-        # _load_approval_for_user raises 404 if the approval doesn't belong to them.
-        await _load_approval_for_user(approval_id, request)
+            raise HTTPException(status_code=404, detail="Approval not found")
 
         now = int(time.time())
         # Audit trail: ``resolved_by`` records the human who clicked resolve,
@@ -221,15 +217,11 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         approval_id: str,
         _: bool = Depends(auth_dependency),
     ) -> None:
-        # Admin-only delete under user_isolation (see ``resolve_approval`` for
-        # the same rationale). Non-admin scoped callers cannot delete any
-        # approval — including their own — because the row is the audit
-        # record of a requested action, not a personal note.
+        # Admin-only delete under user_isolation - return 404 to avoid
+        # leaking existence. Non-admin scoped callers cannot delete any
+        # approval because the row is an audit record.
         if get_scoped_user_id(request) is not None:
-            raise HTTPException(status_code=403, detail="Only an admin may delete this approval")
-
-        # Owner check — non-admin callers cannot delete other users' approvals.
-        await _load_approval_for_user(approval_id, request)
+            raise HTTPException(status_code=404, detail="Approval not found")
         deleted = await _db_call("delete_approval", approval_id)
         if not deleted:
             raise HTTPException(status_code=500, detail="Failed to delete approval")

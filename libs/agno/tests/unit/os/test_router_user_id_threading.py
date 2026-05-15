@@ -29,7 +29,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from agno.os.settings import AgnoAPISettings
 
-
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
@@ -279,10 +278,11 @@ class TestApprovalsAdminOnlyResolve:
     def _resolve_payload(self):
         return {"status": "approved"}
 
-    # --- non-admin under isolation: 403 even on own row ---------------
+    # --- non-admin under isolation: 404 to avoid leaking existence ----
 
     def test_resolve_forbidden_for_non_admin_under_isolation(self, approvals_db, no_security_key):
         # The row belongs to the caller, but self-resolve is still blocked.
+        # Returns 404 (not 403) to avoid leaking the approval's existence.
         approvals_db.get_approval.return_value = {
             "approval_id": "a-1",
             "user_id": "jwt_alice",
@@ -290,7 +290,7 @@ class TestApprovalsAdminOnlyResolve:
         }
         app = _build_approvals_app(approvals_db, isolation=True)
         resp = TestClient(app).post("/approvals/a-1/resolve", json=self._resolve_payload())
-        assert resp.status_code == 403
+        assert resp.status_code == 404
         # Make sure we short-circuited before the DB update.
         approvals_db.update_approval.assert_not_called()
 
@@ -302,7 +302,7 @@ class TestApprovalsAdminOnlyResolve:
         }
         app = _build_approvals_app(approvals_db, isolation=True)
         resp = TestClient(app).delete("/approvals/a-1")
-        assert resp.status_code == 403
+        assert resp.status_code == 404
         approvals_db.delete_approval.assert_not_called()
 
     # --- isolation OFF: legacy behaviour preserved --------------------
@@ -331,8 +331,9 @@ class TestApprovalsAdminOnlyResolve:
 
     def test_resolve_allowed_for_admin(self, approvals_db, no_security_key):
         """An admin token (``agent_os:admin`` in scopes) bypasses the gate."""
-        from starlette.middleware.base import BaseHTTPMiddleware
         from fastapi import FastAPI
+        from starlette.middleware.base import BaseHTTPMiddleware
+
         from agno.os.routers.approvals.router import get_approval_router
 
         class _AdminMiddleware(BaseHTTPMiddleware):

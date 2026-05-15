@@ -209,6 +209,7 @@ async def _resume_stream_generator(
     run_id: str,
     last_event_index: Optional[int],
     session_id: Optional[str],
+    user_id: Optional[str] = None,
 ) -> AsyncGenerator:
     """SSE generator for the /resume endpoint.
 
@@ -223,7 +224,7 @@ async def _resume_stream_generator(
         # PATH 3: Not in buffer -- fall back to database
         if session_id and not isinstance(team, RemoteTeam):
             try:
-                run_output = await team.aget_run_output(run_id=run_id, session_id=session_id)
+                run_output = await team.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
             except Exception as e:
                 error = {"event": "error", "error": f"Failed to fetch run from database: {str(e)}"}
                 yield f"event: error\ndata: {json.dumps(error)}\n\n"
@@ -577,7 +578,12 @@ def get_team_router(
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
 
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+        # Scoped non-admin callers always get their JWT sub as user_id.
+        # Admins and unscoped callers fall through to middleware/form values.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None:
+            user_id = scoped_user_id
+        elif hasattr(request.state, "user_id") and request.state.user_id is not None:
             if user_id and user_id != request.state.user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
             user_id = request.state.user_id
@@ -937,7 +943,7 @@ def get_team_router(
             )
 
         return StreamingResponse(
-            _resume_stream_generator(team, run_id, last_event_index, session_id),
+            _resume_stream_generator(team, run_id, last_event_index, session_id, user_id=scoped_user_id),
             media_type="text/event-stream",
         )
 
