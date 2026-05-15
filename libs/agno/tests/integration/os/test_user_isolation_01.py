@@ -13,7 +13,6 @@ The "review gap" classes live alongside the original isolation tests so
 there's one canonical place to add new isolation regressions.
 """
 
-import json
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -23,10 +22,6 @@ from fastapi.testclient import TestClient
 from agno.agent.agent import Agent
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
-from agno.os.middleware.user_scope import (
-    INSUFFICIENT_PERMISSIONS_WS_RECONNECT,
-    WORKFLOW_ID_REQUIRED_RECONNECT,
-)
 from agno.team.team import Team
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
