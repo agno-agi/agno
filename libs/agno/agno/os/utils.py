@@ -961,6 +961,7 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
         "audience": None,
         "admin_scope": None,
         "user_isolation": False,
+        "auth_required": False,
     }
 
     state = getattr(app, "state", None)
@@ -975,6 +976,7 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
             "audience": getattr(state, "jwt_audience", None),
             "admin_scope": getattr(state, "admin_scope", None),
             "user_isolation": bool(getattr(state, "user_isolation_enabled", False)),
+            "auth_required": True,
         }
 
     # Lazy resolution for manual setup: locate JWTMiddleware in user_middleware
@@ -1009,7 +1011,10 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
                 )
             except Exception as e:
                 log_warning(f"Could not lazily construct JWTValidator for WebSocket auth: {e}")
-                return blank
+                # JWTMiddleware IS configured, so auth was intended. Return
+                # auth_required=True so the WS endpoint rejects connections
+                # instead of silently falling through to unauthenticated mode.
+                return {**blank, "auth_required": True}
 
             verify_audience = bool(kwargs.get("verify_audience", False))
             audience = kwargs.get("audience")
@@ -1031,6 +1036,7 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
                 "audience": audience,
                 "admin_scope": admin_scope,
                 "user_isolation": user_isolation,
+                "auth_required": True,
             }
 
     return blank

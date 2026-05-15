@@ -52,6 +52,7 @@ class TestResolveWsJwtConfigAgentOSPath:
         assert cfg["audience"] == "my-os"
         assert cfg["admin_scope"] == "custom:admin"
         assert cfg["user_isolation"] is True
+        assert cfg["auth_required"] is True
 
     def test_state_attrs_default_when_unset(self):
         validator = MagicMock(name="validator")
@@ -64,8 +65,9 @@ class TestResolveWsJwtConfigAgentOSPath:
         assert cfg["audience"] is None
         assert cfg["admin_scope"] is None
         # user_isolation must default to False even when the validator is set
-        # — this is the opt-in safety net for legacy deployments.
+        # - this is the opt-in safety net for legacy deployments.
         assert cfg["user_isolation"] is False
+        assert cfg["auth_required"] is True
 
 
 class TestResolveWsJwtConfigManualSetupPath:
@@ -103,6 +105,7 @@ class TestResolveWsJwtConfigManualSetupPath:
         assert cfg["audience"] == "manual-os"
         assert cfg["admin_scope"] == "ops:admin"
         assert cfg["user_isolation"] is True
+        assert cfg["auth_required"] is True
 
         # The resolver must cache results on app.state for subsequent calls
         # and for the HTTP middleware that will run later.
@@ -215,6 +218,7 @@ class TestResolveWsJwtConfigEdgeCases:
         app = MagicMock(spec=[])  # no state attribute
         cfg = resolve_ws_jwt_config(app)
         assert cfg["validator"] is None
+        assert cfg["auth_required"] is False
 
     def test_does_not_match_unrelated_middleware(self):
         """A non-JWT middleware entry must not be treated as JWT."""
@@ -227,6 +231,28 @@ class TestResolveWsJwtConfigEdgeCases:
 
         cfg = resolve_ws_jwt_config(app)
         assert cfg["validator"] is None
+        assert cfg["auth_required"] is False
+
+    def test_broken_validator_returns_auth_required_true(self):
+        """When JWTMiddleware is configured but the validator cannot be
+        constructed (e.g. bad JWKS path), the resolver must signal that
+        auth was intended so the WS endpoint rejects rather than silently
+        falling through to unauthenticated mode."""
+        entry = SimpleNamespace(
+            cls=JWTMiddleware,
+            kwargs={
+                # jwks_file pointing to a non-existent path triggers an
+                # exception inside JWTValidator construction.
+                "jwks_file": "/nonexistent/bad/path.json",
+                "algorithm": "RS256",
+            },
+        )
+        app = _make_fake_app(middleware_entries=[entry])
+
+        cfg = resolve_ws_jwt_config(app)
+
+        assert cfg["validator"] is None
+        assert cfg["auth_required"] is True
 
 
 class TestAdminScopeDefault:

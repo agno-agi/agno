@@ -304,9 +304,13 @@ def get_websocket_router(
         ws_admin_scope: str = ws_jwt_config.get("admin_scope") or AgentOSScope.ADMIN.value
         ws_user_isolation_enabled: bool = bool(ws_jwt_config.get("user_isolation", False))
         jwt_auth_enabled = jwt_validator is not None
+        # auth_required is True when JWTMiddleware is configured, even if the
+        # validator could not be constructed (e.g. bad JWKS path). This prevents
+        # silently falling through to unauthenticated mode on misconfiguration.
+        jwt_auth_required = bool(ws_jwt_config.get("auth_required", False))
 
         # Determine auth requirements - JWT takes precedence over legacy
-        requires_auth = jwt_auth_enabled or bool(settings.os_security_key)
+        requires_auth = jwt_auth_enabled or jwt_auth_required or bool(settings.os_security_key)
 
         await websocket_manager.connect(websocket, requires_auth=requires_auth)
 
@@ -326,7 +330,21 @@ def get_websocket_router(
                         await websocket.send_text(json.dumps({"event": "auth_error", "error": "Token is required"}))
                         continue
 
-                    if jwt_auth_enabled and jwt_validator:
+                    if jwt_auth_required and not jwt_auth_enabled:
+                        # JWTMiddleware is configured but the validator could
+                        # not be constructed (e.g. bad JWKS path). Reject
+                        # rather than silently falling through to legacy auth.
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "event": "auth_error",
+                                    "error": "JWT authentication is misconfigured on the server",
+                                    "error_type": "server_error",
+                                }
+                            )
+                        )
+                        continue
+                    elif jwt_auth_enabled and jwt_validator:
                         # Use JWT validator for token validation. Honour the
                         # configured audience so verify_audience=True applies to
                         # WebSocket tokens, not just HTTP requests.
@@ -368,7 +386,7 @@ def get_websocket_router(
 
                 # Check authentication for all other actions (only when required)
                 elif requires_auth and not websocket_manager.is_authenticated(websocket):
-                    auth_type = "JWT" if jwt_auth_enabled else "bearer token"
+                    auth_type = "JWT" if (jwt_auth_enabled or jwt_auth_required) else "bearer token"
                     await websocket.send_text(
                         json.dumps(
                             {

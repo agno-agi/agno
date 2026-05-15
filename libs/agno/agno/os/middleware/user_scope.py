@@ -15,6 +15,25 @@ itself. The trade is fewer moving parts and clearer dispatch, at the cost
 of a per-endpoint convention: every user-scoped read passes ``user_id``,
 every write goes through ``enforce_owner_on_entity`` before persisting.
 
+.. important::
+
+   **Adding a new router endpoint that handles user-owned data?**
+
+   You MUST call one of the scoping helpers (``get_scoped_user_id``,
+   ``resolve_db_and_scope``, or ``apply_scope_to_kwargs``) and thread the
+   resulting ``user_id`` into every DB read/write. Omitting this will
+   silently bypass user isolation with no runtime error.
+
+   Pattern for reads::
+
+       scoped_user_id = get_scoped_user_id(request)
+       db.get_sessions(user_id=scoped_user_id, ...)
+
+   Pattern for writes::
+
+       enforce_owner_on_entity(entity, request)
+       db.upsert_session(entity)
+
 Admin users (with the configured ``admin_scope``) and callers running with
 isolation disabled get ``None`` from ``get_scoped_user_id`` — both helpers
 become no-ops in that case, preserving the legacy unscoped behaviour.
