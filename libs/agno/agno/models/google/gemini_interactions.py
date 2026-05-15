@@ -547,100 +547,6 @@ class GeminiInteractions(Model):
 
         return kwargs
 
-    def _parse_interaction_response(self, interaction: Any) -> ModelResponse:
-        """Parse an Interaction response into a ModelResponse."""
-        model_response = ModelResponse()
-        model_response.role = "assistant"
-
-        # Extract interaction ID for multi-turn (stored in provider_data, not instance)
-        interaction_id = getattr(interaction, "id", None)
-
-        # Parse steps from the interaction
-        steps = getattr(interaction, "steps", None)
-        if not steps:
-            # Store interaction ID in provider_data
-            if model_response.provider_data is None:
-                model_response.provider_data = {}
-            model_response.provider_data["interaction_id"] = interaction_id
-            return model_response
-
-        for step in steps:
-            if isinstance(step, ModelOutputStep):
-                # ModelOutputStep contains a list of content items (TextContent, ImageContent, etc.)
-                if step.content:
-                    for content_item in step.content:
-                        if isinstance(content_item, TextContent):
-                            text = content_item.text or ""
-                            if model_response.content is None:
-                                model_response.content = text
-                            else:
-                                model_response.content += text
-                        elif ImageContent is not None and isinstance(content_item, ImageContent):
-                            # Image output from the model (e.g. image generation)
-                            image = self._parse_image_content(content_item)
-                            if image:
-                                if model_response.images is None:
-                                    model_response.images = []
-                                model_response.images.append(image)
-                        elif AudioContent is not None and isinstance(content_item, AudioContent):
-                            # Audio output from the model (e.g. TTS)
-                            audio = self._parse_audio_content(content_item)
-                            if audio:
-                                model_response.audio = audio
-
-            elif isinstance(step, ThoughtStep):
-                # ThoughtStep.summary is Optional[List[TextContent | ImageContent]]
-                if step.summary:
-                    for summary_item in step.summary:
-                        if isinstance(summary_item, TextContent):
-                            text = summary_item.text or ""
-                            if text:
-                                if model_response.reasoning_content is None:
-                                    model_response.reasoning_content = text
-                                else:
-                                    model_response.reasoning_content += text
-                if step.signature:
-                    if model_response.provider_data is None:
-                        model_response.provider_data = {}
-                    model_response.provider_data["thought_signature"] = step.signature
-
-            elif isinstance(step, FunctionCallStep):
-                args = step.arguments
-                if isinstance(args, dict):
-                    args_str = json.dumps(args)
-                elif args is not None:
-                    args_str = str(args)
-                else:
-                    args_str = ""
-
-                tool_call = {
-                    "id": step.id or str(uuid4()),
-                    "type": "function",
-                    "function": {
-                        "name": step.name or "",
-                        "arguments": args_str,
-                    },
-                }
-                if step.signature:
-                    tool_call["thought_signature"] = step.signature
-                model_response.tool_calls.append(tool_call)
-
-        # Parse usage metrics
-        if hasattr(interaction, "usage") and interaction.usage:
-            usage = interaction.usage
-            model_response.response_usage = MessageMetrics(
-                input_tokens=getattr(usage, "total_input_tokens", 0) or 0,
-                output_tokens=getattr(usage, "total_output_tokens", 0) or 0,
-                total_tokens=getattr(usage, "total_tokens", 0) or 0,
-            )
-
-        # Store interaction ID in provider_data
-        if model_response.provider_data is None:
-            model_response.provider_data = {}
-        model_response.provider_data["interaction_id"] = interaction_id
-
-        return model_response
-
     def _parse_image_content(self, content_item: Any) -> Optional[Image]:
         """Parse an ImageContent response item into an Agno Image."""
         image_data = getattr(content_item, "data", None)
@@ -680,12 +586,166 @@ class GeminiInteractions(Model):
         return None
 
     def _parse_provider_response(self, response: Any, **kwargs: Any) -> ModelResponse:
-        """Parse a raw Interaction response. Delegates to _parse_interaction_response."""
-        return self._parse_interaction_response(response)
+        """Parse an Interaction response into a ModelResponse."""
+        model_response = ModelResponse()
+        model_response.role = "assistant"
 
-    def _parse_provider_response_delta(self, response: Any, **kwargs: Any) -> ModelResponse:
-        """Not used directly - streaming is handled in invoke_stream/ainvoke_stream."""
-        return ModelResponse()
+        interaction_id = getattr(response, "id", None)
+
+        steps = getattr(response, "steps", None)
+        if not steps:
+            if model_response.provider_data is None:
+                model_response.provider_data = {}
+            model_response.provider_data["interaction_id"] = interaction_id
+            return model_response
+
+        for step in steps:
+            if isinstance(step, ModelOutputStep):
+                if step.content:
+                    for content_item in step.content:
+                        if isinstance(content_item, TextContent):
+                            text = content_item.text or ""
+                            if model_response.content is None:
+                                model_response.content = text
+                            else:
+                                model_response.content += text
+                        elif ImageContent is not None and isinstance(content_item, ImageContent):
+                            image = self._parse_image_content(content_item)
+                            if image:
+                                if model_response.images is None:
+                                    model_response.images = []
+                                model_response.images.append(image)
+                        elif AudioContent is not None and isinstance(content_item, AudioContent):
+                            audio = self._parse_audio_content(content_item)
+                            if audio:
+                                model_response.audio = audio
+
+            elif isinstance(step, ThoughtStep):
+                if step.summary:
+                    for summary_item in step.summary:
+                        if isinstance(summary_item, TextContent):
+                            text = summary_item.text or ""
+                            if text:
+                                if model_response.reasoning_content is None:
+                                    model_response.reasoning_content = text
+                                else:
+                                    model_response.reasoning_content += text
+                if step.signature:
+                    if model_response.provider_data is None:
+                        model_response.provider_data = {}
+                    model_response.provider_data["thought_signature"] = step.signature
+
+            elif isinstance(step, FunctionCallStep):
+                args = step.arguments
+                if isinstance(args, dict):
+                    args_str = json.dumps(args)
+                elif args is not None:
+                    args_str = str(args)
+                else:
+                    args_str = ""
+
+                tool_call = {
+                    "id": step.id or str(uuid4()),
+                    "type": "function",
+                    "function": {
+                        "name": step.name or "",
+                        "arguments": args_str,
+                    },
+                }
+                if step.signature:
+                    tool_call["thought_signature"] = step.signature
+                model_response.tool_calls.append(tool_call)
+
+        # Parse usage metrics
+        if hasattr(response, "usage") and response.usage:
+            usage = response.usage
+            model_response.response_usage = MessageMetrics(
+                input_tokens=getattr(usage, "total_input_tokens", 0) or 0,
+                output_tokens=getattr(usage, "total_output_tokens", 0) or 0,
+                total_tokens=getattr(usage, "total_tokens", 0) or 0,
+            )
+
+        if model_response.provider_data is None:
+            model_response.provider_data = {}
+        model_response.provider_data["interaction_id"] = interaction_id
+
+        return model_response
+
+    def _parse_provider_response_delta(
+        self, stream_event: Any, assistant_message: Message, stream_state: Dict[str, Any]
+    ) -> tuple[ModelResponse, Dict[str, Any]]:
+        """Parse a streaming event from the Interactions API into a ModelResponse.
+
+        Args:
+            stream_event: A streaming event from the Interactions API.
+            assistant_message: The assistant message being built (for metrics).
+            stream_state: Mutable state dict tracking pending tool calls across events.
+                Keys: "pending_tool_call" (Optional[Dict]), "pending_args_buffer" (str).
+
+        Returns:
+            Tuple of (ModelResponse, updated stream_state).
+        """
+        model_response = ModelResponse()
+
+        if isinstance(stream_event, interaction_types.InteractionCreatedEvent):
+            if stream_event.interaction and hasattr(stream_event.interaction, "id"):
+                model_response.provider_data = {"interaction_id": stream_event.interaction.id}
+            model_response.role = "assistant"
+
+        elif isinstance(stream_event, interaction_types.StepDelta):
+            delta = stream_event.delta
+            if isinstance(delta, DeltaText):
+                model_response.content = delta.text or ""
+            elif isinstance(delta, DeltaThoughtSummary):
+                model_response.reasoning_content = getattr(delta, "content", "") or ""
+            elif isinstance(delta, DeltaThoughtSignature):
+                if delta.signature:
+                    model_response.provider_data = {"thought_signature": delta.signature}
+            elif isinstance(delta, DeltaArgumentsDelta):
+                if delta.arguments:
+                    stream_state["pending_args_buffer"] += delta.arguments
+
+        elif isinstance(stream_event, interaction_types.StepStart):
+            step = stream_event.step
+            if isinstance(step, FunctionCallStep):
+                stream_state["pending_tool_call"] = {
+                    "id": step.id or str(uuid4()),
+                    "type": "function",
+                    "function": {
+                        "name": step.name or "",
+                        "arguments": "",
+                    },
+                }
+                if step.signature:
+                    stream_state["pending_tool_call"]["thought_signature"] = step.signature
+                args = step.arguments
+                if isinstance(args, dict) and args:
+                    stream_state["pending_args_buffer"] = json.dumps(args)
+                else:
+                    stream_state["pending_args_buffer"] = ""
+
+        elif isinstance(stream_event, interaction_types.StepStop):
+            if stream_state.get("pending_tool_call") is not None:
+                stream_state["pending_tool_call"]["function"]["arguments"] = stream_state["pending_args_buffer"] or "{}"
+                model_response.tool_calls.append(stream_state["pending_tool_call"])
+                stream_state["pending_tool_call"] = None
+                stream_state["pending_args_buffer"] = ""
+
+        elif isinstance(stream_event, interaction_types.InteractionCompletedEvent):
+            if stream_event.interaction:
+                if hasattr(stream_event.interaction, "usage") and stream_event.interaction.usage:
+                    usage = stream_event.interaction.usage
+                    model_response.response_usage = MessageMetrics(
+                        input_tokens=getattr(usage, "total_input_tokens", 0) or 0,
+                        output_tokens=getattr(usage, "total_output_tokens", 0) or 0,
+                        total_tokens=getattr(usage, "total_tokens", 0) or 0,
+                    )
+                if hasattr(stream_event.interaction, "id") and stream_event.interaction.id:
+                    if model_response.provider_data is None:
+                        model_response.provider_data = {}
+                    model_response.provider_data["interaction_id"] = stream_event.interaction.id
+
+        return model_response, stream_state
 
     def invoke(
         self,
@@ -707,7 +767,7 @@ class GeminiInteractions(Model):
             interaction = self.get_client().interactions.create(**request_kwargs)
             assistant_message.metrics.stop_timer()
 
-            return self._parse_interaction_response(interaction)
+            return self._parse_provider_response(interaction)
 
         except Exception as e:
             log_error(f"Error from Gemini Interactions API: {str(e)}")
@@ -732,81 +792,13 @@ class GeminiInteractions(Model):
         try:
             assistant_message.metrics.start_timer()
             stream = self.get_client().interactions.create(**request_kwargs)
-
-            # Track pending function call during streaming - arguments arrive incrementally
-            pending_tool_call: Optional[Dict[str, Any]] = None
-            pending_args_buffer: str = ""
+            stream_state: Dict[str, Any] = {"pending_tool_call": None, "pending_args_buffer": ""}
 
             for event in stream:
-                model_response = ModelResponse()
-
-                if isinstance(event, interaction_types.InteractionCreatedEvent):
-                    if event.interaction and hasattr(event.interaction, "id"):
-                        model_response.provider_data = {"interaction_id": event.interaction.id}
-                    model_response.role = "assistant"
-                    yield model_response
-
-                elif isinstance(event, interaction_types.StepDelta):
-                    delta = event.delta
-                    if isinstance(delta, DeltaText):
-                        model_response.content = delta.text or ""
-                        yield model_response
-                    elif isinstance(delta, DeltaThoughtSummary):
-                        model_response.reasoning_content = getattr(delta, "content", "") or ""
-                        yield model_response
-                    elif isinstance(delta, DeltaThoughtSignature):
-                        if delta.signature:
-                            model_response.provider_data = {"thought_signature": delta.signature}
-                            yield model_response
-                    elif isinstance(delta, DeltaArgumentsDelta):
-                        # Accumulate argument deltas into the pending tool call
-                        if delta.arguments:
-                            pending_args_buffer += delta.arguments
-
-                elif isinstance(event, interaction_types.StepStart):
-                    step = event.step
-                    if isinstance(step, FunctionCallStep):
-                        # Start a new pending tool call - arguments will come via DeltaArgumentsDelta
-                        pending_tool_call = {
-                            "id": step.id or str(uuid4()),
-                            "type": "function",
-                            "function": {
-                                "name": step.name or "",
-                                "arguments": "",
-                            },
-                        }
-                        if step.signature:
-                            pending_tool_call["thought_signature"] = step.signature
-                        # Initialize args buffer with any args already present
-                        args = step.arguments
-                        if isinstance(args, dict) and args:
-                            pending_args_buffer = json.dumps(args)
-                        else:
-                            pending_args_buffer = ""
-
-                elif isinstance(event, interaction_types.StepStop):
-                    # Emit the complete tool call when the step finishes
-                    if pending_tool_call is not None:
-                        pending_tool_call["function"]["arguments"] = pending_args_buffer or "{}"
-                        model_response.tool_calls.append(pending_tool_call)
-                        pending_tool_call = None
-                        pending_args_buffer = ""
-                        yield model_response
-
-                elif isinstance(event, interaction_types.InteractionCompletedEvent):
-                    if event.interaction:
-                        if hasattr(event.interaction, "usage") and event.interaction.usage:
-                            usage = event.interaction.usage
-                            model_response.response_usage = MessageMetrics(
-                                input_tokens=getattr(usage, "total_input_tokens", 0) or 0,
-                                output_tokens=getattr(usage, "total_output_tokens", 0) or 0,
-                                total_tokens=getattr(usage, "total_tokens", 0) or 0,
-                            )
-                        if hasattr(event.interaction, "id") and event.interaction.id:
-                            if model_response.provider_data is None:
-                                model_response.provider_data = {}
-                            model_response.provider_data["interaction_id"] = event.interaction.id
-                    yield model_response
+                model_response, stream_state = self._parse_provider_response_delta(
+                    stream_event=event, assistant_message=assistant_message, stream_state=stream_state
+                )
+                yield model_response
 
             assistant_message.metrics.stop_timer()
 
@@ -834,7 +826,7 @@ class GeminiInteractions(Model):
             interaction = await self.get_client().aio.interactions.create(**request_kwargs)
             assistant_message.metrics.stop_timer()
 
-            return self._parse_interaction_response(interaction)
+            return self._parse_provider_response(interaction)
 
         except Exception as e:
             log_error(f"Error from Gemini Interactions API (async): {str(e)}")
@@ -861,78 +853,13 @@ class GeminiInteractions(Model):
         try:
             assistant_message.metrics.start_timer()
             stream = await self.get_client().aio.interactions.create(**request_kwargs)
-
-            # Track pending function call during streaming - arguments arrive incrementally
-            pending_tool_call: Optional[Dict[str, Any]] = None
-            pending_args_buffer: str = ""
+            stream_state: Dict[str, Any] = {"pending_tool_call": None, "pending_args_buffer": ""}
 
             async for event in stream:
-                model_response = ModelResponse()
-
-                if isinstance(event, interaction_types.InteractionCreatedEvent):
-                    if event.interaction and hasattr(event.interaction, "id"):
-                        model_response.provider_data = {"interaction_id": event.interaction.id}
-                    model_response.role = "assistant"
-                    yield model_response
-
-                elif isinstance(event, interaction_types.StepDelta):
-                    delta = event.delta
-                    if isinstance(delta, DeltaText):
-                        model_response.content = delta.text or ""
-                        yield model_response
-                    elif isinstance(delta, DeltaThoughtSummary):
-                        model_response.reasoning_content = getattr(delta, "content", "") or ""
-                        yield model_response
-                    elif isinstance(delta, DeltaThoughtSignature):
-                        if delta.signature:
-                            model_response.provider_data = {"thought_signature": delta.signature}
-                            yield model_response
-                    elif isinstance(delta, DeltaArgumentsDelta):
-                        # Accumulate argument deltas into the pending tool call
-                        if delta.arguments:
-                            pending_args_buffer += delta.arguments
-
-                elif isinstance(event, interaction_types.StepStart):
-                    step = event.step
-                    if isinstance(step, FunctionCallStep):
-                        pending_tool_call = {
-                            "id": step.id or str(uuid4()),
-                            "type": "function",
-                            "function": {
-                                "name": step.name or "",
-                                "arguments": "",
-                            },
-                        }
-                        if step.signature:
-                            pending_tool_call["thought_signature"] = step.signature
-                        args = step.arguments
-                        if isinstance(args, dict) and args:
-                            pending_args_buffer = json.dumps(args)
-                        else:
-                            pending_args_buffer = ""
-
-                elif isinstance(event, interaction_types.StepStop):
-                    if pending_tool_call is not None:
-                        pending_tool_call["function"]["arguments"] = pending_args_buffer or "{}"
-                        model_response.tool_calls.append(pending_tool_call)
-                        pending_tool_call = None
-                        pending_args_buffer = ""
-                        yield model_response
-
-                elif isinstance(event, interaction_types.InteractionCompletedEvent):
-                    if event.interaction:
-                        if hasattr(event.interaction, "usage") and event.interaction.usage:
-                            usage = event.interaction.usage
-                            model_response.response_usage = MessageMetrics(
-                                input_tokens=getattr(usage, "total_input_tokens", 0) or 0,
-                                output_tokens=getattr(usage, "total_output_tokens", 0) or 0,
-                                total_tokens=getattr(usage, "total_tokens", 0) or 0,
-                            )
-                        if hasattr(event.interaction, "id") and event.interaction.id:
-                            if model_response.provider_data is None:
-                                model_response.provider_data = {}
-                            model_response.provider_data["interaction_id"] = event.interaction.id
-                    yield model_response
+                model_response, stream_state = self._parse_provider_response_delta(
+                    stream_event=event, assistant_message=assistant_message, stream_state=stream_state
+                )
+                yield model_response
 
             assistant_message.metrics.stop_timer()
 

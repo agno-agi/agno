@@ -344,7 +344,7 @@ class TestParseInteractionResponse:
         mock_interaction.steps = [self._make_model_output_step("Hello, world!")]
         mock_interaction.usage = None
 
-        response = model._parse_interaction_response(mock_interaction)
+        response = model._parse_provider_response(mock_interaction)
         assert response.role == "assistant"
         assert response.content == "Hello, world!"
         assert response.provider_data["interaction_id"] == "interactions/test123"
@@ -357,7 +357,7 @@ class TestParseInteractionResponse:
         mock_interaction.steps = [self._make_function_call_step("call_1", "get_weather", {"city": "Paris"})]
         mock_interaction.usage = None
 
-        response = model._parse_interaction_response(mock_interaction)
+        response = model._parse_provider_response(mock_interaction)
         assert len(response.tool_calls) == 1
         assert response.tool_calls[0]["id"] == "call_1"
         assert response.tool_calls[0]["function"]["name"] == "get_weather"
@@ -374,7 +374,7 @@ class TestParseInteractionResponse:
         ]
         mock_interaction.usage = None
 
-        response = model._parse_interaction_response(mock_interaction)
+        response = model._parse_provider_response(mock_interaction)
         assert response.reasoning_content == "Let me think about this..."
         assert response.content == "Here is my answer."
         assert response.provider_data["thought_signature"] == "sig123"
@@ -392,7 +392,7 @@ class TestParseInteractionResponse:
         mock_usage.total_tokens = 30
         mock_interaction.usage = mock_usage
 
-        response = model._parse_interaction_response(mock_interaction)
+        response = model._parse_provider_response(mock_interaction)
         assert response.response_usage is not None
         assert response.response_usage.input_tokens == 10
         assert response.response_usage.output_tokens == 20
@@ -406,7 +406,7 @@ class TestParseInteractionResponse:
         mock_interaction.steps = []
         mock_interaction.usage = None
 
-        response = model._parse_interaction_response(mock_interaction)
+        response = model._parse_provider_response(mock_interaction)
         assert response.role == "assistant"
         assert response.content is None
         assert response.tool_calls == []
@@ -419,7 +419,7 @@ class TestParseInteractionResponse:
         mock_interaction.steps = []
         mock_interaction.usage = None
 
-        response = model._parse_interaction_response(mock_interaction)
+        response = model._parse_provider_response(mock_interaction)
         assert response.provider_data["interaction_id"] == "interactions/first"
 
     def test_multiple_function_calls(self):
@@ -433,7 +433,7 @@ class TestParseInteractionResponse:
         ]
         mock_interaction.usage = None
 
-        response = model._parse_interaction_response(mock_interaction)
+        response = model._parse_provider_response(mock_interaction)
         assert len(response.tool_calls) == 2
         assert response.tool_calls[0]["function"]["name"] == "func_a"
         assert response.tool_calls[1]["function"]["name"] == "func_b"
@@ -448,7 +448,7 @@ class TestParseInteractionResponse:
         ]
         mock_interaction.usage = None
 
-        response = model._parse_interaction_response(mock_interaction)
+        response = model._parse_provider_response(mock_interaction)
         assert response.tool_calls[0]["thought_signature"] == "thought_sig_abc"
 
     def test_parse_none_usage_fields(self):
@@ -465,7 +465,7 @@ class TestParseInteractionResponse:
         mock_usage.total_tokens = None
         mock_interaction.usage = mock_usage
 
-        response = model._parse_interaction_response(mock_interaction)
+        response = model._parse_provider_response(mock_interaction)
         assert response.response_usage.input_tokens == 0
         assert response.response_usage.output_tokens == 0
         assert response.response_usage.total_tokens == 0
@@ -897,7 +897,7 @@ class TestMultimodalOutput:
         mock_interaction.steps = [mock_step]
         mock_interaction.usage = None
 
-        response = model._parse_interaction_response(mock_interaction)
+        response = model._parse_provider_response(mock_interaction)
         assert response.images is not None
         assert len(response.images) == 1
         assert response.images[0].content == b"fake_png_data"
@@ -927,7 +927,7 @@ class TestMultimodalOutput:
         mock_interaction.steps = [mock_step]
         mock_interaction.usage = None
 
-        response = model._parse_interaction_response(mock_interaction)
+        response = model._parse_provider_response(mock_interaction)
         assert response.audio is not None
         assert response.audio.content == b"fake_wav_data"
         assert response.audio.mime_type == "audio/wav"
@@ -960,7 +960,7 @@ class TestMultimodalOutput:
         mock_interaction.steps = [mock_step]
         mock_interaction.usage = None
 
-        response = model._parse_interaction_response(mock_interaction)
+        response = model._parse_provider_response(mock_interaction)
         assert response.content == "Here is the generated image:"
         assert response.images is not None
         assert len(response.images) == 1
