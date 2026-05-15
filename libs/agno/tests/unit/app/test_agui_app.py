@@ -12,6 +12,18 @@ from agno.os.interfaces.agui.utils import (
 from agno.run.agent import RunContentEvent, ToolCallCompletedEvent, ToolCallStartedEvent
 
 
+class FakeAGUIMessage:
+    def __init__(self, role: str, content, **extra):
+        self.role = role
+        self.content = content
+        self._extra = extra
+
+    def model_dump(self):
+        data = {"role": self.role, "content": self.content}
+        data.update(self._extra)
+        return data
+
+
 def test_event_buffer_initial_state():
     """Test EventBuffer initial state"""
     buffer = EventBuffer()
@@ -140,6 +152,57 @@ def test_event_buffer_edge_cases():
     buffer.end_tool_call("")
     assert "" in buffer.ended_tool_call_ids
     assert "" not in buffer.active_tool_call_ids
+
+
+def test_extract_agui_user_input_keeps_text_only_input_as_string():
+    message = FakeAGUIMessage(
+        role="user",
+        content=[
+            {"type": "text", "text": "Hello"},
+            {"type": "text", "text": "world"},
+        ],
+        id="msg-1",
+    )
+
+    result = extract_agui_user_input([message])
+
+    assert result == "Hello\nworld"
+
+
+def test_extract_agui_user_input_preserves_multimodal_payload():
+    message = FakeAGUIMessage(
+        role="user",
+        content=[
+            {"type": "text", "text": "Look at this image"},
+            {"type": "image", "image_url": "data:image/png;base64,abc123"},
+        ],
+        id="msg-2",
+        name="tester",
+    )
+
+    result = extract_agui_user_input([message])
+
+    assert isinstance(result, dict)
+    assert result["role"] == "user"
+    assert result["content"][0]["text"] == "Look at this image"
+    assert result["content"][1]["type"] == "image"
+    assert result["content"][1]["image_url"] == "data:image/png;base64,abc123"
+
+
+def test_extract_agui_user_input_preserves_separate_media_fields():
+    message = FakeAGUIMessage(
+        role="user",
+        content=[{"type": "text", "text": "Here is the image"}],
+        id="msg-3",
+        images=[{"id": "img-1", "mime_type": "image/png"}],
+    )
+
+    result = extract_agui_user_input([message])
+
+    assert isinstance(result, dict)
+    assert result["content"][0]["text"] == "Here is the image"
+    assert result["images"][0]["id"] == "img-1"
+    assert result["images"][0]["mime_type"] == "image/png"
 
 
 @pytest.mark.asyncio

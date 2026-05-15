@@ -153,26 +153,69 @@ class EventBuffer:
         self.reasoning_step_count = 0
 
 
-def extract_agui_user_input(messages: List[AGUIMessage]) -> str:
-    """Extract the last user message content from AG-UI messages.
+def _message_has_non_text_content(message: AGUIMessage) -> bool:
+    content = getattr(message, "content", None)
+    if not isinstance(content, list):
+        return False
+
+    for part in content:
+        if isinstance(part, dict):
+            if part.get("type") != "text":
+                return True
+        elif getattr(part, "type", None) != "text":
+            return True
+
+    for field_name in ("images", "audio", "videos", "files"):
+        if getattr(message, field_name, None):
+            return True
+
+    return False
+
+
+def _dump_message(message: AGUIMessage) -> Dict[str, Any]:
+    if hasattr(message, "model_dump"):
+        return message.model_dump()  # type: ignore[return-value]
+    if hasattr(message, "dict"):
+        return message.dict()  # type: ignore[return-value]
+
+    dumped: Dict[str, Any] = {}
+    for key in ("id", "role", "content", "name", "tool_call_id", "tool_calls", "audio", "images", "videos", "files"):
+        if hasattr(message, key):
+            dumped[key] = getattr(message, key)
+    return dumped
+
+
+def extract_agui_user_input(messages: List[AGUIMessage]) -> Union[str, Dict[str, Any]]:
+    """Extract the last user message from AG-UI messages.
 
     AG-UI frontends send the full conversation history on every request.
     The agent manages its own history via session DB, so we only need the
     latest user message as input — matching the REST API pattern.
+
+    For text-only messages we keep returning a plain string. For multimodal
+    messages we return the full message payload so image/audio/file parts are
+    preserved when calling Agent/Team.
     """
     for msg in reversed(messages):
         if msg.role == "user" and msg.content is not None:
-            # UserMessage.content is Union[str, List[InputContent]]
+            # Text-only user message — preserve the existing string path.
             if isinstance(msg.content, str):
                 return msg.content
-            # Multimodal: extract text parts
+
+            # Multimodal user message — if the content list contains anything
+            # other than plain text parts, return the full payload intact.
             if isinstance(msg.content, list):
                 text_parts = []
                 for part in msg.content:
                     if hasattr(part, "type") and part.type == "text" and hasattr(part, "text"):
                         text_parts.append(part.text)
-                if text_parts:
+                    elif isinstance(part, dict) and part.get("type") == "text" and "text" in part:
+                        text_parts.append(str(part.get("text", "")))
+
+                if text_parts and not _message_has_non_text_content(msg):
                     return "\n".join(text_parts)
+
+            return _dump_message(msg)
     return ""
 
 
