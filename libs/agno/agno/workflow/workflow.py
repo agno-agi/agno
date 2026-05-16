@@ -5495,6 +5495,10 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                     )
 
+                    # Honor cancellation requested while the executor was running — without this
+                    # the single-step workflow would fall through to completion (see #7929).
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
                     if is_executor_pause(step_output):
                         resolved = resolve_executor_pause(step, workflow_run_response)
                         if resolved:
@@ -6292,6 +6296,10 @@ class Workflow:
 
                     if step_output is None:
                         step_output = StepOutput(content="")
+
+                    # Honor cancellation requested while the executor was running — without this
+                    # the single-step workflow would fall through to completion (see #7929).
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     if is_executor_pause(step_output):
                         resolved = resolve_executor_pause(step, workflow_run_response)
@@ -7378,6 +7386,10 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                     )
 
+                    # Honor cancellation requested while the executor was running — without this
+                    # the single-step workflow would fall through to completion (see #7929).
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
                     if is_executor_pause(step_output):
                         resolved = resolve_executor_pause(step, workflow_run_response)
                         if resolved:
@@ -7892,6 +7904,10 @@ class Workflow:
 
                     if step_output is None:
                         step_output = StepOutput(content="")
+
+                    # Honor cancellation requested while the executor was running — without this
+                    # the single-step workflow would fall through to completion (see #7929).
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     if is_executor_pause(step_output):
                         resolved = resolve_executor_pause(step, workflow_run_response)
