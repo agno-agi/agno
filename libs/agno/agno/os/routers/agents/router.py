@@ -1009,7 +1009,7 @@ def get_agent_router(
         if (session_id is None or session_id == "") and not isinstance(agent, RemoteAgent):
             raise HTTPException(
                 status_code=400,
-                detail="session_id is required to continue a run",
+                detail=SESSION_ID_REQUIRED,
             )
 
         # Ownership check: a non-admin caller must own the session AND the run
