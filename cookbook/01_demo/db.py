@@ -1,30 +1,22 @@
-"""Database configuration."""
+"""
+Database
+========
 
-from os import getenv
+Local SQLite for agent sessions + memory.
+Stored at ``data/demo.db`` next to this cookbook (gitignored).
+"""
 
-from agno.db.postgres import PostgresDb
-from agno.knowledge import Knowledge
-from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.vectordb.pgvector import PgVector, SearchType
+from pathlib import Path
 
-db_url = getenv("DATABASE_URL", "postgresql+psycopg://ai:ai@localhost:5532/ai")
+from agno.db.sqlite import SqliteDb
 
+DB_ID = "demo-db"
+DB_FILE = str(Path(__file__).parent / "data" / "demo.db")
 
-def get_postgres_db(contents_table: str | None = None) -> PostgresDb:
-    if contents_table is not None:
-        return PostgresDb(id="demo-db", db_url=db_url, knowledge_table=contents_table)
-    return PostgresDb(id="demo-db", db_url=db_url)
+# Ensure the data directory exists before SqliteDb opens the file.
+Path(DB_FILE).parent.mkdir(parents=True, exist_ok=True)
 
 
-def create_knowledge(name: str, table_name: str) -> Knowledge:
-    return Knowledge(
-        name=name,
-        vector_db=PgVector(
-            db_url=db_url,
-            table_name=table_name,
-            search_type=SearchType.hybrid,
-            embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-        ),
-        contents_db=get_postgres_db(contents_table=f"{table_name}_contents"),
-        max_results=10,
-    )
+def get_db() -> SqliteDb:
+    """Local SQLite database for agent sessions + memory."""
+    return SqliteDb(id=DB_ID, db_file=DB_FILE)
