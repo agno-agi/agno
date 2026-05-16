@@ -3,7 +3,7 @@
 import pytest
 
 from agno.tools import Toolkit, tool
-from agno.tools.function import Function
+from agno.tools.function import Function, FunctionCall
 
 
 def example_func(a: int, b: int) -> int:
@@ -368,7 +368,7 @@ class TestToolDecoratorOnClassMethods:
             def __init__(self):
                 super().__init__(name="test_toolkit", tools=[self.update_state])
 
-            @tool()
+            @tool(name="update_tool_state")
             def update_state(self, key: str, value: str, run_context: RunContext) -> str:
                 """Update session state via run_context."""
                 if run_context.session_state is None:
@@ -377,12 +377,21 @@ class TestToolDecoratorOnClassMethods:
                 return f"Set {key}={value}"
 
         toolkit = MyToolkit()
-        func = toolkit.functions["update_state"]
+        func = toolkit.functions["update_tool_state"]
 
         # run_context should be excluded from parameters
         assert "run_context" not in func.parameters.get("properties", {})
         assert "key" in func.parameters.get("properties", {})
         assert "value" in func.parameters.get("properties", {})
+
+        run_context = RunContext(run_id="run-1", session_id="session-1", session_state={})
+        func._run_context = run_context
+
+        result = FunctionCall(function=func, arguments={"key": "theme", "value": "dark"}).execute()
+
+        assert result.status == "success"
+        assert result.result == "Set theme=dark"
+        assert run_context.session_state == {"theme": "dark"}
 
     def test_tool_decorator_multiple_methods(self):
         """Test multiple @tool decorated methods in same toolkit."""
