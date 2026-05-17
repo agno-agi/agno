@@ -130,76 +130,63 @@ async def aget_last_run_output(agent: Agent, session_id: Optional[str] = None) -
 def read_session(
     agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT, user_id: Optional[str] = None
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
-    try:
-        if not agent.db:
-            raise ValueError("Db not initialized")
-        return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-    except Exception as e:
-        import traceback
+    """Get a Session from the database.
 
-        traceback.print_exc(limit=3)
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    Returns None only when the session does not exist. Raises on DB errors so
+    callers can distinguish a genuine "not found" from a transient failure that
+    would otherwise silently discard session history.
+    """
+    if not agent.db:
+        raise ValueError("Db not initialized")
+    return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
 
 
 async def aread_session(
     agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT, user_id: Optional[str] = None
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
+    """Get a Session from the database (async variant).
+
+    Returns None only when the session does not exist. Raises on DB errors so
+    callers can distinguish a genuine "not found" from a transient failure that
+    would otherwise silently discard session history.
+    """
     from agno.agent import _init
 
-    try:
-        if not agent.db:
-            raise ValueError("Db not initialized")
-        if _init.has_async_db(agent):
-            return await agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-        else:
-            return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-    except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    if not agent.db:
+        raise ValueError("Db not initialized")
+    if _init.has_async_db(agent):
+        return await agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
+    return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
 
 
 def upsert_session(
     agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Upsert a Session into the database."""
+    """Upsert a Session into the database.
 
-    try:
-        if not agent.db:
-            raise ValueError("Db not initialized")
-        return agent.db.upsert_session(session=session)  # type: ignore
-    except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
-        log_warning(f"Error upserting session into db: {str(e)}")
-        return None
+    Raises on DB errors rather than silently returning None so that write
+    failures are not invisible to callers.
+    """
+    if not agent.db:
+        raise ValueError("Db not initialized")
+    return agent.db.upsert_session(session=session)  # type: ignore
 
 
 async def aupsert_session(
     agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Upsert a Session into the database."""
+    """Upsert a Session into the database (async variant).
+
+    Raises on DB errors rather than silently returning None so that write
+    failures are not invisible to callers.
+    """
     from agno.agent import _init
 
-    try:
-        if not agent.db:
-            raise ValueError("Db not initialized")
-        if _init.has_async_db(agent):
-            return await agent.db.upsert_session(session=session)  # type: ignore
-        else:
-            return agent.db.upsert_session(session=session)  # type: ignore
-    except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
-        log_warning(f"Error upserting session into db: {str(e)}")
-        return None
+    if not agent.db:
+        raise ValueError("Db not initialized")
+    if _init.has_async_db(agent):
+        return await agent.db.upsert_session(session=session)  # type: ignore
+    return agent.db.upsert_session(session=session)  # type: ignore
 
 
 # ---------------------------------------------------------------------------

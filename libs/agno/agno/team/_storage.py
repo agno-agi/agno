@@ -164,63 +164,60 @@ def get_session_metrics_internal(team: "Team", session: TeamSession) -> SessionM
 def _read_session(
     team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM, user_id: Optional[str] = None
 ) -> Optional[Union[TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
-    try:
-        if not team.db:
-            raise ValueError("Db not initialized")
-        session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
-        return session  # type: ignore
-    except Exception as e:
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    """Get a Session from the database.
+
+    Returns None only when the session does not exist. Raises on DB errors so
+    callers can distinguish a genuine "not found" from a transient failure that
+    would otherwise silently discard session history.
+    """
+    if not team.db:
+        raise ValueError("Db not initialized")
+    return team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
 
 
 async def _aread_session(
     team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM, user_id: Optional[str] = None
 ) -> Optional[Union[TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
+    """Get a Session from the database (async variant).
+
+    Returns None only when the session does not exist. Raises on DB errors so
+    callers can distinguish a genuine "not found" from a transient failure that
+    would otherwise silently discard session history.
+    """
     from agno.team._init import _has_async_db
 
-    try:
-        if not team.db:
-            raise ValueError("Db not initialized")
-        if _has_async_db(team):
-            team.db = cast(AsyncBaseDb, team.db)
-            session = await team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
-        else:
-            session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore[assignment]
-        return session  # type: ignore
-    except Exception as e:
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    if not team.db:
+        raise ValueError("Db not initialized")
+    if _has_async_db(team):
+        team.db = cast(AsyncBaseDb, team.db)
+        return await team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
+    return team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore[return-value]
 
 
 def _upsert_session(team: "Team", session: TeamSession) -> Optional[TeamSession]:
-    """Upsert a Session into the database."""
+    """Upsert a Session into the database.
 
-    try:
-        if not team.db:
-            raise ValueError("Db not initialized")
-        return team.db.upsert_session(session=session)  # type: ignore
-    except Exception as e:
-        log_warning(f"Error upserting session into db: {str(e)}")
-    return None
+    Raises on DB errors rather than silently returning None so that write
+    failures are not invisible to callers.
+    """
+    if not team.db:
+        raise ValueError("Db not initialized")
+    return team.db.upsert_session(session=session)  # type: ignore
 
 
 async def _aupsert_session(team: "Team", session: TeamSession) -> Optional[TeamSession]:
-    """Upsert a Session into the database."""
+    """Upsert a Session into the database (async variant).
+
+    Raises on DB errors rather than silently returning None so that write
+    failures are not invisible to callers.
+    """
     from agno.team._init import _has_async_db
 
-    try:
-        if not team.db:
-            raise ValueError("Db not initialized")
-        if _has_async_db(team):
-            return await team.db.upsert_session(session=session)  # type: ignore
-        else:
-            return team.db.upsert_session(session=session)  # type: ignore
-    except Exception as e:
-        log_warning(f"Error upserting session into db: {str(e)}")
-    return None
+    if not team.db:
+        raise ValueError("Db not initialized")
+    if _has_async_db(team):
+        return await team.db.upsert_session(session=session)  # type: ignore
+    return team.db.upsert_session(session=session)  # type: ignore
 
 
 def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str] = None) -> TeamSession:
