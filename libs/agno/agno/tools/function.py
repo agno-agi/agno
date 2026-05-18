@@ -157,6 +157,9 @@ class Function(BaseModel):
     show_result: bool = False
     # If True, the agent will stop after the function call.
     stop_after_tool_call: bool = False
+    # If True, the agent will stop after the function call ONLY if it succeeded.
+    # On failure, the error is returned to the model so it can retry.
+    stop_after_successful_tool_call: bool = False
     # Hook that runs before the function is executed.
     # If defined, can accept the FunctionCall instance as a parameter.
     pre_hook: Optional[Callable] = None

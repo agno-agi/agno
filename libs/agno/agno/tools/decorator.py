@@ -66,6 +66,7 @@ def tool(
     add_instructions: bool = True,
     show_result: Optional[bool] = None,
     stop_after_tool_call: Optional[bool] = None,
+    stop_after_successful_tool_call: Optional[bool] = None,
     requires_confirmation: Optional[bool] = None,
     requires_user_input: Optional[bool] = None,
     user_input_fields: Optional[List[str]] = None,
@@ -95,6 +96,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         add_instructions: bool - If True, add instructions to the system message
         show_result: Optional[bool] - If True, shows the result after function call
         stop_after_tool_call: Optional[bool] - If True, the agent will stop after the function call.
+        stop_after_successful_tool_call: Optional[bool] - If True, the agent will stop after the function call only if it succeeded. On failure, error is returned to model for retry.
         requires_confirmation: Optional[bool] - If True, the function will require user confirmation before execution
         requires_user_input: Optional[bool] - If True, the function will require user input before execution
         user_input_fields: Optional[List[str]] - List of fields that will be provided to the function as user input
@@ -133,6 +135,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "add_instructions",
             "show_result",
             "stop_after_tool_call",
+            "stop_after_successful_tool_call",
             "requires_confirmation",
             "requires_user_input",
             "user_input_fields",
@@ -275,7 +278,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         }
 
         # Automatically set show_result=True if stop_after_tool_call=True (unless explicitly set to False)
-        if kwargs.get("stop_after_tool_call") is True:
+        if kwargs.get("stop_after_tool_call") is True or kwargs.get("stop_after_successful_tool_call") is True:
             if "show_result" not in kwargs or kwargs.get("show_result") is None:
                 tool_config["show_result"] = True
         function = Function(**tool_config)

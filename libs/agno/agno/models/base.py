@@ -2090,7 +2090,10 @@ class Model(ABC):
             tool_name=function_call.function.name,
             tool_args=function_call.arguments,
             tool_call_error=not success,
-            stop_after_tool_call=function_call.function.stop_after_tool_call,
+            stop_after_tool_call=(
+                function_call.function.stop_after_tool_call
+                or (function_call.function.stop_after_successful_tool_call and success)
+            ),
             images=images,
             videos=videos,
             audio=audios,

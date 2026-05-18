@@ -264,7 +264,8 @@ class Toolkit:
 
         # decorator settings take precedence, then toolkit settings
         stop_after = function.stop_after_tool_call or tool_name in self.stop_after_tool_call_tools
-        show_result = function.show_result or tool_name in self.show_result_tools or stop_after
+        stop_after_success = function.stop_after_successful_tool_call
+        show_result = function.show_result or tool_name in self.show_result_tools or stop_after or stop_after_success
         requires_confirmation = function.requires_confirmation or tool_name in self.requires_confirmation_tools
         external_execution = function.external_execution or tool_name in self.external_execution_required_tools
 
@@ -280,6 +281,7 @@ class Toolkit:
             skip_entrypoint_processing=True,  # Parameters already processed by decorator
             show_result=show_result,
             stop_after_tool_call=stop_after,
+            stop_after_successful_tool_call=stop_after_success,
             pre_hook=function.pre_hook,
             post_hook=function.post_hook,
             tool_hooks=function.tool_hooks,
