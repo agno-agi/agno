@@ -54,7 +54,7 @@ def sanitize_filename(filename: str) -> str:
         raise PathSecurityError(f"Invalid filename: {filename!r}")
     if "/" in filename or "\\" in filename:
         log_debug(f"sanitize_filename discarded path components from {filename!r}")
-    # Path().name extracts basename; rstrip prevents "file." → "" on Windows
+    # rstrip prevents trailing dots creating empty names on Windows
     safe = Path(filename.replace("\\", "/")).name.rstrip(". ")
     if not safe or safe.strip(".") == "":
         raise PathSecurityError(f"Invalid filename: {filename!r}")
