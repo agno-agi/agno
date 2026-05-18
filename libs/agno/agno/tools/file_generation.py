@@ -64,11 +64,12 @@ class FileGenerationTools(Toolkit):
         super().__init__(name="file_generation", tools=tools, **kwargs)
 
     def _save_file_to_disk(self, content: Union[str, bytes], filename: str) -> Tuple[Optional[str], str]:
-        """Save file to disk if output_directory is set. Returns (path, basename)."""
+        """Save file to disk if output_directory is set. Returns (path, safe_basename)."""
         if not self.output_directory:
             return None, sanitize_filename(filename)
 
         file_path = safe_join_filename(self.output_directory, filename)
+        safe_name = file_path.name
 
         if isinstance(content, str):
             file_path.write_text(content, encoding="utf-8")
@@ -76,7 +77,7 @@ class FileGenerationTools(Toolkit):
             file_path.write_bytes(content)
 
         log_debug(f"File saved to: {file_path}")
-        return str(file_path), file_path.name
+        return str(file_path), safe_name
 
     def _build_file_result(
         self,
