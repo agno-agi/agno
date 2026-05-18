@@ -5,8 +5,11 @@ from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.agent import Agent
+from agno.agent.factory import AgentFactory
+from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.db.base import SessionType
+from agno.db.utils import detect_session_type
 from agno.os.config import (
     ChatConfig,
     EvalsConfig,
@@ -18,8 +21,10 @@ from agno.os.config import (
 )
 from agno.os.utils import extract_input_media, get_run_input, get_session_name, to_utc_datetime
 from agno.session import AgentSession, TeamSession, WorkflowSession
+from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
+from agno.workflow.factory import WorkflowFactory
 from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
@@ -101,10 +106,24 @@ class AgentSummaryResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the agent")
     description: Optional[str] = Field(None, description="Description of the agent")
     db_id: Optional[str] = Field(None, description="Database identifier")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
     @classmethod
-    def from_agent(cls, agent: Union[Agent, RemoteAgent]) -> "AgentSummaryResponse":
-        return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
+    def from_agent(cls, agent: Union[Agent, AgentProtocol, RemoteAgent, AgentFactory]) -> "AgentSummaryResponse":
+        agent_db = getattr(agent, "db", None)
+        framework = getattr(agent, "framework", None)
+        metadata = {"framework": framework} if framework else None
+        if isinstance(agent, AgentFactory):
+            return cls(
+                id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None
+            )
+        return cls(
+            id=agent.id,
+            name=agent.name,
+            description=getattr(agent, "description", None),
+            db_id=agent_db.id if agent_db else None,
+            metadata=metadata,
+        )
 
 
 class TeamSummaryResponse(BaseModel):
@@ -115,7 +134,9 @@ class TeamSummaryResponse(BaseModel):
     mode: Optional[str] = Field(None, description="Team execution mode (coordinate, route, broadcast, tasks)")
 
     @classmethod
-    def from_team(cls, team: Union[Team, RemoteTeam]) -> "TeamSummaryResponse":
+    def from_team(cls, team: Union[Team, RemoteTeam, TeamFactory]) -> "TeamSummaryResponse":
+        if isinstance(team, TeamFactory):
+            return cls(id=team.id, name=team.name, description=team.description, db_id=team.db.id if team.db else None)
         db_id = team.db.id if team.db else None
         mode = team.mode.value if hasattr(team, "mode") and team.mode else None
         return cls(id=team.id, name=team.name, description=team.description, db_id=db_id, mode=mode)
@@ -126,6 +147,8 @@ class WorkflowSummaryResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the workflow")
     description: Optional[str] = Field(None, description="Description of the workflow")
     db_id: Optional[str] = Field(None, description="Database identifier")
+    is_factory: bool = Field(False, description="Whether this workflow is a factory")
+    factory_input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for factory_input")
     is_component: bool = Field(False, description="Whether this workflow was created via Builder")
     current_version: Optional[int] = Field(None, description="Current published version number")
     stage: Optional[str] = Field(None, description="Stage of the loaded config (draft/published)")
@@ -133,9 +156,24 @@ class WorkflowSummaryResponse(BaseModel):
     @classmethod
     def from_workflow(
         cls,
-        workflow: Union[Workflow, RemoteWorkflow],
+        workflow: Union[Workflow, RemoteWorkflow, WorkflowFactory],
         is_component: bool = False,
     ) -> "WorkflowSummaryResponse":
+        if isinstance(workflow, WorkflowFactory):
+            factory_input_schema = None
+            if workflow.input_schema is not None:
+                try:
+                    factory_input_schema = workflow.input_schema.model_json_schema()
+                except Exception:
+                    pass
+            return cls(
+                id=workflow.id,
+                name=workflow.name,
+                description=workflow.description,
+                db_id=workflow.db.id if workflow.db else None,
+                is_factory=True,
+                factory_input_schema=factory_input_schema,
+            )
         db_id = workflow.db.id if workflow.db else None
         return cls(
             id=workflow.id,
@@ -151,6 +189,7 @@ class WorkflowSummaryResponse(BaseModel):
 class InfoResponse(BaseModel):
     """Response schema for the /info endpoint returning lightweight OS metadata."""
 
+    agno_version: str = Field(..., description="Version of the agno framework")
     agent_count: int = Field(0, description="Number of agents registered in the OS")
     team_count: int = Field(0, description="Number of teams registered in the OS")
     workflow_count: int = Field(0, description="Number of workflows registered in the OS")
@@ -204,6 +243,7 @@ class SessionSchema(BaseModel):
     created_at: Optional[datetime] = Field(None, description="Timestamp when session was created")
     updated_at: Optional[datetime] = Field(None, description="Timestamp when session was last updated")
     # Enhanced fields for richer list responses
+    session_type: Optional[str] = Field(None, description="Type of session: agent, team, or workflow")
     user_id: Optional[str] = Field(None, description="User ID associated with the session")
     agent_id: Optional[str] = Field(None, description="Agent ID if this is an agent session")
     team_id: Optional[str] = Field(None, description="Team ID if this is a team session")
@@ -232,12 +272,16 @@ class SessionSchema(BaseModel):
         if summary and hasattr(summary, "to_dict"):
             summary = summary.to_dict()
 
+        # Determine session_type using shared util
+        session_type_str: Optional[str] = detect_session_type(session)
+
         return cls(
             session_id=session.get("session_id", ""),
             session_name=session_name,
             session_state=session_data.get("session_state", None),
             created_at=created_at,
             updated_at=updated_at,
+            session_type=session_type_str,
             user_id=session.get("user_id"),
             agent_id=session.get("agent_id"),
             team_id=session.get("team_id"),
@@ -527,6 +571,12 @@ class WorkflowRunSchema(BaseModel):
     status: Optional[str] = Field(None, description="Status of the workflow run")
     step_results: Optional[list[dict]] = Field(None, description="Results from each workflow step")
     step_executor_runs: Optional[list[dict]] = Field(None, description="Executor runs for each step")
+    step_requirements: Optional[list[dict]] = Field(
+        None, description="HITL step requirements (resolved state for historical display)"
+    )
+    pause_kind: Optional[str] = Field(None, description="Kind of HITL pause: 'step' or 'executor'")
+    paused_step_name: Optional[str] = Field(None, description="Name of the step that caused the pause")
+    paused_step_index: Optional[int] = Field(None, description="Index of the step that caused the pause")
     metrics: Optional[dict] = Field(None, description="Performance and usage metrics")
     created_at: Optional[datetime] = Field(None, description="Run creation timestamp")
     reasoning_content: Optional[str] = Field(None, description="Reasoning content if reasoning was enabled")
@@ -557,6 +607,10 @@ class WorkflowRunSchema(BaseModel):
             metrics=run_response.get("metrics", {}),
             step_results=run_response.get("step_results", []),
             step_executor_runs=run_response.get("step_executor_runs", []),
+            step_requirements=run_response.get("step_requirements"),
+            pause_kind=run_response.get("pause_kind"),
+            paused_step_name=run_response.get("paused_step_name"),
+            paused_step_index=run_response.get("paused_step_index"),
             created_at=to_utc_datetime(run_response.get("created_at")),
             reasoning_content=run_response.get("reasoning_content", ""),
             reasoning_steps=run_response.get("reasoning_steps", []),
