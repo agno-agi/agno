@@ -134,6 +134,7 @@ class SlackTools(Toolkit):
         token: Optional[str] = None,
         markdown: bool = True,
         output_directory: Optional[str] = None,
+        save_downloads: bool = False,
         enable_send_message: bool = True,
         enable_send_message_thread: bool = True,
         enable_list_channels: bool = True,
@@ -158,7 +159,8 @@ class SlackTools(Toolkit):
         Args:
             token (str): The Slack API token. Defaults to the SLACK_TOKEN environment variable.
             markdown (bool): Whether to enable Slack markdown formatting. Defaults to True.
-            output_directory (str): Optional path to save downloaded/uploaded files locally.
+            output_directory (str): Directory for saving downloaded files. Only used when save_downloads=True.
+            save_downloads (bool): Whether to save downloaded files to disk. Defaults to False (base64 only).
             enable_send_message (bool): Whether to enable the send_message tool. Defaults to True.
             enable_send_message_thread (bool): Whether to enable the send_message_thread tool. Defaults to True.
             enable_list_channels (bool): Whether to enable the list_channels tool. Defaults to True.
@@ -186,11 +188,17 @@ class SlackTools(Toolkit):
         self.markdown = markdown
         self.max_file_size = max_file_size
         self.thread_message_limit = thread_message_limit
-        self.output_directory = Path(output_directory).resolve() if output_directory else Path.cwd().resolve()
+        self.save_downloads = save_downloads
         self._channel_cache: Dict[str, _ResolvedChannel] = {}
 
-        self.output_directory.mkdir(parents=True, exist_ok=True)
-        log_debug(f"Downloaded files will be saved to: {self.output_directory}")
+        if self.save_downloads:
+            self.output_directory: Optional[Path] = (
+                Path(output_directory).resolve() if output_directory else Path.cwd().resolve()
+            )
+            self.output_directory.mkdir(parents=True, exist_ok=True)
+            log_debug(f"Downloaded files will be saved to: {self.output_directory}")
+        else:
+            self.output_directory = None
 
         tools: List[Any] = []
         if enable_send_message or all:
@@ -282,9 +290,9 @@ class SlackTools(Toolkit):
         """
         try:
             if dest_path:
-                file_path = safe_join_relative_path(self.output_directory, dest_path)
+                file_path = safe_join_relative_path(self.output_directory, dest_path)  # type: ignore[arg-type]
             else:
-                file_path = safe_join_filename(self.output_directory, filename)
+                file_path = safe_join_filename(self.output_directory, filename)  # type: ignore[arg-type]
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_bytes(content)
         except (OSError, PathSecurityError) as e:
@@ -695,12 +703,15 @@ class SlackTools(Toolkit):
                 "size": file_size,
             }
 
-            path, error = self._save_file_to_disk(content, filename, dest_path=dest_path)
-            if path:
-                result["path"] = path
+            if self.save_downloads and self.output_directory:
+                path, error = self._save_file_to_disk(content, filename, dest_path=dest_path)
+                if path:
+                    result["path"] = path
+                else:
+                    log_debug(f"Local save failed, falling back to base64: {error}")
+                    result["save_error"] = error
+                    result["content_base64"] = base64.b64encode(content).decode("utf-8")
             else:
-                log_debug(f"Local save failed, falling back to base64: {error}")
-                result["save_error"] = error
                 result["content_base64"] = base64.b64encode(content).decode("utf-8")
 
             return json.dumps(result)

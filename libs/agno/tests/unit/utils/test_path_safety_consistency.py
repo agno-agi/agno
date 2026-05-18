@@ -46,11 +46,11 @@ SUBPATH_ONLY_REJECT = [
 
 
 def _filegen(out: str) -> FileGenerationTools:
-    return FileGenerationTools(output_directory=out)
+    return FileGenerationTools(output_directory=out, save_files=True)
 
 
 def _slack(out: str) -> SlackTools:
-    return SlackTools(token="fake-token-for-tests", output_directory=out)
+    return SlackTools(token="fake-token-for-tests", output_directory=out, save_downloads=True)
 
 
 def _toolkit() -> Toolkit:

@@ -12,7 +12,7 @@ from agno.tools.slack import SlackTools
 
 def _make_slack_tools_with_output_dir(output_dir: str) -> SlackTools:
     """Build SlackTools with a fake token for unit-testing _save_file_to_disk."""
-    return SlackTools(token="fake-token-for-tests", output_directory=output_dir)
+    return SlackTools(token="fake-token-for-tests", output_directory=output_dir, save_downloads=True)
 
 
 @pytest.fixture
@@ -173,8 +173,9 @@ def test_upload_file_bytes(slack_tools):
 
 
 def test_download_file_saves_to_disk(slack_tools, tmp_path):
-    """Download saves file to output_directory by default."""
+    """Download saves file to output_directory when save_downloads=True."""
     slack_tools.output_directory = tmp_path
+    slack_tools.save_downloads = True
     slack_tools.client.files_info.return_value = {
         "file": {"id": "F1", "name": "f.txt", "size": 10, "url_private": "https://files.slack.com/f.txt"}
     }
@@ -211,6 +212,7 @@ def test_upload_file_sanitizes_filename_for_slack(slack_tools, tmp_path):
 def test_download_file_dest_path_traversal_falls_back_to_base64(slack_tools, tmp_path):
     """Test that download_file falls back to base64 when dest_path traversal fails."""
     slack_tools.output_directory = tmp_path
+    slack_tools.save_downloads = True
     slack_tools.client.files_info.return_value = {
         "file": {"id": "F1", "name": "f.txt", "size": 4, "url_private": "https://files.slack.com/f.txt"}
     }
@@ -227,6 +229,7 @@ def test_download_file_dest_path_traversal_falls_back_to_base64(slack_tools, tmp
 def test_download_file_dest_path_subdir_lands_inside_output_directory(slack_tools, tmp_path):
     """Test that download_file accepts a legitimate subdir in dest_path."""
     slack_tools.output_directory = tmp_path
+    slack_tools.save_downloads = True
     slack_tools.client.files_info.return_value = {
         "file": {"id": "F1", "name": "f.txt", "size": 4, "url_private": "https://files.slack.com/f.txt"}
     }

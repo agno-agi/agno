@@ -12,7 +12,7 @@ from agno.tools.file_generation import FileGenerationTools
 def test_relative_traversal_blocked():
     """Relative-traversal filenames must be stripped to bare filename."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         tool._save_file_to_disk("payload", "../../../escape.json")
         assert (Path(tmp_dir) / "escape.json").exists()
         assert not (Path(tmp_dir).parent / "escape.json").exists()
@@ -21,7 +21,7 @@ def test_relative_traversal_blocked():
 def test_absolute_path_blocked():
     """Absolute-path filenames must be stripped to bare filename."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         tool._save_file_to_disk("payload", "/tmp/test_absolute_xyz_unique.json")
         assert (Path(tmp_dir) / "test_absolute_xyz_unique.json").exists()
         assert not Path("/tmp/test_absolute_xyz_unique.json").exists()
@@ -30,7 +30,7 @@ def test_absolute_path_blocked():
 def test_nested_path_stripped():
     """Nested-path filenames must be flattened to the bare filename."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         tool._save_file_to_disk("payload", "subdir/file.json")
         assert (Path(tmp_dir) / "file.json").exists()
         assert not (Path(tmp_dir) / "subdir").exists()
@@ -39,7 +39,7 @@ def test_nested_path_stripped():
 def test_normal_filename_unchanged():
     """Normal filenames should pass through unchanged."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         tool._save_file_to_disk("payload", "report.json")
         assert (Path(tmp_dir) / "report.json").exists()
 
@@ -47,7 +47,7 @@ def test_normal_filename_unchanged():
 def test_filename_with_dots_in_name():
     """Filenames with dots in the middle are valid and must be preserved intact."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         tool._save_file_to_disk("payload", "q1.report.json")
         assert (Path(tmp_dir) / "q1.report.json").exists()
 
@@ -55,7 +55,7 @@ def test_filename_with_dots_in_name():
 def test_empty_filename_returns_error():
     """Empty filename must return error in tuple."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         path, error = tool._save_file_to_disk("payload", "")
         assert path is None
         assert error is not None
@@ -65,7 +65,7 @@ def test_empty_filename_returns_error():
 def test_dot_filename_returns_error():
     """Filename '.' must return error in tuple."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         path, error = tool._save_file_to_disk("payload", ".")
         assert path is None
         assert error is not None
@@ -75,7 +75,7 @@ def test_dot_filename_returns_error():
 def test_dotdot_filename_returns_error():
     """Filename '..' must return error in tuple."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         path, error = tool._save_file_to_disk("payload", "..")
         assert path is None
         assert error is not None
@@ -85,7 +85,7 @@ def test_dotdot_filename_returns_error():
 def test_only_traversal_returns_error():
     """Filename '../' (path-only) must return error in tuple."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         path, error = tool._save_file_to_disk("payload", "../")
         assert path is None
         assert error is not None
@@ -104,7 +104,7 @@ def test_symlink_pointing_outside_returns_error():
         except OSError:
             pytest.skip("Symlink creation not permitted on this platform")
 
-        tool = FileGenerationTools(output_directory=str(inside_dir))
+        tool = FileGenerationTools(output_directory=str(inside_dir), save_files=True)
         path, error = tool._save_file_to_disk("payload", "escape")
         assert path is None
         assert error is not None
@@ -112,12 +112,12 @@ def test_symlink_pointing_outside_returns_error():
 
 
 def test_default_output_directory_saves_to_cwd():
-    """When output_directory is not set, files save to cwd() by default."""
+    """When save_files=True and output_directory is not set, files save to cwd()."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         original_cwd = os.getcwd()
         try:
             os.chdir(tmp_dir)
-            tool = FileGenerationTools()
+            tool = FileGenerationTools(save_files=True)
             result = tool.generate_json_file({"x": 1}, filename="report.json")
             assert result.files is not None
             assert result.files[0].filepath is not None
@@ -130,7 +130,7 @@ def test_default_output_directory_saves_to_cwd():
 def test_control_char_filename_returns_error():
     """Filenames containing control characters must return error in tuple."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         path, error = tool._save_file_to_disk("payload", "report\nhacked.json")
         assert path is None
         assert error is not None
@@ -140,7 +140,7 @@ def test_control_char_filename_returns_error():
 def test_whitespace_only_filename_returns_error():
     """Whitespace-only filenames must return error in tuple."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         path, error = tool._save_file_to_disk("payload", "   ")
         assert path is None
         assert error is not None
@@ -150,7 +150,7 @@ def test_whitespace_only_filename_returns_error():
 def test_trailing_dot_space_trimmed():
     """Trailing dots and spaces in the filename must be stripped."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         path, error = tool._save_file_to_disk("payload", "report.json. ")
         assert error is None
         assert (Path(tmp_dir) / "report.json").exists()
@@ -159,7 +159,7 @@ def test_trailing_dot_space_trimmed():
 def test_generate_json_file_traversal_via_public_api():
     """Public-API integration: traversal via generate_json_file lands safely inside output_directory."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         tool.generate_json_file({"x": 1}, filename="../../../escape")
         assert (Path(tmp_dir) / "escape.json").exists()
         assert not (Path(tmp_dir).parent / "escape.json").exists()
@@ -168,7 +168,7 @@ def test_generate_json_file_traversal_via_public_api():
 def test_generate_csv_file_control_char_returns_error():
     """Public-API integration: control char in filename produces an error ToolResult (caught by except Exception)."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         result = tool.generate_csv_file([{"a": 1}], filename="\n")
         assert "Error" in result.content
 
@@ -176,7 +176,7 @@ def test_generate_csv_file_control_char_returns_error():
 def test_pure_dot_filename_returns_error():
     """Filename '...' must return error after rstrip('. ')."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         path, error = tool._save_file_to_disk("payload", "...")
         assert path is None
         assert error is not None
@@ -193,7 +193,7 @@ def test_url_encoded_traversal_sanitized_inside_output_directory():
     not rejected (no PathSecurityError raised).
     """
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         tool._save_file_to_disk("payload", "%2e%2e/escape")
         assert (Path(tmp_dir) / "escape").exists()
         assert not (Path(tmp_dir).parent / "escape").exists()
@@ -202,7 +202,7 @@ def test_url_encoded_traversal_sanitized_inside_output_directory():
 def test_filename_sanitized_in_artifact_traversal():
     """Test that File.filename reflects the sanitized basename, not the original input."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         result = tool.generate_json_file({"x": 1}, filename="../../../escape")
         assert result.files is not None
         artifact = result.files[0]
@@ -213,12 +213,12 @@ def test_filename_sanitized_in_artifact_traversal():
 
 
 def test_filename_sanitized_with_default_output_directory():
-    """Test that File.filename is sanitized and file is saved to cwd by default."""
+    """Test that File.filename is sanitized and file is saved to cwd when save_files=True."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         original_cwd = os.getcwd()
         try:
             os.chdir(tmp_dir)
-            tool = FileGenerationTools()
+            tool = FileGenerationTools(save_files=True)
             result = tool.generate_json_file({"x": 1}, filename="subdir/report.json")
             assert result.files is not None
             artifact = result.files[0]
@@ -251,7 +251,7 @@ def test_no_output_directory_rejects_dangerous_filename(evil):
 def test_filename_sanitized_subdir_collapsed():
     """File.filename matches the on-disk basename when subdir is stripped."""
     with tempfile.TemporaryDirectory() as tmp_dir:
-        tool = FileGenerationTools(output_directory=tmp_dir)
+        tool = FileGenerationTools(output_directory=tmp_dir, save_files=True)
         result = tool.generate_json_file({"x": 1}, filename="subdir/report.json")
         assert result.files is not None
         artifact = result.files[0]
