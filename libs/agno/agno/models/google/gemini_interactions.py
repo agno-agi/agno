@@ -57,41 +57,6 @@ except ImportError:
     ImageContent = None  # type: ignore[assignment, misc]
 
 
-# Keys accepted by the Interactions API's GenerationConfigParam. Used to filter
-# raw generation_config (dict or Pydantic dump) before merging, so that passing
-# a stricter-typed object like GenerateContentConfig - which carries Gemini-only
-# keys such as http_options, tools, and system_instruction - doesn't produce
-# an invalid Interactions payload.
-_GENERATION_CONFIG_KEYS = frozenset(
-    {
-        "image_config",
-        "max_output_tokens",
-        "seed",
-        "speech_config",
-        "stop_sequences",
-        "temperature",
-        "thinking_level",
-        "thinking_summaries",
-        "tool_choice",
-        "top_p",
-    }
-)
-
-
-def _normalize_generation_config(config: Any) -> Dict[str, Any]:
-    """Convert generation_config to a dict and keep only Interactions-supported keys.
-
-    Accepts either a dict or a Pydantic-like object (e.g. GenerateContentConfig).
-    Strips None values via model_dump(exclude_none=True) and filters out keys
-    not in GenerationConfigParam.
-    """
-    if config is None:
-        return {}
-    if hasattr(config, "model_dump"):
-        config = config.model_dump(exclude_none=True)
-    return {k: v for k, v in config.items() if k in _GENERATION_CONFIG_KEYS}
-
-
 @dataclass
 class GeminiInteractions(Model):
     """
@@ -422,9 +387,13 @@ class GeminiInteractions(Model):
         if self.thinking_level is not None:
             generation_config["thinking_level"] = self.thinking_level
         # Merge user-provided raw config last - their keys override field-derived values.
-        # Normalize first: handle Pydantic objects, strip None, drop unsupported keys.
+        # If it's a Pydantic-like object (e.g. GenerateContentConfig), dump it
+        # with exclude_none so the request isn't flooded with unset fields.
         if self.generation_config:
-            generation_config.update(_normalize_generation_config(self.generation_config))
+            extra = self.generation_config
+            if hasattr(extra, "model_dump"):
+                extra = extra.model_dump(exclude_none=True)
+            generation_config.update(extra)
         if generation_config:
             kwargs["generation_config"] = generation_config
 

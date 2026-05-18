@@ -310,40 +310,19 @@ class TestGetRequestKwargs:
         kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
         assert kwargs["generation_config"]["temperature"] == 0.9
 
-    def test_generation_config_filters_unsupported_keys(self):
-        """Keys not in GenerationConfigParam are dropped (e.g. http_options, system_instruction)."""
-        model = self._make_model(
-            generation_config={
-                "temperature": 0.7,
-                "http_options": {"timeout": 30},  # GenerateContentConfig-only
-                "system_instruction": "ignored",  # GenerateContentConfig-only
-                "tools": [],  # GenerateContentConfig-only
-                "top_k": 40,  # generateContent-only
-            }
-        )
-        kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
-        cfg = kwargs["generation_config"]
-        assert cfg == {"temperature": 0.7}
-
     def test_generation_config_accepts_pydantic_object(self):
-        """Passing a Pydantic-like config (e.g. GenerateContentConfig) is normalized via model_dump."""
+        """Pydantic-like configs (e.g. GenerateContentConfig) are dumped with exclude_none."""
 
         class FakeConfig:
             def model_dump(self, exclude_none=True):
-                # Simulate GenerateContentConfig's wide dump: many None fields plus
-                # Gemini-only keys that the Interactions API doesn't accept.
-                return {
-                    "temperature": 0.8,
-                    "top_p": 0.95,
-                    "http_options": {"timeout": 30},
-                    "system_instruction": "ignored",
-                    "tools": [],
-                }
+                # exclude_none drops the None fields the SDK declares for completeness
+                return {"temperature": 0.8, "top_p": 0.95}
 
         model = self._make_model(generation_config=FakeConfig())
         kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
         cfg = kwargs["generation_config"]
-        assert cfg == {"temperature": 0.8, "top_p": 0.95}
+        assert cfg["temperature"] == 0.8
+        assert cfg["top_p"] == 0.95
 
     def test_input_sliced_when_previous_interaction_id_set(self):
         """When previous_interaction_id is set, only messages after the prior assistant turn are sent."""
