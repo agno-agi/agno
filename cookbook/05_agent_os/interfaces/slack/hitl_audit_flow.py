@@ -8,8 +8,7 @@ tool, no plain-chat escape. Uses conclude_incident for clean exit.
 Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
 """
 
-from dataclasses import dataclass
-from typing import Dict, List, Literal
+from typing import Literal
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -21,21 +20,13 @@ from agno.tools import tool
 from agno.tools.websearch import WebSearchTools
 from agno.tools.user_feedback import UserFeedbackTools
 
-@dataclass
-class Service:
-    name: str
-    region: str
-    replicas: int
-    runbook: str
-
-
-_SERVICES: Dict[str, Service] = {
-    "api-gateway": Service("api-gateway", "eu-west", 12, "rb/api-gateway"),
-    "order-worker": Service("order-worker", "eu-west", 6, "rb/order-worker"),
-    "user-profile": Service("user-profile", "us-east", 4, "rb/user-profile"),
+_SERVICES = {
+    "api-gateway": {"region": "eu-west", "replicas": 12, "runbook": "rb/api-gateway"},
+    "order-worker": {"region": "eu-west", "replicas": 6, "runbook": "rb/order-worker"},
+    "user-profile": {"region": "us-east", "replicas": 4, "runbook": "rb/user-profile"},
 }
 
-_INCIDENTS: List[Dict[str, str]] = []
+_INCIDENTS = []
 
 
 @tool
@@ -47,9 +38,8 @@ def lookup_service(service_name: str) -> str:
     """
     svc = _SERVICES.get(service_name)
     if not svc:
-        known = ", ".join(_SERVICES) or "(none)"
-        return f"No service {service_name!r}. Known: {known}."
-    return f"{svc.name}: region={svc.region}, replicas={svc.replicas}, runbook={svc.runbook}"
+        return f"No service {service_name!r}. Known: {', '.join(_SERVICES)}."
+    return f"{service_name}: region={svc['region']}, replicas={svc['replicas']}, runbook={svc['runbook']}"
 
 
 @tool
@@ -85,7 +75,7 @@ def restart_service(service_name: str, reason: str) -> str:
     svc = _SERVICES.get(service_name)
     if not svc:
         return f"No service {service_name!r} — nothing restarted."
-    return f"Rolled {svc.replicas} replicas of {svc.name} in {svc.region}. Reason: {reason!r}."
+    return f"Rolled {svc['replicas']} replicas of {service_name} in {svc['region']}. Reason: {reason!r}."
 
 
 @tool(requires_user_input=True, user_input_fields=["priority", "on_call_owner"])
