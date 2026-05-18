@@ -6,7 +6,7 @@ Coinbase-managed embedded wallet.
 """
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 from agno.tools.mcp.mcp import MCPTools
 
@@ -33,16 +33,27 @@ class CDPWalletTools(MCPTools):
     def __init__(
         self,
         *,
+        bundle_path: Optional[Union[str, Path]] = None,
+        command: Optional[str] = None,
         timeout_seconds: int = 60,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
+        tool_name_prefix: Optional[str] = "cdp_wallet",
         **kwargs,
     ):
-        bundle_path = Path.home() / ".payments-mcp" / "bundle.js"
+        if command is None:
+            bundle_path = (
+                Path(bundle_path).expanduser()
+                if bundle_path is not None
+                else Path.home() / ".payments-mcp" / "bundle.js"
+            )
+            command = f'node "{bundle_path}"'
+
         super().__init__(
-            command=f'node "{bundle_path}"',
+            command=command,
             timeout_seconds=timeout_seconds,
             include_tools=include_tools,
             exclude_tools=exclude_tools,
+            tool_name_prefix=tool_name_prefix,
             **kwargs,
         )
