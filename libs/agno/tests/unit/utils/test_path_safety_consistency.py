@@ -46,11 +46,6 @@ SUBPATH_ONLY_REJECT = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _filegen(out: str) -> FileGenerationTools:
     return FileGenerationTools(output_directory=out)
 
@@ -67,11 +62,6 @@ def _filetools(out: str) -> FileTools:
     return FileTools(base_dir=Path(out))
 
 
-# ---------------------------------------------------------------------------
-# Universal rejection — all 5 callers refuse the same inputs
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("evil", ALL_REJECT)
 def test_all_callers_reject_universally(evil):
     with tempfile.TemporaryDirectory() as tmp:
@@ -86,11 +76,6 @@ def test_all_callers_reject_universally(evil):
         assert ok is False
 
 
-# ---------------------------------------------------------------------------
-# Filename-only rejection — safe_join_filename callers refuse; subpath callers sanitize/accept
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("evil", FILENAME_ONLY_REJECT)
 def test_safe_join_filename_callers_reject_filename_evil(evil):
     """FileGen raises, Slack drops the file silently — both refuse to write evil."""
@@ -98,11 +83,6 @@ def test_safe_join_filename_callers_reject_filename_evil(evil):
         with pytest.raises(PathSecurityError):
             _filegen(tmp)._save_file_to_disk("payload", evil)
         assert _slack(tmp)._save_file_to_disk(b"payload", evil) is None
-
-
-# ---------------------------------------------------------------------------
-# Subpath rejection — subpath callers reject traversal; safe_join_filename sanitizes
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("evil", SUBPATH_ONLY_REJECT)
@@ -149,11 +129,6 @@ def test_safe_join_filename_callers_sanitize_traversal(evil):
         slack_result = _slack(tmp)._save_file_to_disk(b"payload", evil)
         assert slack_result is not None
         assert Path(slack_result).resolve().is_relative_to(Path(tmp).resolve())
-
-
-# ---------------------------------------------------------------------------
-# Adversarial attacks — direct attempts to defeat path safety
-# ---------------------------------------------------------------------------
 
 
 def test_adversarial_read_etc_passwd_via_filegen():

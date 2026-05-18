@@ -258,11 +258,6 @@ def test_toolkit_with_none_instructions():
     assert toolkit.add_instructions is True
 
 
-# =============================================================================
-# Tests for @tool decorator on class methods
-# =============================================================================
-
-
 class TestToolDecoratorOnClassMethods:
     """Tests for using @tool decorator on class methods within a Toolkit."""
 
@@ -472,11 +467,6 @@ class TestToolDecoratorOnClassMethods:
         assert toolkit._get_tool_name(standalone_func) == "custom_name"
         # Test with regular callable
         assert toolkit._get_tool_name(example_func) == "example_func"
-
-
-# =============================================================================
-# Tests for sync/async tool registration
-# =============================================================================
 
 
 async def async_example_func(a: int, b: int) -> int:
@@ -799,11 +789,6 @@ def test_partial_async_get_async_functions():
     assert async_funcs["tool_a"].entrypoint == toolkit.atool_a
     # tool_b should still be sync version (no async variant)
     assert async_funcs["tool_b"].entrypoint == toolkit.tool_b
-
-
-# =============================================================================
-# Tests for Toolkit._check_path (path containment post-safe_join_relative_path migration)
-# =============================================================================
 
 
 def test_check_path_simple_filename_returns_true(basic_toolkit):
