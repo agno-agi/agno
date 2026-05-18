@@ -61,7 +61,7 @@ def lookup_service(service_name: str) -> str:
     """Return replica count, region, and runbook link for a service.
 
     Args:
-        service_name: Logical service name (e.g. "api-gateway").
+        service_name (str): Logical service name (e.g. "api-gateway").
     """
     svc = _SERVICES.get(service_name)
     if not svc:
@@ -84,26 +84,22 @@ def list_recent_incidents() -> List[Dict[str, str]]:
 
 @tool(external_execution=True)
 def run_diagnostic(command: str, note: str = "") -> str:
-    """Run a diagnostic command against production. The agent does NOT
-    execute this — the on-call engineer runs it on their jumpbox and
-    pastes the raw output back into the Slack card.
+    """Run a diagnostic command against production (human executes and pastes output).
 
     Args:
-        command: Exact shell / kubectl command to run.
-        note: Optional short note about what the agent wants to see.
+        command (str): Shell or kubectl command to run.
+        note (str): Optional context for the engineer.
     """
     return f"[ran] {command} {note}".strip()
 
 
 @tool(requires_confirmation=True)
 def restart_service(service_name: str, reason: str) -> str:
-    """Roll-restart every replica of a service. Destructive — briefly
-    drops in-flight requests, so the Slack interface pauses for Approve
-    / Deny before running.
+    """Roll-restart every replica of a service (requires approval).
 
     Args:
-        service_name: Service to restart (matches lookup_service).
-        reason: One-line justification, recorded in the audit log.
+        service_name (str): Service to restart.
+        reason (str): Justification for the restart.
     """
     svc = _SERVICES.get(service_name)
     if not svc:
@@ -121,15 +117,13 @@ def file_incident_retro(
     priority: Literal["P0", "P1", "P2", "P3"],
     on_call_owner: str,
 ) -> str:
-    """Open a retrospective ticket linking the incident timeline and
-    action items. The agent drafts title + summary; the human supplies
-    priority and the on-call owner who should drive the follow-up.
+    """File an incident retrospective ticket (human fills priority + owner).
 
     Args:
-        title: Short incident title (agent drafts).
-        summary: Timeline + resolution notes (agent drafts).
-        priority: One of "P0" | "P1" | "P2" | "P3".
-        on_call_owner: Email / handle of the engineer who owns the retro.
+        title (str): Short incident title (agent drafts).
+        summary (str): Timeline and resolution notes (agent drafts).
+        priority (str): P0-P3 severity tier (human fills).
+        on_call_owner (str): Engineer who owns the retro (human fills).
     """
     incident_id = f"INC-{uuid4().hex[:6].upper()}"
     _INCIDENTS.append(
