@@ -18,7 +18,6 @@ Run:
 Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
 """
 
-import os
 from dataclasses import dataclass
 from typing import Dict, List, Literal
 from uuid import uuid4
@@ -223,8 +222,6 @@ agent_os = AgentOS(
         Slack(
             agent=agent,
             reply_to_mentions_only=True,
-            token=os.environ["SLACK_BOT_TOKEN"],
-            signing_secret=os.environ["SLACK_SIGNING_SECRET"],
         ),
     ],
 )
