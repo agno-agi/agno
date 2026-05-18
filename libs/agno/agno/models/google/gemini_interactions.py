@@ -10,7 +10,7 @@ Requires `google-genai>=2.0.0`.
 import base64
 import json
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, Iterator, List, Literal, Optional, Type, Union
 from uuid import uuid4
@@ -103,6 +103,11 @@ class GeminiInteractions(Model):
     seed: Optional[int] = None
     response_modalities: Optional[list[str]] = None
 
+    # Raw GenerationConfigParam passthrough. Merged into the generation_config
+    # built from the fields above; keys here override the field-derived values.
+    # Use this for advanced params not exposed as individual fields.
+    generation_config: Optional[Dict[str, Any]] = None
+
     # Interactions API specific parameters
     store: Optional[bool] = None  # Whether to persist interactions server-side (default: True)
 
@@ -127,19 +132,36 @@ class GeminiInteractions(Model):
     # Client instance
     client: Optional[GeminiClient] = None
 
-    def _get_previous_interaction_id(self, messages: List[Message]) -> Optional[str]:
-        """Extract the previous interaction ID from message provider_data.
+    # In-memory fallback cache of the last interaction_id keyed by session_id.
+    # Used when the conversation history (and the assistant message's
+    # provider_data) is not available - e.g. when no db is configured. Keyed by
+    # session so concurrent sessions on the same model instance stay isolated.
+    _session_interaction_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
-        Walks messages in reverse to find the most recent assistant message
-        with an interaction_id. This avoids storing state at instance level,
-        which would be unsafe if two concurrent agents share the same model.
+    def _get_previous_interaction_id(
+        self, messages: List[Message], run_response: Optional[RunOutput] = None
+    ) -> Optional[str]:
+        """Extract the previous interaction ID.
+
+        First checks message provider_data (the durable path - works when the
+        conversation history is persisted, e.g. via a db). Falls back to the
+        per-session in-memory cache so multi-turn still works without a db,
+        since the Interactions API manages history server-side.
         """
         for msg in reversed(messages):
             if msg.role == "assistant" and msg.provider_data:
                 iid = msg.provider_data.get("interaction_id")
                 if iid:
                     return iid
+
+        if run_response is not None and run_response.session_id:
+            return self._session_interaction_ids.get(run_response.session_id)
         return None
+
+    def _store_interaction_id(self, run_response: Optional[RunOutput], interaction_id: Optional[str]) -> None:
+        """Cache the interaction_id keyed by session for the no-db fallback path."""
+        if run_response is not None and run_response.session_id and interaction_id:
+            self._session_interaction_ids[run_response.session_id] = interaction_id
 
     def get_client(self) -> GeminiClient:
         """Returns an instance of the GeminiClient.
@@ -187,6 +209,7 @@ class GeminiInteractions(Model):
                 "thinking_level": self.thinking_level,
                 "store": self.store,
                 "service_tier": self.service_tier,
+                "generation_config": self.generation_config,
             }
         )
         return {k: v for k, v in model_dict.items() if v is not None}
@@ -335,6 +358,7 @@ class GeminiInteractions(Model):
         messages: List[Message],
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> Dict[str, Any]:
         """Build keyword arguments for interactions.create()."""
         kwargs: Dict[str, Any] = {
@@ -354,8 +378,9 @@ class GeminiInteractions(Model):
         if system_message:
             kwargs["system_instruction"] = system_message
 
-        # Previous interaction for multi-turn (read from message provider_data)
-        previous_interaction_id = self._get_previous_interaction_id(messages)
+        # Previous interaction for multi-turn. Falls back to session cache when
+        # history isn't propagated through messages (e.g. no db configured).
+        previous_interaction_id = self._get_previous_interaction_id(messages, run_response)
         if previous_interaction_id:
             kwargs["previous_interaction_id"] = previous_interaction_id
 
@@ -373,6 +398,9 @@ class GeminiInteractions(Model):
             generation_config["seed"] = self.seed
         if self.thinking_level is not None:
             generation_config["thinking_level"] = self.thinking_level
+        # Merge user-provided raw config last - their keys override field-derived values
+        if self.generation_config:
+            generation_config.update(self.generation_config)
         if generation_config:
             kwargs["generation_config"] = generation_config
 
@@ -652,7 +680,9 @@ class GeminiInteractions(Model):
         retry_with_guidance: bool = False,
     ) -> ModelResponse:
         """Invoke the model using the Interactions API."""
-        request_kwargs = self._get_request_kwargs(messages, tools=tools, response_format=response_format)
+        request_kwargs = self._get_request_kwargs(
+            messages, tools=tools, response_format=response_format, run_response=run_response
+        )
         log_debug(f"Calling Gemini Interactions API with params: {list(request_kwargs.keys())}", log_level=2)
 
         try:
@@ -660,7 +690,9 @@ class GeminiInteractions(Model):
             interaction = self.get_client().interactions.create(**request_kwargs)
             assistant_message.metrics.stop_timer()
 
-            return self._parse_provider_response(interaction)
+            model_response = self._parse_provider_response(interaction)
+            self._store_interaction_id(run_response, getattr(interaction, "id", None))
+            return model_response
 
         except Exception as e:
             log_error(f"Error from Gemini Interactions API: {str(e)}")
@@ -678,7 +710,9 @@ class GeminiInteractions(Model):
         retry_with_guidance: bool = False,
     ) -> Iterator[ModelResponse]:
         """Invoke the model with streaming using the Interactions API."""
-        request_kwargs = self._get_request_kwargs(messages, tools=tools, response_format=response_format)
+        request_kwargs = self._get_request_kwargs(
+            messages, tools=tools, response_format=response_format, run_response=run_response
+        )
         request_kwargs["stream"] = True
         log_debug(f"Calling Gemini Interactions API (stream) with params: {list(request_kwargs.keys())}", log_level=2)
 
@@ -686,13 +720,17 @@ class GeminiInteractions(Model):
             assistant_message.metrics.start_timer()
             stream = self.get_client().interactions.create(**request_kwargs)
             stream_state: Dict[str, Any] = {"pending_calls": {}}
+            interaction_id: Optional[str] = None
 
             for event in stream:
                 model_response, stream_state = self._parse_provider_response_delta(
                     stream_event=event, assistant_message=assistant_message, stream_state=stream_state
                 )
+                if model_response.provider_data and model_response.provider_data.get("interaction_id"):
+                    interaction_id = model_response.provider_data["interaction_id"]
                 yield model_response
 
+            self._store_interaction_id(run_response, interaction_id)
             assistant_message.metrics.stop_timer()
 
         except Exception as e:
@@ -711,7 +749,9 @@ class GeminiInteractions(Model):
         retry_with_guidance: bool = False,
     ) -> ModelResponse:
         """Async invoke the model using the Interactions API."""
-        request_kwargs = self._get_request_kwargs(messages, tools=tools, response_format=response_format)
+        request_kwargs = self._get_request_kwargs(
+            messages, tools=tools, response_format=response_format, run_response=run_response
+        )
         log_debug(f"Calling Gemini Interactions API (async) with params: {list(request_kwargs.keys())}", log_level=2)
 
         try:
@@ -719,7 +759,9 @@ class GeminiInteractions(Model):
             interaction = await self.get_client().aio.interactions.create(**request_kwargs)
             assistant_message.metrics.stop_timer()
 
-            return self._parse_provider_response(interaction)
+            model_response = self._parse_provider_response(interaction)
+            self._store_interaction_id(run_response, getattr(interaction, "id", None))
+            return model_response
 
         except Exception as e:
             log_error(f"Error from Gemini Interactions API (async): {str(e)}")
@@ -737,7 +779,9 @@ class GeminiInteractions(Model):
         retry_with_guidance: bool = False,
     ) -> AsyncIterator[ModelResponse]:
         """Async streaming invoke using the Interactions API."""
-        request_kwargs = self._get_request_kwargs(messages, tools=tools, response_format=response_format)
+        request_kwargs = self._get_request_kwargs(
+            messages, tools=tools, response_format=response_format, run_response=run_response
+        )
         request_kwargs["stream"] = True
         log_debug(
             f"Calling Gemini Interactions API (async stream) with params: {list(request_kwargs.keys())}", log_level=2
@@ -747,13 +791,17 @@ class GeminiInteractions(Model):
             assistant_message.metrics.start_timer()
             stream = await self.get_client().aio.interactions.create(**request_kwargs)
             stream_state: Dict[str, Any] = {"pending_calls": {}}
+            interaction_id: Optional[str] = None
 
             async for event in stream:
                 model_response, stream_state = self._parse_provider_response_delta(
                     stream_event=event, assistant_message=assistant_message, stream_state=stream_state
                 )
+                if model_response.provider_data and model_response.provider_data.get("interaction_id"):
+                    interaction_id = model_response.provider_data["interaction_id"]
                 yield model_response
 
+            self._store_interaction_id(run_response, interaction_id)
             assistant_message.metrics.stop_timer()
 
         except Exception as e:

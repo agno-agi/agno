@@ -291,6 +291,68 @@ class TestGetRequestKwargs:
         kwargs = model._get_request_kwargs(messages)
         assert kwargs["response_modalities"] == ["text", "image"]
 
+    def test_generation_config_passthrough_merges_with_fields(self):
+        """generation_config dict is merged in - its keys override field-derived values."""
+        model = self._make_model(
+            temperature=0.5,
+            generation_config={"top_p": 0.9, "top_k": 40, "presence_penalty": 0.1},
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
+        cfg = kwargs["generation_config"]
+        assert cfg["temperature"] == 0.5
+        assert cfg["top_p"] == 0.9
+        assert cfg["top_k"] == 40
+        assert cfg["presence_penalty"] == 0.1
+
+    def test_generation_config_passthrough_overrides_fields(self):
+        """When the same key is set on both, the passthrough dict wins."""
+        model = self._make_model(temperature=0.5, generation_config={"temperature": 0.9})
+        kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
+        assert kwargs["generation_config"]["temperature"] == 0.9
+
+    def test_previous_interaction_id_falls_back_to_session_cache(self):
+        """When messages lack provider_data, fall back to per-session cache."""
+        from agno.run.agent import RunOutput
+
+        model = self._make_model()
+        model._session_interaction_ids["sess-1"] = "interactions/cached-id"
+        run_response = RunOutput(session_id="sess-1")
+        messages = [Message(role="user", content="Follow up")]
+        kwargs = model._get_request_kwargs(messages, run_response=run_response)
+        assert kwargs["previous_interaction_id"] == "interactions/cached-id"
+
+    def test_provider_data_takes_precedence_over_session_cache(self):
+        """When messages have provider_data, that wins over the cache (db path is authoritative)."""
+        from agno.run.agent import RunOutput
+
+        model = self._make_model()
+        model._session_interaction_ids["sess-1"] = "interactions/stale"
+        run_response = RunOutput(session_id="sess-1")
+        messages = [
+            Message(role="user", content="First"),
+            Message(role="assistant", content="Response", provider_data={"interaction_id": "interactions/fresh"}),
+            Message(role="user", content="Follow up"),
+        ]
+        kwargs = model._get_request_kwargs(messages, run_response=run_response)
+        assert kwargs["previous_interaction_id"] == "interactions/fresh"
+
+    def test_session_cache_isolated_per_session(self):
+        """Different sessions on the same model instance must not see each other's interaction ids."""
+        from agno.run.agent import RunOutput
+
+        model = self._make_model()
+        model._session_interaction_ids["sess-A"] = "interactions/A"
+        model._session_interaction_ids["sess-B"] = "interactions/B"
+
+        kwargs_a = model._get_request_kwargs(
+            [Message(role="user", content="Hi")], run_response=RunOutput(session_id="sess-A")
+        )
+        kwargs_b = model._get_request_kwargs(
+            [Message(role="user", content="Hi")], run_response=RunOutput(session_id="sess-B")
+        )
+        assert kwargs_a["previous_interaction_id"] == "interactions/A"
+        assert kwargs_b["previous_interaction_id"] == "interactions/B"
+
 
 class TestParseInteractionResponse:
     """Tests for parsing Interaction API responses."""
@@ -552,6 +614,24 @@ class TestInvoke:
 
         response = model.invoke(messages, assistant_message)
         assert response.provider_data["interaction_id"] == "interactions/tracked1"
+
+    def test_invoke_caches_interaction_id_for_session(self):
+        """After a successful invoke with a run_response, the interaction_id is cached by session."""
+        from agno.run.agent import RunOutput
+
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/sess-cached"
+        mock_interaction.steps = []
+        mock_interaction.usage = None
+        mock_client.interactions.create.return_value = mock_interaction
+
+        run_response = RunOutput(session_id="sess-X")
+        model.invoke([Message(role="user", content="Hi")], Message(role="assistant"), run_response=run_response)
+        assert model._session_interaction_ids["sess-X"] == "interactions/sess-cached"
 
 
 class TestInvokeAsync:
