@@ -63,7 +63,7 @@ class FileGenerationTools(Toolkit):
 
         super().__init__(name="file_generation", tools=tools, **kwargs)
 
-    def _save_to_disk(self, content: Union[str, bytes], filename: str) -> Optional[str]:
+    def _save_file_to_disk(self, content: Union[str, bytes], filename: str) -> Optional[str]:
         """Save file to disk. Returns path or None if no output_directory."""
         if not self.output_directory:
             return None
@@ -94,7 +94,7 @@ class FileGenerationTools(Toolkit):
             filename += f".{file_type}"
 
         safe_filename = sanitize_filename(filename)
-        file_path = self._save_to_disk(content, safe_filename)
+        file_path = self._save_file_to_disk(content, safe_filename)
 
         if isinstance(content, str):
             content_bytes = content.encode("utf-8")

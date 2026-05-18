@@ -143,7 +143,7 @@ def test_subpath_callers_reject_reserved_segment(evil):
 def test_safe_join_filename_callers_sanitize_traversal(evil):
     """FileGen + Slack sanitize traversal via Path(filename).name; file lands inside output_dir."""
     with tempfile.TemporaryDirectory() as tmp:
-        filegen_path, _ = _filegen(tmp)._save_file_to_disk("payload", evil)
+        filegen_path = _filegen(tmp)._save_file_to_disk("payload", evil)
         assert filegen_path is not None
         assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
         slack_result = _slack(tmp)._save_file_to_disk(b"payload", evil)
@@ -158,11 +158,11 @@ def test_safe_join_filename_callers_sanitize_traversal(evil):
 
 def test_adversarial_read_etc_passwd_via_filegen():
     with tempfile.TemporaryDirectory() as tmp:
-        filegen_path, safe_name = _filegen(tmp)._save_file_to_disk("evil", "/etc/passwd")
+        filegen_path = _filegen(tmp)._save_file_to_disk("evil", "/etc/passwd")
         # safe_join_filename strips path components → file lands inside tmp as "passwd", NOT in /etc.
         assert filegen_path is not None
         assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
-        assert safe_name == "passwd"
+        assert Path(filegen_path).name == "passwd"
 
 
 def test_adversarial_write_outside_via_slack():
@@ -198,7 +198,7 @@ def test_adversarial_symlink_chain_attack():
 def test_adversarial_unicode_normalization_attack():
     """U+FF0F FULLWIDTH SOLIDUS NFKC-normalizes; must not escape directory."""
     with tempfile.TemporaryDirectory() as tmp:
-        filegen_path, _ = _filegen(tmp)._save_file_to_disk("payload", "．．／escape")
+        filegen_path = _filegen(tmp)._save_file_to_disk("payload", "．．／escape")
         assert filegen_path is not None
         assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
 
@@ -206,7 +206,7 @@ def test_adversarial_unicode_normalization_attack():
 def test_adversarial_url_encoded_attack():
     """%2e%2e%2f is NOT decoded; treated as literal characters in filename."""
     with tempfile.TemporaryDirectory() as tmp:
-        filegen_path, _ = _filegen(tmp)._save_file_to_disk("payload", "%2e%2e%2fescape")
+        filegen_path = _filegen(tmp)._save_file_to_disk("payload", "%2e%2e%2fescape")
         assert filegen_path is not None
         assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
 
@@ -228,7 +228,7 @@ def test_adversarial_long_filename_rejected_or_oserror():
     with tempfile.TemporaryDirectory() as tmp:
         long_name = "a" * 4096 + ".json"
         try:
-            filegen_path, _ = _filegen(tmp)._save_file_to_disk("payload", long_name)
+            filegen_path = _filegen(tmp)._save_file_to_disk("payload", long_name)
         except (PathSecurityError, OSError):
             return
         assert filegen_path is not None, "implementation returned None without raising — would silently drop the file"
