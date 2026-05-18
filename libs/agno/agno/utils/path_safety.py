@@ -1,5 +1,3 @@
-"""Path-safety helpers for filesystem-touching tools."""
-
 import re
 import unicodedata
 from pathlib import Path, PureWindowsPath
@@ -8,8 +6,9 @@ from typing import Union
 from agno.exceptions import PathSecurityError
 from agno.utils.log import log_debug
 
-_WIN_RESERVED_RE = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)", re.IGNORECASE)
-_WIN_PATH_PREFIX_RE = re.compile(r"^([A-Za-z]:|\\\\)")
+# CON, PRN, NUL, etc. create device handles on Windows — block cross-platform for consistency
+_WINDOWS_RESERVED_NAMES_RE = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)", re.IGNORECASE)
+_WINDOWS_PATH_PREFIX_RE = re.compile(r"^([A-Za-z]:|\\\\)")
 
 
 def _contains_control_chars(text: str) -> bool:
@@ -19,9 +18,9 @@ def _contains_control_chars(text: str) -> bool:
 
 def _has_windows_path_prefix(text: str) -> bool:
     """Check for Windows drive letters (C:) or UNC paths (\\\\server)."""
-    if _WIN_PATH_PREFIX_RE.match(text):
+    if _WINDOWS_PATH_PREFIX_RE.match(text):
         return True
-    # PureWindowsPath catches edge cases: //server, C:relative, //?/C:/
+    # PureWindowsPath catches edge cases the regex misses: //server, C:relative, //?/C:/
     pwp = PureWindowsPath(text)
     return bool(pwp.drive) or pwp.is_absolute()
 
@@ -40,13 +39,14 @@ def _sanitize_segment(segment: str) -> str:
     stripped = segment.rstrip(". ")
     if not stripped:
         raise PathSecurityError(f"Invalid path segment: {segment!r}")
-    if _WIN_RESERVED_RE.match(stripped):
+    if _WINDOWS_RESERVED_NAMES_RE.match(stripped):
         raise PathSecurityError(f"Invalid path segment: {segment!r}")
     return stripped
 
 
 def sanitize_filename(filename: str) -> str:
     """Validate and return safe basename. Strips path components."""
+    # NFKC normalizes unicode so ．．／ becomes ../
     filename = unicodedata.normalize("NFKC", filename)
     if _contains_control_chars(filename):
         raise PathSecurityError(f"Invalid filename: {filename!r}")
@@ -54,6 +54,7 @@ def sanitize_filename(filename: str) -> str:
         raise PathSecurityError(f"Invalid filename: {filename!r}")
     if "/" in filename or "\\" in filename:
         log_debug(f"sanitize_filename discarded path components from {filename!r}")
+    # Path().name extracts basename; rstrip prevents "file." → "" on Windows
     safe = Path(filename.replace("\\", "/")).name.rstrip(". ")
     if not safe or safe.strip(".") == "":
         raise PathSecurityError(f"Invalid filename: {filename!r}")
@@ -75,6 +76,7 @@ def safe_join_filename(directory: Union[str, Path], filename: str) -> Path:
         resolved_dir = base.resolve()
     except (OSError, UnicodeEncodeError) as e:
         raise PathSecurityError(f"Cannot resolve path {filename!r}: {e}") from e
+    # Containment check: resolve() follows symlinks, so this catches symlink escapes
     try:
         resolved_file.relative_to(resolved_dir)
     except ValueError:
@@ -97,6 +99,7 @@ def safe_join_relative_path(directory: Union[str, Path], subpath: str) -> Path:
     if pwp.drive or pwp.is_absolute():
         raise PathSecurityError(f"Subpath must be relative: {subpath!r}")
     subpath = subpath.replace("\\", "/")
+    # Validate each segment; keep "", ".", ".." for Path to resolve naturally
     cleaned_parts = []
     for segment in subpath.split("/"):
         if segment in ("", ".", ".."):
