@@ -78,7 +78,7 @@ class FileGenerationTools(Toolkit):
         log_debug(f"File saved to: {file_path}")
         return str(file_path)
 
-    def _build_file_result(
+    def _create_file_artifact(
         self,
         content: Union[str, bytes],
         filename: Optional[str],
@@ -145,7 +145,7 @@ class FileGenerationTools(Toolkit):
             else:
                 json_content = json.dumps(data, indent=2, ensure_ascii=False)
 
-            return self._build_file_result(
+            return self._create_file_artifact(
                 json_content,
                 filename,
                 file_type="json",
@@ -211,7 +211,7 @@ class FileGenerationTools(Toolkit):
             else:
                 csv_content = ""
 
-            return self._build_file_result(
+            return self._create_file_artifact(
                 csv_content,
                 filename,
                 file_type="csv",
@@ -274,7 +274,7 @@ class FileGenerationTools(Toolkit):
             pdf_content = buffer.getvalue()
             buffer.close()
 
-            return self._build_file_result(
+            return self._create_file_artifact(
                 pdf_content,
                 filename,
                 file_type="pdf",
@@ -299,7 +299,7 @@ class FileGenerationTools(Toolkit):
         try:
             log_debug(f"Generating text file with content length: {len(content)}")
 
-            return self._build_file_result(
+            return self._create_file_artifact(
                 content,
                 filename,
                 file_type="txt",
