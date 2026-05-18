@@ -1122,7 +1122,9 @@ class Workflow:
 
         return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
 
-    async def aget_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
+    async def aget_run_output(
+        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> Optional[WorkflowRunOutput]:
         """Get a RunOutput from the database."""
         if self._workflow_session is not None:
             run_response = self._workflow_session.get_run(run_id=run_id)
@@ -1132,7 +1134,7 @@ class Workflow:
                 log_warning(f"RunOutput {run_id} not found in AgentSession {self._workflow_session.session_id}")
                 return None
         else:
-            workflow_session = await self.aget_session(session_id=session_id)  # type: ignore
+            workflow_session = await self.aget_session(session_id=session_id, user_id=user_id)  # type: ignore
             if workflow_session is not None:
                 run_response = workflow_session.get_run(run_id=run_id)
                 if run_response is not None:
@@ -1141,7 +1143,9 @@ class Workflow:
                     log_warning(f"RunOutput {run_id} not found in AgentSession {session_id}")
         return None
 
-    def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
+    def get_run_output(
+        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+    ) -> Optional[WorkflowRunOutput]:
         """Get a RunOutput from the database."""
         if self._workflow_session is not None:
             run_response = self._workflow_session.get_run(run_id=run_id)
@@ -1151,7 +1155,7 @@ class Workflow:
                 log_warning(f"RunOutput {run_id} not found in AgentSession {self._workflow_session.session_id}")
                 return None
         else:
-            workflow_session = self.get_session(session_id=session_id)
+            workflow_session = self.get_session(session_id=session_id, user_id=user_id)
             if workflow_session is not None:
                 run_response = workflow_session.get_run(run_id=run_id)
                 if run_response is not None:
@@ -2041,13 +2045,17 @@ class Workflow:
                         raise
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
-                        step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+                        step_on_error = (
+                            getattr(step, "on_error", "fail") if isinstance(step, (Step, Condition)) else "fail"
+                        )
 
                         if step_on_error == "pause":
                             # Pause workflow and let user decide to retry or skip
                             log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                            error_requirement = cast(Step, step).create_error_requirement(i, step_error)
+                            error_requirement = cast(Union[Step, Condition], step).create_error_requirement(
+                                i, step_error
+                            )
 
                             # Store the paused state
                             workflow_run_response.status = RunStatus.paused
@@ -2450,13 +2458,17 @@ class Workflow:
 
                     # Handle step execution error based on on_error policy
                     if step_error_occurred and step_error_exception is not None:
-                        step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+                        step_on_error = (
+                            getattr(step, "on_error", "fail") if isinstance(step, (Step, Condition)) else "fail"
+                        )
 
                         if step_on_error == "pause":
                             # Pause workflow and let user decide to retry or skip
                             log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                            error_requirement = cast(Step, step).create_error_requirement(i, step_error_exception)
+                            error_requirement = cast(Union[Step, Condition], step).create_error_requirement(
+                                i, step_error_exception
+                            )
 
                             # Store the paused state
                             workflow_run_response.status = RunStatus.paused
@@ -2913,13 +2925,17 @@ class Workflow:
                         raise
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
-                        step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+                        step_on_error = (
+                            getattr(step, "on_error", "fail") if isinstance(step, (Step, Condition)) else "fail"
+                        )
 
                         if step_on_error == "pause":
                             # Pause workflow and let user decide to retry or skip
                             log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                            error_requirement = cast(Step, step).create_error_requirement(i, step_error)
+                            error_requirement = cast(Union[Step, Condition], step).create_error_requirement(
+                                i, step_error
+                            )
 
                             # Store the paused state
                             workflow_run_response.status = RunStatus.paused
@@ -3345,13 +3361,17 @@ class Workflow:
 
                     # Handle step execution error based on on_error policy
                     if step_error_occurred and step_error_exception is not None:
-                        step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
+                        step_on_error = (
+                            getattr(step, "on_error", "fail") if isinstance(step, (Step, Condition)) else "fail"
+                        )
 
                         if step_on_error == "pause":
                             # Pause workflow and let user decide to retry or skip
                             log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                            error_requirement = cast(Step, step).create_error_requirement(i, step_error_exception)
+                            error_requirement = cast(Union[Step, Condition], step).create_error_requirement(
+                                i, step_error_exception
+                            )
 
                             # Store the paused state
                             workflow_run_response.status = RunStatus.paused
