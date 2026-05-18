@@ -43,7 +43,7 @@ def lookup_service(service_name: str) -> str:
 
 
 @tool
-def list_recent_incidents() -> List[Dict[str, str]]:
+def list_recent_incidents() -> list[dict[str, str]]:
     """Return the most recent incidents filed in this session (newest first)."""
     return list(reversed(_INCIDENTS[-5:]))
 
