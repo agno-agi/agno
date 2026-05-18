@@ -82,26 +82,27 @@ class FileGenerationTools(Toolkit):
         self,
         content: Union[str, bytes],
         filename: Optional[str],
-        *,
         file_type: str,
         mime_type: str,
         display_name: str,
     ) -> ToolResult:
-        """Default the filename, append the extension, save, and build the File artifact."""
+        """Build a File artifact and optionally save to disk."""
+        # Resolve filename: default if empty, ensure correct extension
         if not filename:
             filename = f"generated_file_{str(uuid4())[:8]}.{file_type}"
         elif not filename.endswith(f".{file_type}"):
             filename += f".{file_type}"
-
         safe_filename = sanitize_filename(filename)
-        file_path = self._save_file_to_disk(content, safe_filename)
 
+        # Normalize to bytes for the artifact
         if isinstance(content, str):
             content_bytes = content.encode("utf-8")
             count_unit = "characters"
         else:
             content_bytes = content
             count_unit = "bytes"
+
+        file_path = self._save_file_to_disk(content, safe_filename)
 
         file_artifact = File(
             id=str(uuid4()),
@@ -110,7 +111,7 @@ class FileGenerationTools(Toolkit):
             file_type=file_type,
             filename=safe_filename,
             size=len(content_bytes),
-            filepath=file_path if file_path else None,
+            filepath=file_path,
         )
 
         log_debug(f"{display_name} file generated successfully")
