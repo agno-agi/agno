@@ -685,12 +685,15 @@ class SlackTools(Toolkit):
             download_response.raise_for_status()
             content = download_response.content
 
+            # dest_path needs a base directory to constrain writes; without it, arbitrary paths could escape
             if dest_path and not self.output_directory:
                 return json.dumps({"error": "dest_path requires output_directory to be configured on SlackTools"})
 
             save_path: Optional[Path] = None
             if self.output_directory:
                 try:
+                    # dest_path: user-specified subpath (preserves structure)
+                    # filename: Slack-provided name (flatten to basename)
                     if dest_path:
                         save_path = safe_join_relative_path(self.output_directory, dest_path)
                     else:
