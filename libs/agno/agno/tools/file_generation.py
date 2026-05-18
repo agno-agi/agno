@@ -41,12 +41,10 @@ class FileGenerationTools(Toolkit):
         self.enable_csv_generation = enable_csv_generation
         self.enable_pdf_generation = enable_pdf_generation and PDF_AVAILABLE
         self.enable_txt_generation = enable_txt_generation
-        self.output_directory = Path(output_directory) if output_directory else None
+        self.output_directory = Path(output_directory).resolve() if output_directory else Path.cwd().resolve()
 
-        # Create output directory if specified
-        if self.output_directory:
-            self.output_directory.mkdir(parents=True, exist_ok=True)
-            log_debug(f"Files will be saved to: {self.output_directory}")
+        self.output_directory.mkdir(parents=True, exist_ok=True)
+        log_debug(f"Files will be saved to: {self.output_directory}")
 
         if enable_pdf_generation and not PDF_AVAILABLE:
             logger.warning("PDF generation requested but reportlab is not installed. Disabling PDF generation.")
@@ -65,13 +63,13 @@ class FileGenerationTools(Toolkit):
         super().__init__(name="file_generation", tools=tools, **kwargs)
 
     def _save_file_to_disk(self, content: Union[str, bytes], filename: str) -> Tuple[Optional[str], Optional[str]]:
-        """Save file to disk. Caller must check output_directory is set before calling.
+        """Save file to disk within output_directory.
 
         Returns:
             Tuple of (saved_path, error_message). If successful, error is None.
         """
         try:
-            file_path = safe_join_filename(self.output_directory, filename)  # type: ignore[arg-type]
+            file_path = safe_join_filename(self.output_directory, filename)
             if isinstance(content, str):
                 file_path.write_text(content, encoding="utf-8")
             else:
@@ -106,10 +104,7 @@ class FileGenerationTools(Toolkit):
             content_bytes = content
             count_unit = "bytes"
 
-        file_path: Optional[str] = None
-        file_path_error: Optional[str] = None
-        if self.output_directory:
-            file_path, file_path_error = self._save_file_to_disk(content, file_name)
+        file_path, file_path_error = self._save_file_to_disk(content, file_name)
 
         file_artifact = File(
             id=str(uuid4()),

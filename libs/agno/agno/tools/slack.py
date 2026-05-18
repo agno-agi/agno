@@ -186,12 +186,11 @@ class SlackTools(Toolkit):
         self.markdown = markdown
         self.max_file_size = max_file_size
         self.thread_message_limit = thread_message_limit
-        self.output_directory = Path(output_directory) if output_directory else None
+        self.output_directory = Path(output_directory).resolve() if output_directory else Path.cwd().resolve()
         self._channel_cache: Dict[str, _ResolvedChannel] = {}
 
-        if self.output_directory:
-            self.output_directory.mkdir(parents=True, exist_ok=True)
-            log_debug(f"Uploaded files will be saved to: {self.output_directory}")
+        self.output_directory.mkdir(parents=True, exist_ok=True)
+        log_debug(f"Downloaded files will be saved to: {self.output_directory}")
 
         tools: List[Any] = []
         if enable_send_message or all:
@@ -271,7 +270,7 @@ class SlackTools(Toolkit):
     def _save_file_to_disk(
         self, content: bytes, filename: str, *, dest_path: Optional[str] = None
     ) -> Tuple[Optional[str], Optional[str]]:
-        """Save file to disk. Caller must check output_directory is set before calling.
+        """Save file to disk within output_directory.
 
         Args:
             content: File content as bytes.
@@ -283,9 +282,9 @@ class SlackTools(Toolkit):
         """
         try:
             if dest_path:
-                file_path = safe_join_relative_path(self.output_directory, dest_path)  # type: ignore[arg-type]
+                file_path = safe_join_relative_path(self.output_directory, dest_path)
             else:
-                file_path = safe_join_filename(self.output_directory, filename)  # type: ignore[arg-type]
+                file_path = safe_join_filename(self.output_directory, filename)
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_bytes(content)
         except (OSError, PathSecurityError) as e:
@@ -690,24 +689,18 @@ class SlackTools(Toolkit):
             download_response.raise_for_status()
             content = download_response.content
 
-            if dest_path and not self.output_directory:
-                return json.dumps({"error": "dest_path requires output_directory to be configured on SlackTools"})
-
             result: Dict[str, Any] = {
                 "file_id": file_id,
                 "filename": filename,
                 "size": file_size,
             }
 
-            if self.output_directory:
-                path, error = self._save_file_to_disk(content, filename, dest_path=dest_path)
-                if path:
-                    result["path"] = path
-                else:
-                    log_debug(f"Local save failed, falling back to base64: {error}")
-                    result["save_error"] = error
-                    result["content_base64"] = base64.b64encode(content).decode("utf-8")
+            path, error = self._save_file_to_disk(content, filename, dest_path=dest_path)
+            if path:
+                result["path"] = path
             else:
+                log_debug(f"Local save failed, falling back to base64: {error}")
+                result["save_error"] = error
                 result["content_base64"] = base64.b64encode(content).decode("utf-8")
 
             return json.dumps(result)

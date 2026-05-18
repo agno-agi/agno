@@ -1,5 +1,6 @@
 """Tests for FileGenerationTools security and edge-case handling."""
 
+import os
 import tempfile
 from pathlib import Path
 
@@ -111,13 +112,20 @@ def test_symlink_pointing_outside_returns_error():
         assert "resolves outside" in error
 
 
-def test_no_output_directory_returns_none_filepath():
-    """When output_directory is not set, no disk write happens (existing behavior preserved)."""
-    tool = FileGenerationTools()
-    result = tool.generate_json_file({"x": 1}, filename="report.json")
-    assert result.files is not None
-    assert result.files[0].filepath is None
-    assert result.files[0].content is not None
+def test_default_output_directory_saves_to_cwd():
+    """When output_directory is not set, files save to cwd() by default."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_dir)
+            tool = FileGenerationTools()
+            result = tool.generate_json_file({"x": 1}, filename="report.json")
+            assert result.files is not None
+            assert result.files[0].filepath is not None
+            assert Path(result.files[0].filepath).exists()
+            assert Path(result.files[0].filepath).parent.resolve() == Path(tmp_dir).resolve()
+        finally:
+            os.chdir(original_cwd)
 
 
 def test_control_char_filename_returns_error():
@@ -205,14 +213,21 @@ def test_filename_sanitized_in_artifact_traversal():
         assert Path(artifact.filepath).name == artifact.filename
 
 
-def test_filename_sanitized_no_output_directory():
-    """Test that File.filename is sanitized even when no disk write happens."""
-    tool = FileGenerationTools()
-    result = tool.generate_json_file({"x": 1}, filename="subdir/report.json")
-    assert result.files is not None
-    artifact = result.files[0]
-    assert artifact.filename == "report.json"
-    assert artifact.filepath is None
+def test_filename_sanitized_with_default_output_directory():
+    """Test that File.filename is sanitized and file is saved to cwd by default."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_dir)
+            tool = FileGenerationTools()
+            result = tool.generate_json_file({"x": 1}, filename="subdir/report.json")
+            assert result.files is not None
+            artifact = result.files[0]
+            assert artifact.filename == "report.json"
+            assert artifact.filepath is not None
+            assert Path(artifact.filepath).name == "report.json"
+        finally:
+            os.chdir(original_cwd)
 
 
 @pytest.mark.parametrize(
