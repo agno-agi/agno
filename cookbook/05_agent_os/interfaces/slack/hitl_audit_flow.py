@@ -162,53 +162,12 @@ agent = Agent(
         WebSearchTools(),  # backend="auto" multi-backend fallback (more reliable than DuckDuckGo)
     ],
     instructions=[
-        "CRITICAL — STRUCTURED PAUSES ONLY: When you need additional "
-        "information from the user mid-flow, you MUST trigger a tool "
-        "decorated with `requires_user_input=True` or "
-        "`external_execution=True` (use ask_user for selections, "
-        "run_diagnostic for command output). NEVER ask the user a "
-        "question in plain chat — plain-chat asks bypass the Slack form, "
-        "the audit trail, and validation. The 'incident workflow' IS you "
-        "calling these tools; the user cannot navigate to it. "
-        "GOOD: call run_diagnostic(command='kubectl get pods -A'). "
-        "BAD: writing 'Please paste kubectl output here' as text.",
-        "You are a deterministic incident commander. Drive every "
-        "incident through these phases, pausing for the human when the "
-        "framework does:",
-        "  1) Triage — call ask_user once to collect severity (single-select: "
-        "P0/P1/P2/P3) and affected services (multi-select: api-gateway, "
-        "order-worker, user-profile). Call lookup_service for each.",
-        "  2) Diagnose — call run_diagnostic with a concrete command "
-        "(curl against a health endpoint, kubectl describe, etc.). The "
-        "engineer pastes output back; use it to form a hypothesis.",
-        "  3) Remediate — if the fix is a restart, call restart_service. "
-        "In the `reason` field, KEEP IT UNDER 80 CHARACTERS — include only "
-        "essential info + runbook URL (e.g., 'P1 OOMKilled. rb/api-gateway'). "
-        "This avoids Slack's 200-char Card body limit. Slack will gate this "
-        "with Approve / Deny; do NOT ask for extra confirmation yourself.",
-        "  4) Retro — once the incident is stable, call "
-        "file_incident_retro with a clean title + summary. Priority and "
-        "on-call owner come from the Slack pause form, not from you.",
-        "  5) Conclude — after file_incident_retro returns, call "
-        "conclude_incident with a final summary. This is your LAST "
-        "action; the run ends here. The summary MUST include: "
-        "(a) brief recap of what happened; "
-        "(b) root cause hypothesis based on the diagnostic data "
-        "(e.g., 'OOMKilled → memory limit too low or memory leak'); "
-        "(c) specific recommended follow-ups (e.g., 'raise memory "
-        "limit from 2GB to 4GB', 'investigate memory leak post-deploy'); "
-        "(d) process improvements (e.g., 'add memory pressure alert at 80%'). "
-        "Be ACTIONABLE — not just a recap of inputs.",
-        "Use WebSearchTools only if lookup_service + list_recent_incidents "
-        "give you nothing and the symptom is clearly a public library error.",
-        "After file_incident_retro returns, echo the resolved priority "
-        "and on_call_owner values from the tool result in your "
-        "conclude_incident summary so the operator can audit what was "
-        "approved (these are non-sensitive routing fields).",
-        "REMINDER: Information requests go through tools (run_diagnostic, "
-        "ask_user). Never ask via plain chat — the user has no Submit "
-        "form to reply with. If you need more info, IMMEDIATELY call "
-        "run_diagnostic(command=...) — do not write 'we should run X' as text.",
+        "You are an incident commander. Follow this flow:",
+        "1) Triage: ask_user for severity + affected services",
+        "2) Diagnose: run_diagnostic for engineer to execute",
+        "3) Remediate: restart_service if needed",
+        "4) Retro: file_incident_retro with summary",
+        "5) Conclude: conclude_incident to end the run",
     ],
     markdown=True,
     tool_choice="required",  # Forces tool call every turn — no plain-chat escape
