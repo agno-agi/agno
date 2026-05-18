@@ -1325,10 +1325,22 @@ def _handle_model_response_chunk(
                 if not model_response_event.run_id:  # type: ignore
                     model_response_event.run_id = run_response.run_id  # type: ignore
 
-            # Accumulate member content for cancellation persistence
-            # Skip when using structured output to avoid corrupting the response type
+            # Skip terminals — their content is a summary string, not a streaming delta.
             if not parse_structured_output and team._member_response_model is None:
-                if hasattr(model_response_event, "content") and isinstance(model_response_event.content, str):
+                event_name = getattr(model_response_event, "event", "")
+                is_terminal = event_name in {
+                    "RunCompleted",
+                    "RunCancelled",
+                    "RunError",
+                    "TeamRunCompleted",
+                    "TeamRunCancelled",
+                    "TeamRunError",
+                }
+                if (
+                    not is_terminal
+                    and hasattr(model_response_event, "content")
+                    and isinstance(model_response_event.content, str)
+                ):
                     if run_response.content is None:
                         run_response.content = model_response_event.content
                     elif isinstance(run_response.content, str):

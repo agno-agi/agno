@@ -309,9 +309,8 @@ def test_cancel_non_existent_agent_run():
 def test_continue_session_after_cancelled_agent_run(shared_db):
     """Test that a new run on the same session sees the cancelled run's history.
 
-    This tests the primary user story from issue #5994: after cancellation,
-    users should be able to start a new run on the same session and the AI
-    should see what was generated before cancellation.
+    After cancellation, a new run on the same session should see what was generated
+    before cancellation.
     """
     agent = Agent(
         name="Continuity Agent",

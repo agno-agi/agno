@@ -5475,6 +5475,8 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                     )
 
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
                     if is_executor_pause(step_output):
                         resolved = resolve_executor_pause(step, workflow_run_response)
                         if resolved:
@@ -6261,6 +6263,7 @@ class Workflow:
                         stream_executor_events=self.stream_executor_events,
                         step_index=i,
                     ):
+                        raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                         if isinstance(event, StepOutput):
                             step_output = event
                         else:
@@ -6269,6 +6272,8 @@ class Workflow:
                                 event, workflow_run_response, step_index=i, step=step
                             )
                             yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     if step_output is None:
                         step_output = StepOutput(content="")
@@ -7358,6 +7363,8 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                     )
 
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
                     if is_executor_pause(step_output):
                         resolved = resolve_executor_pause(step, workflow_run_response)
                         if resolved:
@@ -7759,7 +7766,7 @@ class Workflow:
             self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
             session.upsert_run(run=workflow_run_response)
             await self.asave_session(session=session)
-            cleanup_run(workflow_run_response.run_id)  # type: ignore
+            await acleanup_run(workflow_run_response.run_id)  # type: ignore
 
         if self.telemetry:
             self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
@@ -7862,6 +7869,7 @@ class Workflow:
                         stream_executor_events=self.stream_executor_events,
                         step_index=i,
                     ):
+                        await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                         if isinstance(event, StepOutput):
                             step_output = event
                         else:
@@ -7869,6 +7877,8 @@ class Workflow:
                                 event, workflow_run_response, step_index=i, step=step
                             )
                             yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     if step_output is None:
                         step_output = StepOutput(content="")
@@ -8485,7 +8495,7 @@ class Workflow:
         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
         await self.asave_session(session=session)
-        cleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_run(workflow_run_response.run_id)  # type: ignore
 
         if self.telemetry:
             self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)

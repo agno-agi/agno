@@ -1,6 +1,6 @@
 """Redis-based run cancellation management."""
 
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterable, Optional, Set, Union
 
 from agno.exceptions import RunCancelledException
 from agno.run.cancellation_management.base import BaseRunCancellationManager
@@ -68,6 +68,10 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
     def _get_key(self, run_id: str) -> str:
         """Get the Redis key for a run ID."""
         return f"{self.key_prefix}{run_id}"
+
+    def _get_members_key(self, team_run_id: str) -> str:
+        """Get the Redis key for a team run's member set."""
+        return f"{self.key_prefix}members:{team_run_id}"
 
     def _ensure_sync_client(self) -> Union[Redis, RedisCluster]:
         """Ensure sync client is available."""
@@ -276,3 +280,53 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
                 result[run_id] = is_cancelled
 
         return result
+
+    def register_member_run(self, team_run_id: str, member_run_id: str) -> None:
+        """Record that a member run belongs to a team run for cancel-cascade."""
+        client = self._ensure_sync_client()
+        key = self._get_members_key(team_run_id)
+        pipe = client.pipeline()
+        pipe.sadd(key, member_run_id)
+        if self.ttl_seconds and self.ttl_seconds > 0:
+            pipe.expire(key, self.ttl_seconds)
+        pipe.execute()
+
+    async def aregister_member_run(self, team_run_id: str, member_run_id: str) -> None:
+        """Record that a member run belongs to a team run for cancel-cascade (async version)."""
+        client = self._ensure_async_client()
+        key = self._get_members_key(team_run_id)
+        pipe = client.pipeline()
+        pipe.sadd(key, member_run_id)
+        if self.ttl_seconds and self.ttl_seconds > 0:
+            pipe.expire(key, self.ttl_seconds)
+        await pipe.execute()
+
+    def _decode_members(self, members: Iterable[Any]) -> Set[str]:
+        """Decode a Redis set response (bytes or str) into a Set[str]."""
+        return {m.decode("utf-8") if isinstance(m, bytes) else m for m in members}
+
+    def get_member_run_ids(self, team_run_id: str) -> Set[str]:
+        """Return the in-flight member run_ids of a team run."""
+        client = self._ensure_sync_client()
+        pipe = client.pipeline()
+        pipe.smembers(self._get_members_key(team_run_id))
+        results = pipe.execute()
+        return self._decode_members(results[0] or set())
+
+    async def aget_member_run_ids(self, team_run_id: str) -> Set[str]:
+        """Return the in-flight member run_ids of a team run (async version)."""
+        client = self._ensure_async_client()
+        pipe = client.pipeline()
+        pipe.smembers(self._get_members_key(team_run_id))
+        results = await pipe.execute()
+        return self._decode_members(results[0] or set())
+
+    def cleanup_member_runs(self, team_run_id: str) -> None:
+        """Drop a team run's member mapping when the team run finishes."""
+        client = self._ensure_sync_client()
+        client.delete(self._get_members_key(team_run_id))
+
+    async def acleanup_member_runs(self, team_run_id: str) -> None:
+        """Drop a team run's member mapping when the team run finishes (async version)."""
+        client = self._ensure_async_client()
+        await client.delete(self._get_members_key(team_run_id))

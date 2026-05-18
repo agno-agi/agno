@@ -1,6 +1,6 @@
 """Run cancellation management."""
 
-from typing import Dict
+from typing import Dict, Set
 
 from agno.run.cancellation_management.base import BaseRunCancellationManager
 from agno.run.cancellation_management.in_memory_cancellation_manager import InMemoryRunCancellationManager
@@ -92,3 +92,33 @@ def get_active_runs() -> Dict[str, bool]:
 async def aget_active_runs() -> Dict[str, bool]:
     """Get all currently tracked runs and their cancellation status (async version)."""
     return await _cancellation_manager.aget_active_runs()
+
+
+def register_member_run(team_run_id: str, member_run_id: str) -> None:
+    """Record that a member run belongs to a team run for cancel-cascade."""
+    _cancellation_manager.register_member_run(team_run_id, member_run_id)
+
+
+async def aregister_member_run(team_run_id: str, member_run_id: str) -> None:
+    """Record that a member run belongs to a team run for cancel-cascade (async version)."""
+    await _cancellation_manager.aregister_member_run(team_run_id, member_run_id)
+
+
+def get_member_run_ids(team_run_id: str) -> Set[str]:
+    """Return the in-flight member run_ids of a team run."""
+    return _cancellation_manager.get_member_run_ids(team_run_id)
+
+
+async def aget_member_run_ids(team_run_id: str) -> Set[str]:
+    """Return the in-flight member run_ids of a team run (async version)."""
+    return await _cancellation_manager.aget_member_run_ids(team_run_id)
+
+
+def cleanup_member_runs(team_run_id: str) -> None:
+    """Drop a team run's member mapping when the team run finishes."""
+    _cancellation_manager.cleanup_member_runs(team_run_id)
+
+
+async def acleanup_member_runs(team_run_id: str) -> None:
+    """Drop a team run's member mapping when the team run finishes (async version)."""
+    await _cancellation_manager.acleanup_member_runs(team_run_id)

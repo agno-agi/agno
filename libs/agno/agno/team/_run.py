@@ -36,16 +36,31 @@ from agno.models.message import Message
 from agno.models.metrics import RunMetrics, merge_background_metrics
 from agno.models.response import ModelResponse, ToolExecution
 from agno.run import RunContext, RunStatus
-from agno.run.agent import RunOutput, RunOutputEvent
+from agno.run.agent import (
+    RunCancelledEvent as AgentRunCancelledEvent,
+)
+from agno.run.agent import (
+    RunCompletedEvent as AgentRunCompletedEvent,
+)
+from agno.run.agent import (
+    RunOutput,
+    RunOutputEvent,
+)
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
 )
 from agno.run.cancel import (
+    acleanup_member_runs,
     acleanup_run,
+    aget_member_run_ids,
     araise_if_cancelled,
+    aregister_member_run,
     aregister_run,
+    cleanup_member_runs,
     cleanup_run,
+    get_member_run_ids,
     raise_if_cancelled,
+    register_member_run,
     register_run,
 )
 from agno.run.cancel import (
@@ -102,33 +117,36 @@ from agno.utils.log import (
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
 _background_tasks: set[asyncio.Task[None]] = set()
 
+# Member terminals that bypass raise_if_cancelled so cancel-state can finalise downstream.
+# RunError is excluded: in a cancel race the team's cancel wins.
+_MEMBER_CANCEL_BYPASS_EVENT_TYPES = (
+    AgentRunCancelledEvent,
+    AgentRunCompletedEvent,
+    TeamRunCancelledEvent,
+    TeamRunCompletedEvent,
+)
+
 if TYPE_CHECKING:
     from agno.team._run_options import ResolvedRunOptions
     from agno.team.team import Team
 
 
 def cancel_run(run_id: str) -> bool:
-    """Cancel a running team execution.
-
-    Args:
-        run_id (str): The run_id to cancel.
-
-    Returns:
-        bool: True if the run was found and marked for cancellation, False otherwise.
-    """
-    return cancel_run_global(run_id)
+    """Cancel a team run and cascade to its in-flight member runs."""
+    result = cancel_run_global(run_id)
+    for member_run_id in get_member_run_ids(run_id):
+        cancel_run(member_run_id)
+    cleanup_member_runs(run_id)
+    return result
 
 
 async def acancel_run(run_id: str) -> bool:
-    """Cancel a running team execution.
-
-    Args:
-        run_id (str): The run_id to cancel.
-
-    Returns:
-        bool: True if the run was found and marked for cancellation, False otherwise.
-    """
-    return await acancel_run_global(run_id)
+    """Async variant of :func:`cancel_run`."""
+    result = await acancel_run_global(run_id)
+    for member_run_id in await aget_member_run_ids(run_id):
+        await acancel_run(member_run_id)
+    await acleanup_member_runs(run_id)
+    return result
 
 
 async def _asetup_session(
@@ -687,7 +705,8 @@ def _run_tasks_stream(
                     session_state=run_context.session_state,
                     run_context=run_context,
                 ):
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
             else:
                 for event in _handle_model_response_stream(
@@ -701,7 +720,8 @@ def _run_tasks_stream(
                     session_state=run_context.session_state,
                     run_context=run_context,
                 ):
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
                     from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
                     if isinstance(event, RunContentEvent):
@@ -1516,7 +1536,8 @@ def _run_stream(
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
                 else:
                     for event in _handle_model_response_stream(
@@ -1530,7 +1551,8 @@ def _run_stream(
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
                         from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
                         if isinstance(event, RunContentEvent):
@@ -2510,7 +2532,8 @@ async def _arun_tasks_stream(
                     session_state=run_context.session_state,
                     run_context=run_context,
                 ):
-                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+                    if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
             else:
                 async for event in _ahandle_model_response_stream(
@@ -2524,7 +2547,8 @@ async def _arun_tasks_stream(
                     session_state=run_context.session_state,
                     run_context=run_context,
                 ):
-                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+                    if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                     from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
                     if isinstance(event, RunContentEvent):
@@ -3626,7 +3650,8 @@ async def _arun_stream(
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
                 else:
                     async for event in _ahandle_model_response_stream(
@@ -3640,7 +3665,8 @@ async def _arun_stream(
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                         from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
                         if isinstance(event, RunContentEvent):
@@ -4204,6 +4230,9 @@ def _cleanup_and_store(
     from agno.run.approval import update_approval_run_status
     from agno.team._session import update_session_metrics
 
+    if run_response.run_id:
+        cleanup_member_runs(run_response.run_id)
+
     # Scrub a shallow copy for storage — the original run_response is never
     # mutated so the caller always sees generated media regardless of store_media.
     storage_copy = copy.copy(run_response)
@@ -4249,6 +4278,9 @@ async def _acleanup_and_store(
 
     from agno.run.approval import aupdate_approval_run_status
     from agno.team._session import update_session_metrics
+
+    if run_response.run_id:
+        await acleanup_member_runs(run_response.run_id)
 
     # Scrub a shallow copy for storage — the original run_response is never
     # mutated so the caller always sees generated media regardless of store_media.
@@ -4923,6 +4955,14 @@ def _route_requirements_to_members(
                         member_run_output = mr
                         break
 
+        member_run_id = (
+            getattr(member_run_output, "run_id", None)
+            if member_run_output is not None
+            else (reqs[0].member_run_id if reqs else None)
+        )
+        if member_run_id and run_response.run_id is not None:
+            register_member_run(run_response.run_id, member_run_id)
+
         if member_run_output is not None:
             # Update requirements and tool executions on the member's run output
             member_run_output.requirements = reqs
@@ -4937,7 +4977,6 @@ def _route_requirements_to_members(
             )
         else:
             # Fallback: use run_id (requires DB or cached session)
-            member_run_id = reqs[0].member_run_id if reqs else None
             member_response = member.continue_run(  # type: ignore[arg-type]
                 run_id=member_run_id,
                 requirements=reqs,
@@ -5015,6 +5054,14 @@ def _route_requirements_to_members_stream(
                         member_run_output = mr
                         break
 
+        member_run_id = (
+            getattr(member_run_output, "run_id", None)
+            if member_run_output is not None
+            else (reqs[0].member_run_id if reqs else None)
+        )
+        if member_run_id and run_response.run_id is not None:
+            register_member_run(run_response.run_id, member_run_id)
+
         if member_run_output is not None:
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
@@ -5030,7 +5077,6 @@ def _route_requirements_to_members_stream(
                 yield_run_output=True,
             )
         else:
-            member_run_id = reqs[0].member_run_id if reqs else None
             member_response_stream = member.continue_run(  # type: ignore[call-overload]
                 run_id=member_run_id,
                 requirements=reqs,
@@ -5047,11 +5093,14 @@ def _route_requirements_to_members_stream(
                 member_response = event
                 continue  # Don't yield the final RunOutput
 
+            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+
             # Set parent_run_id on member events (same as delegate_task_to_member)
             event.parent_run_id = getattr(event, "parent_run_id", None) or run_response.run_id
 
-            # Store event and yield (same as _handle_model_response_chunk for member events)
-            if stream_events or team.stream_member_events:
+            # Forward member terminals regardless of stream_events so the wire always sees a terminal.
+            if isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES) or stream_events or team.stream_member_events:
                 yield handle_event(
                     event,
                     run_response,
@@ -5123,6 +5172,14 @@ async def _aroute_requirements_to_members(
                         member_run_output = mr
                         break
 
+        member_run_id = (
+            getattr(member_run_output, "run_id", None)
+            if member_run_output is not None
+            else (reqs[0].member_run_id if reqs else None)
+        )
+        if member_run_id and run_response.run_id is not None:
+            await aregister_member_run(run_response.run_id, member_run_id)
+
         if member_run_output is not None:
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
@@ -5135,7 +5192,6 @@ async def _aroute_requirements_to_members(
                 session_id=session.session_id,
             )
         else:
-            member_run_id = reqs[0].member_run_id if reqs else None
             member_response = await member.acontinue_run(  # type: ignore[misc]
                 run_id=member_run_id,
                 requirements=reqs,
@@ -5225,6 +5281,14 @@ async def _aroute_requirements_to_members_stream(
                         member_run_output = mr
                         break
 
+        member_run_id = (
+            getattr(member_run_output, "run_id", None)
+            if member_run_output is not None
+            else (reqs[0].member_run_id if reqs else None)
+        )
+        if member_run_id and run_response.run_id is not None:
+            await aregister_member_run(run_response.run_id, member_run_id)
+
         if member_run_output is not None:
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
@@ -5240,7 +5304,6 @@ async def _aroute_requirements_to_members_stream(
                 yield_run_output=True,
             )
         else:
-            member_run_id = reqs[0].member_run_id if reqs else None
             member_response_stream = member.acontinue_run(  # type: ignore[call-overload]
                 run_id=member_run_id,
                 requirements=reqs,
@@ -5257,11 +5320,14 @@ async def _aroute_requirements_to_members_stream(
                 member_response = event
                 continue  # Don't yield the final RunOutput
 
+            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
+
             # Set parent_run_id on member events (same as adelegate_task_to_member)
             event.parent_run_id = getattr(event, "parent_run_id", None) or run_response.run_id
 
-            # Store event and yield (same as _handle_model_response_chunk for member events)
-            if stream_events or team.stream_member_events:
+            # Forward member terminals regardless of stream_events so the wire always sees a terminal.
+            if isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES) or stream_events or team.stream_member_events:
                 yield handle_event(
                     event,
                     run_response,
@@ -5810,7 +5876,22 @@ def _continue_run_dispatch_stream_with_member_events(
     from agno.team._tools import _determine_tools_for_model
 
     # Phase 1: Yield member streaming events
-    yield from member_event_stream
+    try:
+        yield from member_event_stream
+    except RunCancelledException as e:
+        run_response = _handle_team_run_cancellation(run_response, e)
+        cancelled_event, completed_event = _build_team_cancel_terminal_events(
+            team, run_response, error=e, run_context=run_context
+        )
+        try:
+            _cleanup_and_store(team, run_response=run_response, session=team_session, run_context=run_context)
+        except Exception as store_err:
+            log_warning(f"Failed to persist cancelled run: {store_err}")
+        yield cancelled_event
+        yield completed_event
+        if opts.yield_run_output:
+            yield run_response
+        return
 
     # Phase 2: After member routing completes, check for chained pauses
     newly_propagated = [r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids]
@@ -6195,7 +6276,8 @@ def _continue_run_stream(
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
                 else:
                     from agno.run.team import IntermediateRunContentEvent, RunContentEvent
@@ -6211,7 +6293,8 @@ def _continue_run_stream(
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
                         if isinstance(event, RunContentEvent):
                             if stream_events:
                                 yield IntermediateRunContentEvent(
@@ -7070,7 +7153,8 @@ async def _acontinue_run_stream(
                             session_state=run_context.session_state,
                             run_context=run_context,
                         ):
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                await araise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event
                     else:
                         from agno.run.team import IntermediateRunContentEvent, RunContentEvent
@@ -7086,7 +7170,8 @@ async def _acontinue_run_stream(
                             session_state=run_context.session_state,
                             run_context=run_context,
                         ):
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                await araise_if_cancelled(run_response.run_id)  # type: ignore
                             if isinstance(event, RunContentEvent):
                                 if stream_events:
                                     yield IntermediateRunContentEvent(
@@ -7185,7 +7270,8 @@ async def _acontinue_run_stream(
                             session_state=run_context.session_state,
                             run_context=run_context,
                         ):
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                await araise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event
                     else:
                         from agno.run.team import IntermediateRunContentEvent, RunContentEvent
@@ -7201,7 +7287,8 @@ async def _acontinue_run_stream(
                             session_state=run_context.session_state,
                             run_context=run_context,
                         ):
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                await araise_if_cancelled(run_response.run_id)  # type: ignore
                             if isinstance(event, RunContentEvent):
                                 if stream_events:
                                     yield IntermediateRunContentEvent(
