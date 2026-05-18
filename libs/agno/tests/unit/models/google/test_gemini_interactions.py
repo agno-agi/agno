@@ -292,23 +292,58 @@ class TestGetRequestKwargs:
         assert kwargs["response_modalities"] == ["text", "image"]
 
     def test_generation_config_passthrough_merges_with_fields(self):
-        """generation_config dict is merged in - its keys override field-derived values."""
+        """Supported keys from generation_config are merged into the request config."""
         model = self._make_model(
             temperature=0.5,
-            generation_config={"top_p": 0.9, "top_k": 40, "presence_penalty": 0.1},
+            generation_config={"top_p": 0.9, "thinking_summaries": "auto", "tool_choice": "auto"},
         )
         kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
         cfg = kwargs["generation_config"]
         assert cfg["temperature"] == 0.5
         assert cfg["top_p"] == 0.9
-        assert cfg["top_k"] == 40
-        assert cfg["presence_penalty"] == 0.1
+        assert cfg["thinking_summaries"] == "auto"
+        assert cfg["tool_choice"] == "auto"
 
     def test_generation_config_passthrough_overrides_fields(self):
-        """When the same key is set on both, the passthrough dict wins."""
+        """When the same key is set on both, the passthrough wins."""
         model = self._make_model(temperature=0.5, generation_config={"temperature": 0.9})
         kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
         assert kwargs["generation_config"]["temperature"] == 0.9
+
+    def test_generation_config_filters_unsupported_keys(self):
+        """Keys not in GenerationConfigParam are dropped (e.g. http_options, system_instruction)."""
+        model = self._make_model(
+            generation_config={
+                "temperature": 0.7,
+                "http_options": {"timeout": 30},  # GenerateContentConfig-only
+                "system_instruction": "ignored",  # GenerateContentConfig-only
+                "tools": [],  # GenerateContentConfig-only
+                "top_k": 40,  # generateContent-only
+            }
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
+        cfg = kwargs["generation_config"]
+        assert cfg == {"temperature": 0.7}
+
+    def test_generation_config_accepts_pydantic_object(self):
+        """Passing a Pydantic-like config (e.g. GenerateContentConfig) is normalized via model_dump."""
+
+        class FakeConfig:
+            def model_dump(self, exclude_none=True):
+                # Simulate GenerateContentConfig's wide dump: many None fields plus
+                # Gemini-only keys that the Interactions API doesn't accept.
+                return {
+                    "temperature": 0.8,
+                    "top_p": 0.95,
+                    "http_options": {"timeout": 30},
+                    "system_instruction": "ignored",
+                    "tools": [],
+                }
+
+        model = self._make_model(generation_config=FakeConfig())
+        kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
+        cfg = kwargs["generation_config"]
+        assert cfg == {"temperature": 0.8, "top_p": 0.95}
 
     def test_input_sliced_when_previous_interaction_id_set(self):
         """When previous_interaction_id is set, only messages after the prior assistant turn are sent."""

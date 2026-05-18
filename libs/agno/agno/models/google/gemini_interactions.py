@@ -57,6 +57,41 @@ except ImportError:
     ImageContent = None  # type: ignore[assignment, misc]
 
 
+# Keys accepted by the Interactions API's GenerationConfigParam. Used to filter
+# raw generation_config (dict or Pydantic dump) before merging, so that passing
+# a stricter-typed object like GenerateContentConfig - which carries Gemini-only
+# keys such as http_options, tools, and system_instruction - doesn't produce
+# an invalid Interactions payload.
+_GENERATION_CONFIG_KEYS = frozenset(
+    {
+        "image_config",
+        "max_output_tokens",
+        "seed",
+        "speech_config",
+        "stop_sequences",
+        "temperature",
+        "thinking_level",
+        "thinking_summaries",
+        "tool_choice",
+        "top_p",
+    }
+)
+
+
+def _normalize_generation_config(config: Any) -> Dict[str, Any]:
+    """Convert generation_config to a dict and keep only Interactions-supported keys.
+
+    Accepts either a dict or a Pydantic-like object (e.g. GenerateContentConfig).
+    Strips None values via model_dump(exclude_none=True) and filters out keys
+    not in GenerationConfigParam.
+    """
+    if config is None:
+        return {}
+    if hasattr(config, "model_dump"):
+        config = config.model_dump(exclude_none=True)
+    return {k: v for k, v in config.items() if k in _GENERATION_CONFIG_KEYS}
+
+
 @dataclass
 class GeminiInteractions(Model):
     """
@@ -103,10 +138,12 @@ class GeminiInteractions(Model):
     seed: Optional[int] = None
     response_modalities: Optional[list[str]] = None
 
-    # Raw GenerationConfigParam passthrough. Merged into the generation_config
-    # built from the fields above; keys here override the field-derived values.
-    # Use this for advanced params not exposed as individual fields.
-    generation_config: Optional[Dict[str, Any]] = None
+    # Raw GenerationConfigParam passthrough. Accepts either a dict or a
+    # Pydantic-like object (e.g. google.genai.types.GenerateContentConfig).
+    # Merged into the generation_config built from the fields above; keys here
+    # override field-derived values. Only Interactions-supported keys are kept
+    # (see _GENERATION_CONFIG_KEYS) - other keys are dropped.
+    generation_config: Optional[Any] = None
 
     # Interactions API specific parameters
     store: Optional[bool] = None  # Whether to persist interactions server-side (default: True)
@@ -384,9 +421,10 @@ class GeminiInteractions(Model):
             generation_config["seed"] = self.seed
         if self.thinking_level is not None:
             generation_config["thinking_level"] = self.thinking_level
-        # Merge user-provided raw config last - their keys override field-derived values
+        # Merge user-provided raw config last - their keys override field-derived values.
+        # Normalize first: handle Pydantic objects, strip None, drop unsupported keys.
         if self.generation_config:
-            generation_config.update(self.generation_config)
+            generation_config.update(_normalize_generation_config(self.generation_config))
         if generation_config:
             kwargs["generation_config"] = generation_config
 
