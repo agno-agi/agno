@@ -52,40 +52,48 @@ def test_filename_with_dots_in_name():
         assert (Path(tmp_dir) / "q1.report.json").exists()
 
 
-def test_empty_filename_raises():
-    """Empty filename must raise PathSecurityError."""
+def test_empty_filename_returns_error():
+    """Empty filename must return error in tuple."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        with pytest.raises(PathSecurityError, match="Invalid filename"):
-            tool._save_file_to_disk("payload", "")
+        path, error = tool._save_file_to_disk("payload", "")
+        assert path is None
+        assert error is not None
+        assert "Invalid filename" in error
 
 
-def test_dot_filename_raises():
-    """Filename '.' must raise PathSecurityError."""
+def test_dot_filename_returns_error():
+    """Filename '.' must return error in tuple."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        with pytest.raises(PathSecurityError, match="Invalid filename"):
-            tool._save_file_to_disk("payload", ".")
+        path, error = tool._save_file_to_disk("payload", ".")
+        assert path is None
+        assert error is not None
+        assert "Invalid filename" in error
 
 
-def test_dotdot_filename_raises():
-    """Filename '..' must raise PathSecurityError."""
+def test_dotdot_filename_returns_error():
+    """Filename '..' must return error in tuple."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        with pytest.raises(PathSecurityError, match="Invalid filename"):
-            tool._save_file_to_disk("payload", "..")
+        path, error = tool._save_file_to_disk("payload", "..")
+        assert path is None
+        assert error is not None
+        assert "Invalid filename" in error
 
 
-def test_only_traversal_raises():
-    """Filename '../' (path-only) must raise PathSecurityError."""
+def test_only_traversal_returns_error():
+    """Filename '../' (path-only) must return error in tuple."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        with pytest.raises(PathSecurityError, match="Invalid filename"):
-            tool._save_file_to_disk("payload", "../")
+        path, error = tool._save_file_to_disk("payload", "../")
+        assert path is None
+        assert error is not None
+        assert "Invalid filename" in error
 
 
-def test_symlink_pointing_outside_rejected():
-    """Symlink within output_directory pointing outside must be rejected."""
+def test_symlink_pointing_outside_returns_error():
+    """Symlink within output_directory pointing outside must return error."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         outside_dir = Path(tmp_dir) / "outside"
         outside_dir.mkdir()
@@ -97,8 +105,10 @@ def test_symlink_pointing_outside_rejected():
             pytest.skip("Symlink creation not permitted on this platform")
 
         tool = FileGenerationTools(output_directory=str(inside_dir))
-        with pytest.raises(PathSecurityError, match="resolves outside"):
-            tool._save_file_to_disk("payload", "escape")
+        path, error = tool._save_file_to_disk("payload", "escape")
+        assert path is None
+        assert error is not None
+        assert "resolves outside" in error
 
 
 def test_no_output_directory_returns_none_filepath():
@@ -110,27 +120,32 @@ def test_no_output_directory_returns_none_filepath():
     assert result.files[0].content is not None
 
 
-def test_control_char_filename_rejected():
-    """Filenames containing control characters must raise PathSecurityError."""
+def test_control_char_filename_returns_error():
+    """Filenames containing control characters must return error in tuple."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        with pytest.raises(PathSecurityError, match="Invalid"):
-            tool._save_file_to_disk("payload", "report\nhacked.json")
+        path, error = tool._save_file_to_disk("payload", "report\nhacked.json")
+        assert path is None
+        assert error is not None
+        assert "Invalid" in error
 
 
-def test_whitespace_only_filename_rejected():
-    """Whitespace-only filenames must raise PathSecurityError."""
+def test_whitespace_only_filename_returns_error():
+    """Whitespace-only filenames must return error in tuple."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        with pytest.raises(PathSecurityError, match="Invalid filename"):
-            tool._save_file_to_disk("payload", "   ")
+        path, error = tool._save_file_to_disk("payload", "   ")
+        assert path is None
+        assert error is not None
+        assert "Invalid filename" in error
 
 
 def test_trailing_dot_space_trimmed():
     """Trailing dots and spaces in the filename must be stripped."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        tool._save_file_to_disk("payload", "report.json. ")
+        path, error = tool._save_file_to_disk("payload", "report.json. ")
+        assert error is None
         assert (Path(tmp_dir) / "report.json").exists()
 
 
@@ -151,12 +166,14 @@ def test_generate_csv_file_control_char_returns_error():
         assert "Error" in result.content
 
 
-def test_pure_dot_filename_rejected():
-    """Filename '...' must raise PathSecurityError after rstrip('. ')."""
+def test_pure_dot_filename_returns_error():
+    """Filename '...' must return error after rstrip('. ')."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        with pytest.raises(PathSecurityError, match="Invalid filename"):
-            tool._save_file_to_disk("payload", "...")
+        path, error = tool._save_file_to_disk("payload", "...")
+        assert path is None
+        assert error is not None
+        assert "Invalid filename" in error
 
 
 def test_url_encoded_traversal_sanitized_inside_output_directory():

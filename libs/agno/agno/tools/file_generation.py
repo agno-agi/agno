@@ -2,9 +2,10 @@ import csv
 import io
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
+from agno.exceptions import PathSecurityError
 from agno.media import File
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
@@ -63,20 +64,23 @@ class FileGenerationTools(Toolkit):
 
         super().__init__(name="file_generation", tools=tools, **kwargs)
 
-    def _save_file_to_disk(self, content: Union[str, bytes], filename: str) -> Optional[str]:
-        """Save file to disk. Returns path or None if no output_directory."""
-        if not self.output_directory:
-            return None
+    def _save_file_to_disk(self, content: Union[str, bytes], filename: str) -> Tuple[Optional[str], Optional[str]]:
+        """Save file to disk. Caller must check output_directory is set before calling.
 
-        file_path = safe_join_filename(self.output_directory, filename)
-
-        if isinstance(content, str):
-            file_path.write_text(content, encoding="utf-8")
-        else:
-            file_path.write_bytes(content)
-
+        Returns:
+            Tuple of (saved_path, error_message). If successful, error is None.
+        """
+        try:
+            file_path = safe_join_filename(self.output_directory, filename)  # type: ignore[arg-type]
+            if isinstance(content, str):
+                file_path.write_text(content, encoding="utf-8")
+            else:
+                file_path.write_bytes(content)
+        except (OSError, PathSecurityError) as e:
+            log_warning(f"Failed to save file locally: {str(e)}")
+            return None, str(e)
         log_debug(f"File saved to: {file_path}")
-        return str(file_path)
+        return str(file_path), None
 
     def _create_file_artifact(
         self,
@@ -102,7 +106,10 @@ class FileGenerationTools(Toolkit):
             content_bytes = content
             count_unit = "bytes"
 
-        file_path = self._save_file_to_disk(content, file_name)
+        file_path: Optional[str] = None
+        file_path_error: Optional[str] = None
+        if self.output_directory:
+            file_path, file_path_error = self._save_file_to_disk(content, file_name)
 
         file_artifact = File(
             id=str(uuid4()),
@@ -118,6 +125,8 @@ class FileGenerationTools(Toolkit):
         success_msg = f"{display_name} file '{file_name}' generated ({len(content)} {count_unit})"
         if file_path:
             success_msg += f" → {file_path}"
+        elif file_path_error:
+            success_msg += f" (save failed: {file_path_error})"
 
         return ToolResult(content=success_msg, files=[file_artifact])
 

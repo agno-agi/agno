@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
 from ssl import SSLContext
-from typing import Any, Dict, List, Literal, Optional, Union, cast
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import httpx
 
@@ -268,19 +268,31 @@ class SlackTools(Toolkit):
             entry["attachments"] = msg["attachments"]
         return entry
 
-    def _save_file_to_disk(self, content: bytes, filename: str) -> Optional[str]:
-        """Save file to disk if output_directory is set. Returns the saved path or None."""
-        if not self.output_directory:
-            return None
+    def _save_file_to_disk(
+        self, content: bytes, filename: str, *, dest_path: Optional[str] = None
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Save file to disk. Caller must check output_directory is set before calling.
 
+        Args:
+            content: File content as bytes.
+            filename: Flat filename (used when dest_path is None).
+            dest_path: Optional relative path preserving directory structure.
+
+        Returns:
+            Tuple of (saved_path, error_message). If successful, error is None.
+        """
         try:
-            file_path = safe_join_filename(self.output_directory, filename)
+            if dest_path:
+                file_path = safe_join_relative_path(self.output_directory, dest_path)  # type: ignore[arg-type]
+            else:
+                file_path = safe_join_filename(self.output_directory, filename)  # type: ignore[arg-type]
+            file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_bytes(content)
         except (OSError, PathSecurityError) as e:
             log_warning(f"Failed to save file locally: {str(e)}")
-            return None
+            return None, str(e)
         log_debug(f"File saved to: {file_path}")
-        return str(file_path)
+        return str(file_path), None
 
     @staticmethod
     def _channel_cache_key(channel: str) -> str:
@@ -631,8 +643,6 @@ class SlackTools(Toolkit):
             except PathSecurityError as e:
                 return json.dumps({"error": f"Invalid filename: {e}"})
 
-            local_path = self._save_file_to_disk(content_bytes, file_name)
-
             response = self.client.files_upload_v2(
                 channel=channel,
                 content=content_bytes,
@@ -642,12 +652,7 @@ class SlackTools(Toolkit):
                 thread_ts=thread_ts,
             )
 
-            # Copy to avoid mutating the SDK's response object
-            result: Dict[str, Any] = dict(cast(Dict[str, Any], response.data))
-            if local_path:
-                result["local_path"] = local_path
-
-            return json.dumps(result)
+            return json.dumps(dict(cast(Dict[str, Any], response.data)))
         except SlackApiError as e:
             logger.exception("Error uploading file")
             return json.dumps({"error": str(e)})
@@ -685,21 +690,8 @@ class SlackTools(Toolkit):
             download_response.raise_for_status()
             content = download_response.content
 
-            # dest_path needs a base directory to constrain writes; without it, arbitrary paths could escape
             if dest_path and not self.output_directory:
                 return json.dumps({"error": "dest_path requires output_directory to be configured on SlackTools"})
-
-            save_path: Optional[Path] = None
-            if self.output_directory:
-                try:
-                    # dest_path: user-specified subpath (preserves structure)
-                    # filename: Slack-provided name (flatten to basename)
-                    if dest_path:
-                        save_path = safe_join_relative_path(self.output_directory, dest_path)
-                    else:
-                        save_path = safe_join_filename(self.output_directory, filename)
-                except PathSecurityError as e:
-                    return json.dumps({"error": f"Invalid destination path: {e}"})
 
             result: Dict[str, Any] = {
                 "file_id": file_id,
@@ -707,14 +699,13 @@ class SlackTools(Toolkit):
                 "size": file_size,
             }
 
-            if save_path:
-                try:
-                    save_path.parent.mkdir(parents=True, exist_ok=True)
-                    save_path.write_bytes(content)
-                    log_debug(f"File downloaded to: {save_path}")
-                    result["path"] = str(save_path)
-                except OSError as e:
-                    log_warning(f"Failed to save file locally: {str(e)}")
+            if self.output_directory:
+                path, error = self._save_file_to_disk(content, filename, dest_path=dest_path)
+                if path:
+                    result["path"] = path
+                else:
+                    log_debug(f"Local save failed, falling back to base64: {error}")
+                    result["save_error"] = error
                     result["content_base64"] = base64.b64encode(content).decode("utf-8")
             else:
                 result["content_base64"] = base64.b64encode(content).decode("utf-8")
