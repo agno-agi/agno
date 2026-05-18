@@ -388,6 +388,7 @@ def _clone_db_with_table_overrides(
                 db_file=source_db.db_file,
                 db_url=source_db.db_url,
                 db_engine=source_db.db_engine,
+                passphrase_env=source_db.passphrase_env,
                 id=source_db.id,
                 **overrides,
             )

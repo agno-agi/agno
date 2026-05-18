@@ -1,6 +1,5 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple, Union, cast
 from uuid import uuid4
 
@@ -15,6 +14,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.sqlite.engine import create_async_sqlite_engine, resolve_passphrase
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.db.sqlite.utils import (
     abulk_upsert_metrics,
@@ -41,7 +41,7 @@ from agno.utils.string import generate_id
 try:
     from sqlalchemy import Column, ForeignKey, MetaData, String, Table, func, select, text
     from sqlalchemy.dialects import sqlite
-    from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+    from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
     from sqlalchemy.schema import Index, UniqueConstraint
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
@@ -53,6 +53,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         db_file: Optional[str] = None,
         db_engine: Optional[AsyncEngine] = None,
         db_url: Optional[str] = None,
+        passphrase: Optional[str] = None,
+        passphrase_env: Optional[str] = None,
         session_table: Optional[str] = None,
         culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
@@ -81,6 +83,10 @@ class AsyncSqliteDb(AsyncBaseDb):
             db_file (Optional[str]): The database file to connect to.
             db_engine (Optional[AsyncEngine]): The SQLAlchemy async database engine to use.
             db_url (Optional[str]): The database URL to connect to.
+            passphrase (Optional[str]): SQLCipher passphrase. When set, the database file is encrypted.
+                Requires ``pip install agno[sqlite-encrypted]``.
+            passphrase_env (Optional[str]): Environment variable name to read the SQLCipher passphrase from.
+                Used when ``passphrase`` is not provided.
             session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
             culture_table (Optional[str]): Name of the table to store cultural notions.
             memory_table (Optional[str]): Name of the table to store user memories.
@@ -120,24 +126,22 @@ class AsyncSqliteDb(AsyncBaseDb):
         )
 
         _engine: Optional[AsyncEngine] = db_engine
+        _encrypted = False
         if _engine is None:
-            if db_url is not None:
-                _engine = create_async_engine(db_url)
-            elif db_file is not None:
-                db_path = Path(db_file).resolve()
-                db_path.parent.mkdir(parents=True, exist_ok=True)
-                db_file = str(db_path)
-                _engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
-            else:
-                # If none of db_engine, db_url, or db_file are provided, create a db in the current directory
-                default_db_path = Path("./agno.db").resolve()
-                _engine = create_async_engine(f"sqlite+aiosqlite:///{default_db_path}")
-                db_file = str(default_db_path)
-                log_debug(f"Created SQLite database: {default_db_path}")
+            _engine, db_file, db_url, _encrypted = create_async_sqlite_engine(
+                db_file=db_file,
+                db_url=db_url,
+                passphrase=passphrase,
+                passphrase_env=passphrase_env,
+            )
+        else:
+            _, _encrypted = resolve_passphrase(passphrase, passphrase_env)
 
         self.db_engine: AsyncEngine = _engine
         self.db_url: Optional[str] = db_url
         self.db_file: Optional[str] = db_file
+        self.encrypted: bool = _encrypted
+        self.passphrase_env: Optional[str] = passphrase_env if _encrypted else None
         self.metadata: MetaData = MetaData()
 
         # Initialize database session factory
