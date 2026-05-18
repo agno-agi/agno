@@ -469,7 +469,7 @@ def test_build_instructions_never_references_disabled_tools():
 
 
 def test_save_file_traversal_filename_lands_inside_output_dir():
-    """Traversal '../../escape' is sanitized via safe_join; file lands inside output_directory."""
+    """Traversal '../../escape' is sanitized via safe_join_filename; file lands inside output_directory."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = _make_slack_tools_with_output_dir(tmp_dir)
         result = tool._save_file_to_disk(b"payload", "../../escape.bin")
@@ -479,7 +479,7 @@ def test_save_file_traversal_filename_lands_inside_output_dir():
 
 
 def test_save_file_absolute_path_lands_inside_output_dir():
-    """Absolute paths are stripped to bare filename via safe_join; file lands inside output_directory."""
+    """Absolute paths are stripped to bare filename via safe_join_filename; file lands inside output_directory."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = _make_slack_tools_with_output_dir(tmp_dir)
         result = tool._save_file_to_disk(b"payload", "/tmp/test_slack_abs_xyz.bin")

@@ -9,7 +9,7 @@ from agno.media import File
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_warning, logger
-from agno.utils.path_safety import safe_join, sanitize_filename
+from agno.utils.path_safety import safe_join_filename, sanitize_filename
 
 try:
     from reportlab.lib.pagesizes import letter
@@ -68,7 +68,7 @@ class FileGenerationTools(Toolkit):
         if not self.output_directory:
             return None, sanitize_filename(filename)
 
-        file_path = safe_join(self.output_directory, filename)
+        file_path = safe_join_filename(self.output_directory, filename)
 
         if isinstance(content, str):
             file_path.write_text(content, encoding="utf-8")

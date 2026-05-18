@@ -6,7 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 from agno.exceptions import PathSecurityError
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
-from agno.utils.path_safety import safe_join_subpath
+from agno.utils.path_safety import safe_join_relative_path
 
 
 class Toolkit:
@@ -357,7 +357,7 @@ class Toolkit:
                 return False, base_dir
 
         try:
-            resolved_path = safe_join_subpath(base_dir, file_name)
+            resolved_path = safe_join_relative_path(base_dir, file_name)
             return True, resolved_path
         except (PathSecurityError, OSError):
             return False, base_dir

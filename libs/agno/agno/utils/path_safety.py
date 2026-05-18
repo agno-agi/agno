@@ -60,12 +60,12 @@ def sanitize_filename(filename: str) -> str:
     return _sanitize_segment(safe)
 
 
-def safe_join(directory: Union[str, Path], filename: str) -> Path:
+def safe_join_filename(directory: Union[str, Path], filename: str) -> Path:
     """Join ``directory`` with the sanitized basename of ``filename``.
 
     Path components in ``filename`` are discarded. Use for filenames
     received from LLM output. For multi-segment paths, use
-    ``safe_join_subpath``.
+    ``safe_join_relative_path``.
     """
     base = Path(directory)
     safe = sanitize_filename(filename)
@@ -82,7 +82,7 @@ def safe_join(directory: Union[str, Path], filename: str) -> Path:
     return resolved_file
 
 
-def safe_join_subpath(directory: Union[str, Path], subpath: str) -> Path:
+def safe_join_relative_path(directory: Union[str, Path], subpath: str) -> Path:
     """Join ``directory`` with ``subpath``, preserving multi-segment paths.
 
     Allows inputs like ``"docs/report.md"`` and enforces containment by

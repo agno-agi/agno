@@ -802,7 +802,7 @@ def test_partial_async_get_async_functions():
 
 
 # =============================================================================
-# Tests for Toolkit._check_path (path containment post-safe_join_subpath migration)
+# Tests for Toolkit._check_path (path containment post-safe_join_relative_path migration)
 # =============================================================================
 
 
@@ -858,7 +858,7 @@ def test_check_path_restrict_false_returns_resolved_outside(basic_toolkit):
         assert ok is True
         assert path.is_absolute()
         assert path.name == "somewhere.txt"
-        # Use is_relative_to (the same primitive safe_join_subpath uses internally)
+        # Use is_relative_to (the same primitive safe_join_relative_path uses internally)
         # so sibling-prefix names like base="/tmp/foo" vs "/tmp/foobar/..." don't
         # produce a false-positive containment.
         assert not path.is_relative_to(base.resolve())

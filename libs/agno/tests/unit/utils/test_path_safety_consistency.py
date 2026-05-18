@@ -3,7 +3,7 @@
 Verifies that the 5 callers (FileGenerationTools, SlackTools, Toolkit._check_path,
 skills.utils.is_safe_path, FileTools.check_escape) handle the same evil inputs
 with consistent semantics — accounting for the deliberate split between
-safe_join (filename-only) and safe_join_subpath (multi-segment).
+safe_join_filename (filename-only) and safe_join_relative_path (multi-segment).
 """
 
 import sys
@@ -28,7 +28,7 @@ ALL_REJECT = [
     "..",
 ]
 
-# Inputs that safe_join rejects (filename-only); safe_join_subpath sanitizes or accepts.
+# Inputs that safe_join_filename rejects (filename-only); safe_join_relative_path sanitizes or accepts.
 FILENAME_ONLY_REJECT = [
     "CON",
     ".",
@@ -37,7 +37,7 @@ FILENAME_ONLY_REJECT = [
     "\\\\server\\share\\evil",
 ]
 
-# Inputs that safe_join_subpath rejects (traversal); safe_join sanitizes via Path.name.
+# Inputs that safe_join_relative_path rejects (traversal); safe_join_filename sanitizes via Path.name.
 SUBPATH_ONLY_REJECT = [
     "../../escape",
     "../../../etc/passwd",
@@ -87,12 +87,12 @@ def test_all_callers_reject_universally(evil):
 
 
 # ---------------------------------------------------------------------------
-# Filename-only rejection — safe_join callers refuse; subpath callers sanitize/accept
+# Filename-only rejection — safe_join_filename callers refuse; subpath callers sanitize/accept
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("evil", FILENAME_ONLY_REJECT)
-def test_safe_join_callers_reject_filename_evil(evil):
+def test_safe_join_filename_callers_reject_filename_evil(evil):
     """FileGen raises, Slack drops the file silently — both refuse to write evil."""
     with tempfile.TemporaryDirectory() as tmp:
         with pytest.raises(PathSecurityError):
@@ -101,7 +101,7 @@ def test_safe_join_callers_reject_filename_evil(evil):
 
 
 # ---------------------------------------------------------------------------
-# Subpath rejection — subpath callers reject traversal; safe_join sanitizes
+# Subpath rejection — subpath callers reject traversal; safe_join_filename sanitizes
 # ---------------------------------------------------------------------------
 
 
@@ -140,7 +140,7 @@ def test_subpath_callers_reject_reserved_segment(evil):
 
 
 @pytest.mark.parametrize("evil", SUBPATH_ONLY_REJECT)
-def test_safe_join_callers_sanitize_traversal(evil):
+def test_safe_join_filename_callers_sanitize_traversal(evil):
     """FileGen + Slack sanitize traversal via Path(filename).name; file lands inside output_dir."""
     with tempfile.TemporaryDirectory() as tmp:
         filegen_path, _ = _filegen(tmp)._save_file_to_disk("payload", evil)
@@ -159,7 +159,7 @@ def test_safe_join_callers_sanitize_traversal(evil):
 def test_adversarial_read_etc_passwd_via_filegen():
     with tempfile.TemporaryDirectory() as tmp:
         filegen_path, safe_name = _filegen(tmp)._save_file_to_disk("evil", "/etc/passwd")
-        # safe_join strips path components → file lands inside tmp as "passwd", NOT in /etc.
+        # safe_join_filename strips path components → file lands inside tmp as "passwd", NOT in /etc.
         assert filegen_path is not None
         assert Path(filegen_path).resolve().is_relative_to(Path(tmp).resolve())
         assert safe_name == "passwd"

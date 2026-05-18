@@ -10,13 +10,13 @@ from pathlib import Path
 from typing import List, Optional
 
 from agno.exceptions import PathSecurityError
-from agno.utils.path_safety import safe_join_subpath
+from agno.utils.path_safety import safe_join_relative_path
 
 
 def is_safe_path(base_dir: Path, requested_path: str) -> bool:
     """Return True if ``requested_path`` resolves inside ``base_dir``."""
     try:
-        safe_join_subpath(base_dir, requested_path)
+        safe_join_relative_path(base_dir, requested_path)
         return True
     except (PathSecurityError, OSError):
         return False

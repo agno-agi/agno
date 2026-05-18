@@ -15,7 +15,7 @@ from agno.exceptions import PathSecurityError
 from agno.run.base import RunContext
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning, logger
-from agno.utils.path_safety import safe_join, safe_join_subpath, sanitize_filename
+from agno.utils.path_safety import safe_join_filename, safe_join_relative_path, sanitize_filename
 
 try:
     from slack_sdk import WebClient
@@ -274,7 +274,7 @@ class SlackTools(Toolkit):
             return None
 
         try:
-            file_path = safe_join(self.output_directory, filename)
+            file_path = safe_join_filename(self.output_directory, filename)
             file_path.write_bytes(content)
         except (OSError, PathSecurityError) as e:
             log_warning(f"Failed to save file locally: {str(e)}")
@@ -692,9 +692,9 @@ class SlackTools(Toolkit):
             if self.output_directory:
                 try:
                     if dest_path:
-                        save_path = safe_join_subpath(self.output_directory, dest_path)
+                        save_path = safe_join_relative_path(self.output_directory, dest_path)
                     else:
-                        save_path = safe_join(self.output_directory, filename)
+                        save_path = safe_join_filename(self.output_directory, filename)
                 except PathSecurityError as e:
                     return json.dumps({"error": f"Invalid destination path: {e}"})
 

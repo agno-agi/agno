@@ -10,7 +10,7 @@ from agno.skills.skill import Skill
 from agno.skills.utils import read_file_safe, run_script
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
-from agno.utils.path_safety import safe_join_subpath
+from agno.utils.path_safety import safe_join_relative_path
 
 
 class Skills:
@@ -244,7 +244,7 @@ class Skills:
         # Validate and resolve path to prevent path traversal attacks
         refs_dir = Path(skill.source_path) / "references"
         try:
-            ref_file = safe_join_subpath(refs_dir, reference_path)
+            ref_file = safe_join_relative_path(refs_dir, reference_path)
         except PathSecurityError:
             return json.dumps(
                 {
@@ -311,7 +311,7 @@ class Skills:
         # Validate and resolve path to prevent path traversal attacks
         scripts_dir = Path(skill.source_path) / "scripts"
         try:
-            script_file = safe_join_subpath(scripts_dir, script_path)
+            script_file = safe_join_relative_path(scripts_dir, script_path)
         except PathSecurityError:
             return json.dumps(
                 {
