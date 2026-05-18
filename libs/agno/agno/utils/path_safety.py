@@ -25,6 +25,20 @@ def _has_windows_path_prefix(text: str) -> bool:
     return bool(pwp.drive) or pwp.is_absolute()
 
 
+def _check_containment(base: Path, target: Path, name: str) -> Path:
+    """Resolve and verify target stays inside base; catches symlink escapes."""
+    try:
+        resolved_base = base.resolve()
+        resolved_target = target.resolve()
+    except (OSError, UnicodeEncodeError) as e:
+        raise PathSecurityError(f"Cannot resolve {name!r}: {e}") from e
+    try:
+        resolved_target.relative_to(resolved_base)
+    except ValueError:
+        raise PathSecurityError(f"{name!r} resolves outside {base}") from None
+    return resolved_target
+
+
 def _sanitize_segment(segment: str) -> str:
     """Validate a path segment and return its canonical form.
 
@@ -70,18 +84,7 @@ def safe_join_filename(directory: Union[str, Path], filename: str) -> Path:
     """
     base = Path(directory)
     safe = sanitize_filename(filename)
-    file_path = base / safe
-    try:
-        resolved_file = file_path.resolve()
-        resolved_dir = base.resolve()
-    except (OSError, UnicodeEncodeError) as e:
-        raise PathSecurityError(f"Cannot resolve path {filename!r}: {e}") from e
-    # Containment check: resolve() follows symlinks, so this catches symlink escapes
-    try:
-        resolved_file.relative_to(resolved_dir)
-    except ValueError:
-        raise PathSecurityError(f"Filename {filename!r} resolves outside {directory}") from None
-    return resolved_file
+    return _check_containment(base, base / safe, filename)
 
 
 def safe_join_relative_path(directory: Union[str, Path], subpath: str) -> Path:
@@ -108,13 +111,4 @@ def safe_join_relative_path(directory: Union[str, Path], subpath: str) -> Path:
         cleaned_parts.append(_sanitize_segment(segment))
     base = Path(directory)
     target = base / "/".join(cleaned_parts)
-    try:
-        resolved_base = base.resolve()
-        resolved_target = target.resolve()
-    except (OSError, UnicodeEncodeError) as e:
-        raise PathSecurityError(f"Cannot resolve subpath {subpath!r}: {e}") from e
-    try:
-        resolved_target.relative_to(resolved_base)
-    except ValueError:
-        raise PathSecurityError(f"Subpath {subpath!r} resolves outside {directory}") from None
-    return resolved_target
+    return _check_containment(base, target, subpath)
