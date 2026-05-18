@@ -104,11 +104,11 @@ class GeminiInteractions(Model):
     response_modalities: Optional[list[str]] = None
 
     # Raw GenerationConfigParam passthrough. Accepts either a dict or a
-    # Pydantic-like object (e.g. google.genai.types.GenerateContentConfig).
-    # Merged into the generation_config built from the fields above; keys here
-    # override field-derived values. Only Interactions-supported keys are kept
-    # (see _GENERATION_CONFIG_KEYS) - other keys are dropped.
-    generation_config: Optional[Any] = None
+    # Pydantic model (e.g. google.genai.types.GenerateContentConfig). Merged
+    # into the generation_config built from the fields above; keys here
+    # override field-derived values. Pydantic models are dumped with
+    # exclude_none so unset fields don't flood the request.
+    generation_config: Optional[Union[Dict[str, Any], BaseModel]] = None
 
     # Interactions API specific parameters
     store: Optional[bool] = None  # Whether to persist interactions server-side (default: True)
@@ -387,12 +387,14 @@ class GeminiInteractions(Model):
         if self.thinking_level is not None:
             generation_config["thinking_level"] = self.thinking_level
         # Merge user-provided raw config last - their keys override field-derived values.
-        # If it's a Pydantic-like object (e.g. GenerateContentConfig), dump it
-        # with exclude_none so the request isn't flooded with unset fields.
+        # If it's a Pydantic model (e.g. GenerateContentConfig), dump it with
+        # exclude_none so the request isn't flooded with unset fields.
         if self.generation_config:
-            extra = self.generation_config
-            if hasattr(extra, "model_dump"):
-                extra = extra.model_dump(exclude_none=True)
+            extra = (
+                self.generation_config.model_dump(exclude_none=True)
+                if isinstance(self.generation_config, BaseModel)
+                else self.generation_config
+            )
             generation_config.update(extra)
         if generation_config:
             kwargs["generation_config"] = generation_config

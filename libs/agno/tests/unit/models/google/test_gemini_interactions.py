@@ -311,18 +311,22 @@ class TestGetRequestKwargs:
         assert kwargs["generation_config"]["temperature"] == 0.9
 
     def test_generation_config_accepts_pydantic_object(self):
-        """Pydantic-like configs (e.g. GenerateContentConfig) are dumped with exclude_none."""
+        """Pydantic models (e.g. GenerateContentConfig) are dumped with exclude_none."""
+        from typing import Optional as _Opt
 
-        class FakeConfig:
-            def model_dump(self, exclude_none=True):
-                # exclude_none drops the None fields the SDK declares for completeness
-                return {"temperature": 0.8, "top_p": 0.95}
+        from pydantic import BaseModel as _PydBase
 
-        model = self._make_model(generation_config=FakeConfig())
+        class FakeConfig(_PydBase):
+            temperature: _Opt[float] = None
+            top_p: _Opt[float] = None
+            max_output_tokens: _Opt[int] = None  # unset, should be excluded
+
+        model = self._make_model(generation_config=FakeConfig(temperature=0.8, top_p=0.95))
         kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
         cfg = kwargs["generation_config"]
         assert cfg["temperature"] == 0.8
         assert cfg["top_p"] == 0.95
+        assert "max_output_tokens" not in cfg
 
     def test_input_sliced_when_previous_interaction_id_set(self):
         """When previous_interaction_id is set, only messages after the prior assistant turn are sent."""
