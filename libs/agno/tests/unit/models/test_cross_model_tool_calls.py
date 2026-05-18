@@ -358,6 +358,50 @@ class TestClaudeFormatMessages:
         assert formatted[1]["role"] == "assistant"
         assert formatted[2]["role"] == "user"
 
+    def test_assistant_list_content_preserves_server_tool_blocks(self):
+        """server_tool_use and code-execution blocks on list-shaped assistant content round-trip."""
+        from agno.utils.models.claude import format_messages
+
+        server_use = {"type": "server_tool_use", "id": "srvtoolu_01", "name": "code_execution", "input": {}}
+        bash_result = {
+            "type": "bash_code_execution_tool_result",
+            "tool_use_id": "srvtoolu_01",
+            "content": {"type": "bash_code_execution_result", "stderr": "", "stdout": ""},
+        }
+        msgs = [
+            Message(role="user", content="Run code"),
+            Message(
+                role="assistant",
+                content=[
+                    server_use,
+                    {"type": "text", "text": "Executed."},
+                    bash_result,
+                ],
+            ),
+        ]
+        formatted, _ = format_messages(msgs)
+        assert formatted[1]["role"] == "assistant"
+        blocks = formatted[1]["content"]
+        types = [b.get("type") if isinstance(b, dict) else getattr(b, "type", None) for b in blocks]
+        assert types == ["server_tool_use", "text", "bash_code_execution_tool_result"]
+
+    def test_tool_result_preserves_list_payload(self):
+        """Structured tool_result content lists must not be collapsed with str()."""
+        from agno.utils.models.claude import format_messages
+
+        tc = _make_tool_call("toolu_ce01", name="code_execution")
+        inner = {"type": "text", "text": "stdout"}
+        msgs = [
+            Message(role="user", content="Hi"),
+            _assistant_msg([tc]),
+            Message(role="tool", tool_call_id="toolu_ce01", tool_name="code_execution", content=[inner]),
+        ]
+        formatted, _ = format_messages(msgs)
+        tool_result = formatted[2]["content"][0]
+        assert tool_result["type"] == "tool_result"
+        assert isinstance(tool_result["content"], list)
+        assert tool_result["content"][0]["type"] == "text"
+
 
 # ---------------------------------------------------------------------------
 # Gemini format — individual tool messages

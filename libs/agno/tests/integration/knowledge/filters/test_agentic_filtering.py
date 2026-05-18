@@ -173,7 +173,7 @@ async def test_agentic_filtering_openai_with_output_schema(knowledge_base):
 
 @pytest.mark.skipif(not os.environ.get("GOOGLE_API_KEY"), reason="GOOGLE_API_KEY not set")
 async def test_agentic_filtering_gemini(knowledge_base):
-    agent = Agent(model=Gemini("gemini-2.0-flash-001"), knowledge=knowledge_base, enable_agentic_knowledge_filters=True)
+    agent = Agent(model=Gemini("gemini-flash-latest"), knowledge=knowledge_base, enable_agentic_knowledge_filters=True)
     response = await agent.arun(
         "Tell me about revenue performance and top selling products in the region north_america and data_type sales",
         markdown=True,
