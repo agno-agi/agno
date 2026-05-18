@@ -10,17 +10,27 @@ Scope Format:
 The AgentOS ID is verified via the JWT `aud` (audience) claim.
 
 Examples:
-- `system:read` - Read system config
+- `config:read` - Read OS configuration
 - `agents:read` - List all agents
 - `agents:web-agent:read` - Read specific agent
 - `agents:web-agent:run` - Run specific agent
 - `agents:*:run` - Run any agent (wildcard)
 - `agent_os:admin` - Full access to everything
+
+Backwards compatibility:
+- Legacy ``system:*`` scopes are accepted as aliases for ``config:*`` so tokens
+  issued before the rename continue to work. Prefer ``config:*`` in new tokens.
 """
 
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Set
+
+# Legacy resource name aliases — keep tokens issued before a rename working.
+# Keys are the legacy resource names, values are the current names.
+LEGACY_RESOURCE_ALIASES: Dict[str, str] = {
+    "system": "config",
+}
 
 
 class AgentOSScope(str, Enum):
@@ -33,7 +43,9 @@ class AgentOSScope(str, Enum):
     Scope format:
 
     Global Resource Scopes:
-    - system:read - System configuration and model information
+    - config:read - OS configuration and model information (legacy alias: system:read)
+    - config:write - Administrative writes such as database migrations (legacy alias: system:write)
+    - registry:read - Read the code-defined registry (tools, models, databases, etc.)
     - agents:read - List all agents
     - teams:read - List all teams
     - workflows:read - List all workflows
@@ -124,10 +136,11 @@ def parse_scope(scope: str, admin_scope: Optional[str] = None) -> ParsedScope:
 
     # Global resource scope: resource:action (2 parts)
     if len(parts) == 2:
+        resource = LEGACY_RESOURCE_ALIASES.get(parts[0], parts[0])
         return ParsedScope(
             raw=scope,
             scope_type="global",
-            resource=parts[0],
+            resource=resource,
             action=parts[1],
         )
 
@@ -135,11 +148,12 @@ def parse_scope(scope: str, admin_scope: Optional[str] = None) -> ParsedScope:
     if len(parts) == 3:
         resource_id = parts[1]
         is_wildcard_resource = resource_id == "*"
+        resource = LEGACY_RESOURCE_ALIASES.get(parts[0], parts[0])
 
         return ParsedScope(
             raw=scope,
             scope_type="per_resource",
-            resource=parts[0],
+            resource=resource,
             resource_id=resource_id,
             action=parts[2],
             is_wildcard_resource=is_wildcard_resource,
@@ -300,6 +314,7 @@ def get_accessible_resource_ids(
     user_scopes: List[str],
     resource_type: str,
     admin_scope: Optional[str] = None,
+    action: Optional[str] = None,
 ) -> Set[str]:
     """
     Get the set of resource IDs the user has access to.
@@ -308,6 +323,8 @@ def get_accessible_resource_ids(
         user_scopes: List of scope strings the user has
         resource_type: Type of resource ("agents", "teams", "workflows")
         admin_scope: The scope string that grants admin access (default: "agent_os:admin")
+        action: If provided, only consider scopes matching this action (e.g. "run", "read").
+                If None, considers scopes with any action (backwards compatible for list filtering).
 
     Returns:
         Set of resource IDs the user can access. Returns {"*"} for wildcard access.
@@ -327,7 +344,17 @@ def get_accessible_resource_ids(
 
         >>> get_accessible_resource_ids(["admin"], "agents")
         {'*'}
+
+        >>> get_accessible_resource_ids(
+        ...     ["agents:agent-1:read"],
+        ...     "agents",
+        ...     action="run"
+        ... )
+        set()
     """
+    # Actions to match — if action is specified, only match that; otherwise match read/run (legacy)
+    allowed_actions = [action] if action else ["read", "run"]
+
     parsed_scopes = [parse_scope(scope, admin_scope=admin_scope) for scope in user_scopes]
 
     # Check for admin or global wildcard access
@@ -338,10 +365,10 @@ def get_accessible_resource_ids(
         # Check if resource type matches
         if scope.resource == resource_type:
             # Global resource scope (no resource_id) grants access to all
-            if not scope.resource_id and scope.action in ["read", "run"]:
+            if not scope.resource_id and scope.action in allowed_actions:
                 return {"*"}
             # Wildcard resource scope grants access to all
-            if scope.is_wildcard_resource and scope.action in ["read", "run"]:
+            if scope.is_wildcard_resource and scope.action in allowed_actions:
                 return {"*"}
 
     # Collect specific resource IDs
@@ -350,7 +377,7 @@ def get_accessible_resource_ids(
         # Check if resource type matches
         if scope.resource == resource_type:
             # Specific resource ID
-            if scope.resource_id and not scope.is_wildcard_resource and scope.action in ["read", "run"]:
+            if scope.resource_id and not scope.is_wildcard_resource and scope.action in allowed_actions:
                 accessible_ids.add(scope.resource_id)
 
     return accessible_ids
@@ -364,9 +391,9 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
     Format: "METHOD /path/pattern": ["resource:action"]
     """
     return {
-        # System endpoints
-        "GET /config": ["system:read"],
-        "GET /models": ["system:read"],
+        # Config endpoints (legacy scope: system:read)
+        "GET /config": ["config:read"],
+        "GET /models": ["config:read"],
         # Agent endpoints
         "GET /agents": ["agents:read"],
         "GET /agents/*": ["agents:read"],
@@ -452,6 +479,30 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "GET /approvals/*/status": ["approvals:read"],
         "POST /approvals/*/resolve": ["approvals:write"],
         "DELETE /approvals/*": ["approvals:delete"],
+        # Trace search
+        "POST /traces/search": ["traces:read"],
+        # Database migration endpoints (admin-only operations, legacy scope: system:write)
+        "POST /databases/all/migrate": ["config:write"],
+        "POST /databases/*/migrate": ["config:write"],
+        # Additional knowledge endpoints
+        "POST /knowledge/remote-content": ["knowledge:write"],
+        "GET /knowledge/*/sources": ["knowledge:read"],
+        "GET /knowledge/*/sources/*/files": ["knowledge:read"],
+        # Registry (read-only)
+        "GET /registry": ["registry:read"],
+        # Component endpoints (Studio)
+        "GET /components": ["components:read"],
+        "GET /components/*": ["components:read"],
+        "POST /components": ["components:write"],
+        "PATCH /components/*": ["components:write"],
+        "DELETE /components/*": ["components:delete"],
+        "GET /components/*/configs": ["components:read"],
+        "GET /components/*/configs/*": ["components:read"],
+        "GET /components/*/configs/current": ["components:read"],
+        "POST /components/*/configs": ["components:write"],
+        "PATCH /components/*/configs/*": ["components:write"],
+        "DELETE /components/*/configs/*": ["components:delete"],
+        "POST /components/*/configs/*/set-current": ["components:write"],
     }
 
 

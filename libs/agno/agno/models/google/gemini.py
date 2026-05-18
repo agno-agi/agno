@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model, RetryableModelProviderError
-from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason
+from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason, get_mime_type
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
@@ -897,16 +897,16 @@ class Gemini(Model):
         return merged, system_message
 
     def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, GeminiFile]]:
+        mime_type = get_mime_type(audio, "audio/mp3")
+
         # Case 1: Audio is a bytes object
         if audio.content and isinstance(audio.content, bytes):
-            mime_type = f"audio/{audio.format}" if audio.format else "audio/mp3"
             return Part.from_bytes(mime_type=mime_type, data=audio.content)
 
         # Case 2: Audio is an url
         elif audio.url is not None:
             audio_bytes = audio.get_content_bytes()  # type: ignore
             if audio_bytes is not None:
-                mime_type = f"audio/{audio.format}" if audio.format else "audio/mp3"
                 return Part.from_bytes(mime_type=mime_type, data=audio_bytes)
             else:
                 log_warning(f"Failed to download audio from {audio}")
@@ -935,7 +935,7 @@ class Gemini(Model):
                         config=dict(
                             name=remote_file_name,
                             display_name=audio_path.stem,
-                            mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3",
+                            mime_type=mime_type,
                         ),
                     )
                 else:
@@ -953,7 +953,6 @@ class Gemini(Model):
                     return None
 
             if audio_file.uri:
-                mime_type = f"audio/{audio.format}" if audio.format else "audio/mp3"
                 return Part.from_uri(file_uri=audio_file.uri, mime_type=mime_type)
             return None
         else:
@@ -961,9 +960,10 @@ class Gemini(Model):
             return None
 
     def _format_video_for_message(self, video: Video) -> Optional[Part]:
+        mime_type = get_mime_type(video, "video/mp4")
+
         # Case 1: Video is a bytes object
         if video.content and isinstance(video.content, bytes):
-            mime_type = f"video/{video.format}" if video.format else "video/mp4"
             return Part.from_bytes(mime_type=mime_type, data=video.content)
         # Case 2: Video is stored locally
         elif video.filepath is not None:
@@ -988,7 +988,7 @@ class Gemini(Model):
                         config=dict(
                             name=remote_file_name,
                             display_name=video_path.stem,
-                            mime_type=f"video/{video.format}" if video.format else "video/mp4",
+                            mime_type=mime_type,
                         ),
                     )
                 else:
@@ -1006,12 +1006,10 @@ class Gemini(Model):
                     return None
 
             if video_file.uri:
-                mime_type = f"video/{video.format}" if video.format else "video/mp4"
                 return Part.from_uri(file_uri=video_file.uri, mime_type=mime_type)
             return None
         # Case 3: Video is a URL
         elif video.url is not None:
-            mime_type = f"video/{video.format}" if video.format else "video/webm"
             return Part.from_uri(
                 file_uri=video.url,
                 mime_type=mime_type,
