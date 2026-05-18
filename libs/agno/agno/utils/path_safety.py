@@ -9,25 +9,34 @@ from agno.exceptions import PathSecurityError
 from agno.utils.log import log_debug
 
 _WIN_RESERVED_RE = re.compile(r"^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)", re.IGNORECASE)
-_WIN_DRIVE_OR_UNC_RE = re.compile(r"^([A-Za-z]:|\\\\)")
+_WIN_PATH_PREFIX_RE = re.compile(r"^([A-Za-z]:|\\\\)")
 
 
-def _has_control_chars(text: str) -> bool:
+def _contains_control_chars(text: str) -> bool:
+    """Check for null bytes, newlines, and other control characters."""
     return any(unicodedata.category(c) == "Cc" for c in text)
 
 
-def _has_drive_or_unc(text: str) -> bool:
-    if _WIN_DRIVE_OR_UNC_RE.match(text):
+def _has_windows_path_prefix(text: str) -> bool:
+    """Check for Windows drive letters (C:) or UNC paths (\\\\server)."""
+    if _WIN_PATH_PREFIX_RE.match(text):
         return True
+    # PureWindowsPath catches edge cases: //server, C:relative, //?/C:/
     pwp = PureWindowsPath(text)
     return bool(pwp.drive) or pwp.is_absolute()
 
 
-def _validate_segment(segment: str) -> str:
-    if _has_control_chars(segment):
+def _sanitize_segment(segment: str) -> str:
+    """Validate a path segment and return its canonical form.
+
+    Strips trailing dots/spaces and rejects control chars, Windows paths,
+    and reserved device names (CON, NUL, etc.).
+    """
+    if _contains_control_chars(segment):
         raise PathSecurityError(f"Invalid path segment: {segment!r}")
-    if _has_drive_or_unc(segment):
+    if _has_windows_path_prefix(segment):
         raise PathSecurityError(f"Invalid path segment: {segment!r}")
+    # Strip before reserved-name check so CON. matches
     stripped = segment.rstrip(". ")
     if not stripped:
         raise PathSecurityError(f"Invalid path segment: {segment!r}")
@@ -37,23 +46,18 @@ def _validate_segment(segment: str) -> str:
 
 
 def sanitize_filename(filename: str) -> str:
-    """Validate ``filename`` and return the safe basename.
-
-    Applies the same validation as ``safe_join`` without resolving against
-    a directory. Use when the caller needs a sanitized name but no disk
-    write happens.
-    """
+    """Validate and return safe basename. Strips path components."""
     filename = unicodedata.normalize("NFKC", filename)
-    if _has_control_chars(filename):
+    if _contains_control_chars(filename):
         raise PathSecurityError(f"Invalid filename: {filename!r}")
-    if _has_drive_or_unc(filename):
+    if _has_windows_path_prefix(filename):
         raise PathSecurityError(f"Invalid filename: {filename!r}")
     if "/" in filename or "\\" in filename:
-        log_debug(f"safe_join discarded path components from {filename!r}")
+        log_debug(f"sanitize_filename discarded path components from {filename!r}")
     safe = Path(filename.replace("\\", "/")).name.rstrip(". ")
     if not safe or safe.strip(".") == "":
         raise PathSecurityError(f"Invalid filename: {filename!r}")
-    return _validate_segment(safe)
+    return _sanitize_segment(safe)
 
 
 def safe_join(directory: Union[str, Path], filename: str) -> Path:
@@ -87,7 +91,7 @@ def safe_join_subpath(directory: Union[str, Path], subpath: str) -> Path:
     if not subpath or not subpath.strip():
         raise PathSecurityError(f"Invalid subpath: {subpath!r}")
     subpath = unicodedata.normalize("NFKC", subpath)
-    if _has_control_chars(subpath):
+    if _contains_control_chars(subpath):
         raise PathSecurityError(f"Invalid subpath: {subpath!r}")
     pwp = PureWindowsPath(subpath)
     if pwp.drive or pwp.is_absolute():
@@ -98,7 +102,7 @@ def safe_join_subpath(directory: Union[str, Path], subpath: str) -> Path:
         if segment in ("", ".", ".."):
             cleaned_parts.append(segment)
             continue
-        cleaned_parts.append(_validate_segment(segment))
+        cleaned_parts.append(_sanitize_segment(segment))
     base = Path(directory)
     target = base / "/".join(cleaned_parts)
     try:
