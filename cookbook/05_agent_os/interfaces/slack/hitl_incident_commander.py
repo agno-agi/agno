@@ -92,7 +92,6 @@ def run_diagnostic(command: str, note: str = "") -> str:
         command: Exact shell / kubectl command to run.
         note: Optional short note about what the agent wants to see.
     """
-    # Unreachable — external_execution=True pauses before the body runs.
     return f"[ran] {command} {note}".strip()
 
 
