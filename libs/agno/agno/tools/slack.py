@@ -188,7 +188,8 @@ class SlackTools(Toolkit):
         self.markdown = markdown
         self.max_file_size = max_file_size
         self.thread_message_limit = thread_message_limit
-        self.save_downloads = save_downloads
+        # output_directory implies save_downloads=True for backward compatibility
+        self.save_downloads = save_downloads or (output_directory is not None)
         self._channel_cache: Dict[str, _ResolvedChannel] = {}
 
         if self.save_downloads:

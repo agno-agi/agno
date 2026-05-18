@@ -42,9 +42,9 @@ class FileGenerationTools(Toolkit):
         self.enable_csv_generation = enable_csv_generation
         self.enable_pdf_generation = enable_pdf_generation and PDF_AVAILABLE
         self.enable_txt_generation = enable_txt_generation
-        self.save_files = save_files
+        # output_directory implies save_files=True for backward compatibility
+        self.save_files = save_files or (output_directory is not None)
 
-        # Only set up output directory when save_files is enabled
         if self.save_files:
             self.output_directory: Optional[Path] = (
                 Path(output_directory).resolve() if output_directory else Path.cwd().resolve()
