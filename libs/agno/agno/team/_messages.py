@@ -896,6 +896,7 @@ def _get_run_messages(
             limit=team.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             team_id=team.id if team.parent_team_id is not None else None,
+            include_run_response_content=True,
         )
 
         if len(history) > 0:
@@ -1030,6 +1031,7 @@ async def _aget_run_messages(
             limit=team.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             team_id=team.id if team.parent_team_id is not None else None,
+            include_run_response_content=True,
         )
 
         if len(history) > 0:
