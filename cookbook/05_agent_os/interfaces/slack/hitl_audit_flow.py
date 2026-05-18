@@ -1,36 +1,19 @@
 """
-Slack HITL — Deterministic Incident Commander
-=============================================
+Slack HITL — Audit Flow
+========================
 
-Compound HITL cookbook with three determinism patterns layered on top of
-the basic incident commander flow. Demonstrates how to run an incident
-response via Slack with strong audit-trail guarantees and a clean exit.
+Audit-ready incident response with tool_choice="required" — agent NEVER
+asks questions in plain chat; every interaction goes through HITL tools.
 
-Patterns demonstrated:
-  1. Forced structured pauses — agent ALWAYS uses HITL pause tools
-     (run_diagnostic, ask_user, etc.), NEVER asks via plain chat. This is
-     enforced at the API level via tool_choice="required" and reinforced
-     by explicit system-prompt rules + multishot examples.
-  2. Echo of captured user_input values — bot's reply to the operator
-     surfaces the priority + on_call_owner that were captured via the
-     Slack pause form, so the audit trail is visible in chat.
-  3. Clean termination — a conclude_incident tool decorated with
-     stop_after_tool_call=True gives the agent a deterministic exit
-     point. Without it, tool_choice="required" would loop forever after
-     the retro is filed.
+Key patterns:
+  1. tool_choice="required" — forces tool call every turn, no chat escape
+  2. conclude_incident(stop_after_tool_call=True) — clean deterministic exit
+  3. Explicit echo of captured values in final summary for audit trail
 
-How this differs from hitl_incident_commander.py:
-  - tool_choice="required" on the Agent
-  - CRITICAL / REMINDER instruction bullets
-  - GOOD / BAD multishot examples
-  - conclude_incident tool with stop_after_tool_call=True
-  - Explicit echo instruction for the post-retro reply
+See hitl_incident_walkthrough.py for the basic version without these guards.
 
 Run:
-  .venvs/demo/bin/python cookbook/05_agent_os/interfaces/slack/hitl_deterministic_incident.py
-
-Try in Slack:
-  @bot prod api returning 500s in eu-west, P1 incident
+  .venvs/demo/bin/python cookbook/05_agent_os/interfaces/slack/hitl_audit_flow.py
 
 Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
 """
@@ -49,9 +32,6 @@ from agno.tools import tool
 from agno.tools.websearch import WebSearchTools
 from agno.tools.user_feedback import UserFeedbackTools
 
-# Stand-in incident registry + service catalog
-
-
 @dataclass
 class Service:
     name: str
@@ -67,9 +47,6 @@ _SERVICES: Dict[str, Service] = {
 }
 
 _INCIDENTS: List[Dict[str, str]] = []
-
-
-# Read-only context tools
 
 
 @tool
@@ -90,9 +67,6 @@ def lookup_service(service_name: str) -> str:
 def list_recent_incidents() -> List[Dict[str, str]]:
     """Return the most recent incidents filed in this session (newest first)."""
     return list(reversed(_INCIDENTS[-5:]))
-
-
-# HITL tools — one per pause type
 
 
 @tool(external_execution=True)
@@ -154,12 +128,7 @@ def file_incident_retro(
     return f"Incident {incident_id} filed: {title} (priority={priority}, owner={on_call_owner}).\nSummary: {summary}"
 
 
-# Termination tool — gives the agent a clean exit when tool_choice="required"
-# is set. Without this, the agent would loop forever after file_incident_retro
-# because the API forces a tool call every turn and the agent has nothing else
-# meaningful to call.
-
-
+# Required for clean exit when tool_choice="required" — otherwise loops forever
 @tool(stop_after_tool_call=True)
 def conclude_incident(summary: str) -> str:
     """Mark the incident as concluded. Call this AFTER file_incident_retro
@@ -172,17 +141,15 @@ def conclude_incident(summary: str) -> str:
     return summary
 
 
-# Agent + AgentOS + Slack interface
-
 db = SqliteDb(
-    db_file="tmp/hitl_deterministic_incident.db",
+    db_file="tmp/hitl_audit_flow.db",
     session_table="agent_sessions",
     approvals_table="approvals",
 )
 
 agent = Agent(
-    name="Deterministic Incident Commander",
-    id="deterministic-incident-commander-agent",
+    name="Audit Flow",
+    id="audit-flow-agent",
     model=OpenAIResponses(id="gpt-5.4"),
     db=db,
     tools=[
@@ -245,15 +212,11 @@ agent = Agent(
         "run_diagnostic(command=...) — do not write 'we should run X' as text.",
     ],
     markdown=True,
-    # Forces the LLM to call a tool every turn; combined with conclude_incident
-    # (stop_after_tool_call=True) gives a deterministic, plain-chat-free flow.
-    # Note: OpenAI honors this; agno's Anthropic adapter currently drops it
-    # silently — kept here because this cookbook uses OpenAIResponses.
-    tool_choice="required",
+    tool_choice="required",  # Forces tool call every turn — no plain-chat escape
 )
 
 agent_os = AgentOS(
-    description="Slack HITL — deterministic incident commander (audit-friendly compound flow)",
+    description="Slack HITL — audit flow (tool_choice=required, no chat escape)",
     agents=[agent],
     db=db,
     interfaces=[
@@ -269,4 +232,4 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    agent_os.serve(app="hitl_deterministic_incident:app", reload=True)
+    agent_os.serve(app="hitl_audit_flow:app", reload=True)

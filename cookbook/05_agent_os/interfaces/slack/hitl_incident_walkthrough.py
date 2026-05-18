@@ -1,21 +1,17 @@
 """
-Slack HITL — Incident Commander
-===============================
+Slack HITL — Incident Walkthrough
+==================================
 
-Compound HITL cookbook showing all four pause types inside one realistic
-incident-response flow. The agent is summoned during a production
-incident and walks the on-call through triage, diagnostics, remediation,
-and retrospective ticket filing — pausing whenever it needs the human
-judgment only the requester has.
+All four HITL pause types in one realistic incident-response flow.
 
-Pause points in this flow:
-  1. user_feedback    → severity + affected subsystems (up front)
-  2. external_execution → engineer runs a diagnostic command and pastes output
-  3. confirmation     → restart a production service (destructive, gated)
-  4. user_input       → retrospective ticket priority + on-call owner
+Pause points:
+  1. user_feedback     → severity + affected subsystems
+  2. external_execution → engineer runs diagnostic, pastes output
+  3. confirmation      → restart service (destructive, gated)
+  4. user_input        → retro ticket priority + on-call owner
 
-Try in Slack:
-  @bot prod api returning 500s in eu-west, help me triage
+Run:
+  .venvs/demo/bin/python cookbook/05_agent_os/interfaces/slack/hitl_incident_walkthrough.py
 
 Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
 """
@@ -33,9 +29,6 @@ from agno.tools import tool
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.user_feedback import UserFeedbackTools
 
-# Stand-in incident registry + service catalog
-
-
 @dataclass
 class Service:
     name: str
@@ -51,9 +44,6 @@ _SERVICES: Dict[str, Service] = {
 }
 
 _INCIDENTS: List[Dict[str, str]] = []
-
-
-# Read-only context tools
 
 
 @tool
@@ -77,9 +67,6 @@ def lookup_service(service_name: str) -> str:
 def list_recent_incidents() -> List[Dict[str, str]]:
     """Return the most recent incidents filed in this session (newest first)."""
     return list(reversed(_INCIDENTS[-5:]))
-
-
-# HITL tools — one per pause type
 
 
 @tool(external_execution=True)
@@ -147,17 +134,15 @@ def file_incident_retro(
     )
 
 
-# Agent + AgentOS + Slack interface
-
 db = SqliteDb(
-    db_file="tmp/hitl_incident_commander.db",
+    db_file="tmp/hitl_incident_walkthrough.db",
     session_table="agent_sessions",
     approvals_table="approvals",
 )
 
 agent = Agent(
-    name="Incident Commander",
-    id="incident-commander-agent",
+    name="Incident Walkthrough",
+    id="incident-walkthrough-agent",
     model=OpenAIResponses(id="gpt-5.4"),
     db=db,
     tools=[
@@ -191,7 +176,7 @@ agent = Agent(
 )
 
 agent_os = AgentOS(
-    description="Slack HITL — incident commander (all four pause types)",
+    description="Slack HITL — incident walkthrough (all four pause types)",
     agents=[agent],
     db=db,
     interfaces=[
@@ -205,4 +190,4 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    agent_os.serve(app="hitl_incident_commander:app", reload=True)
+    agent_os.serve(app="hitl_incident_walkthrough:app", reload=True)
