@@ -1,6 +1,6 @@
 """
-Slack HITL — Incident Walkthrough
-==================================
+Slack HITL — Incident Commander
+===============================
 
 Compound HITL cookbook showing all four pause types inside one realistic
 incident-response flow. The agent is summoned during a production
@@ -150,14 +150,14 @@ def file_incident_retro(
 # Agent + AgentOS + Slack interface
 
 db = SqliteDb(
-    db_file="tmp/hitl_incident_walkthrough.db",
+    db_file="tmp/hitl_incident_commander.db",
     session_table="agent_sessions",
     approvals_table="approvals",
 )
 
 agent = Agent(
-    name="Incident Walkthrough",
-    id="incident-walkthrough-agent",
+    name="Incident Commander",
+    id="incident-commander-agent",
     model=OpenAIResponses(id="gpt-5.4"),
     db=db,
     tools=[
@@ -191,7 +191,7 @@ agent = Agent(
 )
 
 agent_os = AgentOS(
-    description="Slack HITL — incident walkthrough (all four pause types)",
+    description="Slack HITL — incident commander (all four pause types)",
     agents=[agent],
     db=db,
     interfaces=[
@@ -205,4 +205,4 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    agent_os.serve(app="hitl_incident_walkthrough:app", reload=True)
+    agent_os.serve(app="hitl_incident_commander:app", reload=True)
