@@ -28,11 +28,15 @@ from ag_ui.core.types import Message as AGUIMessage
 from pydantic import BaseModel
 
 from agno.reasoning.step import ReasoningStep
+from agno.run.agent import FollowupsCompletedEvent as AgentFollowupsCompletedEvent
+from agno.run.agent import FollowupsStartedEvent as AgentFollowupsStartedEvent
 from agno.run.agent import ReasoningCompletedEvent as AgentReasoningCompletedEvent
 from agno.run.agent import ReasoningContentDeltaEvent as AgentReasoningContentDeltaEvent
 from agno.run.agent import ReasoningStartedEvent as AgentReasoningStartedEvent
 from agno.run.agent import ReasoningStepEvent as AgentReasoningStepEvent
 from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
+from agno.run.team import FollowupsCompletedEvent as TeamFollowupsCompletedEvent
+from agno.run.team import FollowupsStartedEvent as TeamFollowupsStartedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
 from agno.run.team import ReasoningContentDeltaEvent as TeamReasoningContentDeltaEvent
 from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
@@ -447,6 +451,28 @@ def _create_events_from_chunk(
 
         custom_event = CustomEvent(name=custom_event_name, value=custom_event_value)
         events_to_emit.append(custom_event)
+
+    # Handle followups events — surface them through AG-UI so frontends can
+    # render suggested follow-up prompts. AG-UI has no native followup event
+    # type, so we emit them as CustomEvent per the approach confirmed in
+    # agno-agi/agno#7398.
+    elif isinstance(
+        chunk,
+        (
+            AgentFollowupsStartedEvent,
+            AgentFollowupsCompletedEvent,
+            TeamFollowupsStartedEvent,
+            TeamFollowupsCompletedEvent,
+        ),
+    ):
+        try:
+            custom_event_value = chunk.to_dict()
+        except Exception:
+            custom_event_value = None
+
+        events_to_emit.append(
+            CustomEvent(name=chunk.__class__.__name__, value=custom_event_value)
+        )
 
     return events_to_emit, message_started, message_id
 
