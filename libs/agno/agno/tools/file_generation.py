@@ -114,13 +114,9 @@ class FileGenerationTools(Toolkit):
         )
 
         log_debug(f"{display_name} file generated successfully")
-        success_msg = (
-            f"{display_name} file '{safe_filename}' has been generated successfully with {len(content)} {count_unit}."
-        )
+        success_msg = f"{display_name} file '{safe_filename}' generated ({len(content)} {count_unit})"
         if file_path:
-            success_msg += f" File saved to: {file_path}"
-        else:
-            success_msg += " File is available in response."
+            success_msg += f" → {file_path}"
 
         return ToolResult(content=success_msg, files=[file_artifact])
 
