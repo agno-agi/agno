@@ -403,7 +403,7 @@ class TestClaudeFormatMessages:
         assert tool_result["content"][0]["type"] == "text"
 
     def test_server_tool_blocks_not_duplicated_across_sources(self):
-        """When list-content and provider_data both carry server tool blocks, emit once."""
+        """When list-content and provider_data both carry the same block, emit once."""
         from agno.utils.models.claude import format_messages
 
         server_use = {"type": "server_tool_use", "id": "srvtoolu_dup", "name": "web_search", "input": {}}
@@ -417,6 +417,35 @@ class TestClaudeFormatMessages:
         types = [b.get("type") if isinstance(b, dict) else getattr(b, "type", None) for b in blocks]
         assert types.count("server_tool_use") == 1
         assert "text" in types
+
+    def test_server_tool_blocks_merged_by_identity(self):
+        """Partial overlap: provider_data blocks not present in list-content must still be emitted.
+
+        Regression guard: a previous version flipped a binary list_has_server_blocks flag and
+        dropped all provider_data blocks whenever list-content carried any server block,
+        silently losing blocks that existed only in provider_data.
+        """
+        from agno.utils.models.claude import format_messages
+
+        shared = {"type": "server_tool_use", "id": "srvtoolu_A", "name": "web_search", "input": {}}
+        only_in_provider = {
+            "type": "web_search_tool_result",
+            "tool_use_id": "srvtoolu_B",
+            "content": [],
+        }
+        msg = Message(
+            role="assistant",
+            content=[shared, {"type": "text", "text": "done"}],
+            provider_data={"server_tool_blocks": [shared, only_in_provider]},
+        )
+        formatted, _ = format_messages([Message(role="user", content="hi"), msg])
+        blocks = formatted[1]["content"]
+        ids = [b.get("id") or b.get("tool_use_id") if isinstance(b, dict) else None for b in blocks]
+        types = [b.get("type") if isinstance(b, dict) else getattr(b, "type", None) for b in blocks]
+        assert types.count("server_tool_use") == 1
+        assert "web_search_tool_result" in types
+        assert "srvtoolu_A" in ids
+        assert "srvtoolu_B" in ids
 
     def test_tool_result_non_block_item_coerced_to_text(self):
         """Tool result list items that aren't valid blocks should be coerced to text, not passed through."""
