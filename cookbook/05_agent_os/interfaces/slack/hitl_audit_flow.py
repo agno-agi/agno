@@ -2,18 +2,8 @@
 Slack HITL — Audit Flow
 ========================
 
-Audit-ready incident response with tool_choice="required" — agent NEVER
-asks questions in plain chat; every interaction goes through HITL tools.
-
-Key patterns:
-  1. tool_choice="required" — forces tool call every turn, no chat escape
-  2. conclude_incident(stop_after_tool_call=True) — clean deterministic exit
-  3. Explicit echo of captured values in final summary for audit trail
-
-See hitl_incident_walkthrough.py for the basic version without these guards.
-
-Run:
-  .venvs/demo/bin/python cookbook/05_agent_os/interfaces/slack/hitl_audit_flow.py
+Incident response with tool_choice="required" — every turn must call a
+tool, no plain-chat escape. Uses conclude_incident for clean exit.
 
 Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
 """

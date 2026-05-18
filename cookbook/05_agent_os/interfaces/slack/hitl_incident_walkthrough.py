@@ -2,16 +2,8 @@
 Slack HITL — Incident Walkthrough
 ==================================
 
-All four HITL pause types in one realistic incident-response flow.
-
-Pause points:
-  1. user_feedback     → severity + affected subsystems
-  2. external_execution → engineer runs diagnostic, pastes output
-  3. confirmation      → restart service (destructive, gated)
-  4. user_input        → retro ticket priority + on-call owner
-
-Run:
-  .venvs/demo/bin/python cookbook/05_agent_os/interfaces/slack/hitl_incident_walkthrough.py
+All four HITL pause types in one incident-response flow: user_feedback,
+external_execution, confirmation, and user_input.
 
 Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
 """
