@@ -666,6 +666,11 @@ class RunOutput:
     # and should be treated as foreign keys for data integrity
     workflow_step_id: Optional[str] = None  # FK: Points to StepOutput.step_id
 
+    # Team context -- populated when this agent runs as a member of a team
+    team_id: Optional[str] = None
+    team_name: Optional[str] = None
+    member_responses: Optional[List[Any]] = None
+
     @property
     def active_requirements(self) -> list[RunRequirement]:
         if not self.requirements:
