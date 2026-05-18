@@ -20,10 +20,10 @@ from rich.pretty import pprint  # noqa
 # ---------------------------------------------------------------------------
 class BoundingBox(BaseModel):
     label: str = Field(..., description="What the box contains")
-    x: float = Field(..., ge=0.0, le=1.0)
-    y: float = Field(..., ge=0.0, le=1.0)
-    width: float = Field(..., ge=0.0, le=1.0)
-    height: float = Field(..., ge=0.0, le=1.0)
+    x: float = Field(..., ge=0.0, le=1.0, description="Top-left x in [0, 1]")
+    y: float = Field(..., ge=0.0, le=1.0, description="Top-left y in [0, 1]")
+    width: float = Field(..., ge=0.0, le=1.0, description="Width in [0, 1]")
+    height: float = Field(..., ge=0.0, le=1.0, description="Height in [0, 1]")
     confidence: Literal["high", "medium", "low"] = Field(
         ..., description="Confidence in the box and label"
     )
@@ -33,7 +33,15 @@ class BoundingBox(BaseModel):
 # Agent Instructions
 # ---------------------------------------------------------------------------
 instructions = """\
-Locate the main subject and return a bounding box plus a confidence:
+Locate the main subject of the image and return a bounding box plus a
+confidence. Coordinates are relative to the full image:
+- x, y: top-left corner, each in [0, 1]
+- width, height: size, each in [0, 1]
+
+The box should be tight: include the subject and exclude as much background
+as possible without clipping the subject.
+
+Confidence reflects both the box and the label:
 - high   - subject is clearly visible, box is tight and accurate
 - medium - subject is identifiable but partly occluded, box is approximate
 - low    - subject is barely visible or you are guessing at the location

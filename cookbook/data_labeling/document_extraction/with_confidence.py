@@ -12,7 +12,7 @@ from typing import Literal, Optional
 from agno.agent import Agent, RunOutput  # noqa
 from agno.media import File
 from agno.models.openai import OpenAIResponses
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from rich.pretty import pprint  # noqa
 
 Confidence = Literal["high", "medium", "low"]
@@ -30,10 +30,8 @@ class RecipeBook(BaseModel):
     title: ConfidentField
     cuisine: ConfidentField
     language: ConfidentField
-    recipe_count: ConfidentField = Field(
-        ...,
-        description="Number of recipes, as a string so confidence applies cleanly",
-    )
+    # Held as a string so per-field confidence applies cleanly to the count.
+    recipe_count: ConfidentField
 
 
 # ---------------------------------------------------------------------------

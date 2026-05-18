@@ -56,10 +56,8 @@ agent = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    # Stop sign in England, public domain.
-    url = (
-        "https://upload.wikimedia.org/wikipedia/commons/e/e0/Stop_sign_London_2020.jpg"
-    )
+    # The "Welcome to Fabulous Las Vegas" sign, public domain.
+    url = "https://upload.wikimedia.org/wikipedia/commons/1/10/Welcome_to_Fabulous_Las_Vegas_sign.jpg"
     run: RunOutput = agent.run(
         "Extract the text fields from this sign.", images=[Image(url=url)]
     )

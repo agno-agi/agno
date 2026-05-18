@@ -1,15 +1,33 @@
 # Test Log - text_classification
 
-Tests pending. Populate after running each file end-to-end.
+Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses), agno 2.6.6.
 
-## Template
+### basic.py
 
-### filename.py
+**Status:** PASS
 
-**Status:** PASS / FAIL
+**Description:** Sentiment classification (positive/negative/neutral) over three product reviews.
 
-**Description:** What the test does and what was observed.
+**Result:** All three samples classified as expected.
 
-**Result:** Summary of success or failure.
+---
+
+### with_confidence.py
+
+**Status:** PASS
+
+**Description:** Same task as basic.py with an extra `confidence` field on the output.
+
+**Result:** Classifications correct; confidence tracks ambiguity (e.g. "It's fine I guess." -> neutral, medium).
+
+---
+
+### with_rationale.py
+
+**Status:** PASS
+
+**Description:** Same task with a free-text rationale alongside each label.
+
+**Result:** Rationales correctly cite the deciding phrases in each input.
 
 ---
