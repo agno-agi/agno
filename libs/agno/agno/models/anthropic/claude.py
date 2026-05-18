@@ -1117,8 +1117,11 @@ class Claude(Model):
         model_response = ModelResponse()
 
         if isinstance(response, (ContentBlockStartEvent, BetaRawContentBlockStartEvent)):
-            if response.content_block.type == "redacted_reasoning_content":
-                model_response.redacted_reasoning_content = response.content_block.data
+            # The Anthropic SDK emits "redacted_thinking" for these blocks; accept the legacy
+            # "redacted_reasoning_content" spelling too in case it appears via a rehydrated event.
+            block_type = getattr(response.content_block, "type", None)
+            if block_type in ("redacted_thinking", "redacted_reasoning_content"):
+                model_response.redacted_reasoning_content = getattr(response.content_block, "data", None)
 
         if isinstance(response, (ContentBlockDeltaEvent, BetaRawContentBlockDeltaEvent)):
             # Handle text content
