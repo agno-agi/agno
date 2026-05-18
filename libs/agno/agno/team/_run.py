@@ -3668,6 +3668,11 @@ async def _arun_stream(
                 # 6b. Check if delegation propagated member HITL requirements
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                     from agno.team import _hooks
+                    from agno.run.base import RunStatus
+
+                    # Persist the paused run so acontinue_run() can find it after restart
+                    run_response.status = RunStatus.paused
+                    await _acleanup_and_store(team, run_response=run_response, session=team_session)
 
                     async for item in _hooks.ahandle_team_run_paused_stream(  # type: ignore[assignment]
                         team, run_response=run_response, session=team_session, run_context=run_context
