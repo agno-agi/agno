@@ -7,11 +7,9 @@ After the first response, subsequent turns only send the new message
 and reference the previous interaction via `previous_interaction_id`.
 This enables implicit caching and reduces token costs.
 
-Multi-turn works either way:
-- With a db (recommended): conversation history is persisted across processes
-  and the previous_interaction_id flows through assistant message provider_data
-- Without a db: the model falls back to a per-session in-memory cache, so
-  multi-turn still works within a single process
+Multi-turn requires a db (e.g. SqliteDb) so the interaction_id from each
+turn's response is persisted on the assistant message and read back on
+the next turn.
 """
 
 from agno.agent import Agent

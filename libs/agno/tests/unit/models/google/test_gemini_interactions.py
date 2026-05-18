@@ -310,48 +310,49 @@ class TestGetRequestKwargs:
         kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
         assert kwargs["generation_config"]["temperature"] == 0.9
 
-    def test_previous_interaction_id_falls_back_to_session_cache(self):
-        """When messages lack provider_data, fall back to per-session cache."""
-        from agno.run.agent import RunOutput
-
+    def test_input_sliced_when_previous_interaction_id_set(self):
+        """When previous_interaction_id is set, only messages after the prior assistant turn are sent."""
         model = self._make_model()
-        model._session_interaction_ids["sess-1"] = "interactions/cached-id"
-        run_response = RunOutput(session_id="sess-1")
-        messages = [Message(role="user", content="Follow up")]
-        kwargs = model._get_request_kwargs(messages, run_response=run_response)
-        assert kwargs["previous_interaction_id"] == "interactions/cached-id"
-
-    def test_provider_data_takes_precedence_over_session_cache(self):
-        """When messages have provider_data, that wins over the cache (db path is authoritative)."""
-        from agno.run.agent import RunOutput
-
-        model = self._make_model()
-        model._session_interaction_ids["sess-1"] = "interactions/stale"
-        run_response = RunOutput(session_id="sess-1")
         messages = [
-            Message(role="user", content="First"),
-            Message(role="assistant", content="Response", provider_data={"interaction_id": "interactions/fresh"}),
+            Message(role="user", content="First turn"),
+            Message(role="assistant", content="Reply 1", provider_data={"interaction_id": "interactions/abc"}),
             Message(role="user", content="Follow up"),
         ]
-        kwargs = model._get_request_kwargs(messages, run_response=run_response)
-        assert kwargs["previous_interaction_id"] == "interactions/fresh"
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["previous_interaction_id"] == "interactions/abc"
+        # Only the new user message should be in input - server has the prior turns
+        input_steps = kwargs["input"]
+        assert len(input_steps) == 1
+        assert input_steps[0]["type"] == "user_input"
+        assert input_steps[0]["content"][0]["text"] == "Follow up"
 
-    def test_session_cache_isolated_per_session(self):
-        """Different sessions on the same model instance must not see each other's interaction ids."""
-        from agno.run.agent import RunOutput
-
+    def test_input_includes_all_messages_on_first_turn(self):
+        """Without a previous_interaction_id, full message history is sent."""
         model = self._make_model()
-        model._session_interaction_ids["sess-A"] = "interactions/A"
-        model._session_interaction_ids["sess-B"] = "interactions/B"
+        messages = [Message(role="user", content="Hello")]
+        kwargs = model._get_request_kwargs(messages)
+        assert "previous_interaction_id" not in kwargs
+        assert kwargs["input"][0]["content"][0]["text"] == "Hello"
 
-        kwargs_a = model._get_request_kwargs(
-            [Message(role="user", content="Hi")], run_response=RunOutput(session_id="sess-A")
-        )
-        kwargs_b = model._get_request_kwargs(
-            [Message(role="user", content="Hi")], run_response=RunOutput(session_id="sess-B")
-        )
-        assert kwargs_a["previous_interaction_id"] == "interactions/A"
-        assert kwargs_b["previous_interaction_id"] == "interactions/B"
+    def test_input_sliced_includes_tool_results_after_assistant(self):
+        """Mid-tool-call: send only tool result steps after the prior assistant turn."""
+        model = self._make_model()
+        messages = [
+            Message(role="user", content="Weather?"),
+            Message(
+                role="assistant",
+                tool_calls=[{"id": "c1", "type": "function", "function": {"name": "weather", "arguments": "{}"}}],
+                provider_data={"interaction_id": "interactions/abc"},
+            ),
+            Message(role="tool", tool_call_id="c1", tool_name="weather", content="Sunny"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["previous_interaction_id"] == "interactions/abc"
+        input_steps = kwargs["input"]
+        assert len(input_steps) == 1
+        assert input_steps[0]["type"] == "function_result"
+        assert input_steps[0]["call_id"] == "c1"
+        assert input_steps[0]["result"] == "Sunny"
 
 
 class TestParseInteractionResponse:
@@ -614,24 +615,6 @@ class TestInvoke:
 
         response = model.invoke(messages, assistant_message)
         assert response.provider_data["interaction_id"] == "interactions/tracked1"
-
-    def test_invoke_caches_interaction_id_for_session(self):
-        """After a successful invoke with a run_response, the interaction_id is cached by session."""
-        from agno.run.agent import RunOutput
-
-        model = self._make_model()
-        mock_client = MagicMock()
-        model.client = mock_client
-
-        mock_interaction = MagicMock()
-        mock_interaction.id = "interactions/sess-cached"
-        mock_interaction.steps = []
-        mock_interaction.usage = None
-        mock_client.interactions.create.return_value = mock_interaction
-
-        run_response = RunOutput(session_id="sess-X")
-        model.invoke([Message(role="user", content="Hi")], Message(role="assistant"), run_response=run_response)
-        assert model._session_interaction_ids["sess-X"] == "interactions/sess-cached"
 
 
 class TestInvokeAsync:
