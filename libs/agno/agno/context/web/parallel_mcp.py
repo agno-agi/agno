@@ -26,6 +26,7 @@ from collections.abc import Sequence
 from os import getenv
 from typing import Any, Optional
 
+from agno import __version__ as _AGNO_VERSION
 from agno.context.backend import ContextBackend
 from agno.context.provider import Status
 from agno.utils.log import log_info, log_warning
@@ -81,9 +82,9 @@ class ParallelMCPBackend(ContextBackend):
         from agno.tools.mcp import MCPTools
         from agno.tools.mcp.params import StreamableHTTPClientParams
 
-        headers: dict[str, Any] | None = None
+        headers: dict[str, Any] = {"User-Agent": f"agno/{_AGNO_VERSION}"}
         if self.api_key:
-            headers = {"Authorization": f"Bearer {self.api_key}"}
+            headers["Authorization"] = f"Bearer {self.api_key}"
 
         server_params = StreamableHTTPClientParams(
             url=self.url,
