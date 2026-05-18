@@ -92,7 +92,7 @@ class FileGenerationTools(Toolkit):
             filename = f"generated_file_{str(uuid4())[:8]}.{file_type}"
         elif not filename.endswith(f".{file_type}"):
             filename += f".{file_type}"
-        safe_filename = sanitize_filename(filename)
+        file_name = sanitize_filename(filename)
 
         # Normalize to bytes for the artifact
         if isinstance(content, str):
@@ -102,20 +102,20 @@ class FileGenerationTools(Toolkit):
             content_bytes = content
             count_unit = "bytes"
 
-        file_path = self._save_file_to_disk(content, safe_filename)
+        file_path = self._save_file_to_disk(content, file_name)
 
         file_artifact = File(
             id=str(uuid4()),
             content=content_bytes,
             mime_type=mime_type,
             file_type=file_type,
-            filename=safe_filename,
+            filename=file_name,
             size=len(content_bytes),
             filepath=file_path,
         )
 
         log_debug(f"{display_name} file generated successfully")
-        success_msg = f"{display_name} file '{safe_filename}' generated ({len(content)} {count_unit})"
+        success_msg = f"{display_name} file '{file_name}' generated ({len(content)} {count_unit})"
         if file_path:
             success_msg += f" → {file_path}"
 

@@ -627,16 +627,16 @@ class SlackTools(Toolkit):
                 )
 
             try:
-                safe_name = sanitize_filename(filename)
+                file_name = sanitize_filename(filename)
             except PathSecurityError as e:
                 return json.dumps({"error": f"Invalid filename: {e}"})
 
-            local_path = self._save_file_to_disk(content_bytes, safe_name)
+            local_path = self._save_file_to_disk(content_bytes, file_name)
 
             response = self.client.files_upload_v2(
                 channel=channel,
                 content=content_bytes,
-                filename=safe_name,
+                filename=file_name,
                 title=title,
                 initial_comment=initial_comment,
                 thread_ts=thread_ts,
