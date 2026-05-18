@@ -2,7 +2,7 @@ import csv
 import io
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.media import File
@@ -63,13 +63,12 @@ class FileGenerationTools(Toolkit):
 
         super().__init__(name="file_generation", tools=tools, **kwargs)
 
-    def _save_file_to_disk(self, content: Union[str, bytes], filename: str) -> Tuple[Optional[str], str]:
-        """Save file to disk if output_directory is set. Returns (path, safe_basename)."""
+    def _save_to_disk(self, content: Union[str, bytes], filename: str) -> Optional[str]:
+        """Save file to disk. Returns path or None if no output_directory."""
         if not self.output_directory:
-            return None, sanitize_filename(filename)
+            return None
 
         file_path = safe_join_filename(self.output_directory, filename)
-        safe_name = file_path.name
 
         if isinstance(content, str):
             file_path.write_text(content, encoding="utf-8")
@@ -77,7 +76,7 @@ class FileGenerationTools(Toolkit):
             file_path.write_bytes(content)
 
         log_debug(f"File saved to: {file_path}")
-        return str(file_path), safe_name
+        return str(file_path)
 
     def _build_file_result(
         self,
@@ -94,7 +93,8 @@ class FileGenerationTools(Toolkit):
         elif not filename.endswith(f".{file_type}"):
             filename += f".{file_type}"
 
-        file_path, safe_filename = self._save_file_to_disk(content, filename)
+        safe_filename = sanitize_filename(filename)
+        file_path = self._save_to_disk(content, safe_filename)
 
         if isinstance(content, str):
             content_bytes = content.encode("utf-8")

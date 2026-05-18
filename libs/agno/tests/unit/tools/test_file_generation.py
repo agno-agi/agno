@@ -13,7 +13,7 @@ def test_relative_traversal_blocked():
     """Relative-traversal filenames must be stripped to bare filename."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        tool._save_file_to_disk("payload", "../../../escape.json")
+        tool._save_to_disk("payload", "../../../escape.json")
         assert (Path(tmp_dir) / "escape.json").exists()
         assert not (Path(tmp_dir).parent / "escape.json").exists()
 
@@ -22,7 +22,7 @@ def test_absolute_path_blocked():
     """Absolute-path filenames must be stripped to bare filename."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        tool._save_file_to_disk("payload", "/tmp/test_absolute_xyz_unique.json")
+        tool._save_to_disk("payload", "/tmp/test_absolute_xyz_unique.json")
         assert (Path(tmp_dir) / "test_absolute_xyz_unique.json").exists()
         assert not Path("/tmp/test_absolute_xyz_unique.json").exists()
 
@@ -31,7 +31,7 @@ def test_nested_path_stripped():
     """Nested-path filenames must be flattened to the bare filename."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        tool._save_file_to_disk("payload", "subdir/file.json")
+        tool._save_to_disk("payload", "subdir/file.json")
         assert (Path(tmp_dir) / "file.json").exists()
         assert not (Path(tmp_dir) / "subdir").exists()
 
@@ -40,7 +40,7 @@ def test_normal_filename_unchanged():
     """Normal filenames should pass through unchanged."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        tool._save_file_to_disk("payload", "report.json")
+        tool._save_to_disk("payload", "report.json")
         assert (Path(tmp_dir) / "report.json").exists()
 
 
@@ -48,7 +48,7 @@ def test_filename_with_dots_in_name():
     """Filenames with dots in the middle are valid and must be preserved intact."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        tool._save_file_to_disk("payload", "q1.report.json")
+        tool._save_to_disk("payload", "q1.report.json")
         assert (Path(tmp_dir) / "q1.report.json").exists()
 
 
@@ -57,7 +57,7 @@ def test_empty_filename_raises():
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
         with pytest.raises(PathSecurityError, match="Invalid filename"):
-            tool._save_file_to_disk("payload", "")
+            tool._save_to_disk("payload", "")
 
 
 def test_dot_filename_raises():
@@ -65,7 +65,7 @@ def test_dot_filename_raises():
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
         with pytest.raises(PathSecurityError, match="Invalid filename"):
-            tool._save_file_to_disk("payload", ".")
+            tool._save_to_disk("payload", ".")
 
 
 def test_dotdot_filename_raises():
@@ -73,7 +73,7 @@ def test_dotdot_filename_raises():
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
         with pytest.raises(PathSecurityError, match="Invalid filename"):
-            tool._save_file_to_disk("payload", "..")
+            tool._save_to_disk("payload", "..")
 
 
 def test_only_traversal_raises():
@@ -81,7 +81,7 @@ def test_only_traversal_raises():
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
         with pytest.raises(PathSecurityError, match="Invalid filename"):
-            tool._save_file_to_disk("payload", "../")
+            tool._save_to_disk("payload", "../")
 
 
 def test_symlink_pointing_outside_rejected():
@@ -98,7 +98,7 @@ def test_symlink_pointing_outside_rejected():
 
         tool = FileGenerationTools(output_directory=str(inside_dir))
         with pytest.raises(PathSecurityError, match="resolves outside"):
-            tool._save_file_to_disk("payload", "escape")
+            tool._save_to_disk("payload", "escape")
 
 
 def test_no_output_directory_returns_none_filepath():
@@ -115,7 +115,7 @@ def test_control_char_filename_rejected():
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
         with pytest.raises(PathSecurityError, match="Invalid"):
-            tool._save_file_to_disk("payload", "report\nhacked.json")
+            tool._save_to_disk("payload", "report\nhacked.json")
 
 
 def test_whitespace_only_filename_rejected():
@@ -123,14 +123,14 @@ def test_whitespace_only_filename_rejected():
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
         with pytest.raises(PathSecurityError, match="Invalid filename"):
-            tool._save_file_to_disk("payload", "   ")
+            tool._save_to_disk("payload", "   ")
 
 
 def test_trailing_dot_space_trimmed():
     """Trailing dots and spaces in the filename must be stripped."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        tool._save_file_to_disk("payload", "report.json. ")
+        tool._save_to_disk("payload", "report.json. ")
         assert (Path(tmp_dir) / "report.json").exists()
 
 
@@ -156,7 +156,7 @@ def test_pure_dot_filename_rejected():
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
         with pytest.raises(PathSecurityError, match="Invalid filename"):
-            tool._save_file_to_disk("payload", "...")
+            tool._save_to_disk("payload", "...")
 
 
 def test_url_encoded_traversal_sanitized_inside_output_directory():
@@ -170,7 +170,7 @@ def test_url_encoded_traversal_sanitized_inside_output_directory():
     """
     with tempfile.TemporaryDirectory() as tmp_dir:
         tool = FileGenerationTools(output_directory=tmp_dir)
-        tool._save_file_to_disk("payload", "%2e%2e/escape")
+        tool._save_to_disk("payload", "%2e%2e/escape")
         assert (Path(tmp_dir) / "escape").exists()
         assert not (Path(tmp_dir).parent / "escape").exists()
 
