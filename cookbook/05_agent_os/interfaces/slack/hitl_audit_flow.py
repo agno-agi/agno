@@ -176,8 +176,8 @@ agent = Agent(
         "incident through these phases, pausing for the human when the "
         "framework does:",
         "  1) Triage — call ask_user once to collect severity (single-select: "
-        "P0/P1/P2/P3) and affected subsystems (multi-select: api, db, cache, "
-        "queue, frontend). Call lookup_service for each subsystem named.",
+        "P0/P1/P2/P3) and affected services (multi-select: api-gateway, "
+        "order-worker, user-profile). Call lookup_service for each.",
         "  2) Diagnose — call run_diagnostic with a concrete command "
         "(curl against a health endpoint, kubectl describe, etc.). The "
         "engineer pastes output back; use it to form a hypothesis.",
