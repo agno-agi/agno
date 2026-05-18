@@ -263,7 +263,8 @@ class TestGetRequestKwargs:
         assert kwargs["store"] is False
 
     def test_previous_interaction_id_from_provider_data(self):
-        """Previous interaction ID is read from assistant message provider_data."""
+        """Previous interaction ID is read from assistant message provider_data,
+        and only the new turn is sent (server holds history)."""
         model = self._make_model()
         messages = [
             Message(role="user", content="First message"),
@@ -272,6 +273,8 @@ class TestGetRequestKwargs:
         ]
         kwargs = model._get_request_kwargs(messages)
         assert kwargs["previous_interaction_id"] == "interactions/abc123"
+        # Server-side history: don't replay "First message", send only "Follow up".
+        assert kwargs["input"] == [{"type": "user_input", "content": [{"type": "text", "text": "Follow up"}]}]
 
     def test_no_previous_interaction_id_on_first_turn(self):
         model = self._make_model()
@@ -391,6 +394,286 @@ class TestGetRequestKwargs:
         assert input_steps[0]["result"] == "Sunny"
 
 
+class TestDeepResearchAgentPath:
+    """Tests for the Deep Research agent path (agent + agent_config).
+
+    The SDK enforces that `model`/`generation_config` and `agent`/`agent_config`
+    are mutually exclusive; these tests assert we never mix them.
+    """
+
+    def _make_model(self, **kwargs):
+        return GeminiInteractions(api_key="test-key", **kwargs)
+
+    def test_default_uses_model_path_not_agent(self):
+        model = self._make_model()
+        kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
+        assert "model" in kwargs
+        assert "agent" not in kwargs
+        assert "agent_config" not in kwargs
+
+    def test_agent_set_uses_agent_path_and_omits_model(self):
+        model = self._make_model(agent="deep-research-preview-04-2026")
+        kwargs = model._get_request_kwargs([Message(role="user", content="Research jazz")])
+        assert kwargs["agent"] == "deep-research-preview-04-2026"
+        assert "model" not in kwargs
+        assert "generation_config" not in kwargs
+
+    def test_agent_path_forces_background_and_store(self):
+        # The Interactions API requires background=true (and store=true) for
+        # agent interactions; the model must force both regardless of `store`.
+        model = self._make_model(agent="deep-research-preview-04-2026", store=False)
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert kwargs["background"] is True
+        assert kwargs["store"] is True
+
+    def test_model_path_does_not_force_background(self):
+        model = self._make_model()
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert "background" not in kwargs
+
+    def test_agent_path_drops_system_message(self):
+        # Deep Research rejects system_instruction and treats input as the
+        # research request. Agno's framework boilerplate is neither sent as
+        # system_instruction nor folded into input on the agent path.
+        model = self._make_model(agent="deep-research-preview-04-2026")
+        messages = [
+            Message(role="system", content="Be concise."),
+            Message(role="user", content="What is a TPU?"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert "system_instruction" not in kwargs
+        assert kwargs["input"] == [{"type": "user_input", "content": [{"type": "text", "text": "What is a TPU?"}]}]
+
+    def test_agent_path_only_sends_new_turn_when_continuing(self):
+        # With previous_interaction_id set, the server already has history;
+        # send only the newest user turn, not the replayed conversation.
+        model = self._make_model(agent="deep-research-preview-04-2026")
+        messages = [
+            Message(role="system", content="boilerplate"),
+            Message(role="user", content="Research TPUs"),
+            Message(role="assistant", content="Here is the plan", provider_data={"interaction_id": "int-1"}),
+            Message(role="user", content="Focus on competitors"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["previous_interaction_id"] == "int-1"
+        assert kwargs["input"] == [
+            {"type": "user_input", "content": [{"type": "text", "text": "Focus on competitors"}]}
+        ]
+
+    def test_model_path_still_sends_system_instruction(self):
+        model = self._make_model()
+        messages = [
+            Message(role="system", content="Be concise."),
+            Message(role="user", content="What is a TPU?"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["system_instruction"] == "Be concise."
+
+    def test_deep_research_agent_config_built(self):
+        model = self._make_model(
+            agent="deep-research-pro-preview-12-2025",
+            collaborative_planning=True,
+            thinking_summaries="auto",
+            visualization="auto",
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="Research jazz")])
+        assert kwargs["agent_config"] == {
+            "type": "deep-research",
+            "collaborative_planning": True,
+            "thinking_summaries": "auto",
+            "visualization": "auto",
+        }
+
+    def test_generation_config_never_sent_on_agent_path(self):
+        # Even if generation params are set, the agent path must not send them
+        # (the SDK raises ValueError if agent + generation_config are combined).
+        model = self._make_model(
+            agent="deep-research-pro-preview-12-2025",
+            temperature=0.7,
+            max_output_tokens=500,
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert "generation_config" not in kwargs
+        assert "agent" in kwargs
+
+    def test_non_deep_research_agent_sends_no_agent_config(self):
+        model = self._make_model(agent="some-future-agent")
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert kwargs["agent"] == "some-future-agent"
+        assert "agent_config" not in kwargs
+        assert "model" not in kwargs
+
+    def test_mcp_servers_added_to_tools(self):
+        model = self._make_model(
+            agent="deep-research-preview-04-2026",
+            mcp_servers=[
+                {
+                    "name": "Deploy Tracker",
+                    "url": "https://mcp.example.com/mcp",
+                    "headers": {"Authorization": "Bearer tok"},
+                    "allowed_tools": ["status"],
+                }
+            ],
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="check deploys")])
+        assert {
+            "type": "mcp_server",
+            "name": "Deploy Tracker",
+            "url": "https://mcp.example.com/mcp",
+            "headers": {"Authorization": "Bearer tok"},
+            "allowed_tools": ["status"],
+        } in kwargs["tools"]
+
+    def test_multiple_mcp_servers(self):
+        model = self._make_model(
+            agent="deep-research-preview-04-2026",
+            mcp_servers=[
+                {"url": "https://a.example.com/mcp"},
+                {"url": "https://b.example.com/mcp"},
+            ],
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        mcp = [t for t in kwargs["tools"] if t["type"] == "mcp_server"]
+        assert len(mcp) == 2
+        assert {t["url"] for t in mcp} == {"https://a.example.com/mcp", "https://b.example.com/mcp"}
+
+    def test_file_search_added_to_tools(self):
+        model = self._make_model(
+            agent="deep-research-preview-04-2026",
+            file_search_store_names=["fileSearchStores/my-store"],
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="compare to our docs")])
+        assert {
+            "type": "file_search",
+            "file_search_store_names": ["fileSearchStores/my-store"],
+        } in kwargs["tools"]
+
+    def test_no_extra_tools_when_unset(self):
+        model = self._make_model(agent="deep-research-preview-04-2026")
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        # No mcp/file_search configured -> not present (Deep Research has its
+        # own defaults server-side when tools is omitted).
+        assert "tools" not in kwargs
+
+    def test_deep_research_partial_config(self):
+        # Only the knobs that are set should appear; type is always present.
+        model = self._make_model(
+            agent="deep-research-preview-04-2026",
+            collaborative_planning=True,
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert kwargs["agent_config"] == {"type": "deep-research", "collaborative_planning": True}
+
+    def test_agent_path_keeps_shared_params(self):
+        # service_tier / store still flow on the agent path; the system message
+        # is dropped (not sent as system_instruction, not folded into input).
+        model = self._make_model(
+            agent="deep-research-pro-preview-12-2025",
+            service_tier="priority",
+            store=True,
+        )
+        messages = [
+            Message(role="system", content="Be thorough"),
+            Message(role="user", content="Research the Apollo program"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert "system_instruction" not in kwargs
+        assert kwargs["input"] == [
+            {"type": "user_input", "content": [{"type": "text", "text": "Research the Apollo program"}]}
+        ]
+        assert kwargs["service_tier"] == "priority"
+        # store is forced True on the agent path regardless of the configured value
+        assert kwargs["store"] is True
+
+
+class TestAgentBackgroundPolling:
+    """The agent path runs in the background; invoke() must poll to terminal."""
+
+    def _make_model(self, **kwargs):
+        return GeminiInteractions(api_key="test-key", agent="deep-research-preview-04-2026", **kwargs)
+
+    def test_poll_returns_immediately_if_already_terminal(self):
+        model = self._make_model()
+        done = MagicMock()
+        done.status = "completed"
+        # No client calls needed; already terminal.
+        assert model._poll_until_terminal(done) is done
+
+    def test_poll_loops_until_completed(self):
+        model = self._make_model(agent_poll_interval=0.0)
+
+        in_progress = MagicMock()
+        in_progress.status = "in_progress"
+        in_progress.id = "interactions/dr-1"
+
+        completed = MagicMock()
+        completed.status = "completed"
+        completed.id = "interactions/dr-1"
+
+        mock_client = MagicMock()
+        # First get() still in progress, second completed.
+        mock_client.interactions.get.side_effect = [in_progress, completed]
+
+        with patch.object(model, "get_client", return_value=mock_client):
+            result = model._poll_until_terminal(in_progress)
+
+        assert result is completed
+        assert mock_client.interactions.get.call_count == 2
+
+    def test_poll_times_out(self):
+        from agno.exceptions import ModelProviderError
+
+        model = self._make_model(agent_poll_interval=0.0, agent_max_wait=0.0)
+
+        in_progress = MagicMock()
+        in_progress.status = "in_progress"
+        in_progress.id = "interactions/dr-1"
+
+        mock_client = MagicMock()
+        mock_client.interactions.get.return_value = in_progress
+
+        with patch.object(model, "get_client", return_value=mock_client):
+            with pytest.raises(ModelProviderError, match="did not complete"):
+                model._poll_until_terminal(in_progress)
+
+    def test_invoke_polls_on_agent_path(self):
+        from agno.models.google.gemini_interactions import ModelOutputStep, TextContent
+
+        model = self._make_model(agent_poll_interval=0.0)
+
+        in_progress = MagicMock()
+        in_progress.status = "in_progress"
+        in_progress.id = "interactions/dr-1"
+
+        text = MagicMock(spec=TextContent)
+        text.text = "Research complete."
+        text.annotations = None
+        text.__class__ = TextContent
+        step = MagicMock(spec=ModelOutputStep)
+        step.content = [text]
+        step.__class__ = ModelOutputStep
+        completed = MagicMock()
+        completed.status = "completed"
+        completed.id = "interactions/dr-1"
+        completed.steps = [step]
+        completed.usage = None
+
+        mock_client = MagicMock()
+        mock_client.interactions.create.return_value = in_progress
+        mock_client.interactions.get.return_value = completed
+
+        msg = Message(role="user", content="Research X")
+        with patch.object(model, "get_client", return_value=mock_client):
+            resp = model.invoke([msg], assistant_message=Message(role="assistant"))
+
+        # create() called with background+store forced; then polled to completion.
+        _, create_kwargs = mock_client.interactions.create.call_args
+        assert create_kwargs["background"] is True
+        assert create_kwargs["store"] is True
+        mock_client.interactions.get.assert_called_with("interactions/dr-1")
+        assert resp.content == "Research complete."
+
+
 class TestParseInteractionResponse:
     """Tests for parsing Interaction API responses."""
 
@@ -447,6 +730,49 @@ class TestParseInteractionResponse:
         assert response.role == "assistant"
         assert response.content == "Hello, world!"
         assert response.provider_data["interaction_id"] == "interactions/test123"
+
+    def test_parse_deep_research_citation_types(self):
+        """Deep Research emits url_citation, file_citation, and place_citation.
+
+        All go to citations.raw; only url_citation populates citations.urls.
+        """
+        from agno.models.google.gemini_interactions import ModelOutputStep, TextContent
+
+        url_ann = MagicMock()
+        url_ann.type = "url_citation"
+        url_ann.url = "https://example.com/jazz"
+        url_ann.title = "Jazz history"
+
+        file_ann = MagicMock()
+        file_ann.type = "file_citation"
+
+        place_ann = MagicMock()
+        place_ann.type = "place_citation"
+
+        unknown_ann = MagicMock()
+        unknown_ann.type = "something_new"
+
+        mock_text = MagicMock(spec=TextContent)
+        mock_text.text = "Jazz originated in New Orleans."
+        mock_text.annotations = [url_ann, file_ann, place_ann, unknown_ann]
+        mock_text.__class__ = TextContent
+
+        mock_step = MagicMock(spec=ModelOutputStep)
+        mock_step.content = [mock_text]
+        mock_step.__class__ = ModelOutputStep
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/dr1"
+        mock_interaction.steps = [mock_step]
+        mock_interaction.usage = None
+
+        response = self._make_model()._parse_provider_response(mock_interaction)
+        # url + file + place captured in raw; unknown skipped
+        assert response.citations is not None
+        assert len(response.citations.raw) == 3
+        # only the url citation produces a UrlCitation
+        assert len(response.citations.urls) == 1
+        assert response.citations.urls[0].url == "https://example.com/jazz"
 
     def test_parse_function_call_response(self):
         model = self._make_model()
@@ -509,6 +835,32 @@ class TestParseInteractionResponse:
         assert response.role == "assistant"
         assert response.content is None
         assert response.tool_calls == []
+
+    def test_parse_failed_status_raises_with_error(self):
+        from agno.exceptions import ModelProviderError
+
+        model = self._make_model()
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/fail1"
+        mock_interaction.status = "failed"
+        mock_interaction.error = "rate limit exceeded"
+        mock_interaction.steps = None
+
+        with pytest.raises(ModelProviderError, match="rate limit exceeded"):
+            model._parse_provider_response(mock_interaction)
+
+    def test_parse_failed_status_without_error_detail(self):
+        from agno.exceptions import ModelProviderError
+
+        model = self._make_model()
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/fail2"
+        mock_interaction.status = "failed"
+        mock_interaction.error = None
+        mock_interaction.steps = None
+
+        with pytest.raises(ModelProviderError, match="no error detail"):
+            model._parse_provider_response(mock_interaction)
 
     def test_interaction_id_in_provider_data(self):
         model = self._make_model()
@@ -741,6 +1093,31 @@ class TestInvokeStream:
         responses = list(model.invoke_stream(messages, assistant_message))
         assert any(r.content == "Hello" for r in responses)
 
+    def test_invoke_stream_handles_image_delta(self):
+        """Streamed visualization charts (DeltaImage) surface incrementally."""
+        import base64
+
+        from agno.models.google.gemini_interactions import DeltaImage, interaction_types
+
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        png = base64.b64encode(b"fake-png-bytes").decode()
+        mock_event = MagicMock(spec=interaction_types.StepDelta)
+        mock_event.__class__ = interaction_types.StepDelta
+        mock_delta = MagicMock(spec=DeltaImage)
+        mock_delta.__class__ = DeltaImage
+        mock_delta.data = png
+        mock_delta.mime_type = "image/png"
+        mock_event.delta = mock_delta
+
+        mock_client.interactions.create.return_value = iter([mock_event])
+
+        responses = list(model.invoke_stream([Message(role="user", content="chart it")], Message(role="assistant")))
+        imgs = [img for r in responses if r.images for img in r.images]
+        assert len(imgs) == 1
+
     def test_invoke_stream_handles_interaction_created(self):
         from agno.models.google.gemini_interactions import interaction_types
 
@@ -827,6 +1204,144 @@ class TestInvokeStream:
 
         with pytest.raises(ModelProviderError, match="Stream error"):
             list(model.invoke_stream(messages, assistant_message))
+
+
+class TestBackgroundStreamReconnect:
+    """Background interactions (Deep Research) end the initial SSE early and
+    continue server-side. invoke_stream must reconnect until terminal."""
+
+    def _make_model(self):
+        # agent path forces background=True (the reconnect trigger). Tiny poll
+        # interval so the test does not actually sleep.
+        return GeminiInteractions(
+            api_key="test-key",
+            agent="deep-research-preview-04-2026",
+            agent_poll_interval=0.0,
+        )
+
+    def _created_event(self, iid="interactions/dr-1"):
+        from agno.models.google.gemini_interactions import interaction_types
+
+        ev = MagicMock(spec=interaction_types.InteractionCreatedEvent)
+        ev.__class__ = interaction_types.InteractionCreatedEvent
+        ev.interaction = MagicMock()
+        ev.interaction.id = iid
+        ev.event_id = "e1"
+        return ev
+
+    def _text_delta(self, text, event_id="e2"):
+        from agno.models.google.gemini_interactions import DeltaText, interaction_types
+
+        ev = MagicMock(spec=interaction_types.StepDelta)
+        ev.__class__ = interaction_types.StepDelta
+        d = MagicMock(spec=DeltaText)
+        d.__class__ = DeltaText
+        d.text = text
+        ev.delta = d
+        ev.event_id = event_id
+        return ev
+
+    def test_reconnects_until_completed(self):
+        from agno.models.google.gemini_interactions import ModelOutputStep, TextContent
+
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        # Initial stream: only created (then ends early, as background does).
+        mock_client.interactions.create.return_value = iter([self._created_event()])
+
+        # First get(): still running. Reconnect get(stream=True): delivers text.
+        running = MagicMock()
+        running.status = "in_progress"
+
+        text = MagicMock(spec=TextContent)
+        text.text = "Final report."
+        text.annotations = None
+        text.__class__ = TextContent
+        step = MagicMock(spec=ModelOutputStep)
+        step.content = [text]
+        step.__class__ = ModelOutputStep
+        completed = MagicMock()
+        completed.status = "completed"
+        completed.id = "interactions/dr-1"
+        completed.steps = [step]
+        completed.usage = None
+
+        resumed_stream = iter([self._text_delta("Final report.")])
+
+        # get() is called: (1) status check -> running, (2) stream resume,
+        # then loop checks completed flag (set by... we have no completed event
+        # in resumed_stream, so add a second status check that is terminal).
+        get_calls = {"n": 0}
+
+        def get_side_effect(*args, **kwargs):
+            get_calls["n"] += 1
+            if kwargs.get("stream"):
+                return resumed_stream
+            # non-stream status checks: first running, then completed
+            return running if get_calls["n"] <= 1 else completed
+
+        mock_client.interactions.get.side_effect = get_side_effect
+
+        messages = [Message(role="user", content="Research X")]
+        responses = list(model.invoke_stream(messages, Message(role="assistant")))
+
+        # The reconnected stream's text + the final completed snapshot parse
+        # should both surface the report.
+        assert any("Final report." in (r.content or "") for r in responses)
+        # create() forced background; reconnect used get(stream=True, last_event_id=...)
+        assert mock_client.interactions.create.call_args[1]["background"] is True
+        stream_get = [c for c in mock_client.interactions.get.call_args_list if c.kwargs.get("stream")]
+        assert stream_get, "expected a get(stream=True) reconnect call"
+        assert stream_get[0].kwargs.get("last_event_id") == "e1"
+
+    def test_reconnect_times_out(self):
+        from agno.exceptions import ModelProviderError
+
+        model = GeminiInteractions(
+            api_key="test-key",
+            agent="deep-research-preview-04-2026",
+            agent_poll_interval=0.0,
+            agent_max_wait=0.0,  # immediate timeout
+        )
+        mock_client = MagicMock()
+        model.client = mock_client
+        mock_client.interactions.create.return_value = iter([self._created_event()])
+        running = MagicMock()
+        running.status = "in_progress"
+        mock_client.interactions.get.return_value = running
+
+        with pytest.raises(ModelProviderError, match="did not complete"):
+            list(model.invoke_stream([Message(role="user", content="x")], Message(role="assistant")))
+
+    def test_error_event_raises(self):
+        from agno.exceptions import ModelProviderError
+        from agno.models.google.gemini_interactions import interaction_types
+
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        err = MagicMock(spec=interaction_types.ErrorEvent)
+        err.__class__ = interaction_types.ErrorEvent
+        err.error = "model overloaded"
+        err.event_id = "e9"
+        mock_client.interactions.create.return_value = iter([self._created_event(), err])
+
+        with pytest.raises(ModelProviderError, match="model overloaded"):
+            list(model.invoke_stream([Message(role="user", content="x")], Message(role="assistant")))
+
+    def test_non_background_path_does_not_reconnect(self):
+        # The model path (no agent) must not enter the reconnect loop.
+        model = GeminiInteractions(api_key="test-key")
+        mock_client = MagicMock()
+        model.client = mock_client
+        mock_client.interactions.create.return_value = iter([self._text_delta("hi")])
+
+        list(model.invoke_stream([Message(role="user", content="x")], Message(role="assistant")))
+        # get() must never be called on the model (non-background) path.
+        mock_client.interactions.get.assert_not_called()
 
 
 class TestToDict:
