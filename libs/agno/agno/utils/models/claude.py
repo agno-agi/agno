@@ -96,12 +96,12 @@ def _anthropic_coerce_content_block(item: Any) -> Optional[Any]:
     model_dump = getattr(item, "model_dump", None)
     if callable(model_dump):
         try:
-            dumped = model_dump(exclude_none=True)
+            block_dict = model_dump(exclude_none=True)
         except Exception as e:
             log_warning(f"Failed to serialize Anthropic content block of type {type(item).__name__}: {e}")
             return None
-        if isinstance(dumped, dict) and dumped.get("type"):
-            return dumped
+        if isinstance(block_dict, dict) and block_dict.get("type"):
+            return block_dict
     return None
 
 
