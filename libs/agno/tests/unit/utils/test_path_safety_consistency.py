@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 
-from agno.exceptions import PathSecurityError
 from agno.skills.utils import is_safe_path
 from agno.tools import Toolkit
 from agno.tools.file import FileTools

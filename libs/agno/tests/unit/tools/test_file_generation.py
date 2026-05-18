@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from agno.exceptions import PathSecurityError
 from agno.tools.file_generation import FileGenerationTools
 
 
