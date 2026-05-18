@@ -328,6 +328,24 @@ class TestGetRequestKwargs:
         assert cfg["top_p"] == 0.95
         assert "max_output_tokens" not in cfg
 
+    def test_store_false_opts_out_of_server_state(self):
+        """store=False disables previous_interaction_id chaining; full history is sent."""
+        model = self._make_model(store=False)
+        messages = [
+            Message(role="user", content="First turn"),
+            Message(role="assistant", content="Reply 1", provider_data={"interaction_id": "interactions/abc"}),
+            Message(role="user", content="Follow up"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert "previous_interaction_id" not in kwargs
+        # Full history is sent: user1 + assistant1 (no tool calls -> skipped) + user2
+        # _build_input emits a user_input step for each user message
+        input_steps = kwargs["input"]
+        user_steps = [s for s in input_steps if s["type"] == "user_input"]
+        assert len(user_steps) == 2
+        assert user_steps[0]["content"][0]["text"] == "First turn"
+        assert user_steps[1]["content"][0]["text"] == "Follow up"
+
     def test_input_sliced_when_previous_interaction_id_set(self):
         """When previous_interaction_id is set, only messages after the prior assistant turn are sent."""
         model = self._make_model()

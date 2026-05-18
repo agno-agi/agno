@@ -359,18 +359,20 @@ class GeminiInteractions(Model):
         if system_message:
             kwargs["system_instruction"] = system_message
 
-        # When previous_interaction_id is set, the server already has all turns
-        # up to and including that assistant message. Send only the messages
-        # AFTER it - this is the core value of the Interactions API: server-side
-        # state, no need to replay history.
-        previous_interaction_id, boundary_idx = self._find_previous_interaction(messages)
-        input_messages = messages if boundary_idx == -1 else messages[boundary_idx + 1 :]
+        # When store=False, the user has opted out of server-side state - send
+        # the full message history and don't chain via previous_interaction_id.
+        # Otherwise, leverage server-side state: pass previous_interaction_id
+        # and send only the messages AFTER the prior assistant turn (the server
+        # already has everything up to that point).
+        if self.store is False:
+            input_messages: List[Message] = messages
+        else:
+            previous_interaction_id, boundary_idx = self._find_previous_interaction(messages)
+            input_messages = messages if boundary_idx == -1 else messages[boundary_idx + 1 :]
+            if previous_interaction_id:
+                kwargs["previous_interaction_id"] = previous_interaction_id
 
-        input_turns = self._build_input(input_messages)
-        kwargs["input"] = input_turns
-
-        if previous_interaction_id:
-            kwargs["previous_interaction_id"] = previous_interaction_id
+        kwargs["input"] = self._build_input(input_messages)
 
         # Generation config (only params supported by the Interactions API SDK)
         generation_config: Dict[str, Any] = {}
