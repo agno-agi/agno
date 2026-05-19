@@ -9,8 +9,8 @@ partial results if your organization has many shared drives.
 
 Key concepts:
 - corpora="allDrives": Search personal Drive AND all Shared Drives you can access
-- incompleteSearch: Flag when Google couldn't search all drives (inform the user)
-- output_schema: Structured results with incomplete_search status for programmatic use
+- incompleteSearch: API flag when Google couldn't search all drives (agent adds notice)
+- output_schema: Structured results with owner/location for programmatic use
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Google Drive API)
@@ -40,13 +40,9 @@ class CompanySearchResult(BaseModel):
     query: str = Field(..., description="The search query used")
     documents: List[DocumentResult] = Field(default_factory=list)
     total_found: int = Field(..., description="Number of documents found")
-    incomplete_search: bool = Field(
-        False,
-        description="True if some drives could not be searched - results may be partial",
-    )
     notice: Optional[str] = Field(
         None,
-        description="Warning message if results are incomplete",
+        description="Warning if results are incomplete or other issues",
     )
 
 
@@ -62,8 +58,8 @@ agent = Agent(
     ],
     instructions=[
         "Search across all drives the user has access to.",
-        "If incompleteSearch is true in the search results, set incomplete_search=True "
-        "and add a notice explaining that some shared drives could not be searched.",
+        "If incompleteSearch is true in the search results, add a notice explaining "
+        "that some shared drives could not be searched.",
         "Include the owner and location (shared drive name) when available.",
     ],
     output_schema=CompanySearchResult,
@@ -77,10 +73,6 @@ if __name__ == "__main__":
     # Find compliance documents across all drives
     result = agent.run("Find any documents with 'policy' or 'compliance' in the name")
     print(result.content)
-
-    # Check if search was incomplete
-    # if result.content.incomplete_search:
-    #     print(f"Warning: {result.content.notice}")
 
     # Search for project resources
     # result = agent.run("Find spreadsheets related to Q4 planning")
