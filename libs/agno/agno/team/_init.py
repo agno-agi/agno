@@ -633,6 +633,10 @@ def _set_learning_machine(team: "Team") -> None:
             team.learning.model = team.model
         team._learning = team.learning
 
+        # PROPOSE/HITL modes need chat history for multi-turn confirmation
+        if team._learning.requires_history and not team.add_history_to_context:
+            team.add_history_to_context = True
+
 
 def _initialize_session(
     team: "Team",
