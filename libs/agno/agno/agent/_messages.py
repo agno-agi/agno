@@ -1153,6 +1153,56 @@ async def aget_user_message(
 # ---------------------------------------------------------------------------
 
 
+def _add_files_to_session_state(
+    agent: Agent,
+    run_context: RunContext,
+    files: Optional[Sequence[File]],
+) -> None:
+    """Record uploaded file metadata into session_state when files are not sent to the model.
+
+    Opt-in via Agent.add_files_to_session_state. Only active when send_media_to_model
+    is False (the model otherwise already sees the file). Entries are deduplicated by
+    id when present, else by (filename, mime_type). See issue #7306.
+    """
+    if not agent.add_files_to_session_state:
+        return
+    if agent.send_media_to_model:
+        return
+    if not files:
+        return
+    if run_context.session_state is None:
+        run_context.session_state = {}
+    recorded: List[Dict[str, Any]] = run_context.session_state.setdefault("uploaded_files", [])
+    for f in files:
+        entry: Dict[str, Any] = {}
+        if f.id is not None:
+            entry["id"] = f.id
+        name = f.filename or f.name
+        if name is not None:
+            entry["filename"] = name
+        if f.mime_type is not None:
+            entry["mime_type"] = f.mime_type
+        if not entry:
+            continue
+        if _is_duplicate_file_entry(entry, recorded):
+            continue
+        recorded.append(entry)
+
+
+def _is_duplicate_file_entry(entry: Dict[str, Any], recorded: List[Dict[str, Any]]) -> bool:
+    """True if entry already exists: match on id when present, else (filename, mime_type)."""
+    for existing in recorded:
+        if "id" in entry and existing.get("id") == entry["id"]:
+            return True
+        if (
+            "id" not in entry
+            and existing.get("filename") == entry.get("filename")
+            and existing.get("mime_type") == entry.get("mime_type")
+        ):
+            return True
+    return False
+
+
 def get_run_messages(
     agent: Agent,
     *,
