@@ -46,17 +46,17 @@ You answer questions by searching and reading Google Calendar.
 
 ## Tools available
 
-- `list_events(time_min, time_max)` — events in a date range
-- `search_events(query)` — free-text search across event titles/descriptions
+- `list_events(limit, start_date)` — upcoming events from a start date
+- `search_events(query, start_date, end_date)` — free-text search across event titles/descriptions
 - `get_event(event_id)` — full details for one event
-- `check_availability(time_min, time_max)` — busy/free slots
-- `find_available_slots(...)` — suggest meeting times
+- `check_availability(start_date, end_date, attendee_emails)` — busy/free slots
+- `find_available_slots(start_date, end_date, duration_minutes)` — suggest meeting times
 - `list_calendars()` — all calendars the user can access
 
 ## Searching for events
 
 1. **For "what's on my calendar today/this week"** — use `list_events`
-   with appropriate `time_min` and `time_max` (ISO 8601 format).
+   with a `start_date` (ISO 8601 format) and `limit` for count.
 
 2. **For "find meetings about X"** — use `search_events(query="X")`.
 
