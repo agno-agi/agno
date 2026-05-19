@@ -352,7 +352,7 @@ class LiteLLM(Model):
         # Expose the finish_reason (e.g. 'length', 'stop') so downstream logic can
         # detect truncation. Surfaced via provider_data to stay consistent with how
         # other providers expose provider-specific response metadata.
-        finish_reason = getattr(choice, "finish_reason", None)
+        finish_reason = choice.finish_reason
         if finish_reason is not None:
             if model_response.provider_data is None:
                 model_response.provider_data = {}
@@ -392,7 +392,7 @@ class LiteLLM(Model):
             # streaming chunk so downstream logic can detect truncation. Surfaced
             # via provider_data to stay consistent with how other providers expose
             # provider-specific response metadata in streaming responses.
-            finish_reason = getattr(choice, "finish_reason", None)
+            finish_reason = choice.finish_reason
             if finish_reason is not None:
                 if model_response.provider_data is None:
                     model_response.provider_data = {}

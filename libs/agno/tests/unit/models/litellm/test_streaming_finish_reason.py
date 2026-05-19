@@ -175,3 +175,10 @@ def test_finish_reason_reachable_end_to_end_via_assistant_message():
     assert assistant_message.content == "Artificial intelligence"
     assert assistant_message.provider_data is not None
     assert assistant_message.provider_data.get("finish_reason") == "length"
+
+
+def test_content_only_chunk_does_not_pollute_provider_data():
+    """A chunk with no finish_reason must NOT add a finish_reason key (or a None one)."""
+    model = LiteLLM(id="gpt-4o")
+    mr = model._parse_provider_response_delta(MockStreamChunk(content="hi"))
+    assert mr.provider_data is None or "finish_reason" not in mr.provider_data
