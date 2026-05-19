@@ -493,7 +493,7 @@ class Model(ABC):
             return None
 
         try:
-            with open(cache_file, "r") as f:
+            with open(cache_file, "r", encoding="utf-8") as f:
                 cached_data = json.load(f)
 
             # Check TTL if set (None means no expiration)
@@ -515,7 +515,7 @@ class Model(ABC):
                 "is_streaming": is_streaming,
                 "result": result.to_dict(),
             }
-            with open(cache_file, "w") as f:
+            with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(cache_data, f)
         except Exception:
             pass
@@ -531,7 +531,7 @@ class Model(ABC):
         }
 
         try:
-            with open(cache_file, "w") as f:
+            with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(cache_data, f)
         except Exception:
             pass

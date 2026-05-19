@@ -1132,7 +1132,7 @@ def load_yaml_config(config_file_path: str) -> AgentOSConfig:
         raise ValueError(f"Config file must have a .yaml or .yml extension, got: {config_file_path}")
 
     # Load the YAML file
-    with open(config_file_path, "r") as f:
+    with open(config_file_path, "r", encoding="utf-8") as f:
         return AgentOSConfig.model_validate(yaml.safe_load(f))
 
 

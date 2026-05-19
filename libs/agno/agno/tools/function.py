@@ -714,7 +714,7 @@ class Function(BaseModel):
             return None
 
         try:
-            with cache_path.open("r") as f:
+            with cache_path.open("r", encoding="utf-8") as f:
                 cache_data = json.load(f)
 
             timestamp = cache_data.get("timestamp", 0)
@@ -737,7 +737,7 @@ class Function(BaseModel):
 
         try:
             serializable_result = result.model_dump() if isinstance(result, BaseModel) else result
-            with open(cache_file, "w") as f:
+            with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump({"timestamp": time(), "result": serializable_result}, f)
         except Exception:
             log_exception("Error writing cache")
