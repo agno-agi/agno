@@ -346,7 +346,17 @@ class LiteLLM(Model):
         """Parse the provider response."""
         model_response = ModelResponse()
 
-        response_message = response.choices[0].message
+        choice = response.choices[0]
+        response_message = choice.message
+
+        # Expose the finish_reason (e.g. 'length', 'stop') so downstream logic can
+        # detect truncation. Surfaced via provider_data to stay consistent with how
+        # other providers expose provider-specific response metadata.
+        finish_reason = getattr(choice, "finish_reason", None)
+        if finish_reason is not None:
+            if model_response.provider_data is None:
+                model_response.provider_data = {}
+            model_response.provider_data["finish_reason"] = finish_reason
 
         if response_message.content is not None:
             model_response.content = response_message.content
@@ -375,7 +385,18 @@ class LiteLLM(Model):
         model_response = ModelResponse()
 
         if hasattr(response_delta, "choices") and len(response_delta.choices) > 0:
-            choice_delta = response_delta.choices[0].delta
+            choice = response_delta.choices[0]
+            choice_delta = choice.delta
+
+            # Expose the finish_reason (e.g. 'length', 'stop') from the final
+            # streaming chunk so downstream logic can detect truncation. Surfaced
+            # via provider_data to stay consistent with how other providers expose
+            # provider-specific response metadata in streaming responses.
+            finish_reason = getattr(choice, "finish_reason", None)
+            if finish_reason is not None:
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data["finish_reason"] = finish_reason
 
             if choice_delta:
                 if hasattr(choice_delta, "content") and choice_delta.content is not None:
