@@ -82,7 +82,7 @@ You are an expert on the Agno framework and building AI agents.
 # ---------------------------------------------------------------------------
 agent_with_knowledge = Agent(
     name="Agent with Knowledge",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     knowledge=knowledge,
     search_knowledge=True,

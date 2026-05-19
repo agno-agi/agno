@@ -2,7 +2,7 @@
 
 Learn how to build agents with 12 guided cookbooks. We'll go from single tool-using agent to multi-agent teams and step-based workflows through clean, runnable examples.
 
-Each example can be run independently and contains detailed comments to help you understand what's happening under the hood. We'll use Gemini 3 Flash — fast, affordable, and excellent at tool calling but you can swap in any model with a one line change.
+Each example can be run independently and contains detailed comments to help you understand what's happening under the hood. We'll use Gemini 3.5 Flash — fast, affordable, and excellent at tool calling but you can swap in any model with a one line change.
 
 ## What You'll Build
 
@@ -93,7 +93,7 @@ Agno is model-agnostic. Same code, different provider:
 ```python
 # Gemini (default in these examples)
 from agno.models.google import Gemini
-model = Gemini(id="gemini-3-flash-preview")
+model = Gemini(id="gemini-3.5-flash")
 
 # OpenAI
 from agno.models.openai import OpenAIResponses
