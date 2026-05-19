@@ -5,7 +5,7 @@ import json
 import uuid
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field, is_dataclass
-from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple, Type, TypeVar, Union
 
 from ag_ui.core import (
     BaseEvent,
@@ -156,6 +156,7 @@ class EventBuffer:
 
 
 def _format_from_mime_type(mime_type: Optional[str]) -> Optional[str]:
+    """Return the subtype of a MIME type (e.g. 'image/png' -> 'png'), or None."""
     if mime_type and "/" in mime_type:
         return mime_type.split("/")[-1]
     return None
@@ -179,6 +180,7 @@ def _decode_agui_base64_content(value: str) -> Tuple[Optional[bytes], Optional[s
 
 
 def _safe_file_mime_type(mime_type: Optional[str]) -> Optional[str]:
+    """Return the MIME type only if it is a valid Agno File MIME type, else None."""
     if mime_type in File.valid_mime_types():
         return mime_type
     return None
@@ -194,8 +196,11 @@ class AGUIUserInputMedia:
     files: List[File] = field(default_factory=list)
 
 
-def _extract_agui_image(part: Any) -> Optional[Image]:
-    """Convert a single AG-UI image input content part into an Agno Image."""
+_AGUIMedia = TypeVar("_AGUIMedia", Image, Audio, Video, File)
+
+
+def _extract_agui_media(part: Any, media_cls: Type[_AGUIMedia], sanitize_mime: bool = False) -> Optional[_AGUIMedia]:
+    """Convert a typed AG-UI input content part into the given Agno media object."""
     source = getattr(part, "source", None)
     if source is None:
         return None
@@ -206,103 +211,23 @@ def _extract_agui_image(part: Any) -> Optional[Image]:
         return None
 
     mime_type = getattr(source, "mime_type", None)
+    content_kwargs: Dict[str, Any]
     if source_type == "url":
-        return Image(url=value, mime_type=mime_type, format=_format_from_mime_type(mime_type))
-
-    if source_type == "data":
+        content_kwargs = {"url": value}
+    elif source_type == "data":
         content, data_url_mime_type = _decode_agui_base64_content(value)
         if content is None:
             return None
-
-        image_mime_type = mime_type or data_url_mime_type
-        return Image(content=content, mime_type=image_mime_type, format=_format_from_mime_type(image_mime_type))
-
-    return None
-
-
-def _extract_agui_audio(part: Any) -> Optional[Audio]:
-    """Convert a single AG-UI audio input content part into an Agno Audio."""
-    source = getattr(part, "source", None)
-    if source is None:
+        content_kwargs = {"content": content}
+        mime_type = mime_type or data_url_mime_type
+    else:
         return None
 
-    source_type = getattr(source, "type", None)
-    value = getattr(source, "value", None)
-    if not value:
-        return None
-
-    mime_type = getattr(source, "mime_type", None)
-    if source_type == "url":
-        return Audio(url=value, mime_type=mime_type, format=_format_from_mime_type(mime_type))
-
-    if source_type == "data":
-        content, data_url_mime_type = _decode_agui_base64_content(value)
-        if content is None:
-            return None
-
-        audio_mime_type = mime_type or data_url_mime_type
-        return Audio(content=content, mime_type=audio_mime_type, format=_format_from_mime_type(audio_mime_type))
-
-    return None
-
-
-def _extract_agui_video(part: Any) -> Optional[Video]:
-    """Convert a single AG-UI video input content part into an Agno Video."""
-    source = getattr(part, "source", None)
-    if source is None:
-        return None
-
-    source_type = getattr(source, "type", None)
-    value = getattr(source, "value", None)
-    if not value:
-        return None
-
-    mime_type = getattr(source, "mime_type", None)
-    if source_type == "url":
-        return Video(url=value, mime_type=mime_type, format=_format_from_mime_type(mime_type))
-
-    if source_type == "data":
-        content, data_url_mime_type = _decode_agui_base64_content(value)
-        if content is None:
-            return None
-
-        video_mime_type = mime_type or data_url_mime_type
-        return Video(content=content, mime_type=video_mime_type, format=_format_from_mime_type(video_mime_type))
-
-    return None
-
-
-def _extract_agui_file(part: Any) -> Optional[File]:
-    """Convert a single AG-UI document input content part into an Agno File."""
-    source = getattr(part, "source", None)
-    if source is None:
-        return None
-
-    source_type = getattr(source, "type", None)
-    value = getattr(source, "value", None)
-    if not value:
-        return None
-
-    mime_type = getattr(source, "mime_type", None)
-    safe_mime_type = _safe_file_mime_type(mime_type)
-    file_format = _format_from_mime_type(mime_type)
-
-    if source_type == "url":
-        return File(url=value, mime_type=safe_mime_type, format=file_format)
-
-    if source_type == "data":
-        content, data_url_mime_type = _decode_agui_base64_content(value)
-        if content is None:
-            return None
-
-        file_mime_type = mime_type or data_url_mime_type
-        return File(
-            content=content,
-            mime_type=_safe_file_mime_type(file_mime_type),
-            format=_format_from_mime_type(file_mime_type),
-        )
-
-    return None
+    return media_cls(
+        format=_format_from_mime_type(mime_type),
+        mime_type=_safe_file_mime_type(mime_type) if sanitize_mime else mime_type,
+        **content_kwargs,
+    )
 
 
 def _extract_agui_binary(part: Any, media: AGUIUserInputMedia) -> None:
@@ -368,19 +293,19 @@ def extract_agui_user_input_and_media(messages: List[AGUIMessage]) -> Tuple[str,
                     if hasattr(part, "type") and part.type == "text" and hasattr(part, "text"):
                         text_parts.append(part.text)
                     elif hasattr(part, "type") and part.type == "image":
-                        image = _extract_agui_image(part)
+                        image = _extract_agui_media(part, Image)
                         if image is not None:
                             media.images.append(image)
                     elif hasattr(part, "type") and part.type == "audio":
-                        audio = _extract_agui_audio(part)
+                        audio = _extract_agui_media(part, Audio)
                         if audio is not None:
                             media.audio.append(audio)
                     elif hasattr(part, "type") and part.type == "video":
-                        video = _extract_agui_video(part)
+                        video = _extract_agui_media(part, Video)
                         if video is not None:
                             media.videos.append(video)
                     elif hasattr(part, "type") and part.type == "document":
-                        file = _extract_agui_file(part)
+                        file = _extract_agui_media(part, File, sanitize_mime=True)
                         if file is not None:
                             media.files.append(file)
                     elif hasattr(part, "type") and part.type == "binary":

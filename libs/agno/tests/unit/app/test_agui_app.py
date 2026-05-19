@@ -1637,27 +1637,32 @@ def test_extract_agui_user_input_and_media_routes_binary_content_by_mime_type():
     assert media.files[0].filename == "archive.bin"
 
 
-@pytest.mark.asyncio
-async def test_run_agent_passes_agui_images_to_agent():
-    """Test the AG-UI router forwards extracted media parts to Agent.arun."""
-    captured_kwargs = {}
-    audio_bytes = b"fake-audio-bytes"
-    video_bytes = b"fake-video-bytes"
-    document_bytes = b"fake-document-bytes"
+_AUDIO_BYTES = b"fake-audio-bytes"
+_VIDEO_BYTES = b"fake-video-bytes"
+_DOCUMENT_BYTES = b"fake-document-bytes"
 
-    class FakeAgent:
-        def arun(self, **kwargs):
-            captured_kwargs.update(kwargs)
 
-            async def response_stream():
-                completed_response = RunContentEvent()
-                completed_response.event = RunEvent.run_completed
-                completed_response.content = ""
-                yield completed_response
+class _FakeRunner:
+    """Minimal Agent/Team stand-in: records arun kwargs, yields one completed run."""
 
-            return response_stream()
+    def __init__(self):
+        self.captured_kwargs = {}
 
-    run_input = RunAgentInput(
+    def arun(self, **kwargs):
+        self.captured_kwargs.update(kwargs)
+
+        async def response_stream():
+            completed_response = RunContentEvent()
+            completed_response.event = RunEvent.run_completed
+            completed_response.content = ""
+            yield completed_response
+
+        return response_stream()
+
+
+def _media_run_input():
+    """Build a RunAgentInput carrying one text part plus one of each media type."""
+    return RunAgentInput(
         thread_id="thread_1",
         run_id="run_1",
         state={},
@@ -1671,17 +1676,17 @@ async def test_run_agent_passes_agui_images_to_agent():
                     ),
                     AudioInputContent(
                         source=InputContentDataSource(
-                            value=base64.b64encode(audio_bytes).decode(), mime_type="audio/mpeg"
+                            value=base64.b64encode(_AUDIO_BYTES).decode(), mime_type="audio/mpeg"
                         )
                     ),
                     VideoInputContent(
                         source=InputContentDataSource(
-                            value=base64.b64encode(video_bytes).decode(), mime_type="video/mp4"
+                            value=base64.b64encode(_VIDEO_BYTES).decode(), mime_type="video/mp4"
                         )
                     ),
                     DocumentInputContent(
                         source=InputContentDataSource(
-                            value=base64.b64encode(document_bytes).decode(), mime_type="application/pdf"
+                            value=base64.b64encode(_DOCUMENT_BYTES).decode(), mime_type="application/pdf"
                         )
                     ),
                 ],
@@ -1692,86 +1697,34 @@ async def test_run_agent_passes_agui_images_to_agent():
         forwarded_props={},
     )
 
-    events = [event async for event in run_agent(FakeAgent(), run_input)]
 
-    assert events[0].type == EventType.RUN_STARTED
+def _assert_media_forwarded(captured_kwargs):
+    """Assert the router forwarded every media part into the run kwargs."""
     assert captured_kwargs["input"] == "please inspect"
     assert len(captured_kwargs["images"]) == 1
     assert captured_kwargs["images"][0].url == "https://example.com/screenshot.png"
     assert captured_kwargs["images"][0].mime_type == "image/png"
-    assert captured_kwargs["audio"][0].content == audio_bytes
+    assert captured_kwargs["audio"][0].content == _AUDIO_BYTES
     assert captured_kwargs["audio"][0].mime_type == "audio/mpeg"
-    assert captured_kwargs["videos"][0].content == video_bytes
+    assert captured_kwargs["videos"][0].content == _VIDEO_BYTES
     assert captured_kwargs["videos"][0].mime_type == "video/mp4"
-    assert captured_kwargs["files"][0].content == document_bytes
+    assert captured_kwargs["files"][0].content == _DOCUMENT_BYTES
     assert captured_kwargs["files"][0].mime_type == "application/pdf"
+
+
+@pytest.mark.asyncio
+async def test_run_agent_passes_agui_images_to_agent():
+    """Test the AG-UI router forwards extracted media parts to Agent.arun."""
+    fake_agent = _FakeRunner()
+    events = [event async for event in run_agent(fake_agent, _media_run_input())]
+    assert events[0].type == EventType.RUN_STARTED
+    _assert_media_forwarded(fake_agent.captured_kwargs)
 
 
 @pytest.mark.asyncio
 async def test_run_team_passes_agui_images_to_team():
     """Test the AG-UI router forwards extracted media parts to Team.arun."""
-    captured_kwargs = {}
-    audio_bytes = b"fake-audio-bytes"
-    video_bytes = b"fake-video-bytes"
-    document_bytes = b"fake-document-bytes"
-
-    class FakeTeam:
-        def arun(self, **kwargs):
-            captured_kwargs.update(kwargs)
-
-            async def response_stream():
-                completed_response = RunContentEvent()
-                completed_response.event = RunEvent.run_completed
-                completed_response.content = ""
-                yield completed_response
-
-            return response_stream()
-
-    run_input = RunAgentInput(
-        thread_id="thread_1",
-        run_id="run_1",
-        state={},
-        messages=[
-            UserMessage(
-                id="u1",
-                content=[
-                    TextInputContent(text="please inspect"),
-                    ImageInputContent(
-                        source=InputContentUrlSource(value="https://example.com/screenshot.png", mime_type="image/png")
-                    ),
-                    AudioInputContent(
-                        source=InputContentDataSource(
-                            value=base64.b64encode(audio_bytes).decode(), mime_type="audio/mpeg"
-                        )
-                    ),
-                    VideoInputContent(
-                        source=InputContentDataSource(
-                            value=base64.b64encode(video_bytes).decode(), mime_type="video/mp4"
-                        )
-                    ),
-                    DocumentInputContent(
-                        source=InputContentDataSource(
-                            value=base64.b64encode(document_bytes).decode(), mime_type="application/pdf"
-                        )
-                    ),
-                ],
-            )
-        ],
-        tools=[],
-        context=[],
-        forwarded_props={},
-    )
-
-    events = [event async for event in run_team(FakeTeam(), run_input)]
-
+    fake_team = _FakeRunner()
+    events = [event async for event in run_team(fake_team, _media_run_input())]
     assert events[0].type == EventType.RUN_STARTED
-    assert captured_kwargs["input"] == "please inspect"
-    assert len(captured_kwargs["images"]) == 1
-    assert captured_kwargs["images"][0].url == "https://example.com/screenshot.png"
-    assert captured_kwargs["images"][0].mime_type == "image/png"
-    assert captured_kwargs["audio"][0].content == audio_bytes
-    assert captured_kwargs["audio"][0].mime_type == "audio/mpeg"
-    assert captured_kwargs["videos"][0].content == video_bytes
-    assert captured_kwargs["videos"][0].mime_type == "video/mp4"
-    assert captured_kwargs["files"][0].content == document_bytes
-    assert captured_kwargs["files"][0].mime_type == "application/pdf"
+    _assert_media_forwarded(fake_team.captured_kwargs)
