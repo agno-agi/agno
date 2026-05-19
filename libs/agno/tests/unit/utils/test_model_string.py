@@ -7,6 +7,7 @@ from agno.memory.manager import MemoryManager
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
+from agno.models.n1n import N1N
 from agno.models.openai import OpenAIChat, OpenAIResponses
 from agno.models.utils import get_model
 from agno.team import Team
@@ -44,6 +45,13 @@ def test_get_model_parses_anthropic_string():
     model = get_model("anthropic:claude-3-5-sonnet-20241022")
     assert isinstance(model, Claude)
     assert model.id == "claude-3-5-sonnet-20241022"
+
+
+def test_get_model_parses_n1n_string():
+    """Test get_model() parses N1N model string."""
+    model = get_model("n1n:gpt-4o")
+    assert isinstance(model, N1N)
+    assert model.id == "gpt-4o"
 
 
 def test_get_model_strips_whitespace():
