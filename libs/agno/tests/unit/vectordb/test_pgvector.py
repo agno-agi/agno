@@ -170,6 +170,52 @@ def test_create(mock_pgvector):
         mock_pgvector.table.create.assert_called_once()
 
 
+def test_create_skips_extension_when_disabled(mock_pgvector):
+    """Test create does not attempt extension creation when create_extension is False."""
+    mock_pgvector.create_extension = False
+    mock_session = mock_pgvector.Session.return_value.__enter__.return_value
+
+    with patch.object(mock_pgvector, "table_exists", return_value=False):
+        mock_pgvector.create()
+
+    for call in mock_session.execute.call_args_list:
+        sql = str(call.args[0])
+        assert "CREATE EXTENSION" not in sql
+
+
+def test_create_skips_extension_when_already_installed(mock_pgvector):
+    """Test create does not run CREATE EXTENSION when pgvector is already installed."""
+    mock_session = mock_pgvector.Session.return_value.__enter__.return_value
+    mock_session.execute.return_value.scalar.return_value = True
+
+    with patch.object(mock_pgvector, "table_exists", return_value=False):
+        mock_pgvector.create()
+
+    for call in mock_session.execute.call_args_list:
+        sql = str(call.args[0])
+        assert "CREATE EXTENSION" not in sql
+
+
+def test_create_continues_when_extension_creation_fails(mock_pgvector):
+    """Test create logs and continues when extension creation lacks permissions."""
+    mock_session = mock_pgvector.Session.return_value.__enter__.return_value
+    mock_session.execute.return_value.scalar.return_value = False
+
+    def execute_side_effect(stmt, *args, **kwargs):
+        if "CREATE EXTENSION" in str(stmt):
+            raise Exception("permission denied to create extension")
+        result = MagicMock()
+        result.scalar.return_value = False
+        return result
+
+    mock_session.execute.side_effect = execute_side_effect
+
+    with patch.object(mock_pgvector, "table_exists", return_value=False):
+        mock_pgvector.create()
+
+    mock_pgvector.table.create.assert_called_once()
+
+
 def test_name_exists(mock_pgvector):
     """Test name_exists method."""
     with patch.object(mock_pgvector, "_record_exists") as mock_record_exists:
