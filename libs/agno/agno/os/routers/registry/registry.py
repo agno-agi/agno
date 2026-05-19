@@ -482,12 +482,16 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 vector_db = getattr(kb, "vector_db", None)
                 contents_db = getattr(kb, "contents_db", None)
                 readers = getattr(kb, "readers", None)
+                # Knowledge.readers is normally a dict, but the codebase also
+                # accepts a list (see Knowledge.get_readers). Count either; any
+                # other unexpected type is treated as unknown rather than crashing.
+                num_readers = len(readers) if isinstance(readers, (dict, list)) else None
                 kb_metadata = KnowledgeMetadata(
                     class_path=_class_path(kb),
                     vector_db_class=_class_path(vector_db) if vector_db else None,
                     contents_db_class=_class_path(contents_db) if contents_db else None,
                     max_results=getattr(kb, "max_results", None),
-                    num_readers=len(readers) if isinstance(readers, dict) else None,
+                    num_readers=num_readers,
                 )
                 resources.append(
                     RegistryContentResponse(
@@ -507,8 +511,8 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 db = getattr(mm, "db", None)
                 mm_metadata = MemoryManagerMetadata(
                     class_path=_class_path(mm),
-                    owner_id=_safe_str(getattr(mm, "_registry_owner_id", None)),
-                    owner_type=_safe_str(getattr(mm, "_registry_owner_type", None)),
+                    owner_id=_safe_str(getattr(mm, "owner_id", None)),
+                    owner_type=_safe_str(getattr(mm, "owner_type", None)),
                     model_class=_class_path(model) if model else None,
                     model_id=_safe_str(getattr(model, "id", None)) if model else None,
                     db_class=_class_path(db) if db else None,
@@ -534,8 +538,8 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                 model = getattr(sm, "model", None)
                 sm_metadata = SessionSummaryManagerMetadata(
                     class_path=_class_path(sm),
-                    owner_id=_safe_str(getattr(sm, "_registry_owner_id", None)),
-                    owner_type=_safe_str(getattr(sm, "_registry_owner_type", None)),
+                    owner_id=_safe_str(getattr(sm, "owner_id", None)),
+                    owner_type=_safe_str(getattr(sm, "owner_type", None)),
                     model_class=_class_path(model) if model else None,
                     model_id=_safe_str(getattr(model, "id", None)) if model else None,
                     last_n_runs=getattr(sm, "last_n_runs", None),

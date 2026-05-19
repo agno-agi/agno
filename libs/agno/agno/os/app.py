@@ -331,6 +331,12 @@ class AgentOS:
         self._populate_registry()
         self._populate_registry_managers()
 
+        # Discover knowledge instances and mirror them into the registry so that
+        # GET /registry?resource_type=knowledge is consistent right after construction
+        # (not only after get_app()/resync()).
+        self._auto_discover_knowledge_instances()
+        self._populate_registry_knowledge()
+
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
 
@@ -675,11 +681,8 @@ class AgentOS:
             if mm is not None:
                 mm_id = getattr(mm, "id", None)
                 if mm_id is not None and mm_id not in memory_ids:
-                    try:
-                        setattr(mm, "_registry_owner_id", owner_id)
-                        setattr(mm, "_registry_owner_type", owner_type)
-                    except (AttributeError, TypeError):
-                        pass
+                    mm.owner_id = owner_id
+                    mm.owner_type = owner_type
                     registry.memory_managers.append(mm)
                     memory_ids.add(mm_id)
 
@@ -687,11 +690,8 @@ class AgentOS:
             if sm is not None:
                 sm_id = getattr(sm, "id", None)
                 if sm_id is not None and sm_id not in summary_ids:
-                    try:
-                        setattr(sm, "_registry_owner_id", owner_id)
-                        setattr(sm, "_registry_owner_type", owner_type)
-                    except (AttributeError, TypeError):
-                        pass
+                    sm.owner_id = owner_id
+                    sm.owner_type = owner_type
                     registry.session_summary_managers.append(sm)
                     summary_ids.add(sm_id)
 

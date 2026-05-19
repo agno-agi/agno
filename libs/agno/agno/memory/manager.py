@@ -46,11 +46,6 @@ class MemorySearchResponse(BaseModel):
 class MemoryManager:
     """Memory Manager"""
 
-    # Unique identifier for this manager. Auto-generated if not provided.
-    id: Optional[str] = None
-    # Optional human-readable name for this manager.
-    name: Optional[str] = None
-
     # Model used for memory management
     model: Optional[Model] = None
 
@@ -93,9 +88,13 @@ class MemoryManager:
         debug_mode: bool = False,
         id: Optional[str] = None,
         name: Optional[str] = None,
+        owner_id: Optional[str] = None,
+        owner_type: Optional[str] = None,
     ):
         self.id = id if id is not None else f"memory_manager_{uuid4().hex[:8]}"
         self.name = name
+        self.owner_id = owner_id
+        self.owner_type = owner_type
         self.model = model  # type: ignore[assignment]
         self.system_message = system_message
         self.memory_capture_instructions = memory_capture_instructions

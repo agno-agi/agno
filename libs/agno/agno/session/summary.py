@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
@@ -64,10 +64,16 @@ class SessionSummaryManager:
     """Session Summary Manager"""
 
     # Unique identifier for this manager. Auto-generated if not provided.
-    id: Optional[str] = field(default=None)
+    id: Optional[str] = None
 
     # Optional human-readable name for this manager.
     name: Optional[str] = None
+
+    # Id of the agent or team that owns this manager (set when registered in the OS).
+    owner_id: Optional[str] = None
+
+    # Type of the owner: "agent" or "team" (set when registered in the OS).
+    owner_type: Optional[str] = None
 
     # Model used for session summary generation
     model: Optional[Model] = None
