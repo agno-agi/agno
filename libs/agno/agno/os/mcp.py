@@ -46,6 +46,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _resolve_user_id(caller_user_id: Optional[str]) -> Optional[str]:
+    """Bind user_id to the JWT subject when an authenticated request is in flight."""
+    from fastmcp.server.dependencies import get_http_request
+
+    try:
+        request = get_http_request()
+    except RuntimeError:
+        return caller_user_id
+
+    state_user_id = getattr(getattr(request, "state", None), "user_id", None)
+    if state_user_id is not None:
+        return state_user_id
+    return caller_user_id
+
+
 def get_mcp_server(
     os: "AgentOS",
 ) -> StarletteWithLifespan:
@@ -123,6 +138,7 @@ def get_mcp_server(
         sort_by: str = "created_at",
         sort_order: str = "desc",
     ) -> Dict[str, Any]:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
         if isinstance(db, RemoteDb):
@@ -186,6 +202,7 @@ def get_mcp_server(
         session_type: str = "agent",
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
 
@@ -234,6 +251,7 @@ def get_mcp_server(
     ) -> Dict[str, Any]:
         import time
 
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
 
@@ -324,6 +342,7 @@ def get_mcp_server(
         session_type: str = "agent",
         user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
 
@@ -384,6 +403,7 @@ def get_mcp_server(
         session_type: str = "agent",
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
 
@@ -442,6 +462,7 @@ def get_mcp_server(
         session_type: str = "agent",
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
 
@@ -490,6 +511,7 @@ def get_mcp_server(
         summary: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
         session_type_enum = SessionType(session_type)
 
@@ -565,6 +587,7 @@ def get_mcp_server(
         db_id: str,
         user_id: Optional[str] = None,
     ) -> str:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
@@ -591,6 +614,7 @@ def get_mcp_server(
         session_types: Optional[List[str]] = None,
         user_id: Optional[str] = None,
     ) -> str:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
@@ -617,6 +641,7 @@ def get_mcp_server(
         user_id: str,
         topics: Optional[List[str]] = None,
     ) -> UserMemorySchema:
+        user_id = _resolve_user_id(user_id) or user_id
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
@@ -665,6 +690,7 @@ def get_mcp_server(
         db_id: str,
         user_id: Optional[str] = None,
     ) -> UserMemorySchema:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
@@ -699,6 +725,7 @@ def get_mcp_server(
         sort_by: str = "updated_at",
         sort_order: str = "desc",
     ) -> Dict[str, Any]:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
@@ -764,6 +791,7 @@ def get_mcp_server(
         user_id: str,
         topics: Optional[List[str]] = None,
     ) -> UserMemorySchema:
+        user_id = _resolve_user_id(user_id) or user_id
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
@@ -809,6 +837,7 @@ def get_mcp_server(
         memory_id: str,
         user_id: Optional[str] = None,
     ) -> str:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
@@ -834,6 +863,7 @@ def get_mcp_server(
         db_id: str,
         user_id: Optional[str] = None,
     ) -> str:
+        user_id = _resolve_user_id(user_id)
         db = await get_db(os.dbs, db_id)
 
         if isinstance(db, RemoteDb):
