@@ -32,24 +32,38 @@ from a2a.client import create_client
 from a2a.types import Message, Part, Role, SendMessageRequest
 
 async def main():
-    client = create_client("http://localhost:7777/a2a/agents/agno-assist/v1")
+    client = await create_client("http://localhost:7777/a2a/agents/agno-assist")
     async with client:
         req = SendMessageRequest(message=Message(
             message_id=str(uuid4()),
             role=Role.ROLE_USER,
             parts=[Part(text="Hello!", media_type="text/plain")],
         ))
+        # The SDK yields a stream of StreamResponse oneofs. Token chunks
+        # arrive as `artifact_update` events; the final response arrives as a
+        # `task` event with the full history.
         async for resp in client.send_message(req):
-            if resp.WhichOneof("payload") == "task":
-                for entry in resp.task.history:
-                    for p in entry.parts:
-                        if p.WhichOneof("content") == "text":
-                            print(p.text)
+            kind = resp.WhichOneof("payload")
+            if kind == "artifact_update":
+                chunk = "".join(
+                    p.text for p in resp.artifact_update.artifact.parts
+                    if p.WhichOneof("content") == "text"
+                )
+                print(chunk, end="", flush=True)
+            elif kind == "task":
+                print()  # newline after final chunk
 
 asyncio.run(main())
 ```
 
 The AgentCard for any running example is at `GET <base>/.well-known/agent-card.json` and follows the v1 schema (`supportedInterfaces`, `capabilities`, `extendedAgentCard`, ...).
+
+### Stream event shapes
+
+- `status_update` — lifecycle events (working / completed / failed / cancelled). Metadata carries `agno_event_type` for tool calls, reasoning, memory updates, workflow steps, etc.
+- `artifact_update` — incremental text chunks of the agent's response, with `append=true`. Concatenate the text parts across these events for a live token stream.
+- `task` — single terminal event with the full final `history` and any media artifacts. Receiving this means the run is complete.
+- `message` is reserved by the v1 spec as a terminal event; Agno's interface never emits one mid-stream (the SDK would otherwise stop iterating early).
 
 ## Testing interactively
 

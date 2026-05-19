@@ -43,7 +43,8 @@ The Agno A2A interface emits standard A2A 1.0 wire format:
 
 - AgentCard structure: `supportedInterfaces[]` with `protocolBinding: "JSONRPC"` and `protocolVersion: "1.0"`; `capabilities.extendedAgentCard`; v1 enum values like `ROLE_AGENT` and `TASK_STATE_COMPLETED`.
 - Flat `Part` objects with member-presence discrimination (`text` / `url` / `raw` / `data`) and `mediaType` — no `kind` discriminator, no nested `FilePart`/`FileWithUri`/`FileWithBytes`.
-- Streaming events drop the v0.3 `final` flag (stream closure is the completion signal) and use `TaskStatusUpdateEvent` / `TaskArtifactUpdateEvent` wrappers.
+- JSON-RPC method dispatch: every operation (`SendMessage`, `SendStreamingMessage`, …) is POSTed to the single URL advertised in `supportedInterfaces[0].url`. Old URL-style routes (`/v1/message:send`, etc.) are still mounted for backwards compatibility.
+- Streaming events: token chunks stream as `TaskArtifactUpdateEvent` (with `append=true`); lifecycle/progress flows as `TaskStatusUpdateEvent`; the run ends with a single `Task` event carrying the full history. Agno never emits a mid-stream `Message` (which the v1 SDK treats as terminal). Stream closure is the completion signal — the v0.3 `final` flag is gone.
 - JSON-RPC 2.0 envelope on every response.
 
 Concretely: the same Agno server you point `trip_planning_a2a_client.py` at can also be debugged in the [a2a-inspector](https://github.com/a2aproject/a2a-inspector), called from a Google ADK agent, or consumed by anything else built on `a2a-sdk>=1.0`. Agno isn't a custom dialect — it's the spec.

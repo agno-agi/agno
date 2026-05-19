@@ -23,7 +23,7 @@ from uuid import uuid4
 from a2a.client import create_client
 from a2a.types import Message, Part, Role, SendMessageRequest
 
-TARGET_BASE_URL = "http://localhost:7770/a2a/agents/weather-reporter-agent/v1"
+TARGET_BASE_URL = "http://localhost:7770/a2a/agents/weather-reporter-agent"
 PROMPT = "What is the weather in Tokyo right now? Be concise."
 
 
@@ -35,7 +35,7 @@ async def main() -> None:
             parts=[Part(text=PROMPT, media_type="text/plain")],
         )
     )
-    client = create_client(TARGET_BASE_URL)
+    client = await create_client(TARGET_BASE_URL)
     async with client:
         print(f"Connecting to {TARGET_BASE_URL}")
         print(f"Prompt: {PROMPT}\n")
@@ -47,7 +47,15 @@ async def main() -> None:
                 print(f"[status_update] state={evt.status.state} task_id={evt.task_id}")
             elif kind == "artifact_update":
                 evt = response.artifact_update
-                print(f"[artifact_update] artifact_id={evt.artifact.artifact_id}")
+                chunk = "".join(
+                    p.text
+                    for p in evt.artifact.parts
+                    if p.WhichOneof("content") == "text"
+                )
+                if chunk:
+                    print(f"[artifact_update] {chunk!r}")
+                else:
+                    print(f"[artifact_update] artifact_id={evt.artifact.artifact_id}")
             elif kind == "message":
                 msg = response.message
                 text = "".join(

@@ -67,9 +67,10 @@ if __name__ == "__main__":
     """Run your AgentOS with the A2A 1.0 interface.
 
     Endpoints for a Team (A2A 1.0, JSON-RPC 2.0 envelope, flat Part with mediaType):
-        POST http://localhost:7777/a2a/teams/{id}/v1/message:send
-        POST http://localhost:7777/a2a/teams/{id}/v1/message:stream
         GET  http://localhost:7777/a2a/teams/{id}/.well-known/agent-card.json
+        POST http://localhost:7777/a2a/teams/{id}/v1                 (JSON-RPC: SendMessage / SendStreamingMessage — what the a2a-sdk Client targets)
+        POST http://localhost:7777/a2a/teams/{id}/v1/message:send    (legacy URL-style, kept for back-compat)
+        POST http://localhost:7777/a2a/teams/{id}/v1/message:stream  (legacy URL-style, kept for back-compat)
 
     Test with the official a2a-sdk client (see README.md for a runnable snippet)
     or with the a2a-inspector at https://github.com/a2aproject/a2a-inspector.

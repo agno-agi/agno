@@ -50,9 +50,10 @@ if __name__ == "__main__":
     """Run your AgentOS with the A2A 1.0 interface.
 
     Endpoints (A2A 1.0, JSON-RPC 2.0 envelope, flat Part with mediaType):
-        POST http://localhost:7774/a2a/agents/airbnb-search-agent/v1/message:send
-        POST http://localhost:7774/a2a/agents/airbnb-search-agent/v1/message:stream
         GET  http://localhost:7774/a2a/agents/airbnb-search-agent/.well-known/agent-card.json
+        POST http://localhost:7774/a2a/agents/airbnb-search-agent/v1                 (JSON-RPC: SendMessage / SendStreamingMessage)
+        POST http://localhost:7774/a2a/agents/airbnb-search-agent/v1/message:send    (legacy URL-style)
+        POST http://localhost:7774/a2a/agents/airbnb-search-agent/v1/message:stream  (legacy URL-style)
 
     The orchestrator (`trip_planning_a2a_client.py`) calls this agent through
     the official `a2a-sdk` client.

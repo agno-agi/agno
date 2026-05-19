@@ -321,6 +321,28 @@ def attach_routes(
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
 
+    @router.post(
+        "/agents/{id}/v1",
+        operation_id="a2a_agent_jsonrpc",
+        name="a2a_agent_jsonrpc",
+        description="A2A 1.0 JSON-RPC dispatcher for an Agno Agent. The official a2a-sdk client POSTs every operation here with the method in the JSON-RPC `method` field.",
+    )
+    async def a2a_agent_jsonrpc(request: Request, id: str):
+        body = await request.json()
+        method = body.get("method") or ""
+        if method == "SendMessage":
+            return await a2a_run_agent(request, id)
+        if method == "SendStreamingMessage":
+            return await a2a_stream_agent(request, id)
+        return JSONResponse(
+            status_code=400,
+            content={
+                "jsonrpc": "2.0",
+                "id": body.get("id"),
+                "error": {"code": -32601, "message": f"Method not found or not supported: {method!r}"},
+            },
+        )
+
     # ============= TEAMS =============
     @router.get("/teams/{id}/.well-known/agent-card.json")
     async def get_team_card(request: Request, id: str):
@@ -509,6 +531,28 @@ def attach_routes(
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
 
+    @router.post(
+        "/teams/{id}/v1",
+        operation_id="a2a_team_jsonrpc",
+        name="a2a_team_jsonrpc",
+        description="A2A 1.0 JSON-RPC dispatcher for an Agno Team.",
+    )
+    async def a2a_team_jsonrpc(request: Request, id: str):
+        body = await request.json()
+        method = body.get("method") or ""
+        if method == "SendMessage":
+            return await a2a_run_team(request, id)
+        if method == "SendStreamingMessage":
+            return await a2a_stream_team(request, id)
+        return JSONResponse(
+            status_code=400,
+            content={
+                "jsonrpc": "2.0",
+                "id": body.get("id"),
+                "error": {"code": -32601, "message": f"Method not found or not supported: {method!r}"},
+            },
+        )
+
     # ============= WORKFLOWS =============
     @router.get("/workflows/{id}/.well-known/agent-card.json")
     async def get_workflow_card(request: Request, id: str):
@@ -624,6 +668,28 @@ def attach_routes(
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to start run: {str(e)}")
+
+    @router.post(
+        "/workflows/{id}/v1",
+        operation_id="a2a_workflow_jsonrpc",
+        name="a2a_workflow_jsonrpc",
+        description="A2A 1.0 JSON-RPC dispatcher for an Agno Workflow.",
+    )
+    async def a2a_workflow_jsonrpc(request: Request, id: str):
+        body = await request.json()
+        method = body.get("method") or ""
+        if method == "SendMessage":
+            return await a2a_run_workflow(request, id)
+        if method == "SendStreamingMessage":
+            return await a2a_stream_workflow(request, id)
+        return JSONResponse(
+            status_code=400,
+            content={
+                "jsonrpc": "2.0",
+                "id": body.get("id"),
+                "error": {"code": -32601, "message": f"Method not found or not supported: {method!r}"},
+            },
+        )
 
     # ============= DEPRECATED ENDPOINTS =============
 

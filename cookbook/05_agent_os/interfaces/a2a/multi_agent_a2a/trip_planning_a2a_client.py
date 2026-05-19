@@ -25,8 +25,11 @@ from agno.os import AgentOS
 from a2a.client import create_client
 from a2a.types import Message, Part, Role, SendMessageRequest
 
-AIRBNB_BASE_URL = "http://localhost:7774/a2a/agents/airbnb-search-agent/v1"
-WEATHER_BASE_URL = "http://localhost:7770/a2a/agents/weather-reporter-agent/v1"
+# Base URL points at the agent — `create_client` fetches /.well-known/agent-card.json
+# from here, and the card itself advertises the JSON-RPC interface URL (with /v1)
+# that the SDK then POSTs operations to.
+AIRBNB_BASE_URL = "http://localhost:7774/a2a/agents/airbnb-search-agent"
+WEATHER_BASE_URL = "http://localhost:7770/a2a/agents/weather-reporter-agent"
 
 
 def _extract_text_from_history(task) -> str:
@@ -37,7 +40,13 @@ def _extract_text_from_history(task) -> str:
 
 
 async def _send_to_a2a_agent(base_url: str, text: str) -> str:
-    """Send a single user message via the official a2a-sdk client and return the agent's final text."""
+    """Send a user message via the a2a-sdk client and return the agent's final response.
+
+    The SDK streams `status_update` + `artifact_update` events while the agent
+    runs, then a final `task` event when the run completes. We only need the
+    final task here; the orchestrator agent doesn't surface intermediate
+    progress to its caller.
+    """
     request = SendMessageRequest(
         message=Message(
             message_id=str(uuid4()),
@@ -45,8 +54,8 @@ async def _send_to_a2a_agent(base_url: str, text: str) -> str:
             parts=[Part(text=text, media_type="text/plain")],
         )
     )
-    client = create_client(base_url)
     try:
+        client = await create_client(base_url)
         async with client:
             async for response in client.send_message(request):
                 if response.WhichOneof("payload") == "task":
@@ -54,13 +63,6 @@ async def _send_to_a2a_agent(base_url: str, text: str) -> str:
                         _extract_text_from_history(response.task)
                         or "(no text in task history)"
                     )
-                if response.WhichOneof("payload") == "message":
-                    msg = response.message
-                    text_out = "".join(
-                        p.text for p in msg.parts if p.WhichOneof("content") == "text"
-                    )
-                    if text_out:
-                        return text_out
     except Exception as e:
         return f"Connection Error: Could not talk to agent at {base_url}. Details: {e}"
     return f"System Error: No final task received from {base_url}."
@@ -111,9 +113,11 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """Run the orchestrator.
 
-    Talk to it via A2A 1.0:
-        POST http://localhost:7777/a2a/agents/trip_planner/v1/message:send
-        POST http://localhost:7777/a2a/agents/trip_planner/v1/message:stream
+    The orchestrator is itself an A2A 1.0 server — point another a2a-sdk
+    client at it the same way it talks to its tools:
         GET  http://localhost:7777/a2a/agents/trip_planner/.well-known/agent-card.json
+        POST http://localhost:7777/a2a/agents/trip_planner/v1     (JSON-RPC: SendMessage / SendStreamingMessage)
+        POST http://localhost:7777/a2a/agents/trip_planner/v1/message:send   (legacy URL-style)
+        POST http://localhost:7777/a2a/agents/trip_planner/v1/message:stream (legacy URL-style)
     """
     agent_os.serve(app="trip_planning_a2a_client:app", port=7777, reload=True)

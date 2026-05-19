@@ -48,7 +48,9 @@ try:
         Message,
         Part,
         Role,
+        StreamResponse,
         Task,
+        TaskArtifactUpdateEvent,
         TaskState,
         TaskStatus,
         TaskStatusUpdateEvent,
@@ -97,8 +99,22 @@ def _jsonrpc_envelope(request_id: Union[str, int], result_msg) -> dict:
     }
 
 
-def _sse_event(event_name: str, request_id: Union[str, int], result_msg) -> str:
-    return f"event: {event_name}\ndata: {json.dumps(_jsonrpc_envelope(request_id, result_msg))}\n\n"
+def _wrap_stream_payload(payload) -> StreamResponse:
+    """Wrap a stream payload proto in the v1 StreamResponse oneof."""
+    if isinstance(payload, TaskStatusUpdateEvent):
+        return StreamResponse(status_update=payload)
+    if isinstance(payload, TaskArtifactUpdateEvent):
+        return StreamResponse(artifact_update=payload)
+    if isinstance(payload, Message):
+        return StreamResponse(message=payload)
+    if isinstance(payload, Task):
+        return StreamResponse(task=payload)
+    raise TypeError(f"Unsupported stream payload type: {type(payload).__name__}")
+
+
+def _sse_event(event_name: str, request_id: Union[str, int], payload) -> str:
+    wrapped = _wrap_stream_payload(payload)
+    return f"event: {event_name}\ndata: {json.dumps(_jsonrpc_envelope(request_id, wrapped))}\n\n"
 
 
 def _set_struct(struct_field, py_dict: Optional[Dict[str, Any]]) -> None:
@@ -349,6 +365,7 @@ async def stream_a2a_response(
     task_id: str = str(uuid4())
     context_id: str = str(uuid4())
     message_id: str = str(uuid4())
+    content_artifact_id: str = str(uuid4())
     accumulated_content = ""
     completion_event = None
     cancelled_event = None
@@ -356,6 +373,23 @@ async def stream_a2a_response(
     def _emit_status_metadata(meta: Dict[str, Any]) -> str:
         evt = _status_update(task_id, context_id, TaskState.TASK_STATE_WORKING, metadata=meta)
         return _sse_event("TaskStatusUpdateEvent", request_id, evt)
+
+    def _emit_text_chunk(text: str, *, extra_meta: Optional[Dict[str, Any]] = None) -> str:
+        artifact = Artifact(
+            artifact_id=content_artifact_id,
+            name="agent-response",
+            parts=[_text_part(text)],
+        )
+        evt = TaskArtifactUpdateEvent(
+            task_id=task_id,
+            context_id=context_id,
+            artifact=artifact,
+            append=True,
+            last_chunk=False,
+        )
+        if extra_meta:
+            _set_struct(evt.metadata, extra_meta)
+        return _sse_event("TaskArtifactUpdateEvent", request_id, evt)
 
     async for event in event_stream:
         if isinstance(event, (RunStartedEvent, TeamRunStartedEvent, WorkflowStartedEvent)):
@@ -382,15 +416,10 @@ async def stream_a2a_response(
             else:
                 content_str = raw_content
             accumulated_content += content_str
-
-            message = _build_agent_message(
-                parts=[_text_part(content_str)],
-                context_id=context_id,
-                task_id=task_id,
-                message_id=message_id,
-                metadata={"agno_content_category": "content"},
-            )
-            yield _sse_event("Message", request_id, message)
+            # Per v1 semantics, a `Message` in the stream is terminal — the SDK
+            # stops iterating on the first one. Stream chunks as artifact
+            # updates instead so consumers see incremental progress.
+            yield _emit_text_chunk(content_str, extra_meta={"agno_content_category": "content"})
 
         elif isinstance(event, (ToolCallStartedEvent, TeamToolCallStartedEvent)):
             metadata: Dict[str, Any] = {"agno_event_type": "tool_call_started"}
@@ -417,20 +446,16 @@ async def stream_a2a_response(
 
         elif isinstance(event, (ReasoningStepEvent, TeamReasoningStepEvent)):
             if event.reasoning_content:
-                reasoning_message = _build_agent_message(
-                    parts=[
-                        _text_part(
-                            event.reasoning_content,
-                            part_metadata={
-                                "step_type": event.content_type if event.content_type else "str",
-                            },
-                        )
-                    ],
-                    context_id=context_id,
-                    task_id=task_id,
-                    metadata={"agno_content_category": "reasoning", "agno_event_type": "reasoning_step"},
+                # Reasoning steps must not be Messages (terminal in v1). Surface them
+                # as status updates with the reasoning text in metadata.
+                yield _emit_status_metadata(
+                    {
+                        "agno_event_type": "reasoning_step",
+                        "agno_content_category": "reasoning",
+                        "step_type": event.content_type if event.content_type else "str",
+                        "reasoning_content": event.reasoning_content,
+                    }
                 )
-                yield _sse_event("Message", request_id, reasoning_message)
 
         elif isinstance(event, (ReasoningCompletedEvent, TeamReasoningCompletedEvent)):
             yield _emit_status_metadata({"agno_event_type": "reasoning_completed"})
