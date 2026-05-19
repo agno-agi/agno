@@ -4,13 +4,13 @@ Company-Wide Document Search
 Search across personal and shared drives to find documents organization-wide.
 
 Example scenario: A compliance officer preparing for an external audit needs to
-locate all policy documents across the company, regardless of which team drive
+locate policy documents across the company, regardless of which team drive
 they're stored in. The structured output makes it easy to generate a report.
 
 Key concepts:
 - corpora="allDrives": Search personal Drive AND all Shared Drives you can access
 - incompleteSearch: API flag when Google couldn't search all drives (agent adds notice)
-- output_schema: Structured results with owner/location for report generation
+- Pagination: search_files returns max 10 results; use nextPageToken for more
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Google Drive API)
@@ -32,7 +32,6 @@ class DocumentResult(BaseModel):
     name: str = Field(..., description="File name")
     file_id: str = Field(..., description="Google Drive file ID")
     owner: Optional[str] = Field(None, description="File owner email")
-    location: Optional[str] = Field(None, description="Shared drive name or 'My Drive'")
     web_link: Optional[str] = Field(None, description="Link to open in browser")
 
 
@@ -40,6 +39,9 @@ class CompanySearchResult(BaseModel):
     query: str = Field(..., description="The search query used")
     documents: List[DocumentResult] = Field(default_factory=list)
     total_found: int = Field(..., description="Number of documents found")
+    has_more: bool = Field(
+        False, description="True if more results available via pagination"
+    )
     notice: Optional[str] = Field(
         None,
         description="Warning if results are incomplete or other issues",
@@ -58,9 +60,9 @@ agent = Agent(
     ],
     instructions=[
         "Search across all drives the user has access to.",
-        "If incompleteSearch is true in the search results, add a notice explaining "
-        "that some shared drives could not be searched.",
-        "Include the owner and location (shared drive name) when available.",
+        "If incompleteSearch is true, add a notice that some shared drives could not be searched.",
+        "If nextPageToken is present, set has_more=True to indicate more results exist.",
+        "Include owner email when available from the owners field.",
     ],
     output_schema=CompanySearchResult,
 )
@@ -72,7 +74,7 @@ agent = Agent(
 if __name__ == "__main__":
     # Scenario: Compliance officer preparing for external audit
     result = agent.run(
-        "Find all Google Docs with 'policy' in the name. "
+        "Find Google Docs with 'policy' in the name. "
         "I need to review our company policies before next week's audit."
     )
 
@@ -81,7 +83,10 @@ if __name__ == "__main__":
     print("Policy Document Audit Report")
     print(f"{'=' * 40}")
     print(f"Search: {search_result.query}")
-    print(f"Found: {search_result.total_found} documents\n")
+    print(f"Found: {search_result.total_found} documents")
+    if search_result.has_more:
+        print("(More results available - use pagination)")
+    print()
 
     if search_result.notice:
         print(f"Notice: {search_result.notice}\n")
@@ -89,5 +94,4 @@ if __name__ == "__main__":
     for doc in search_result.documents:
         print(f"- {doc.name}")
         print(f"  Owner: {doc.owner or 'Unknown'}")
-        print(f"  Location: {doc.location or 'My Drive'}")
         print(f"  Link: {doc.web_link or 'N/A'}\n")

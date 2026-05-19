@@ -100,8 +100,8 @@ DRIVE_QUERY_INSTRUCTIONS = textwrap.dedent(f"""\
     If search returns `incompleteSearch: true`, some shared drives could not be searched.
     This is a server-side limitation of the `allDrives` corpus, not a problem with your query.
     - Inform the user that results may be incomplete due to shared drive limitations
-    - If a specific folder is known, try narrowing with `'<folder_id>' in parents`
-    - Do NOT retry the same query or remove filters — it will not help""")
+    - Do NOT retry the same query — the limitation is server-side
+    - For complete results, the user must reconfigure with `corpora="user"` or `corpora="drive"`""")
 
 
 authenticate = google_authenticate("drive")
