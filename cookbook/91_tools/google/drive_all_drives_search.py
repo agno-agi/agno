@@ -10,7 +10,6 @@ they're stored in. The structured output makes it easy to generate a report.
 Key concepts:
 - corpora="allDrives": Search personal Drive AND all Shared Drives you can access
 - incompleteSearch: API flag when Google couldn't search all drives (agent adds notice)
-- Pagination: search_files returns max 10 results; use nextPageToken for more
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Google Drive API)
@@ -39,9 +38,6 @@ class CompanySearchResult(BaseModel):
     query: str = Field(..., description="The search query used")
     documents: List[DocumentResult] = Field(default_factory=list)
     total_found: int = Field(..., description="Number of documents found")
-    has_more: bool = Field(
-        False, description="True if more results available via pagination"
-    )
     notice: Optional[str] = Field(
         None,
         description="Warning if results are incomplete or other issues",
@@ -61,7 +57,6 @@ agent = Agent(
     instructions=[
         "Search across all drives the user has access to.",
         "If incompleteSearch is true, add a notice that some shared drives could not be searched.",
-        "If nextPageToken is present, set has_more=True to indicate more results exist.",
         "Include owner email when available from the owners field.",
     ],
     output_schema=CompanySearchResult,
@@ -83,10 +78,7 @@ if __name__ == "__main__":
     print("Policy Document Audit Report")
     print(f"{'=' * 40}")
     print(f"Search: {search_result.query}")
-    print(f"Found: {search_result.total_found} documents")
-    if search_result.has_more:
-        print("(More results available - use pagination)")
-    print()
+    print(f"Found: {search_result.total_found} documents\n")
 
     if search_result.notice:
         print(f"Notice: {search_result.notice}\n")
