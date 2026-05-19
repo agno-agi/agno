@@ -1405,6 +1405,9 @@ def get_run_messages(
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
 
+    # Record uploaded file metadata into session_state when files are not sent to the model
+    _add_files_to_session_state(agent, run_context, files)
+
     return run_messages
 
 
@@ -1609,6 +1612,9 @@ async def aget_run_messages(
 
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
+
+    # Record uploaded file metadata into session_state when files are not sent to the model
+    _add_files_to_session_state(agent, run_context, files)
 
     return run_messages
 

@@ -104,3 +104,84 @@ def test_accumulates_distinct_files_in_order():
             {"id": "f2", "filename": "b.csv", "mime_type": "text/csv"},
         ]
     }
+
+
+from typing import Any, AsyncIterator, Iterator
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+
+from agno.models.base import Model
+from agno.models.message import MessageMetrics
+from agno.models.response import ModelResponse
+
+
+class _MockModel(Model):
+    def __init__(self):
+        super().__init__(id="test-model", name="test-model", provider="test")
+        self.instructions = None
+        self._resp = ModelResponse(
+            content="ok", role="assistant", response_usage=MessageMetrics()
+        )
+        self.response = Mock(return_value=self._resp)
+        self.aresponse = AsyncMock(return_value=self._resp)
+
+    def get_instructions_for_model(self, *a, **k):
+        return None
+
+    def get_system_message_for_model(self, *a, **k):
+        return None
+
+    async def aget_instructions_for_model(self, *a, **k):
+        return None
+
+    async def aget_system_message_for_model(self, *a, **k):
+        return None
+
+    def parse_args(self, *a, **k):
+        return {}
+
+    def invoke(self, *a, **k):
+        return self._resp
+
+    async def ainvoke(self, *a, **k):
+        return self._resp
+
+    def invoke_stream(self, *a, **k) -> Iterator[ModelResponse]:
+        yield self._resp
+
+    async def ainvoke_stream(self, *a, **k) -> AsyncIterator[ModelResponse]:
+        yield self._resp
+        return
+
+    def _parse_provider_response(self, response: Any, **k) -> ModelResponse:
+        return self._resp
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return self._resp
+
+
+def test_sync_run_populates_uploaded_files():
+    agent = Agent(
+        model=_MockModel(),
+        add_files_to_session_state=True,
+        send_media_to_model=False,
+    )
+    resp = agent.run("process this", files=[File(id="f1", filename="a.csv", mime_type="text/csv")])
+    assert resp.session_state is not None
+    assert resp.session_state.get("uploaded_files") == [
+        {"id": "f1", "filename": "a.csv", "mime_type": "text/csv"}
+    ]
+
+
+async def test_async_run_populates_uploaded_files():
+    agent = Agent(
+        model=_MockModel(),
+        add_files_to_session_state=True,
+        send_media_to_model=False,
+    )
+    resp = await agent.arun("process this", files=[File(id="f2", filename="b.csv", mime_type="text/csv")])
+    assert resp.session_state is not None
+    assert resp.session_state.get("uploaded_files") == [
+        {"id": "f2", "filename": "b.csv", "mime_type": "text/csv"}
+    ]
