@@ -6,6 +6,7 @@ Examples for session state management, chat history, and session persistence.
 - `agentic_session_state.py` - Agent-managed session state updates.
 - `chat_history.py` - Access and manage chat history.
 - `dynamic_session_state.py` - Dynamic session state with computed values.
+- `files_in_session_state.py` - Record uploaded file metadata into session state.
 - `last_n_session_messages.py` - Limit context to the last N messages.
 - `persistent_session.py` - Persist sessions across restarts with a database.
 - `session_options.py` - Configure session options.

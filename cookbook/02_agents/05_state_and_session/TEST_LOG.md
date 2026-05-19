@@ -112,3 +112,12 @@
 **Result:** Completed successfully in 23s.
 
 ---
+
+### files_in_session_state.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** Verifies an Agent with send_media_to_model=False and add_files_to_session_state=True records uploaded file metadata into session_state["uploaded_files"]. The live model call requires OPENAI_API_KEY; core logic is covered by libs/agno/tests/unit/agent/test_add_files_to_session_state.py.
+**Result:** Completed successfully.
+
+---
