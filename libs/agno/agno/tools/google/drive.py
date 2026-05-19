@@ -94,7 +94,14 @@ DRIVE_QUERY_INSTRUCTIONS = textwrap.dedent(f"""\
     - `sharedWithMe` — files shared with the user
     - `starred` — starred files
     - Combine with `and` / `or`: `name contains 'report' and mimeType = 'application/pdf'`
-    - Trashed files are filtered automatically. Do not add trashed clauses.""")
+    - Trashed files are filtered automatically. Do not add trashed clauses.
+
+    ## Handling Incomplete Results
+    If search returns `incompleteSearch: true`, some shared drives could not be searched.
+    This is a server-side limitation of the `allDrives` corpus, not a problem with your query.
+    - Inform the user that results may be incomplete due to shared drive limitations
+    - If a specific folder is known, try narrowing with `'<folder_id>' in parents`
+    - Do NOT retry the same query or remove filters — it will not help""")
 
 
 authenticate = google_authenticate("drive")
@@ -518,9 +525,8 @@ class GoogleDriveTools(Toolkit):
             incomplete = results.get("incompleteSearch", False)
             if incomplete:
                 log_warning(
-                    f"Google Drive returned incomplete search results for query "
-                    f"{effective_query!r} (corpora={self.corpora!r}); some drives "
-                    f"could not be searched."
+                    f"Google Drive returned incomplete search results "
+                    f"(corpora={self.corpora!r}); some drives could not be searched."
                 )
             return json.dumps(
                 {
@@ -549,7 +555,9 @@ class GoogleDriveTools(Toolkit):
             page_token (str): Token from a previous response to fetch the next page
 
         Returns:
-            str: JSON string containing matching files and metadata or error message
+            str: JSON string with keys files, count, nextPageToken, and
+                 incompleteSearch (True when Drive could not search every drive,
+                 typical with corpora="allDrives"). Returns {"error": ...} on failure.
         """
         return await asyncio.to_thread(self.search_files, query=query, max_results=max_results, page_token=page_token)
 
