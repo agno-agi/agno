@@ -184,3 +184,11 @@ def test_overwrites_non_list_uploaded_files():
     ctx.session_state = {"uploaded_files": "not-a-list"}
     _add_files_to_session_state(agent, ctx, [File(id="f1", filename="a.csv", mime_type="text/csv")])
     assert ctx.session_state["uploaded_files"] == [{"id": "f1", "filename": "a.csv", "mime_type": "text/csv"}]
+
+
+def test_add_files_to_session_state_survives_serialization_round_trip():
+    enabled = Agent.from_dict(_agent(add_files_to_session_state=True).to_dict())
+    assert enabled.add_files_to_session_state is True
+
+    default = Agent.from_dict(_agent().to_dict())
+    assert default.add_files_to_session_state is False
