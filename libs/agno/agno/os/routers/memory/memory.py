@@ -1,6 +1,6 @@
 import logging
 import math
-from typing import List, Optional, Union, cast
+from typing import Any, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import Depends, HTTPException, Path, Query, Request
@@ -10,6 +10,7 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
 from agno.models.utils import get_model
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
+from agno.os.middleware.user_scope import get_scoped_user_id, resolve_db_and_scope
 from agno.os.routers.memory.schemas import (
     DeleteMemoriesRequest,
     OptimizeMemoriesRequest,
@@ -29,7 +30,6 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_db
 from agno.remote.base import RemoteDb
 
 logger = logging.getLogger(__name__)
@@ -91,14 +91,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to use for memory storage"),
         table: Optional[str] = Query(default=None, description="Table to use for memory storage"),
     ) -> UserMemorySchema:
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
-            payload.user_id = user_id
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=payload.user_id)
+        # Scoped callers get their JWT sub; admins/unscoped get the payload value.
+        if effective_user_id is not None:
+            payload.user_id = effective_user_id
 
         if payload.user_id is None:
             raise HTTPException(status_code=400, detail="User ID is required")
-
-        db = await get_db(dbs, db_id, table)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -158,26 +157,28 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
-        db = await get_db(dbs, db_id, table)
-
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.delete_memory(
                 memory_id=memory_id,
-                user_id=user_id,
+                user_id=effective_user_id,
                 db_id=db_id,
                 table=table,
                 headers=headers,
             )
+
+        local_kwargs: Dict[str, Any] = {"memory_id": memory_id}
+        if effective_user_id is not None:
+            local_kwargs["user_id"] = effective_user_id
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            await db.delete_user_memory(memory_id=memory_id, user_id=user_id)
+            await db.delete_user_memory(**local_kwargs)
         else:
-            db.delete_user_memory(memory_id=memory_id, user_id=user_id)
+            db.delete_user_memory(**local_kwargs)
 
     @router.delete(
         "/memories",
@@ -200,10 +201,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
     ) -> None:
-        db = await get_db(dbs, db_id, table)
-
-        if hasattr(http_request.state, "user_id") and http_request.state.user_id is not None:
-            request.user_id = http_request.state.user_id
+        db, effective_user_id = await resolve_db_and_scope(
+            http_request, dbs, db_id, table, fallback_user_id=request.user_id
+        )
+        if effective_user_id is not None:
+            request.user_id = effective_user_id
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(http_request)
@@ -269,16 +271,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query memories from"),
         table: Optional[str] = Query(default=None, description="The database table to use"),
     ) -> PaginatedResponse[UserMemorySchema]:
-        db = await get_db(dbs, db_id, table)
-
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.get_memories(
-                user_id=user_id,
+                user_id=effective_user_id,
                 agent_id=agent_id,
                 team_id=team_id,
                 topics=topics,
@@ -292,33 +291,25 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 headers=headers,
             )
 
+        local_kwargs: Dict[str, Any] = {
+            "limit": limit,
+            "page": page,
+            "agent_id": agent_id,
+            "team_id": team_id,
+            "topics": topics,
+            "search_content": search_content,
+            "sort_by": sort_by,
+            "sort_order": sort_order,
+            "deserialize": False,
+        }
+        if effective_user_id is not None:
+            local_kwargs["user_id"] = effective_user_id
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            user_memories, total_count = await db.get_user_memories(
-                limit=limit,
-                page=page,
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                topics=topics,
-                search_content=search_content,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                deserialize=False,
-            )
+            user_memories, total_count = await db.get_user_memories(**local_kwargs)
         else:
-            user_memories, total_count = db.get_user_memories(  # type: ignore
-                limit=limit,
-                page=page,
-                user_id=user_id,
-                agent_id=agent_id,
-                team_id=team_id,
-                topics=topics,
-                search_content=search_content,
-                sort_by=sort_by,
-                sort_order=sort_order,
-                deserialize=False,
-            )
+            user_memories, total_count = db.get_user_memories(**local_kwargs)  # type: ignore
 
         memories = [UserMemorySchema.from_dict(user_memory) for user_memory in user_memories]  # type: ignore
         return PaginatedResponse(
@@ -365,27 +356,28 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query memory from"),
         table: Optional[str] = Query(default=None, description="Table to query memory from"),
     ) -> UserMemorySchema:
-        db = await get_db(dbs, db_id, table)
-
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.get_memory(
                 memory_id=memory_id,
-                user_id=user_id,
+                user_id=effective_user_id,
                 db_id=db_id,
                 table=table,
                 headers=headers,
             )
 
+        local_kwargs: Dict[str, Any] = {"memory_id": memory_id, "deserialize": False}
+        if effective_user_id is not None:
+            local_kwargs["user_id"] = effective_user_id
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            user_memory = await db.get_user_memory(memory_id=memory_id, user_id=user_id, deserialize=False)
+            user_memory = await db.get_user_memory(**local_kwargs)
         else:
-            user_memory = db.get_user_memory(memory_id=memory_id, user_id=user_id, deserialize=False)
+            user_memory = db.get_user_memory(**local_kwargs)
         if not user_memory:
             raise HTTPException(status_code=404, detail=f"Memory with ID {memory_id} not found")
 
@@ -428,10 +420,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query topics from"),
         table: Optional[str] = Query(default=None, description="Table to query topics from"),
     ) -> List[str]:
-        db = await get_db(dbs, db_id, table)
-
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -442,11 +431,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 headers=headers,
             )
 
+        local_kwargs: Dict[str, Any] = {}
+        if effective_user_id is not None:
+            local_kwargs["user_id"] = effective_user_id
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            return await db.get_all_memory_topics(user_id=user_id)
+            return await db.get_all_memory_topics(**local_kwargs)
         else:
-            return db.get_all_memory_topics(user_id=user_id)
+            return db.get_all_memory_topics(**local_kwargs)  # type: ignore[return-value]
 
     @router.patch(
         "/memories/{memory_id}",
@@ -488,14 +481,24 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to use for update"),
         table: Optional[str] = Query(default=None, description="Table to use for update"),
     ) -> UserMemorySchema:
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
-            payload.user_id = user_id
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=payload.user_id)
+        if effective_user_id is not None:
+            payload.user_id = effective_user_id
 
         if payload.user_id is None:
             raise HTTPException(status_code=400, detail="User ID is required")
 
-        db = await get_db(dbs, db_id, table)
+        # For scoped callers, verify the existing memory belongs to them
+        # before allowing the upsert. Without this, a caller could overwrite
+        # another user's memory_id by supplying it in the path.
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None and not isinstance(db, RemoteDb):
+            if isinstance(db, AsyncBaseDb):
+                existing = await cast(AsyncBaseDb, db).get_user_memory(memory_id=memory_id, user_id=scoped_user_id)
+            else:
+                existing = db.get_user_memory(memory_id=memory_id, user_id=scoped_user_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="Memory not found")
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -574,10 +577,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         db_id: Optional[str] = Query(default=None, description="Database ID to query statistics from"),
         table: Optional[str] = Query(default=None, description="Table to query statistics from"),
     ) -> PaginatedResponse[UserStatsSchema]:
-        db = await get_db(dbs, db_id, table)
-
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
+        db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -591,22 +591,17 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             )
 
         try:
-            # Ensure limit and page are integers
             limit = int(limit) if limit is not None else 20
             page = int(page) if page is not None else 1
+            local_kwargs: Dict[str, Any] = {"limit": limit, "page": page}
+            if effective_user_id is not None:
+                local_kwargs["user_id"] = effective_user_id
+
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
-                user_stats, total_count = await db.get_user_memory_stats(
-                    limit=limit,
-                    page=page,
-                    user_id=user_id,
-                )
+                user_stats, total_count = await db.get_user_memory_stats(**local_kwargs)
             else:
-                user_stats, total_count = db.get_user_memory_stats(
-                    limit=limit,
-                    page=page,
-                    user_id=user_id,
-                )
+                user_stats, total_count = db.get_user_memory_stats(**local_kwargs)
             return PaginatedResponse(
                 data=[UserStatsSchema.from_dict(stats) for stats in user_stats],
                 meta=PaginationInfo(
@@ -678,12 +673,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         from agno.memory import MemoryManager
         from agno.memory.strategies.types import MemoryOptimizationStrategyType
 
-        if hasattr(http_request.state, "user_id") and http_request.state.user_id is not None:
-            request.user_id = http_request.state.user_id
-
         try:
-            # Get database instance
-            db = await get_db(dbs, db_id, table)
+            db, effective_user_id = await resolve_db_and_scope(
+                http_request, dbs, db_id, table, fallback_user_id=request.user_id
+            )
+            if effective_user_id is not None:
+                request.user_id = effective_user_id
 
             if isinstance(db, RemoteDb):
                 auth_token = get_auth_token_from_request(http_request)
@@ -698,15 +693,17 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
                 )
 
             # Create memory manager with optional model
+            # db may be a user-scoped DB adapter at this point;
+            # MemoryManager treats it structurally.
             if request.model:
                 try:
                     model_instance = get_model(request.model)
                 except ValueError as e:
                     raise HTTPException(status_code=400, detail=str(e))
-                memory_manager = MemoryManager(model=model_instance, db=db)
+                memory_manager = MemoryManager(model=model_instance, db=db)  # type: ignore[arg-type]
             else:
                 # No model specified - use MemoryManager's default
-                memory_manager = MemoryManager(db=db)
+                memory_manager = MemoryManager(db=db)  # type: ignore[arg-type]
 
             # Get current memories to count tokens before optimization
             if isinstance(db, AsyncBaseDb):
