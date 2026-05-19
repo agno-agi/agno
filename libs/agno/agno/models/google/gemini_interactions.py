@@ -121,12 +121,15 @@ class GeminiInteractions(Model):
     search: bool = False
     url_context: bool = False
     code_execution: bool = False
-    # Remote MCP servers for the agent (Deep Research). Each entry:
+    # Remote MCP servers. Supported on the model path and on Deep Research;
+    # NOT supported on Antigravity (the docs list it as out-of-scope).
+    # Each entry:
     #   {"name": "...", "url": "https://...", "headers": {...}, "allowed_tools": [...]}
     # `type` is added automatically; only `url` is strictly required.
     mcp_servers: Optional[List[Dict[str, Any]]] = None
-    # File Search store names to ground the agent on your own corpora, e.g.
-    # ["fileSearchStores/my-store-name"].
+    # File Search store names to ground responses on your own corpora, e.g.
+    # ["fileSearchStores/my-store-name"]. Supported on the model path and on
+    # Deep Research; NOT supported on Antigravity.
     file_search_store_names: Optional[List[str]] = None
 
     # Agent path (e.g. Deep Research, Antigravity). When `agent` is set, the
@@ -498,7 +501,9 @@ class GeminiInteractions(Model):
             all_tools.append({"type": "code_execution"})
         if self.mcp_servers:
             for server in self.mcp_servers:
-                all_tools.append({"type": "mcp_server", **server})
+                # Discriminator goes last so a stray "type" in the user's
+                # server dict can't clobber it.
+                all_tools.append({**server, "type": "mcp_server"})
         if self.file_search_store_names:
             all_tools.append({"type": "file_search", "file_search_store_names": self.file_search_store_names})
         if all_tools:
@@ -588,12 +593,16 @@ class GeminiInteractions(Model):
 
         interaction_id = getattr(response, "id", None)
 
-        # A failed background interaction (e.g. Deep Research) carries an error
-        # reason. Surface it instead of returning an empty response.
-        if getattr(response, "status", None) == "failed":
+        # Surface any non-success terminal status as an error rather than
+        # returning a silently empty/partial response. "completed" is the
+        # only success state; "failed" carries an error reason, while
+        # "cancelled" / "incomplete" indicate the autonomous loop stopped
+        # before finishing the work.
+        status = getattr(response, "status", None)
+        if status in ("failed", "cancelled", "incomplete"):
             error_detail = getattr(response, "error", None)
             raise ModelProviderError(
-                message=f"Interaction failed: {error_detail or 'no error detail provided'}",
+                message=f"Interaction ended with status '{status}': {error_detail or 'no error detail provided'}",
                 model_name=self.name,
                 model_id=self.id,
             )
@@ -862,7 +871,7 @@ class GeminiInteractions(Model):
         if not interaction_id:
             return interaction
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         deadline = loop.time() + self.agent_max_wait
         client = self.get_client()
         while True:
@@ -1045,7 +1054,7 @@ class GeminiInteractions(Model):
                 yield model_response
 
             if is_background:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 deadline = loop.time() + self.agent_max_wait
                 while not stream_state.get("completed"):
                     interaction_id = stream_state.get("interaction_id")

@@ -537,6 +537,20 @@ class TestDeepResearchAgentPath:
         assert len(mcp) == 2
         assert {t["url"] for t in mcp} == {"https://a.example.com/mcp", "https://b.example.com/mcp"}
 
+    def test_mcp_server_type_key_cannot_be_overridden(self):
+        # A user-supplied mcp_servers entry with a stray "type" key must not
+        # be able to clobber the discriminator the SDK uses to route the tool.
+        model = self._make_model(
+            agent="deep-research-preview-04-2026",
+            mcp_servers=[{"url": "https://x.example.com/mcp", "type": "function"}],
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        mcp = [t for t in kwargs["tools"] if t.get("type") == "mcp_server"]
+        assert len(mcp) == 1
+        assert mcp[0]["url"] == "https://x.example.com/mcp"
+        # No tool should have been registered as a function as a side effect.
+        assert not any(t.get("type") == "function" for t in kwargs["tools"])
+
     def test_file_search_added_to_tools(self):
         model = self._make_model(
             agent="deep-research-preview-04-2026",
@@ -949,6 +963,36 @@ class TestParseInteractionResponse:
         mock_interaction.steps = None
 
         with pytest.raises(ModelProviderError, match="no error detail"):
+            model._parse_provider_response(mock_interaction)
+
+    def test_parse_cancelled_status_raises(self):
+        # A cancelled interaction is terminal but unsuccessful; the parser
+        # must not silently return an empty response.
+        from agno.exceptions import ModelProviderError
+
+        model = self._make_model()
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/cancel1"
+        mock_interaction.status = "cancelled"
+        mock_interaction.error = None
+        mock_interaction.steps = None
+
+        with pytest.raises(ModelProviderError, match="cancelled"):
+            model._parse_provider_response(mock_interaction)
+
+    def test_parse_incomplete_status_raises(self):
+        # An incomplete interaction means the autonomous loop stopped before
+        # finishing; surface this rather than returning a partial response.
+        from agno.exceptions import ModelProviderError
+
+        model = self._make_model()
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/inc1"
+        mock_interaction.status = "incomplete"
+        mock_interaction.error = "max_steps_reached"
+        mock_interaction.steps = None
+
+        with pytest.raises(ModelProviderError, match="incomplete.*max_steps_reached"):
             model._parse_provider_response(mock_interaction)
 
     def test_interaction_id_in_provider_data(self):
