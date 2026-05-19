@@ -10,7 +10,7 @@ partial results if your organization has many shared drives.
 Key concepts:
 - corpora="allDrives": Search personal Drive AND all Shared Drives you can access
 - incompleteSearch: Flag when Google couldn't search all drives (inform the user)
-- supports_all_drives: Required for accessing Shared Drive items
+- output_schema: Structured results with incomplete_search status for programmatic use
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Google Drive API)
@@ -19,9 +19,36 @@ Setup:
 4. First run opens browser for OAuth consent, saves token.json for reuse
 """
 
+from typing import List, Optional
+
+from pydantic import BaseModel, Field
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.google.drive import GoogleDriveTools
+
+
+class DocumentResult(BaseModel):
+    name: str = Field(..., description="File name")
+    file_id: str = Field(..., description="Google Drive file ID")
+    owner: Optional[str] = Field(None, description="File owner email")
+    location: Optional[str] = Field(None, description="Shared drive name or 'My Drive'")
+    web_link: Optional[str] = Field(None, description="Link to open in browser")
+
+
+class CompanySearchResult(BaseModel):
+    query: str = Field(..., description="The search query used")
+    documents: List[DocumentResult] = Field(default_factory=list)
+    total_found: int = Field(..., description="Number of documents found")
+    incomplete_search: bool = Field(
+        False,
+        description="True if some drives could not be searched - results may be partial",
+    )
+    notice: Optional[str] = Field(
+        None,
+        description="Warning message if results are incomplete",
+    )
+
 
 agent = Agent(
     name="Company Search Agent",
@@ -35,10 +62,11 @@ agent = Agent(
     ],
     instructions=[
         "Search across all drives the user has access to.",
-        "If incompleteSearch is true, tell the user results may be partial.",
-        "Group results by shared drive or owner when possible.",
+        "If incompleteSearch is true in the search results, set incomplete_search=True "
+        "and add a notice explaining that some shared drives could not be searched.",
+        "Include the owner and location (shared drive name) when available.",
     ],
-    markdown=True,
+    output_schema=CompanySearchResult,
 )
 
 # ---------------------------------------------------------------------------
@@ -47,19 +75,13 @@ agent = Agent(
 
 if __name__ == "__main__":
     # Find compliance documents across all drives
-    agent.print_response(
-        "Find any documents with 'policy' or 'compliance' in the name",
-        stream=True,
-    )
+    result = agent.run("Find any documents with 'policy' or 'compliance' in the name")
+    print(result.content)
+
+    # Check if search was incomplete
+    # if result.content.incomplete_search:
+    #     print(f"Warning: {result.content.notice}")
 
     # Search for project resources
-    # agent.print_response(
-    #     "Find spreadsheets related to Q4 planning across all team drives",
-    #     stream=True,
-    # )
-
-    # Find recent presentations
-    # agent.print_response(
-    #     "What presentations were created in the last month?",
-    #     stream=True,
-    # )
+    # result = agent.run("Find spreadsheets related to Q4 planning")
+    # print(result.content)
