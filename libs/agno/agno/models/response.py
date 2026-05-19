@@ -147,6 +147,8 @@ class ModelResponse:
 
     extra: Optional[Dict[str, Any]] = None
 
+    finish_reason: Optional[str] = None
+
     updated_session_state: Optional[Dict[str, Any]] = None
 
     # Compression stats
