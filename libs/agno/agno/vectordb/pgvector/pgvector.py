@@ -64,8 +64,8 @@ class PgVector(VectorDb):
         auto_upgrade_schema: bool = False,
         reranker: Optional[Reranker] = None,
         create_schema: bool = True,
-        create_extension: bool = True,
         similarity_threshold: Optional[float] = None,
+        create_extension: bool = True,
     ):
         """
         Initialize the PgVector instance.
@@ -89,9 +89,9 @@ class PgVector(VectorDb):
             reranker (Optional[Reranker]): Reranker instance for reranking search results.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
+            similarity_threshold (Optional[float]): Minimum similarity score (0.0-1.0) to filter results.
             create_extension (bool): Whether to attempt creating the pgvector extension.
                 Set to False when the extension is pre-installed by a database admin. Defaults to True.
-            similarity_threshold (Optional[float]): Minimum similarity score (0.0-1.0) to filter results.
         """
         if not table_name:
             raise ValueError("Table name must be provided.")
