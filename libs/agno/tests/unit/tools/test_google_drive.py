@@ -683,6 +683,7 @@ def test_all_drives_search_files_returns_incomplete_search(all_drives_tools):
 
 
 def test_all_drives_incomplete_search_defaults_false(all_drives_tools):
+    """GoogleDriveTools.search_files defaults incompleteSearch to False when field is absent."""
     all_drives_tools.service.files.return_value.list.return_value.execute.return_value = {
         "files": [],
     }
@@ -691,6 +692,7 @@ def test_all_drives_incomplete_search_defaults_false(all_drives_tools):
 
 
 def test_all_drives_error_excludes_incomplete_search(all_drives_tools):
+    """GoogleDriveTools.search_files error response excludes incompleteSearch field."""
     all_drives_tools.service.files.return_value.list.side_effect = Exception("API error")
     result = json.loads(all_drives_tools.search_files(query="x"))
     assert "error" in result
@@ -698,6 +700,7 @@ def test_all_drives_error_excludes_incomplete_search(all_drives_tools):
 
 
 def test_all_drives_log_debug_on_incomplete_search(all_drives_tools):
+    """GoogleDriveTools.search_files emits log_debug when incompleteSearch is True."""
     all_drives_tools.service.files.return_value.list.return_value.execute.return_value = {
         "files": [],
         "incompleteSearch": True,
