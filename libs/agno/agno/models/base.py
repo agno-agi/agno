@@ -17,6 +17,7 @@ from typing import (
     Literal,
     Optional,
     Sequence,
+    Set,
     Tuple,
     Type,
     Union,
@@ -663,7 +664,7 @@ class Model(ABC):
         """
         if run_response is None or not run_response.tools:
             return 0
-        seen_ids: set = set()
+        seen_ids: Set[str] = set()
         count = 0
         for tool_execution in run_response.tools:
             tool_call_id = getattr(tool_execution, "tool_call_id", None)
@@ -715,15 +716,19 @@ class Model(ABC):
             _log_messages(messages)
             model_response = ModelResponse()
 
-            # Seed from prior tool calls so tool_call_limit is enforced
-            # cumulatively across HITL pause/resume, not per loop invocation.
-            function_call_count = self._initial_function_call_count(run_response)
-
             _tool_dicts = self._format_tools(tools) if tools is not None else []
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
             _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
             _compression_manager = compression_manager if _compress_tool_results else None
+
+            # Seed from prior tool calls so tool_call_limit is enforced
+            # cumulatively across HITL pause/resume, not per loop invocation.
+            # run_response.tools holds only PRIOR executions at this point; the
+            # current invocation's are appended by the agent after this loop
+            # returns - so this read is the cumulative pre-invocation count, not
+            # double-counted.
+            function_call_count = self._initial_function_call_count(run_response)
 
             while True:
                 # Compress tool results if compression is enabled and threshold is met
@@ -947,6 +952,10 @@ class Model(ABC):
 
             # Seed from prior tool calls so tool_call_limit is enforced
             # cumulatively across HITL pause/resume, not per loop invocation.
+            # run_response.tools holds only PRIOR executions at this point; the
+            # current invocation's are appended by the agent after this loop
+            # returns - so this read is the cumulative pre-invocation count, not
+            # double-counted.
             function_call_count = self._initial_function_call_count(run_response)
 
             while True:
@@ -1424,6 +1433,10 @@ class Model(ABC):
 
             # Seed from prior tool calls so tool_call_limit is enforced
             # cumulatively across HITL pause/resume, not per loop invocation.
+            # run_response.tools holds only PRIOR executions at this point; the
+            # current invocation's are appended by the agent after this loop
+            # returns - so this read is the cumulative pre-invocation count, not
+            # double-counted.
             function_call_count = self._initial_function_call_count(run_response)
 
             while True:
@@ -1702,6 +1715,10 @@ class Model(ABC):
 
             # Seed from prior tool calls so tool_call_limit is enforced
             # cumulatively across HITL pause/resume, not per loop invocation.
+            # run_response.tools holds only PRIOR executions at this point; the
+            # current invocation's are appended by the agent after this loop
+            # returns - so this read is the cumulative pre-invocation count, not
+            # double-counted.
             function_call_count = self._initial_function_call_count(run_response)
 
             while True:

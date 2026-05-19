@@ -219,3 +219,115 @@ async def test_tool_call_limit_enforced_across_hitl_resume_async_stream():
     async for _ in agent.acontinue_run(response, stream=True, yield_run_output=True):
         final = _
     _assert_limit_enforced_after_resume(final)
+
+
+class _ThreeCallScriptedModel(_ScriptedModel):
+    """Scripts three confirmation tool calls then plain content.
+
+    Reuses the base harness; only the response script is extended so the
+    cumulative ``tool_call_limit`` boundary can be probed with a limit > 1:
+
+      step 0 -> tool call "Tokyo"  (1st call, pauses for confirmation)
+      step 1 -> tool call "Paris"  (2nd call, pauses for confirmation)
+      step 2 -> tool call "Berlin" (3rd call, must be blocked at limit=2)
+      step 3 -> plain content      (run finishes)
+    """
+
+    def _next_response(self) -> ModelResponse:
+        step = self._step
+        self._step += 1
+        if step == 0:
+            return ModelResponse(
+                role="assistant",
+                tool_calls=[_tool_call("Tokyo")],
+                response_usage=MessageMetrics(),
+            )
+        if step == 1:
+            return ModelResponse(
+                role="assistant",
+                tool_calls=[_tool_call("Paris")],
+                response_usage=MessageMetrics(),
+            )
+        if step == 2:
+            return ModelResponse(
+                role="assistant",
+                tool_calls=[_tool_call("Berlin")],
+                response_usage=MessageMetrics(),
+            )
+        return ModelResponse(
+            role="assistant",
+            content="The weather has been reported.",
+            response_usage=MessageMetrics(),
+        )
+
+
+def test_tool_call_limit_cumulative_no_double_count_across_hitl_resume_sync():
+    """tool_call_limit=2: seed + in-loop increment count *disjoint* sets.
+
+    This locks in the property the four limit=1 tests above do NOT prove:
+    that the pre-pause call(s) seeded from ``run_response.tools`` and the
+    post-resume call(s) counted inside the fresh model loop are summed
+    without overlap (no double-count) *and* without forgetting prior calls
+    (cumulative, not per-invocation).
+
+      - Call #1 "Tokyo": cumulative 1 <= 2 -> allowed, pauses for confirm.
+      - Resume, Call #2 "Paris": seed=1 (Tokyo) + 1 = 2 <= 2 -> STILL
+        allowed (proves no double-count: a double-counted seed would be 2,
+        making this 3 > 2 and wrongly blocked), pauses for confirm.
+      - Resume, Call #3 "Berlin": seed=2 (Tokyo, Paris) + 1 = 3 > 2 ->
+        BLOCKED (proves the count is cumulative across both resumes; with
+        the pre-fix per-invocation reset the seed would be 0 and this 3rd
+        call would be allowed and pause again).
+    """
+    executions.clear()
+    agent = Agent(
+        model=_ThreeCallScriptedModel(),
+        tools=[get_the_weather],
+        tool_call_limit=2,
+        db=InMemoryDb(),
+        telemetry=False,
+    )
+
+    # Call #1 -> allowed under limit=2, pauses for confirmation.
+    response = agent.run("What is the weather?")
+    assert response is not None
+    assert response.is_paused
+    assert response.tools is not None
+    assert len(response.tools) == 1
+    assert response.tools[0].tool_args == {"city": "Tokyo"}
+
+    # Approve #1; resume. Call #2 must STILL be allowed (cumulative 2 == 2,
+    # not over) -> it executes Tokyo then pauses again for Paris. If the
+    # seed double-counted, #2 would be wrongly blocked here.
+    response.tools[0].confirmed = True
+    response = agent.continue_run(response)
+    assert response is not None
+    assert response.is_paused, "2nd call must be allowed under limit=2 (no double-count of the seed)"
+    assert executions == ["Tokyo"]
+    assert any(t.tool_args == {"city": "Paris"} for t in (response.tools or []))
+    assert all(
+        "Tool call limit reached" not in (m.content or "") for m in (response.messages or []) if m.tool_call_error
+    )
+
+    # Approve #2 (the still-paused Paris call; Tokyo is already executed) and
+    # resume. Now cumulative is 2 (Tokyo + Paris); Call #3 "Berlin" pushes it
+    # to 3 > 2 and must be BLOCKED. The run finishes instead of pausing a 3rd
+    # time, and a tool_call_limit error surfaces.
+    for paused_tool in response.tools or []:
+        if paused_tool.result is None:
+            paused_tool.confirmed = True
+    final = agent.continue_run(response)
+    assert final is not None
+    assert final.is_paused is False, "3rd call must be blocked (cumulative limit reached across both resumes)"
+    assert executions == ["Tokyo", "Paris"], "Berlin must never execute (blocked by cumulative limit)"
+
+    weather_tools = [t for t in (final.tools or []) if t.tool_name == "get_the_weather"]
+    assert len(weather_tools) == 2
+    assert {t.tool_args["city"] for t in weather_tools} == {"Tokyo", "Paris"}
+
+    limit_errors = [
+        m
+        for m in (final.messages or [])
+        if m.tool_call_error and isinstance(m.content, str) and "Tool call limit reached" in m.content
+    ]
+    assert len(limit_errors) == 1, "3rd tool call should be blocked by the cumulative tool_call_limit"
