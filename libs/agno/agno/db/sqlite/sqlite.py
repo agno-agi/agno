@@ -2525,18 +2525,17 @@ class SqliteDb(BaseDb):
         trace_id: Optional[str] = None,
         run_id: Optional[str] = None,
     ):
-        """Get a single trace by trace_id or other filters.
+        """Get a single trace by trace_id (or run_id).
+
+        See ``BaseDb.get_trace`` for why no other filters are accepted here.
+        Ownership checks live at the route layer.
 
         Args:
             trace_id: The unique trace identifier.
-            run_id: Filter by run ID (returns first match).
+            run_id: Fallback unique-alternative-key lookup.
 
         Returns:
             Optional[Trace]: The trace if found, None otherwise.
-
-        Note:
-            If multiple filters are provided, trace_id takes precedence.
-            For other filters, the most recent trace is returned.
         """
         try:
             from agno.tracing.schemas import Trace
