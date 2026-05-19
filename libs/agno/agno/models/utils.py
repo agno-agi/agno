@@ -149,6 +149,11 @@ def _get_model_class(model_id: str, model_provider: str) -> Model:
 
         return MoonShot(id=model_id)
 
+    elif model_provider == "n1n":
+        from agno.models.n1n import N1N
+
+        return N1N(id=model_id)
+
     elif model_provider == "nebius":
         from agno.models.nebius import Nebius
 
