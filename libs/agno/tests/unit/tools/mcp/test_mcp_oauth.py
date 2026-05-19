@@ -78,3 +78,131 @@ def test_create_oauth_provider_returns_provider():
     cfg = OAuthConfig(client_id="cid", client_secret="secret")
     provider = create_oauth_provider(cfg, "http://localhost:8000/mcp")
     assert isinstance(provider, ClientCredentialsOAuthProvider)
+
+
+# ---------------------------------------------------------------------------
+# MCPTools oauth parameter tests
+# ---------------------------------------------------------------------------
+
+def test_mcptools_oauth_raises_for_stdio():
+    from agno.tools.mcp import MCPTools
+    from agno.tools.mcp.oauth import OAuthConfig
+    import pytest
+    with pytest.raises(ValueError, match="oauth.*stdio"):
+        MCPTools(
+            command="npx -y @modelcontextprotocol/server-everything",
+            transport="stdio",
+            oauth=OAuthConfig(client_id="id", client_secret="secret"),
+        )
+
+
+def test_mcptools_oauth_warns_when_session_provided(caplog):
+    import logging
+    from unittest.mock import MagicMock
+    from agno.tools.mcp import MCPTools
+    from agno.tools.mcp.oauth import OAuthConfig
+
+    # Agno's logger has propagate=False, so pytest's caplog cannot see its
+    # records. Capture warnings via a dedicated handler attached to "agno".
+    records: list[logging.LogRecord] = []
+
+    class _Recorder(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    # Other tests may switch the active agno logger via use_team_logger /
+    # use_workflow_logger. Attach to every known agno logger to be safe.
+    agno_loggers = [
+        logging.getLogger("agno"),
+        logging.getLogger("agno-team"),
+        logging.getLogger("agno-workflow"),
+    ]
+    handler = _Recorder(level=logging.WARNING)
+    for lg in agno_loggers:
+        lg.addHandler(handler)
+    try:
+        mock_session = MagicMock()
+        mcp = MCPTools(
+            url="http://localhost:8000/mcp",
+            transport="streamable-http",
+            session=mock_session,
+            oauth=OAuthConfig(client_id="id", client_secret="secret"),
+        )
+    finally:
+        for lg in agno_loggers:
+            lg.removeHandler(handler)
+
+    assert mcp._oauth_provider is None
+    assert any("oauth" in r.getMessage().lower() for r in records)
+
+
+@pytest.mark.asyncio
+async def test_mcptools_connect_passes_auth_to_streamable_http():
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from agno.tools.mcp import MCPTools
+    from agno.tools.mcp.oauth import OAuthConfig
+
+    mcp = MCPTools(
+        url="http://localhost:8000/mcp",
+        transport="streamable-http",
+        oauth=OAuthConfig(client_id="id", client_secret="secret"),
+    )
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock()
+
+    mock_read = AsyncMock()
+    mock_write = AsyncMock()
+
+    mock_transport_ctx = AsyncMock()
+    mock_transport_ctx.__aenter__ = AsyncMock(return_value=(mock_read, mock_write, None))
+    mock_transport_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session_ctx = AsyncMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=mock_transport_ctx) as mock_http, \
+         patch("agno.tools.mcp.mcp.ClientSession", return_value=mock_session_ctx), \
+         patch.object(mcp, "initialize", new_callable=AsyncMock):
+        await mcp._connect()
+
+    call_kwargs = mock_http.call_args.kwargs
+    assert "auth" in call_kwargs
+    assert call_kwargs["auth"] is not None
+
+
+@pytest.mark.asyncio
+async def test_mcptools_connect_passes_auth_to_sse():
+    from unittest.mock import AsyncMock, patch
+    from agno.tools.mcp import MCPTools
+    from agno.tools.mcp.oauth import OAuthConfig
+
+    mcp = MCPTools(
+        url="http://localhost:8000/mcp",
+        transport="sse",
+        oauth=OAuthConfig(client_id="id", client_secret="secret"),
+    )
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock()
+
+    mock_read = AsyncMock()
+    mock_write = AsyncMock()
+
+    mock_transport_ctx = AsyncMock()
+    mock_transport_ctx.__aenter__ = AsyncMock(return_value=(mock_read, mock_write))
+    mock_transport_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session_ctx = AsyncMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("agno.tools.mcp.mcp.sse_client", return_value=mock_transport_ctx) as mock_sse, \
+         patch("agno.tools.mcp.mcp.ClientSession", return_value=mock_session_ctx), \
+         patch.object(mcp, "initialize", new_callable=AsyncMock):
+        await mcp._connect()
+
+    call_kwargs = mock_sse.call_args.kwargs
+    assert "auth" in call_kwargs
+    assert call_kwargs["auth"] is not None

@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from agno.agent import Agent
     from agno.run import RunContext
     from agno.team.team import Team
+    from agno.tools.mcp.oauth import OAuthConfig
 
 try:
     from mcp import ClientSession, StdioServerParameters
@@ -53,6 +54,7 @@ class MCPTools(Toolkit):
         refresh_connection: bool = False,
         tool_name_prefix: Optional[str] = None,
         header_provider: Optional[Callable[..., dict[str, Any]]] = None,
+        oauth: Optional["OAuthConfig"] = None,
         **kwargs,
     ):
         """
@@ -74,6 +76,9 @@ class MCPTools(Toolkit):
             header_provider: Optional function to generate dynamic HTTP headers.
                 Only relevant with HTTP transports (Streamable HTTP or SSE).
                 Creates a new session per agent run with dynamic headers merged into connection config.
+            oauth: Optional OAuth client_credentials configuration. When provided, MCPTools will
+                obtain access tokens from the OAuth server and attach them to outgoing MCP
+                requests. Only relevant with HTTP transports (Streamable HTTP or SSE).
         """
         # Extract these before super().__init__() to bypass early validation
         # (tools aren't available until build_tools() is called)
@@ -148,6 +153,21 @@ class MCPTools(Toolkit):
                 )
             log_debug("Dynamic header support enabled for MCP tools")
             self.header_provider = header_provider
+
+        self._oauth_provider = None
+        if oauth is not None:
+            if self.transport not in ["sse", "streamable-http"]:
+                raise ValueError(
+                    f"oauth is not supported with '{self.transport}' transport. "
+                    "Use 'sse' or 'streamable-http' transport instead."
+                )
+            if session is not None:
+                log_warning("oauth is ignored when a pre-built session is provided")
+                self._oauth_config = None
+            else:
+                self._oauth_config = oauth
+        else:
+            self._oauth_config = None
 
         self.timeout_seconds = timeout_seconds
         self.session: Optional[ClientSession] = session
@@ -349,7 +369,7 @@ class MCPTools(Toolkit):
                 existing_headers = sse_params.get("headers") or {}
                 sse_params["headers"] = {**existing_headers, **dynamic_headers}
 
-                context = sse_client(**sse_params)  # type: ignore
+                context = sse_client(**sse_params, auth=self._oauth_provider)  # type: ignore
                 client_timeout = min(self.timeout_seconds, sse_params.get("timeout", self.timeout_seconds))
 
             elif self.transport == "streamable-http":
@@ -361,7 +381,7 @@ class MCPTools(Toolkit):
                 existing_headers = streamable_http_params.get("headers") or {}
                 streamable_http_params["headers"] = {**existing_headers, **dynamic_headers}
 
-                context = streamablehttp_client(**streamable_http_params)  # type: ignore
+                context = streamablehttp_client(**streamable_http_params, auth=self._oauth_provider)  # type: ignore
                 params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
                 if isinstance(params_timeout, timedelta):
                     params_timeout = int(params_timeout.total_seconds())
@@ -487,6 +507,15 @@ class MCPTools(Toolkit):
         if self.header_provider:
             init_headers = self._call_header_provider()
 
+        # Create OAuth provider if configured
+        if self._oauth_config is not None:
+            from agno.tools.mcp.oauth import create_oauth_provider
+            server_url = self.url or (
+                self.server_params.url if self.server_params is not None else None  # type: ignore
+            )
+            if server_url:
+                self._oauth_provider = create_oauth_provider(self._oauth_config, server_url)
+
         # Create a new studio session
         if self.transport == "sse":
             sse_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
@@ -495,7 +524,7 @@ class MCPTools(Toolkit):
             if init_headers:
                 existing_headers = sse_params.get("headers") or {}
                 sse_params["headers"] = {**existing_headers, **init_headers}
-            self._context = sse_client(**sse_params)  # type: ignore
+            self._context = sse_client(**sse_params, auth=self._oauth_provider)  # type: ignore
             client_timeout = min(self.timeout_seconds, sse_params.get("timeout", self.timeout_seconds))
 
         # Create a new streamable HTTP session
@@ -506,7 +535,7 @@ class MCPTools(Toolkit):
             if init_headers:
                 existing_headers = streamable_http_params.get("headers") or {}
                 streamable_http_params["headers"] = {**existing_headers, **init_headers}
-            self._context = streamablehttp_client(**streamable_http_params)  # type: ignore
+            self._context = streamablehttp_client(**streamable_http_params, auth=self._oauth_provider)  # type: ignore
             params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
             if isinstance(params_timeout, timedelta):
                 params_timeout = int(params_timeout.total_seconds())
