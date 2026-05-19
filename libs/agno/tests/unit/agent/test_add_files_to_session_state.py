@@ -1,9 +1,15 @@
 """Unit tests for Agent.add_files_to_session_state and the file-recording helper."""
 
+from typing import Any, AsyncIterator, Iterator
+from unittest.mock import AsyncMock, Mock
+
 from agno.agent.agent import Agent
 from agno.agent._messages import _add_files_to_session_state
 from agno.media import File
+from agno.models.base import Model
+from agno.models.message import MessageMetrics
 from agno.models.openai import OpenAIResponses
+from agno.models.response import ModelResponse
 from agno.run import RunContext
 
 
@@ -51,12 +57,8 @@ def test_noop_when_no_files():
 def test_records_id_filename_mime_type():
     agent = _agent(add_files_to_session_state=True, send_media_to_model=False)
     ctx = _ctx()
-    _add_files_to_session_state(
-        agent, ctx, [File(id="f1", filename="report.xlsx", mime_type="text/csv")]
-    )
-    assert ctx.session_state == {
-        "uploaded_files": [{"id": "f1", "filename": "report.xlsx", "mime_type": "text/csv"}]
-    }
+    _add_files_to_session_state(agent, ctx, [File(id="f1", filename="report.xlsx", mime_type="text/csv")])
+    assert ctx.session_state == {"uploaded_files": [{"id": "f1", "filename": "report.xlsx", "mime_type": "text/csv"}]}
 
 
 def test_none_fields_dropped_and_name_fallback():
@@ -78,9 +80,7 @@ def test_dedup_by_id():
     ctx = _ctx()
     _add_files_to_session_state(agent, ctx, [File(id="f1", filename="a.csv", mime_type="text/csv")])
     _add_files_to_session_state(agent, ctx, [File(id="f1", filename="renamed.csv", mime_type="text/csv")])
-    assert ctx.session_state == {
-        "uploaded_files": [{"id": "f1", "filename": "a.csv", "mime_type": "text/csv"}]
-    }
+    assert ctx.session_state == {"uploaded_files": [{"id": "f1", "filename": "a.csv", "mime_type": "text/csv"}]}
 
 
 def test_dedup_by_filename_mime_when_no_id():
@@ -88,9 +88,7 @@ def test_dedup_by_filename_mime_when_no_id():
     ctx = _ctx()
     _add_files_to_session_state(agent, ctx, [File(url="https://x", filename="a.csv", mime_type="text/csv")])
     _add_files_to_session_state(agent, ctx, [File(url="https://y", filename="a.csv", mime_type="text/csv")])
-    assert ctx.session_state == {
-        "uploaded_files": [{"filename": "a.csv", "mime_type": "text/csv"}]
-    }
+    assert ctx.session_state == {"uploaded_files": [{"filename": "a.csv", "mime_type": "text/csv"}]}
 
 
 def test_accumulates_distinct_files_in_order():
@@ -106,23 +104,11 @@ def test_accumulates_distinct_files_in_order():
     }
 
 
-from typing import Any, AsyncIterator, Iterator
-from unittest.mock import AsyncMock, Mock
-
-import pytest
-
-from agno.models.base import Model
-from agno.models.message import MessageMetrics
-from agno.models.response import ModelResponse
-
-
 class _MockModel(Model):
     def __init__(self):
         super().__init__(id="test-model", name="test-model", provider="test")
         self.instructions = None
-        self._resp = ModelResponse(
-            content="ok", role="assistant", response_usage=MessageMetrics()
-        )
+        self._resp = ModelResponse(content="ok", role="assistant", response_usage=MessageMetrics())
         self.response = Mock(return_value=self._resp)
         self.aresponse = AsyncMock(return_value=self._resp)
 
@@ -169,9 +155,7 @@ def test_sync_run_populates_uploaded_files():
     )
     resp = agent.run("process this", files=[File(id="f1", filename="a.csv", mime_type="text/csv")])
     assert resp.session_state is not None
-    assert resp.session_state.get("uploaded_files") == [
-        {"id": "f1", "filename": "a.csv", "mime_type": "text/csv"}
-    ]
+    assert resp.session_state.get("uploaded_files") == [{"id": "f1", "filename": "a.csv", "mime_type": "text/csv"}]
 
 
 async def test_async_run_populates_uploaded_files():
@@ -182,6 +166,21 @@ async def test_async_run_populates_uploaded_files():
     )
     resp = await agent.arun("process this", files=[File(id="f2", filename="b.csv", mime_type="text/csv")])
     assert resp.session_state is not None
-    assert resp.session_state.get("uploaded_files") == [
-        {"id": "f2", "filename": "b.csv", "mime_type": "text/csv"}
-    ]
+    assert resp.session_state.get("uploaded_files") == [{"id": "f2", "filename": "b.csv", "mime_type": "text/csv"}]
+
+
+def test_preserves_other_session_state_keys():
+    agent = _agent(add_files_to_session_state=True, send_media_to_model=False)
+    ctx = _ctx()
+    ctx.session_state = {"foo": "bar"}
+    _add_files_to_session_state(agent, ctx, [File(id="f1", filename="a.csv", mime_type="text/csv")])
+    assert ctx.session_state["foo"] == "bar"
+    assert ctx.session_state["uploaded_files"] == [{"id": "f1", "filename": "a.csv", "mime_type": "text/csv"}]
+
+
+def test_overwrites_non_list_uploaded_files():
+    agent = _agent(add_files_to_session_state=True, send_media_to_model=False)
+    ctx = _ctx()
+    ctx.session_state = {"uploaded_files": "not-a-list"}
+    _add_files_to_session_state(agent, ctx, [File(id="f1", filename="a.csv", mime_type="text/csv")])
+    assert ctx.session_state["uploaded_files"] == [{"id": "f1", "filename": "a.csv", "mime_type": "text/csv"}]

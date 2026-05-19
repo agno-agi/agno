@@ -1172,7 +1172,9 @@ def _add_files_to_session_state(
         return
     if run_context.session_state is None:
         run_context.session_state = {}
-    recorded: List[Dict[str, Any]] = run_context.session_state.setdefault("uploaded_files", [])
+    existing = run_context.session_state.get("uploaded_files")
+    recorded: List[Dict[str, Any]] = existing if isinstance(existing, list) else []
+    run_context.session_state["uploaded_files"] = recorded
     for f in files:
         entry: Dict[str, Any] = {}
         if f.id is not None:
@@ -1190,7 +1192,11 @@ def _add_files_to_session_state(
 
 
 def _is_duplicate_file_entry(entry: Dict[str, Any], recorded: List[Dict[str, Any]]) -> bool:
-    """True if entry already exists: match on id when present, else (filename, mime_type)."""
+    """True if entry already exists: match on id when present, else (filename, mime_type).
+
+    id-based and (filename, mime_type)-based identities are treated as distinct, so a file
+    sent once without an id and later with an id will be recorded twice.
+    """
     for existing in recorded:
         if "id" in entry and existing.get("id") == entry["id"]:
             return True
