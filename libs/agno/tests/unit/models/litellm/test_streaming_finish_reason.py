@@ -11,6 +11,7 @@ import pytest
 
 pytest.importorskip("litellm")
 
+from agno.models.base import MessageData
 from agno.models.litellm import LiteLLM
 from agno.models.message import Message
 
@@ -131,3 +132,46 @@ async def test_async_streaming_propagates_finish_reason():
             finish_reasons.append(delta.provider_data["finish_reason"])
 
     assert "length" in finish_reasons
+
+
+def test_finish_reason_reachable_end_to_end_via_assistant_message():
+    """End-to-end: finish_reason must survive Agno's streaming merge.
+
+    This drives the *real* consumer path that issue agno-agi/agno#7985 is
+    actually about: each LiteLLM chunk is parsed by the real
+    ``_parse_provider_response_delta``, accumulated through the real
+    ``_populate_stream_data`` merge (base.py:1938-1947), and finally copied
+    onto the assistant ``Message`` by the real
+    ``_populate_assistant_message_from_stream_data`` (base.py:1879-1880).
+
+    The earlier tests only assert on the raw per-delta parser return; this one
+    proves a downstream consumer can read
+    ``assistant_message.provider_data["finish_reason"]`` after the merge. It
+    also exercises the realistic terminal-chunk case where the final chunk
+    carries ``finish_reason`` with ``content=None``.
+    """
+    model = LiteLLM(id="gpt-4o")
+
+    # Realistic LiteLLM stream: content chunks, then a terminal chunk that
+    # carries only finish_reason (content=None).
+    chunks = [
+        MockStreamChunk(content="Artificial "),
+        MockStreamChunk(content="intelligence"),
+        MockStreamChunk(content=None, finish_reason="length"),
+    ]
+
+    stream_data = MessageData()
+    assistant_message = Message(role="assistant")
+
+    for chunk in chunks:
+        model_response_delta = model._parse_provider_response_delta(chunk)
+        # _populate_stream_data is a generator (Iterator[ModelResponse]); it
+        # must be exhausted for the accumulation side effects to run.
+        for _ in model._populate_stream_data(stream_data=stream_data, model_response_delta=model_response_delta):
+            pass
+
+    model._populate_assistant_message_from_stream_data(assistant_message=assistant_message, stream_data=stream_data)
+
+    assert assistant_message.content == "Artificial intelligence"
+    assert assistant_message.provider_data is not None
+    assert assistant_message.provider_data.get("finish_reason") == "length"
