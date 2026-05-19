@@ -492,9 +492,7 @@ class GoogleDriveTools(Toolkit):
             page_token (str): Token from a previous response to fetch the next page
 
         Returns:
-            str: JSON string with keys files, count, nextPageToken, and
-                 incompleteSearch (True when Drive could not search every drive,
-                 typical with corpora="allDrives"). Returns {"error": ...} on failure.
+            str: JSON string containing matching files and metadata or error message
         """
         if max_results < 1:
             return json.dumps({"error": "max_results must be greater than 0"})
@@ -555,9 +553,7 @@ class GoogleDriveTools(Toolkit):
             page_token (str): Token from a previous response to fetch the next page
 
         Returns:
-            str: JSON string with keys files, count, nextPageToken, and
-                 incompleteSearch (True when Drive could not search every drive,
-                 typical with corpora="allDrives"). Returns {"error": ...} on failure.
+            str: JSON string containing matching files and metadata or error message
         """
         return await asyncio.to_thread(self.search_files, query=query, max_results=max_results, page_token=page_token)
 
