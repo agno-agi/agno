@@ -698,6 +698,152 @@ class Claude(Model):
             log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
         return request_kwargs
 
+    def _build_prewarm_kwargs(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Build request kwargs for a ``max_tokens=0`` cache pre-warm call.
+
+        The system prompt is derived from ``messages`` exactly as a real
+        ``invoke`` call derives it, so the warmed cache prefix matches.
+
+        Args:
+            messages: Message list whose system prompt / tools should be warmed.
+            tools: Tool dicts already formatted by ``_format_tools``, or None.
+            response_format: Optional response format.
+
+        Returns:
+            Request kwargs with ``max_tokens`` forced to 0, or ``None`` when no
+            ``cache_control`` breakpoint is present (nothing to pre-warm).
+        """
+        # Only the system prompt is warmed; format_messages' chat output is
+        # unused -- prewarm sends a fixed "warmup" placeholder as the user turn.
+        _, system_message = format_messages(
+            messages,
+            compress_tool_results=True,
+            append_trailing_user_message=self.append_trailing_user_message,
+            trailing_user_message_content=self.trailing_user_message_content,
+            enable_citations=self.citations and not self._output_format_enabled(response_format),
+        )
+        kwargs = self._prepare_request_kwargs(
+            system_message, tools=tools, response_format=response_format, messages=messages
+        )
+        # get_request_params drops max_tokens when falsy, so set it explicitly.
+        kwargs["max_tokens"] = 0
+        # max_tokens=0 is rejected by the API with extended thinking or structured outputs.
+        kwargs.pop("thinking", None)
+        kwargs.pop("output_format", None)
+        blocks = (kwargs.get("system") or []) + (kwargs.get("tools") or [])
+        if not any(isinstance(b, dict) and b.get("cache_control") for b in blocks):
+            log_warning(
+                "Claude.prewarm(): no cache_control breakpoint on system or tools — "
+                "enable cache_system_prompt or cache_tools. Nothing to pre-warm."
+            )
+            return None
+        return kwargs
+
+    def prewarm(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> Optional[MessageMetrics]:
+        """Pre-warm the Anthropic prompt cache for this model's system prompt and tools.
+
+        Sends a ``max_tokens=0`` request so the API writes the cache at every
+        ``cache_control`` breakpoint without generating output. Re-warm within
+        the cache TTL (5 minutes by default) to keep the entry alive.
+
+        Args:
+            messages: Message list whose system prompt / tools should be warmed.
+            tools: Tools to warm alongside the system prompt.
+            response_format: Optional response format.
+
+        Returns:
+            Cache metrics (``cache_write_tokens`` confirms the write), or ``None``
+            when there is no ``cache_control`` breakpoint to warm.
+
+        Raises:
+            ModelProviderError: If called on a non-Anthropic provider.
+        """
+        if self.provider != "Anthropic":
+            raise ModelProviderError(
+                message="prewarm() is only supported on the direct Anthropic API",
+                model_name=self.name,
+                model_id=self.id,
+            )
+        formatted_tools = self._format_tools(tools) if tools else None
+        kwargs = self._build_prewarm_kwargs(messages, tools=formatted_tools, response_format=response_format)
+        if kwargs is None:
+            return None
+        warmup: List[Dict[str, Any]] = [{"role": "user", "content": "warmup"}]
+        client = self.get_client()
+        create = (
+            client.beta.messages.create
+            if self._has_beta_features(response_format=response_format, tools=formatted_tools)
+            else client.messages.create
+        )
+        try:
+            response = create(model=self.id, messages=warmup, **kwargs)
+        except APIStatusError as e:
+            if e.status_code != 400 or "max_tokens" not in str(e):
+                self._handle_api_error(e)
+            kwargs["max_tokens"] = 1  # older models may reject max_tokens=0
+            response = create(model=self.id, messages=warmup, **kwargs)
+        except Exception as e:
+            self._handle_api_error(e)
+        return self._get_metrics(response.usage)
+
+    async def aprewarm(
+        self,
+        messages: List[Message],
+        tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+    ) -> Optional[MessageMetrics]:
+        """Async variant of prewarm().
+
+        Args:
+            messages: Message list whose system prompt / tools should be warmed.
+            tools: Tools to warm alongside the system prompt.
+            response_format: Optional response format.
+
+        Returns:
+            Cache metrics (``cache_write_tokens`` confirms the write), or ``None``
+            when there is no ``cache_control`` breakpoint to warm.
+
+        Raises:
+            ModelProviderError: If called on a non-Anthropic provider.
+        """
+        if self.provider != "Anthropic":
+            raise ModelProviderError(
+                message="aprewarm() is only supported on the direct Anthropic API",
+                model_name=self.name,
+                model_id=self.id,
+            )
+        formatted_tools = self._format_tools(tools) if tools else None
+        kwargs = self._build_prewarm_kwargs(messages, tools=formatted_tools, response_format=response_format)
+        if kwargs is None:
+            return None
+        warmup: List[Dict[str, Any]] = [{"role": "user", "content": "warmup"}]
+        client = self.get_async_client()
+        create = (
+            client.beta.messages.create
+            if self._has_beta_features(response_format=response_format, tools=formatted_tools)
+            else client.messages.create
+        )
+        try:
+            response = await create(model=self.id, messages=warmup, **kwargs)
+        except APIStatusError as e:
+            if e.status_code != 400 or "max_tokens" not in str(e):
+                self._handle_api_error(e)
+            kwargs["max_tokens"] = 1  # older models may reject max_tokens=0
+            response = await create(model=self.id, messages=warmup, **kwargs)
+        except Exception as e:
+            self._handle_api_error(e)
+        return self._get_metrics(response.usage)
+
     def _handle_api_error(self, e: Exception) -> NoReturn:
         """Convert Anthropic SDK exceptions into Agno model exceptions.
 
