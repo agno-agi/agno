@@ -36,6 +36,5 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     agent.print_response(
-        "Plot the growth of global solar energy generation over the last "
-        "decade and produce a short HTML slide deck summarizing the trend."
+        "What is the capital of France?"
     )

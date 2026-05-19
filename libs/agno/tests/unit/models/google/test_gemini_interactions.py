@@ -688,6 +688,27 @@ class TestAntigravityAgentPath:
         kwargs = model._get_request_kwargs(messages)
         assert "system_instruction" not in kwargs
 
+    def test_antigravity_multi_turn_only_sends_new_turn(self):
+        # With previous_interaction_id set, the server already has the prior
+        # sandbox state and conversation; only the new user turn goes on the
+        # wire. Same slicing rule as Deep Research.
+        model = self._make_model(agent="antigravity-preview-05-2026", environment="remote")
+        messages = [
+            Message(role="system", content="boilerplate"),
+            Message(role="user", content="Plot solar growth and save as solar.png"),
+            Message(
+                role="assistant",
+                content="Done, saved to solar.png",
+                provider_data={"interaction_id": "int-ag-1"},
+            ),
+            Message(role="user", content="Now turn it into a 3-slide HTML deck"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["previous_interaction_id"] == "int-ag-1"
+        assert kwargs["input"] == [
+            {"type": "user_input", "content": [{"type": "text", "text": "Now turn it into a 3-slide HTML deck"}]}
+        ]
+
 
 class TestAgentBackgroundPolling:
     """The agent path runs in the background; invoke() must poll to terminal."""
