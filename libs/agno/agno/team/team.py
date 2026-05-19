@@ -1522,14 +1522,14 @@ class Team:
 
     # -*- Public convenience functions
     def get_run_output(
-        self, run_id: str, session_id: Optional[str] = None
+        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> Optional[Union[TeamRunOutput, RunOutput]]:
-        return _storage.get_run_output(self, run_id=run_id, session_id=session_id)
+        return _storage.get_run_output(self, run_id=run_id, session_id=session_id, user_id=user_id)
 
     async def aget_run_output(
-        self, run_id: str, session_id: Optional[str] = None
+        self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> Optional[Union[TeamRunOutput, RunOutput]]:
-        return await _storage.aget_run_output(self, run_id=run_id, session_id=session_id)
+        return await _storage.aget_run_output(self, run_id=run_id, session_id=session_id, user_id=user_id)
 
     def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
         return _storage.get_last_run_output(self, session_id=session_id)
