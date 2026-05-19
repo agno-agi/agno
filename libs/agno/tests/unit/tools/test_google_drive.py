@@ -707,8 +707,24 @@ def test_all_drives_log_debug_on_incomplete_search(all_drives_tools):
     }
     with patch("agno.tools.google.drive.log_debug") as mock_debug:
         all_drives_tools.search_files(query="x")
-    assert mock_debug.called
+    mock_debug.assert_called_once()
     assert "incomplete" in mock_debug.call_args[0][0].lower()
+
+
+@pytest.mark.parametrize(
+    "api_response",
+    [
+        {"files": []},
+        {"files": [], "incompleteSearch": False},
+    ],
+)
+def test_all_drives_no_log_debug_when_incomplete_search_false(all_drives_tools, api_response):
+    """GoogleDriveTools.search_files does not log when incompleteSearch is False or absent."""
+    all_drives_tools.service.files.return_value.list.return_value.execute.return_value = api_response
+    with patch("agno.tools.google.drive.log_debug") as mock_debug:
+        result = json.loads(all_drives_tools.search_files(query="x"))
+    assert result["incompleteSearch"] is False
+    mock_debug.assert_not_called()
 
 
 def test_all_drives_search_files_still_filters_trashed(all_drives_tools):
