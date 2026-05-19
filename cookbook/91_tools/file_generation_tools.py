@@ -2,6 +2,9 @@
 File Generation Tool Example
 This cookbook shows how to use the FileGenerationTool to generate various file types (JSON, CSV, PDF, TXT).
 The tool can generate files from agent responses and make them available for download or further processing.
+
+By default, files are returned as in-memory artifacts only (save_files=False).
+Set save_files=True to also persist files to disk.
 """
 
 from agno.agent import Agent
@@ -13,11 +16,11 @@ from agno.tools.file_generation import FileGenerationTools
 # Create Agent
 # ---------------------------------------------------------------------------
 
-
+# save_files=True persists generated files to output_directory (defaults to cwd if not set)
 agent = Agent(
-    model=OpenAIResponses(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     db=SqliteDb(db_file="tmp/test.db"),
-    tools=[FileGenerationTools(output_directory="tmp")],
+    tools=[FileGenerationTools(output_directory="tmp", save_files=True)],
     description="You are a helpful assistant that can generate files in various formats.",
     instructions=[
         "When asked to create files, use the appropriate file generation tools.",
