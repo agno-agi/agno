@@ -206,34 +206,34 @@ def test_http_mock_real_client_surfaces_incomplete_search(mock_creds):
 
 
 # ---------------------------------------------------------------------------
-# Phase 6: log_warning improvement — visibility for non-JSON-inspecting callers
+# Phase 6: log_debug for incomplete search — operational visibility
 # ---------------------------------------------------------------------------
 
 
-def test_log_warning_emitted_when_incomplete_search_true(all_drives_tools):
-    """Phase 6: log_warning must fire when Drive returns incompleteSearch=True
-    so partial results are visible to operators without inspecting JSON."""
+def test_log_debug_emitted_when_incomplete_search_true(all_drives_tools):
+    """Phase 6: log_debug fires when Drive returns incompleteSearch=True
+    so partial results are visible to operators with debug logging enabled."""
     all_drives_tools.service.files.return_value.list.return_value.execute.return_value = {
         "files": [],
         "incompleteSearch": True,
     }
 
-    with patch("agno.tools.google.drive.log_warning") as mock_warn:
+    with patch("agno.tools.google.drive.log_debug") as mock_debug:
         all_drives_tools.search_files(query="x")
 
-    assert mock_warn.called, "Expected log_warning when incompleteSearch=True"
-    msg = mock_warn.call_args[0][0]
+    assert mock_debug.called, "Expected log_debug when incompleteSearch=True"
+    msg = mock_debug.call_args[0][0]
     assert "incomplete" in msg.lower()
 
 
-def test_log_warning_not_emitted_when_incomplete_search_false(all_drives_tools):
-    """Phase 6: no warning fires when incompleteSearch=False or absent."""
+def test_log_debug_not_emitted_when_incomplete_search_false(all_drives_tools):
+    """Phase 6: no debug log fires when incompleteSearch=False or absent."""
     all_drives_tools.service.files.return_value.list.return_value.execute.return_value = {
         "files": [],
         "incompleteSearch": False,
     }
 
-    with patch("agno.tools.google.drive.log_warning") as mock_warn:
+    with patch("agno.tools.google.drive.log_debug") as mock_debug:
         all_drives_tools.search_files(query="x")
 
-    assert not mock_warn.called, "Should not log warning when incompleteSearch=False"
+    assert not mock_debug.called, "Should not log debug when incompleteSearch=False"

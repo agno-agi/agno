@@ -45,7 +45,7 @@ from typing import Any, List, Optional, Tuple, Union, cast
 
 from agno.tools import Toolkit
 from agno.tools.google.auth import google_authenticate
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_debug, log_error
 
 try:
     from google.auth.transport.requests import Request
@@ -524,7 +524,7 @@ class GoogleDriveTools(Toolkit):
             files = results.get("files", [])
             incomplete = results.get("incompleteSearch", False)
             if incomplete:
-                log_warning(
+                log_debug(
                     f"Google Drive returned incomplete search results "
                     f"(corpora={self.corpora!r}); some drives could not be searched."
                 )
