@@ -3,6 +3,7 @@
 Examples for `interfaces/agui` in AgentOS.
 
 ## Files
+- `agent_with_media.py` — Agent With Media - Accept multimodal user input (image, audio, video, document).
 - `agent_with_silent_tools.py` — Silent External Tools - Suppress verbose messages in frontends.
 - `agent_with_tools.py` — Agent With Tools.
 - `basic.py` — Basic.
