@@ -3,14 +3,14 @@ Company-Wide Document Search
 =============================
 Search across personal and shared drives to find documents organization-wide.
 
-Useful for compliance audits, finding policy documents, or locating project
-resources scattered across team drives. Uses allDrives corpus which may return
-partial results if your organization has many shared drives.
+Example scenario: A compliance officer preparing for an external audit needs to
+locate all policy documents across the company, regardless of which team drive
+they're stored in. The structured output makes it easy to generate a report.
 
 Key concepts:
 - corpora="allDrives": Search personal Drive AND all Shared Drives you can access
 - incompleteSearch: API flag when Google couldn't search all drives (agent adds notice)
-- output_schema: Structured results with owner/location for programmatic use
+- output_schema: Structured results with owner/location for report generation
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Google Drive API)
@@ -47,7 +47,7 @@ class CompanySearchResult(BaseModel):
 
 
 agent = Agent(
-    name="Company Search Agent",
+    name="Compliance Document Finder",
     model=OpenAIChat(id="gpt-4o"),
     tools=[
         GoogleDriveTools(
@@ -66,14 +66,28 @@ agent = Agent(
 )
 
 # ---------------------------------------------------------------------------
-# Run Demo
+# Run: Pre-Audit Policy Document Discovery
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # Find compliance documents across all drives
-    result = agent.run("Find any documents with 'policy' or 'compliance' in the name")
-    print(result.content)
+    # Scenario: Compliance officer preparing for external audit
+    result = agent.run(
+        "Find all Google Docs with 'policy' in the name. "
+        "I need to review our company policies before next week's audit."
+    )
 
-    # Search for project resources
-    # result = agent.run("Find spreadsheets related to Q4 planning")
-    # print(result.content)
+    # Generate a simple audit report
+    search_result: CompanySearchResult = result.content
+    print("Policy Document Audit Report")
+    print(f"{'=' * 40}")
+    print(f"Search: {search_result.query}")
+    print(f"Found: {search_result.total_found} documents\n")
+
+    if search_result.notice:
+        print(f"Notice: {search_result.notice}\n")
+
+    for doc in search_result.documents:
+        print(f"- {doc.name}")
+        print(f"  Owner: {doc.owner or 'Unknown'}")
+        print(f"  Location: {doc.location or 'My Drive'}")
+        print(f"  Link: {doc.web_link or 'N/A'}\n")
