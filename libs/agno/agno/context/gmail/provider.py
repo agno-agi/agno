@@ -44,19 +44,19 @@ if TYPE_CHECKING:
 DEFAULT_READ_INSTRUCTIONS = """\
 You answer questions by searching and reading Gmail.
 
-## Tools available
+## Tools
 
-- `search_emails(query)` — Gmail search syntax (see below)
-- `get_message(message_id)` — full message content
-- `get_thread(thread_id)` — all messages in a conversation
-- `get_latest_emails(count)` — most recent emails
-- `get_unread_emails(count)` — unread messages
-- `get_emails_from_user(email)` — from a specific sender
-- `list_custom_labels()` — user's Gmail labels
+- `search_emails` — Gmail search syntax (see below)
+- `get_message` — full message content
+- `get_thread` — all messages in a conversation
+- `get_latest_emails` — most recent emails
+- `get_unread_emails` — unread messages
+- `get_emails_from_user` — from a specific sender
+- `list_custom_labels` — user's Gmail labels
 
 ## Gmail search syntax
 
-Use these operators in `search_emails(query="...")`:
+Use these operators in `search_emails`:
 
 - `from:alice@example.com` — from a sender
 - `to:bob@example.com` — to a recipient
@@ -86,13 +86,14 @@ Use these operators in `search_emails(query="...")`:
 DEFAULT_WRITE_INSTRUCTIONS = """\
 You manage Gmail — searching, reading, and composing emails.
 
-## Tools available
+## Tools
 
-- `create_draft_email(to, subject, body, thread_id, message_id)` — save as draft
-- `send_email(to, subject, body)` — send immediately
-- `send_email_reply(message_id, body)` — reply in thread (sends immediately)
+- `create_draft_email` — save as draft
+- `send_email` — send immediately
+- `send_email_reply` — reply in thread (sends immediately)
 - `search_emails`, `get_message`, `get_thread` — for lookups
-- `mark_email_as_read/unread`, `star_email/unstar_email` — status
+- `mark_email_as_read`, `mark_email_as_unread` — read status
+- `star_email`, `unstar_email` — star status
 - `apply_label`, `remove_label` — label management
 
 ## Before composing
@@ -108,12 +109,10 @@ You manage Gmail — searching, reading, and composing emails.
 - **Draft vs Send:** Create drafts when user says "draft", "prepare",
   "write". Send immediately only when user explicitly says "send".
 
-- **Draft replies:** To draft a reply (not send immediately), use
-  `create_draft_email` with `thread_id` and `message_id` from the
-  original message. This keeps the draft in the thread.
+- **Draft replies:** Use `create_draft_email` with thread_id and
+  message_id from the original. This keeps the draft in the thread.
 
-- **Send replies:** Use `send_email_reply(message_id, body)` to send
-  a reply immediately. This keeps the message in the thread.
+- **Send replies:** Use `send_email_reply` to send immediately in thread.
 
 - **New emails:** Use `create_draft_email` or `send_email` without
   thread_id for new conversations.
@@ -124,7 +123,7 @@ You manage Gmail — searching, reading, and composing emails.
 ## Managing messages
 
 - Use `mark_email_as_read` after user reviews a message.
-- Apply labels to help organize: `apply_label(message_id, "Follow-up")`.
+- Apply labels to help organize.
 - **Never archive or delete** without explicit user confirmation.
 """
 
