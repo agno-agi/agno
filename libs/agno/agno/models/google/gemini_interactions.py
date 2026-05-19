@@ -129,17 +129,26 @@ class GeminiInteractions(Model):
     # ["fileSearchStores/my-store-name"].
     file_search_store_names: Optional[List[str]] = None
 
-    # Agent path (e.g. Deep Research). When `agent` is set, the request uses the
-    # agent + agent_config path instead of model + generation_config. The SDK
-    # enforces these are mutually exclusive.
-    # Example: agent="deep-research-preview-04-2026"
+    # Agent path (e.g. Deep Research, Antigravity). When `agent` is set, the
+    # request uses the agent + agent_config path instead of model +
+    # generation_config. The SDK enforces these are mutually exclusive.
+    # Examples:
+    #   agent="deep-research-preview-04-2026"
+    #   agent="antigravity-preview-05-2026"
     agent: Optional[str] = None
     # Deep Research agent_config knobs (only sent when `agent` is a deep-research id):
     collaborative_planning: Optional[bool] = None  # turn 1 returns a plan; flip to False to execute
     thinking_summaries: Optional[Literal["auto", "none"]] = None
     visualization: Optional[Literal["off", "auto"]] = None
-    # Agent interactions require background execution. The non-streaming path
-    # creates the interaction then polls interactions.get() until terminal.
+    # Antigravity environment. One of:
+    #   - "remote"                  -> provision a fresh remote sandbox
+    #   - "env_<id>"                -> reuse an existing environment by id
+    #   - {...EnvironmentConfig}    -> custom sources / network rules
+    # Only forwarded on the agent path; ignored otherwise.
+    environment: Optional[Union[str, Dict[str, Any]]] = None
+    # Background polling cadence. Used for agents that run in background
+    # mode (Deep Research). Antigravity runs in the foreground and does
+    # not engage these knobs.
     agent_poll_interval: float = 10.0  # seconds between status polls
     agent_max_wait: float = 1800.0  # max seconds to wait for a terminal status (Deep Research can take minutes)
     # Terminal statuses for a background agent interaction. "completed" /
@@ -222,6 +231,8 @@ class GeminiInteractions(Model):
                 "store": self.store,
                 "service_tier": self.service_tier,
                 "generation_config": self.generation_config,
+                "agent": self.agent,
+                "environment": self.environment,
             }
         )
         return {k: v for k, v in model_dict.items() if v is not None}
@@ -502,16 +513,33 @@ class GeminiInteractions(Model):
             kwargs["store"] = self.store
 
         if use_agent_path:
-            # The Interactions API requires background execution for agent
-            # interactions (e.g. Deep Research), and store=true alongside it.
-            # Force both and tell the caller why.
-            log_debug(
-                "Agent interactions require background execution; forcing "
-                "background=True and store=True for the agent path.",
-                log_level=2,
-            )
-            kwargs["background"] = True
+            # The agent path always requires server-side state.
             kwargs["store"] = True
+
+            # Per-agent background semantics:
+            #   - Deep Research REQUIRES background=True (long-running, server
+            #     drives the autonomous loop).
+            #   - Antigravity does NOT support background=True (the SDK
+            #     rejects it; the agent runs in the foreground).
+            # Anything else: leave background unset and let the SDK default
+            # apply.
+            agent_id = str(self.agent)
+            if agent_id.startswith("deep-research"):
+                kwargs["background"] = True
+                log_debug(
+                    "Deep Research requires background execution; forcing background=True and store=True.",
+                    log_level=2,
+                )
+            else:
+                log_debug(
+                    "Agent path forcing store=True (server-side state is required).",
+                    log_level=2,
+                )
+
+            # Antigravity (and any future agent that takes one) reads its
+            # sandbox spec from `environment`. Forwarded as-is.
+            if self.environment is not None:
+                kwargs["environment"] = self.environment
 
         return kwargs
 

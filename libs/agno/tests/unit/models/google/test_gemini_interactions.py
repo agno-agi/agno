@@ -418,9 +418,9 @@ class TestDeepResearchAgentPath:
         assert "model" not in kwargs
         assert "generation_config" not in kwargs
 
-    def test_agent_path_forces_background_and_store(self):
-        # The Interactions API requires background=true (and store=true) for
-        # agent interactions; the model must force both regardless of `store`.
+    def test_deep_research_forces_background_and_store(self):
+        # Deep Research requires background=true (and store=true) for the
+        # autonomous loop; the model must force both regardless of `store`.
         model = self._make_model(agent="deep-research-preview-04-2026", store=False)
         kwargs = model._get_request_kwargs([Message(role="user", content="x")])
         assert kwargs["background"] is True
@@ -584,6 +584,95 @@ class TestDeepResearchAgentPath:
         assert kwargs["service_tier"] == "priority"
         # store is forced True on the agent path regardless of the configured value
         assert kwargs["store"] is True
+
+
+class TestAntigravityAgentPath:
+    """Tests for the Antigravity agent path.
+
+    Antigravity differs from Deep Research:
+      - it does NOT support background=True (foreground autonomous loop)
+      - it takes an `environment` parameter (string id or full dict config)
+      - it carries no agent_config (no deep-research knobs apply)
+    """
+
+    def _make_model(self, **kwargs):
+        return GeminiInteractions(api_key="test-key", **kwargs)
+
+    def test_antigravity_uses_agent_path(self):
+        model = self._make_model(agent="antigravity-preview-05-2026", environment="remote")
+        kwargs = model._get_request_kwargs([Message(role="user", content="Plot solar growth")])
+        assert kwargs["agent"] == "antigravity-preview-05-2026"
+        assert "model" not in kwargs
+        assert "generation_config" not in kwargs
+
+    def test_antigravity_forces_store_but_not_background(self):
+        # Antigravity runs in the foreground; the SDK rejects background=True.
+        # We must force store=True (server-side state is required) but must
+        # not force background.
+        model = self._make_model(
+            agent="antigravity-preview-05-2026",
+            environment="remote",
+            store=False,
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert kwargs["store"] is True
+        assert "background" not in kwargs
+
+    def test_antigravity_forwards_environment_string(self):
+        model = self._make_model(agent="antigravity-preview-05-2026", environment="remote")
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert kwargs["environment"] == "remote"
+
+    def test_antigravity_forwards_environment_id(self):
+        model = self._make_model(agent="antigravity-preview-05-2026", environment="env_abc123")
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert kwargs["environment"] == "env_abc123"
+
+    def test_antigravity_forwards_environment_dict(self):
+        # Full EnvironmentConfig should pass through unchanged.
+        env_dict = {
+            "type": "remote",
+            "sources": [{"type": "git", "url": "https://example.com/repo"}],
+            "network": {"allow_internet_access": True},
+        }
+        model = self._make_model(agent="antigravity-preview-05-2026", environment=env_dict)
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert kwargs["environment"] == env_dict
+
+    def test_antigravity_emits_no_agent_config(self):
+        # agent_config is deep-research-specific; setting deep-research knobs
+        # on Antigravity must not produce an agent_config block.
+        model = self._make_model(
+            agent="antigravity-preview-05-2026",
+            environment="remote",
+            collaborative_planning=True,
+            thinking_summaries="auto",
+            visualization="auto",
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert "agent_config" not in kwargs
+
+    def test_environment_not_sent_on_model_path(self):
+        # `environment` is meaningful only on the agent path; on the model
+        # path it must be silently dropped (the SDK rejects it).
+        model = self._make_model(environment="remote")
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert "environment" not in kwargs
+
+    def test_environment_not_sent_when_unset_on_agent_path(self):
+        model = self._make_model(agent="antigravity-preview-05-2026")
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert "environment" not in kwargs
+
+    def test_antigravity_drops_system_message(self):
+        # Same agent-path system_instruction rule as Deep Research applies.
+        model = self._make_model(agent="antigravity-preview-05-2026", environment="remote")
+        messages = [
+            Message(role="system", content="Be concise."),
+            Message(role="user", content="Plot solar growth"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert "system_instruction" not in kwargs
 
 
 class TestAgentBackgroundPolling:
