@@ -154,7 +154,7 @@ class MCPTools(Toolkit):
             log_debug("Dynamic header support enabled for MCP tools")
             self.header_provider = header_provider
 
-        self._oauth_provider = None
+        self._oauth_provider: Optional[Any] = None
         if oauth is not None:
             if self.transport not in ["sse", "streamable-http"]:
                 raise ValueError(
