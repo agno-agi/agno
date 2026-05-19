@@ -170,6 +170,28 @@ def test_create(mock_pgvector):
         mock_pgvector.table.create.assert_called_once()
 
 
+def test_create_runs_extension_when_admin_and_missing(mock_pgvector):
+    """Test create runs CREATE EXTENSION on the admin happy path: extension absent, role has permission."""
+    mock_session = mock_pgvector.Session.return_value.__enter__.return_value
+
+    def execute_side_effect(stmt, *args, **kwargs):
+        result = MagicMock()
+        if "pg_extension" in str(stmt):
+            result.scalar.return_value = False
+        else:
+            result.scalar.return_value = None
+        return result
+
+    mock_session.execute.side_effect = execute_side_effect
+
+    with patch.object(mock_pgvector, "table_exists", return_value=False):
+        mock_pgvector.create()
+
+    extension_calls = [c for c in mock_session.execute.call_args_list if "CREATE EXTENSION" in str(c.args[0])]
+    assert len(extension_calls) == 1
+    mock_pgvector.table.create.assert_called_once()
+
+
 def test_create_skips_extension_when_disabled(mock_pgvector):
     """Test create does not attempt extension creation when create_extension is False."""
     mock_pgvector.create_extension = False
