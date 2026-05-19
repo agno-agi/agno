@@ -47,12 +47,14 @@ app = agent_os.get_app()
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    """Run your AgentOS.
-    You can run the Agent via A2A protocol:
-    POST http://localhost:7774/agents/{id}/v1/message:send
-    For streaming responses:
-    POST http://localhost:7774/agents/{id}/v1/message:stream
-    Retrieve the agent card at:
-    GET  http://localhost:7774/agents/{id}/.well-known/agent-card.json
+    """Run your AgentOS with the A2A 1.0 interface.
+
+    Endpoints (A2A 1.0, JSON-RPC 2.0 envelope, flat Part with mediaType):
+        POST http://localhost:7774/a2a/agents/airbnb-search-agent/v1/message:send
+        POST http://localhost:7774/a2a/agents/airbnb-search-agent/v1/message:stream
+        GET  http://localhost:7774/a2a/agents/airbnb-search-agent/.well-known/agent-card.json
+
+    The orchestrator (`trip_planning_a2a_client.py`) calls this agent through
+    the official `a2a-sdk` client.
     """
     agent_os.serve(app="airbnb_agent:app", port=7774, reload=True)

@@ -2,96 +2,92 @@
 Trip Planning A2A Client
 ========================
 
-Demonstrates trip planning a2a client.
+A Trip Planner Agno agent that orchestrates two specialised Agno agents
+(airbnb_agent on 7774, weather_agent on 7770) via the canonical A2A 1.0
+client from the `a2a-sdk` package. Demonstrates that an Agno-hosted A2A
+server speaks the same protocol any modern A2A client expects.
+
+Prerequisites:
+    .venvs/demo/bin/python -m pip install -U "a2a-sdk>=1.0"
+
+Run the three servers in three terminals:
+    .venvs/demo/bin/python cookbook/05_agent_os/interfaces/a2a/multi_agent_a2a/airbnb_agent.py
+    .venvs/demo/bin/python cookbook/05_agent_os/interfaces/a2a/multi_agent_a2a/weather_agent.py
+    .venvs/demo/bin/python cookbook/05_agent_os/interfaces/a2a/multi_agent_a2a/trip_planning_a2a_client.py
 """
 
-import uuid
+from uuid import uuid4
 
-import requests
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 
-# ---------------------------------------------------------------------------
-# Create Example
-# ---------------------------------------------------------------------------
+from a2a.client import create_client
+from a2a.types import Message, Part, Role, SendMessageRequest
+
+AIRBNB_BASE_URL = "http://localhost:7774/a2a/agents/airbnb-search-agent/v1"
+WEATHER_BASE_URL = "http://localhost:7770/a2a/agents/weather-reporter-agent/v1"
 
 
-# --- 1. A2A Helper Function (The Protocol) ---
-def _send_a2a_message(url: str, text: str) -> str:
-    """
-    Internal helper to send a message using your A2A JSON-RPC format.
-    """
-    payload = {
-        "id": "trip_planner_client",
-        "jsonrpc": "2.0",
-        "method": "message/send",
-        "params": {
-            "message": {
-                "message_id": str(uuid.uuid4()),
-                "role": "user",
-                "parts": [{"text": text}],
-            }
-        },
-    }
+def _extract_text_from_history(task) -> str:
+    if not task.history:
+        return ""
+    last = task.history[-1]
+    return "".join(p.text for p in last.parts if p.WhichOneof("content") == "text")
 
+
+async def _send_to_a2a_agent(base_url: str, text: str) -> str:
+    """Send a single user message via the official a2a-sdk client and return the agent's final text."""
+    request = SendMessageRequest(
+        message=Message(
+            message_id=str(uuid4()),
+            role=Role.ROLE_USER,
+            parts=[Part(text=text, media_type="text/plain")],
+        )
+    )
+    client = create_client(base_url)
     try:
-        # Send POST request
-        response = requests.post(url, json=payload, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-
-        # Unwrap the specific A2A response structure
-        # result -> history -> last_item -> parts -> first_item -> text
-        if "result" in data and "history" in data["result"]:
-            history = data["result"]["history"]
-            if history:
-                last_msg = history[-1]
-                if "parts" in last_msg and last_msg["parts"]:
-                    return last_msg["parts"][0]["text"]
-
-        return f"System Error: The agent at {url} responded, but no text message was found in the history."
-
+        async with client:
+            async for response in client.send_message(request):
+                if response.WhichOneof("payload") == "task":
+                    return (
+                        _extract_text_from_history(response.task)
+                        or "(no text in task history)"
+                    )
+                if response.WhichOneof("payload") == "message":
+                    msg = response.message
+                    text_out = "".join(
+                        p.text for p in msg.parts if p.WhichOneof("content") == "text"
+                    )
+                    if text_out:
+                        return text_out
     except Exception as e:
-        return f"Connection Error: Could not talk to agent at {url}. Details: {e}"
+        return f"Connection Error: Could not talk to agent at {base_url}. Details: {e}"
+    return f"System Error: No final task received from {base_url}."
 
 
-# --- 2. The Two Tool Functions ---
-
-
-def ask_airbnb_agent(request: str) -> str:
-    """
-    Contacts the specialized Airbnb Agent to find listings or get details.
+async def ask_airbnb_agent(request: str) -> str:
+    """Contact the specialised Airbnb Agent to find listings or get details.
 
     Args:
         request (str): A natural language request (e.g., "Find a 2-bed apartment in Paris for under $200").
     """
-    # URL for the Airbnb Agent Service
-    AIRBNB_URL = "http://localhost:7774/a2a/agents/airbnb-search-agent/v1/message:send"
-    return _send_a2a_message(AIRBNB_URL, request)
+    return await _send_to_a2a_agent(AIRBNB_BASE_URL, request)
 
 
-def ask_weather_agent(request: str) -> str:
-    """
-    Contacts the specialized Weather Agent to get forecasts or current conditions.
+async def ask_weather_agent(request: str) -> str:
+    """Contact the specialised Weather Agent to get forecasts or current conditions.
 
     Args:
         request (str): A natural language request (e.g., "What is the weather in Tokyo next week?").
     """
-    # URL for the Weather Agent Service
-    WEATHER_URL = (
-        "http://localhost:7770/a2a/agents/weather-reporter-agent/v1/message:send"
-    )
-    return _send_a2a_message(WEATHER_URL, request)
+    return await _send_to_a2a_agent(WEATHER_BASE_URL, request)
 
-
-# --- 3. The Main Trip Planning Agent ---
 
 trip_planner = Agent(
     name="Trip Planner",
     id="trip_planner",
-    model=OpenAIChat(id="gpt-4o"),
-    # Give the agent the tools we just created
+    model=OpenAIChat(id="gpt-5.2"),
     tools=[ask_airbnb_agent, ask_weather_agent],
     markdown=True,
     description="You are an expert Trip Planner orchestrator.",
@@ -103,25 +99,21 @@ trip_planner = Agent(
         "If an agent returns an error, inform the user and try to proceed with the available information.",
     ],
 )
+
 agent_os = AgentOS(
     id="trip-planning-service",
     description="AgentOS hosting the Trip Planning Orchestrator.",
-    agents=[
-        trip_planner,
-    ],
+    agents=[trip_planner],
 )
 app = agent_os.get_app()
-# ---------------------------------------------------------------------------
-# Run Example
-# ---------------------------------------------------------------------------
+
 
 if __name__ == "__main__":
-    """Run your AgentOS.
-    You can run the Agent via A2A protocol:
-    POST http://localhost:7777/agents/{id}/v1/message:send
-    For streaming responses:
-    POST http://localhost:7777/agents/{id}/v1/message:stream
-    Retrieve the agent card at:
-    GET  http://localhost:7777/agents/{id}/.well-known/agent-card.json
+    """Run the orchestrator.
+
+    Talk to it via A2A 1.0:
+        POST http://localhost:7777/a2a/agents/trip_planner/v1/message:send
+        POST http://localhost:7777/a2a/agents/trip_planner/v1/message:stream
+        GET  http://localhost:7777/a2a/agents/trip_planner/.well-known/agent-card.json
     """
     agent_os.serve(app="trip_planning_a2a_client:app", port=7777, reload=True)

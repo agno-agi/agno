@@ -1,3 +1,5 @@
+"""Utilities for the Agno A2A interface — targets a2a-sdk 1.0 (protobuf-based types)."""
+
 import json
 from typing import Any, Dict, Optional, cast
 from uuid import uuid4
@@ -43,24 +45,17 @@ from agno.run.workflow import StepStartedEvent as WorkflowStepStartedEvent
 try:
     from a2a.types import (
         Artifact,
-        DataPart,
-        FilePart,
-        FileWithBytes,
-        FileWithUri,
+        Message,
         Part,
         Role,
-        SendMessageRequest,
-        SendStreamingMessageRequest,
-        SendStreamingMessageSuccessResponse,
         Task,
         TaskState,
         TaskStatus,
         TaskStatusUpdateEvent,
-        TextPart,
     )
-    from a2a.types import Message as A2AMessage
+    from google.protobuf import json_format
 except ImportError as e:
-    raise ImportError("`a2a` not installed. Please install it with `pip install -U a2a`") from e
+    raise ImportError("`a2a-sdk>=1.0` is required. Install with `pip install -U 'a2a-sdk>=1.0'`.") from e
 
 
 from agno.media import Audio, File, Image, Video
@@ -83,93 +78,162 @@ from agno.run.agent import (
 from agno.run.base import RunStatus
 
 
+# --- proto <-> wire helpers ----------------------------------------------------
+
+
+def _proto_to_jsonable(msg) -> dict:
+    return json_format.MessageToDict(
+        msg,
+        preserving_proto_field_name=False,
+        always_print_fields_with_no_presence=False,
+    )
+
+
+def _jsonrpc_envelope(request_id: Union[str, int], result_msg) -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "result": _proto_to_jsonable(result_msg),
+    }
+
+
+def _sse_event(event_name: str, request_id: Union[str, int], result_msg) -> str:
+    return f"event: {event_name}\ndata: {json.dumps(_jsonrpc_envelope(request_id, result_msg))}\n\n"
+
+
+def _set_struct(struct_field, py_dict: Optional[Dict[str, Any]]) -> None:
+    if py_dict:
+        struct_field.update(py_dict)
+
+
+# --- Part / Message factories --------------------------------------------------
+
+
+def _text_part(text: str, *, part_metadata: Optional[Dict[str, Any]] = None) -> Part:
+    p = Part(text=text, media_type="text/plain")
+    _set_struct(p.metadata, part_metadata)
+    return p
+
+
+def _file_part_from_url(url: str, media_type: str, *, filename: Optional[str] = None) -> Part:
+    if filename:
+        return Part(url=url, media_type=media_type, filename=filename)
+    return Part(url=url, media_type=media_type)
+
+
+def _file_part_from_bytes(raw: bytes, media_type: str, *, filename: Optional[str] = None) -> Part:
+    if filename:
+        return Part(raw=raw, media_type=media_type, filename=filename)
+    return Part(raw=raw, media_type=media_type)
+
+
+def _build_agent_message(
+    *,
+    parts: List[Part],
+    context_id: Optional[str] = None,
+    task_id: Optional[str] = None,
+    message_id: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Message:
+    msg = Message(
+        message_id=message_id or str(uuid4()),
+        role=Role.ROLE_AGENT,
+        context_id=context_id or "",
+        task_id=task_id or "",
+        parts=parts,
+    )
+    _set_struct(msg.metadata, metadata)
+    return msg
+
+
+def _status_update(
+    task_id: str,
+    context_id: str,
+    state: int,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> TaskStatusUpdateEvent:
+    evt = TaskStatusUpdateEvent(
+        task_id=task_id,
+        context_id=context_id,
+        status=TaskStatus(state=state),  # type: ignore[arg-type]
+    )
+    _set_struct(evt.metadata, metadata)
+    return evt
+
+
+# --- request parsing -----------------------------------------------------------
+
+
 async def map_a2a_request_to_run_input(request_body: dict, stream: bool = True) -> RunInput:
-    """Map A2A SendMessageRequest to Agno RunInput.
+    """Map an A2A v1 JSON-RPC SendMessage request body to an Agno RunInput.
 
-    1. Validate the request
-    2. Process message parts
-    3. Build and return RunInput
+    Request body shape (JSON-RPC 2.0):
 
-    Args:
-        request_body: A2A-valid JSON-RPC request body dict:
-
-        ```json
         {
             "jsonrpc": "2.0",
-            "id": "id",
+            "id": "...",
+            "method": "message/send" | "message/stream",
             "params": {
                 "message": {
-                    "messageId": "id",
-                    "role": "user",
-                    "contextId": "id",
-                    "parts": [{"kind": "text", "text": "Hello"}]
+                    "messageId": "...",
+                    "role": "ROLE_USER",
+                    "contextId": "...",
+                    "parts": [{"text": "Hello", "mediaType": "text/plain"}]
                 }
             }
         }
-        ```
-
-    Returns:
-        RunInput: The Agno RunInput
-        stream: Whether we are in stream mode
     """
+    del stream  # v1 SendMessageRequest is the same for blocking and streaming
+    params = request_body.get("params") or {}
+    raw_message = params.get("message")
+    if not raw_message:
+        raise HTTPException(status_code=400, detail="Invalid A2A request: params.message is required")
 
-    # 1. Validate the request
-    if stream:
-        try:
-            a2a_request = SendStreamingMessageRequest.model_validate(request_body)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid A2A request: {str(e)}")
-    else:
-        try:
-            a2a_request = SendMessageRequest.model_validate(request_body)  # type: ignore[assignment]
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid A2A request: {str(e)}")
+    # Accept legacy lowercase role names ("user" / "agent") in addition to v1 enum names
+    # ("ROLE_USER" / "ROLE_AGENT"). Protobuf's ParseDict only accepts the latter.
+    role_value = raw_message.get("role")
+    if isinstance(role_value, str) and not role_value.startswith("ROLE_"):
+        raw_message = {**raw_message, "role": f"ROLE_{role_value.upper()}"}
 
-    a2a_message = a2a_request.params.message
-    if a2a_message.role != "user":
+    a2a_message = Message()
+    try:
+        json_format.ParseDict(raw_message, a2a_message, ignore_unknown_fields=True)
+    except json_format.ParseError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid A2A request: {e}")
+
+    if a2a_message.role != Role.ROLE_USER:
         raise HTTPException(status_code=400, detail="Only user messages are accepted")
 
-    # 2. Process message parts
-    text_parts = []
-    images = []
-    videos = []
-    audios = []
-    files = []
+    text_parts: List[str] = []
+    images: List[Image] = []
+    videos: List[Video] = []
+    audios: List[Audio] = []
+    files: List[File] = []
 
     for part in a2a_message.parts:
-        # Handle message text content
-        if isinstance(part.root, TextPart):
-            text_parts.append(part.root.text)
+        which = part.WhichOneof("content")
+        if which == "text":
+            text_parts.append(part.text)
+        elif which == "url":
+            mt = part.media_type or ""
+            if mt.startswith("image/"):
+                images.append(Image(url=part.url))
+            elif mt.startswith("video/"):
+                videos.append(Video(url=part.url))
+            elif mt.startswith("audio/"):
+                audios.append(Audio(url=part.url))
+            elif mt:
+                files.append(File(url=part.url, mime_type=mt))
+        elif which == "raw":
+            mt = part.media_type or ""
+            if mt:
+                files.append(File(content=part.raw, mime_type=mt))
+        elif which == "data":
+            data_dict = json_format.MessageToDict(part.data) if part.HasField("data") else {}
+            text_parts.append(json.dumps(data_dict))
 
-        # Handle message files
-        elif isinstance(part.root, FilePart):
-            file_data = part.root.file
-            if isinstance(file_data, FileWithUri):
-                if not file_data.mime_type:
-                    continue
-                elif file_data.mime_type.startswith("image/"):
-                    images.append(Image(url=file_data.uri))
-                elif file_data.mime_type.startswith("video/"):
-                    videos.append(Video(url=file_data.uri))
-                elif file_data.mime_type.startswith("audio/"):
-                    audios.append(Audio(url=file_data.uri))
-                else:
-                    files.append(File(url=file_data.uri, mime_type=file_data.mime_type))
-            elif isinstance(file_data, FileWithBytes):
-                if not file_data.mime_type:
-                    continue
-                files.append(File(content=file_data.bytes, mime_type=file_data.mime_type))
-
-        # Handle message structured data parts
-        elif isinstance(part.root, DataPart):
-            import json
-
-            text_parts.append(json.dumps(part.root.data))
-
-    # 3. Build and return RunInput
-    complete_input_content = "\n".join(text_parts) if text_parts else ""
     return RunInput(
-        input_content=complete_input_content,
+        input_content="\n".join(text_parts) if text_parts else "",
         images=images if images else None,
         videos=videos if videos else None,
         audios=audios if audios else None,
@@ -177,147 +241,110 @@ async def map_a2a_request_to_run_input(request_body: dict, stream: bool = True) 
     )
 
 
-def _map_run_status_to_task_state(status: Optional[RunStatus]) -> TaskState:
-    """Map Agno RunStatus to A2A TaskState."""
+# --- run output -> A2A task ----------------------------------------------------
+
+
+def _map_run_status_to_task_state(status: Optional[RunStatus]) -> int:
     if status is None:
-        return TaskState.completed
+        return TaskState.TASK_STATE_COMPLETED
     _mapping = {
-        RunStatus.pending: TaskState.submitted,
-        RunStatus.running: TaskState.working,
-        RunStatus.completed: TaskState.completed,
-        RunStatus.error: TaskState.failed,
-        RunStatus.cancelled: TaskState.canceled,
-        RunStatus.paused: TaskState.working,
+        RunStatus.pending: TaskState.TASK_STATE_SUBMITTED,
+        RunStatus.running: TaskState.TASK_STATE_WORKING,
+        RunStatus.completed: TaskState.TASK_STATE_COMPLETED,
+        RunStatus.error: TaskState.TASK_STATE_FAILED,
+        RunStatus.cancelled: TaskState.TASK_STATE_CANCELED,
+        RunStatus.paused: TaskState.TASK_STATE_WORKING,
     }
-    return _mapping.get(status, TaskState.completed)
+    return _mapping.get(status, TaskState.TASK_STATE_COMPLETED)
+
+
+def _media_artifacts(items, default_media_type: str, name_prefix: str) -> List[Artifact]:
+    out: List[Artifact] = []
+    for idx, item in enumerate(items):
+        artifact_parts: List[Part] = []
+        if getattr(item, "url", None):
+            artifact_parts.append(_file_part_from_url(item.url, default_media_type))
+        out.append(
+            Artifact(
+                artifact_id=str(uuid4()),
+                name=f"{name_prefix}_{idx}",
+                description=f"Generated {name_prefix} {idx}",
+                parts=artifact_parts,
+            )
+        )
+    return out
 
 
 def map_run_output_to_a2a_task(run_output: Union[RunOutput, WorkflowRunOutput]) -> Task:
-    """Map the given RunOutput or WorkflowRunOutput into an A2A Task.
-
-    1. Handle output content
-    2. Handle output media
-    3. Build the A2A message
-    4. Build and return the A2A task
-
-    Args:
-        run_output: The Agno RunOutput or WorkflowRunOutput
-
-    Returns:
-        Task: The A2A Task
-    """
     parts: List[Part] = []
-
-    # 1. Handle output content
     if run_output.content:
-        parts.append(Part(root=TextPart(text=str(run_output.content))))
+        parts.append(_text_part(str(run_output.content)))
 
-    # 2. Handle output media
     artifacts: List[Artifact] = []
     if hasattr(run_output, "images") and run_output.images:
-        for idx, img in enumerate(run_output.images):
-            artifact_parts = []
-            if img.url:
-                artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=img.url, mime_type="image/jpeg"))))
-            artifacts.append(
-                Artifact(
-                    artifact_id=str(uuid4()),
-                    name=f"image_{idx}",
-                    description=f"Generated image {idx}",
-                    parts=artifact_parts,
-                )
-            )
+        artifacts.extend(_media_artifacts(run_output.images, "image/jpeg", "image"))
     if hasattr(run_output, "videos") and run_output.videos:
-        for idx, vid in enumerate(run_output.videos):
-            artifact_parts = []
-            if vid.url:
-                artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=vid.url, mime_type="video/mp4"))))
-            artifacts.append(
-                Artifact(
-                    artifact_id=str(uuid4()),
-                    name=f"video_{idx}",
-                    description=f"Generated video {idx}",
-                    parts=artifact_parts,
-                )
-            )
+        artifacts.extend(_media_artifacts(run_output.videos, "video/mp4", "video"))
     if hasattr(run_output, "audio") and run_output.audio:
-        for idx, aud in enumerate(run_output.audio):
-            artifact_parts = []
-            if aud.url:
-                artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=aud.url, mime_type="audio/mpeg"))))
-            artifacts.append(
-                Artifact(
-                    artifact_id=str(uuid4()),
-                    name=f"audio_{idx}",
-                    description=f"Generated audio {idx}",
-                    parts=artifact_parts,
-                )
-            )
+        artifacts.extend(_media_artifacts(run_output.audio, "audio/mpeg", "audio"))
     if hasattr(run_output, "files") and run_output.files:
         for idx, file in enumerate(run_output.files):
-            artifact_parts = []
+            artifact_parts: List[Part] = []
             if file.url:
                 artifact_parts.append(
-                    Part(
-                        root=FilePart(
-                            file=FileWithUri(uri=file.url, mime_type=file.mime_type or "application/octet-stream")
-                        )
+                    _file_part_from_url(
+                        file.url,
+                        file.mime_type or "application/octet-stream",
+                        filename=getattr(file, "name", None),
                     )
                 )
             artifacts.append(
                 Artifact(
                     artifact_id=str(uuid4()),
-                    name=getattr(file, "name", f"file_{idx}"),
+                    name=getattr(file, "name", None) or f"file_{idx}",
                     description=f"Generated file {idx}",
                     parts=artifact_parts,
                 )
             )
 
-    # 3. Build the A2A message
-    metadata = {}
+    metadata: Dict[str, Any] = {}
     if hasattr(run_output, "user_id") and run_output.user_id:
         metadata["userId"] = run_output.user_id
 
-    agent_message = A2AMessage(
-        message_id=str(uuid4()),  # TODO: use our message_id once it's implemented
-        role=Role.agent,
+    agent_message = _build_agent_message(
         parts=parts,
         context_id=run_output.session_id,
         task_id=run_output.run_id,
-        metadata=metadata if metadata else None,
+        metadata=metadata or None,
     )
 
-    # 4. Build and return the A2A task
     run_id = cast(str, run_output.run_id) if run_output.run_id else str(uuid4())
     session_id = cast(str, run_output.session_id) if run_output.session_id else str(uuid4())
     run_status = getattr(run_output, "status", None)
     task_state = _map_run_status_to_task_state(run_status)
-    return Task(
+
+    task = Task(
         id=run_id,
         context_id=session_id,
-        status=TaskStatus(state=task_state),
+        status=TaskStatus(state=task_state),  # type: ignore[arg-type]
         history=[agent_message],
-        artifacts=artifacts if artifacts else None,
     )
+    if artifacts:
+        task.artifacts.extend(artifacts)
+    return task
+
+
+# --- streaming -----------------------------------------------------------------
 
 
 async def stream_a2a_response(
     event_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent, RunOutput]],
     request_id: Union[str, int],
 ) -> AsyncIterator[str]:
-    """Stream the given event stream as A2A responses.
+    """Yield SSE-formatted v1 A2A stream events wrapped in JSON-RPC envelopes.
 
-    1. Send initial event
-    2. Send content and secondary events
-    3. Send final status event
-    4. Send final complete task
-
-    Args:
-        event_stream: The async iterator of Agno events from agent/team/workflow.arun(stream=True)
-        request_id: The JSON-RPC request ID
-
-    Yields:
-        str: JSON-RPC response objects (A2A-valid)
+    Note: v1 dropped the `final` flag on TaskStatusUpdateEvent. Stream closure
+    is the completion signal.
     """
     task_id: str = str(uuid4())
     context_id: str = str(uuid4())
@@ -326,27 +353,23 @@ async def stream_a2a_response(
     completion_event = None
     cancelled_event = None
 
-    # Stream events
+    def _emit_status_metadata(meta: Dict[str, Any]) -> str:
+        evt = _status_update(task_id, context_id, TaskState.TASK_STATE_WORKING, metadata=meta)
+        return _sse_event("TaskStatusUpdateEvent", request_id, evt)
+
     async for event in event_stream:
-        # 1. Send initial event
         if isinstance(event, (RunStartedEvent, TeamRunStartedEvent, WorkflowStartedEvent)):
             if hasattr(event, "run_id") and event.run_id:
                 task_id = event.run_id
             if hasattr(event, "session_id") and event.session_id:
                 context_id = event.session_id
 
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
+            yield _sse_event(
+                "TaskStatusUpdateEvent",
+                request_id,
+                _status_update(task_id, context_id, TaskState.TASK_STATE_WORKING),
             )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
-        # 2. Send all content and secondary events
-
-        # Send content events
         elif isinstance(event, (RunContentEvent, TeamRunContentEvent)) and event.content:
             # Serialize content to str: Pydantic models (from output_schema) must be
             # converted before str-concatenation or TextPart construction, otherwise
@@ -359,18 +382,16 @@ async def stream_a2a_response(
             else:
                 content_str = raw_content
             accumulated_content += content_str
-            message = A2AMessage(
-                message_id=message_id,
-                role=Role.agent,
-                parts=[Part(root=TextPart(text=content_str))],
+
+            message = _build_agent_message(
+                parts=[_text_part(content_str)],
                 context_id=context_id,
                 task_id=task_id,
+                message_id=message_id,
                 metadata={"agno_content_category": "content"},
             )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=message)
-            yield f"event: Message\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+            yield _sse_event("Message", request_id, message)
 
-        # Send tool call events
         elif isinstance(event, (ToolCallStartedEvent, TeamToolCallStartedEvent)):
             metadata: Dict[str, Any] = {"agno_event_type": "tool_call_started"}
             if event.tool:
@@ -379,16 +400,7 @@ async def stream_a2a_response(
                     metadata["tool_call_id"] = event.tool.tool_call_id
                 if hasattr(event.tool, "tool_args") and event.tool.tool_args:
                     metadata["tool_args"] = json.dumps(event.tool.tool_args)
-
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata=metadata,
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+            yield _emit_status_metadata(metadata)
 
         elif isinstance(event, (ToolCallCompletedEvent, TeamToolCallCompletedEvent)):
             metadata = {"agno_event_type": "tool_call_completed"}
@@ -398,116 +410,48 @@ async def stream_a2a_response(
                     metadata["tool_call_id"] = event.tool.tool_call_id
                 if hasattr(event.tool, "tool_args") and event.tool.tool_args:
                     metadata["tool_args"] = json.dumps(event.tool.tool_args)
+            yield _emit_status_metadata(metadata)
 
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata=metadata,
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
-
-        # Send reasoning events
         elif isinstance(event, (ReasoningStartedEvent, TeamReasoningStartedEvent)):
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata={"agno_event_type": "reasoning_started"},
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+            yield _emit_status_metadata({"agno_event_type": "reasoning_started"})
 
         elif isinstance(event, (ReasoningStepEvent, TeamReasoningStepEvent)):
             if event.reasoning_content:
-                # Send reasoning step as a message
-                reasoning_message = A2AMessage(
-                    message_id=str(uuid4()),
-                    role=Role.agent,
+                reasoning_message = _build_agent_message(
                     parts=[
-                        Part(
-                            root=TextPart(
-                                text=event.reasoning_content,
-                                metadata={
-                                    "step_type": event.content_type if event.content_type else "str",
-                                },
-                            )
+                        _text_part(
+                            event.reasoning_content,
+                            part_metadata={
+                                "step_type": event.content_type if event.content_type else "str",
+                            },
                         )
                     ],
                     context_id=context_id,
                     task_id=task_id,
                     metadata={"agno_content_category": "reasoning", "agno_event_type": "reasoning_step"},
                 )
-                response = SendStreamingMessageSuccessResponse(id=request_id, result=reasoning_message)
-                yield f"event: Message\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+                yield _sse_event("Message", request_id, reasoning_message)
 
         elif isinstance(event, (ReasoningCompletedEvent, TeamReasoningCompletedEvent)):
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata={"agno_event_type": "reasoning_completed"},
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+            yield _emit_status_metadata({"agno_event_type": "reasoning_completed"})
 
-        # Send memory update events
         elif isinstance(event, (MemoryUpdateStartedEvent, TeamMemoryUpdateStartedEvent)):
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata={"agno_event_type": "memory_update_started"},
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+            yield _emit_status_metadata({"agno_event_type": "memory_update_started"})
 
         elif isinstance(event, (MemoryUpdateCompletedEvent, TeamMemoryUpdateCompletedEvent)):
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata={"agno_event_type": "memory_update_completed"},
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+            yield _emit_status_metadata({"agno_event_type": "memory_update_completed"})
 
-        # Send workflow events
         elif isinstance(event, WorkflowStepStartedEvent):
             metadata = {"agno_event_type": "workflow_step_started"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
-
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata=metadata,
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+            yield _emit_status_metadata(metadata)
 
         elif isinstance(event, WorkflowStepCompletedEvent):
             metadata = {"agno_event_type": "workflow_step_completed"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
-
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata=metadata,
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+            yield _emit_status_metadata(metadata)
 
         elif isinstance(event, WorkflowStepErrorEvent):
             metadata = {"agno_event_type": "workflow_step_error"}
@@ -515,34 +459,15 @@ async def stream_a2a_response(
                 metadata["step_name"] = event.step_name
             if hasattr(event, "error") and event.error:
                 metadata["error"] = event.error
+            yield _emit_status_metadata(metadata)
 
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata=metadata,
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
-
-        # Send loop events
         elif isinstance(event, LoopExecutionStartedEvent):
             metadata = {"agno_event_type": "loop_execution_started"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "max_iterations") and event.max_iterations:
                 metadata["max_iterations"] = event.max_iterations
-
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata=metadata,
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+            yield _emit_status_metadata(metadata)
 
         elif isinstance(event, LoopIterationStartedEvent):
             metadata = {"agno_event_type": "loop_iteration_started"}
@@ -552,16 +477,7 @@ async def stream_a2a_response(
                 metadata["iteration"] = event.iteration
             if hasattr(event, "max_iterations") and event.max_iterations:
                 metadata["max_iterations"] = event.max_iterations
-
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata=metadata,
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+            yield _emit_status_metadata(metadata)
 
         elif isinstance(event, LoopIterationCompletedEvent):
             metadata = {"agno_event_type": "loop_iteration_completed"}
@@ -571,16 +487,7 @@ async def stream_a2a_response(
                 metadata["iteration"] = event.iteration
             if hasattr(event, "should_continue") and event.should_continue is not None:
                 metadata["should_continue"] = event.should_continue
-
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata=metadata,
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+            yield _emit_status_metadata(metadata)
 
         elif isinstance(event, LoopExecutionCompletedEvent):
             metadata = {"agno_event_type": "loop_execution_completed"}
@@ -588,34 +495,15 @@ async def stream_a2a_response(
                 metadata["step_name"] = event.step_name
             if hasattr(event, "total_iterations") and event.total_iterations is not None:
                 metadata["total_iterations"] = event.total_iterations
+            yield _emit_status_metadata(metadata)
 
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata=metadata,
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
-
-        # Send parallel events
         elif isinstance(event, ParallelExecutionStartedEvent):
             metadata = {"agno_event_type": "parallel_execution_started"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "parallel_step_count") and event.parallel_step_count:
                 metadata["parallel_step_count"] = event.parallel_step_count
-
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata=metadata,
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+            yield _emit_status_metadata(metadata)
 
         elif isinstance(event, ParallelExecutionCompletedEvent):
             metadata = {"agno_event_type": "parallel_execution_completed"}
@@ -623,34 +511,15 @@ async def stream_a2a_response(
                 metadata["step_name"] = event.step_name
             if hasattr(event, "parallel_step_count") and event.parallel_step_count:
                 metadata["parallel_step_count"] = event.parallel_step_count
+            yield _emit_status_metadata(metadata)
 
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata=metadata,
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
-
-        # Send condition events
         elif isinstance(event, ConditionExecutionStartedEvent):
             metadata = {"agno_event_type": "condition_execution_started"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "condition_result") and event.condition_result is not None:
                 metadata["condition_result"] = event.condition_result
-
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata=metadata,
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+            yield _emit_status_metadata(metadata)
 
         elif isinstance(event, ConditionExecutionCompletedEvent):
             metadata = {"agno_event_type": "condition_execution_completed"}
@@ -660,34 +529,15 @@ async def stream_a2a_response(
                 metadata["condition_result"] = event.condition_result
             if hasattr(event, "executed_steps") and event.executed_steps is not None:
                 metadata["executed_steps"] = event.executed_steps
+            yield _emit_status_metadata(metadata)
 
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata=metadata,
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
-
-        # Send router events
         elif isinstance(event, RouterExecutionStartedEvent):
             metadata = {"agno_event_type": "router_execution_started"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "selected_steps") and event.selected_steps:
                 metadata["selected_steps"] = event.selected_steps
-
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata=metadata,
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+            yield _emit_status_metadata(metadata)
 
         elif isinstance(event, RouterExecutionCompletedEvent):
             metadata = {"agno_event_type": "router_execution_completed"}
@@ -697,34 +547,15 @@ async def stream_a2a_response(
                 metadata["selected_steps"] = event.selected_steps
             if hasattr(event, "executed_steps") and event.executed_steps is not None:
                 metadata["executed_steps"] = event.executed_steps
+            yield _emit_status_metadata(metadata)
 
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata=metadata,
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
-
-        # Send steps events
         elif isinstance(event, StepsExecutionStartedEvent):
             metadata = {"agno_event_type": "steps_execution_started"}
             if hasattr(event, "step_name") and event.step_name:
                 metadata["step_name"] = event.step_name
             if hasattr(event, "steps_count") and event.steps_count:
                 metadata["steps_count"] = event.steps_count
-
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata=metadata,
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+            yield _emit_status_metadata(metadata)
 
         elif isinstance(event, StepsExecutionCompletedEvent):
             metadata = {"agno_event_type": "steps_execution_completed"}
@@ -734,218 +565,148 @@ async def stream_a2a_response(
                 metadata["steps_count"] = event.steps_count
             if hasattr(event, "executed_steps") and event.executed_steps is not None:
                 metadata["executed_steps"] = event.executed_steps
+            yield _emit_status_metadata(metadata)
 
-            status_event = TaskStatusUpdateEvent(
-                task_id=task_id,
-                context_id=context_id,
-                status=TaskStatus(state=TaskState.working),
-                final=False,
-                metadata=metadata,
-            )
-            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
-            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
-
-        # Capture completion event for final task construction
         elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent, WorkflowCompletedEvent)):
             completion_event = event
 
-        # Capture cancelled event for final task construction
         elif isinstance(event, (RunCancelledEvent, TeamRunCancelledEvent, WorkflowCancelledEvent)):
             cancelled_event = event
 
-    # 3. Send final status event
-    # If cancelled, send canceled status; otherwise send completed
+    # Final status event
     if cancelled_event:
-        final_state = TaskState.canceled
-        metadata = {"agno_event_type": "run_cancelled"}
+        final_metadata: Dict[str, Any] = {"agno_event_type": "run_cancelled"}
         if hasattr(cancelled_event, "reason") and cancelled_event.reason:
-            metadata["reason"] = cancelled_event.reason
-        final_status_event = TaskStatusUpdateEvent(
-            task_id=task_id,
-            context_id=context_id,
-            status=TaskStatus(state=final_state),
-            final=True,
-            metadata=metadata,
-        )
+            final_metadata["reason"] = cancelled_event.reason
+        final_status_event = _status_update(task_id, context_id, TaskState.TASK_STATE_CANCELED, metadata=final_metadata)
     else:
-        final_status_event = TaskStatusUpdateEvent(
-            task_id=task_id,
-            context_id=context_id,
-            status=TaskStatus(state=TaskState.completed),
-            final=True,
-        )
-    response = SendStreamingMessageSuccessResponse(id=request_id, result=final_status_event)
-    yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+        final_status_event = _status_update(task_id, context_id, TaskState.TASK_STATE_COMPLETED)
+    yield _sse_event("TaskStatusUpdateEvent", request_id, final_status_event)
 
-    # 4. Send final task
-    # Handle cancelled case
+    # Final Task
     if cancelled_event:
-        cancel_message = "Run was cancelled"
+        cancel_text = "Run was cancelled"
         if hasattr(cancelled_event, "reason") and cancelled_event.reason:
-            cancel_message = f"Run was cancelled: {cancelled_event.reason}"
+            cancel_text = f"Run was cancelled: {cancelled_event.reason}"
 
-        parts: List[Part] = []
+        cancel_parts: List[Part] = []
         if accumulated_content:
-            parts.append(Part(root=TextPart(text=accumulated_content)))
-        parts.append(Part(root=TextPart(text=cancel_message)))
+            cancel_parts.append(_text_part(accumulated_content))
+        cancel_parts.append(_text_part(cancel_text))
 
-        final_message = A2AMessage(
-            message_id=message_id,
-            role=Role.agent,
-            parts=parts,
+        final_message = _build_agent_message(
+            parts=cancel_parts,
             context_id=context_id,
             task_id=task_id,
+            message_id=message_id,
             metadata={"agno_event_type": "run_cancelled"},
         )
-
         task = Task(
             id=task_id,
             context_id=context_id,
-            status=TaskStatus(state=TaskState.canceled),
+            status=TaskStatus(state=TaskState.TASK_STATE_CANCELED),
             history=[final_message],
         )
-        response = SendStreamingMessageSuccessResponse(id=request_id, result=task)
-        yield f"event: Task\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+        yield _sse_event("Task", request_id, task)
         return
 
-    # Build from completion_event if available, otherwise use accumulated content
+    artifacts: List[Artifact] = []
     if completion_event:
         final_content = completion_event.content if completion_event.content else accumulated_content
-
         final_parts: List[Part] = []
         if final_content:
-            final_parts.append(Part(root=TextPart(text=str(final_content))))
+            final_parts.append(_text_part(str(final_content)))
 
-        # Handle all media artifacts
-        artifacts: List[Artifact] = []
+        def _emit_media(items, mt: str, prefix: str) -> None:
+            for idx, item in enumerate(items):
+                ap: List[Part] = []
+                if getattr(item, "url", None):
+                    ap.append(_file_part_from_url(item.url, mt))
+                artifacts.append(
+                    Artifact(
+                        artifact_id=f"{prefix}-{idx}",
+                        name=getattr(item, "name", None) or f"{prefix}-{idx}",
+                        description=f"{prefix.capitalize()} generated during task",
+                        parts=ap,
+                    )
+                )
+
         if hasattr(completion_event, "images") and completion_event.images:
-            for idx, image in enumerate(completion_event.images):
-                artifact_parts = []
-                if image.url:
-                    artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=image.url, mime_type="image/*"))))
-                artifacts.append(
-                    Artifact(
-                        artifact_id=f"image-{idx}",
-                        name=getattr(image, "name", None) or f"image-{idx}",
-                        description="Image generated during task",
-                        parts=artifact_parts,
-                    )
-                )
+            _emit_media(completion_event.images, "image/*", "image")
         if hasattr(completion_event, "videos") and completion_event.videos:
-            for idx, video in enumerate(completion_event.videos):
-                artifact_parts = []
-                if video.url:
-                    artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=video.url, mime_type="video/*"))))
-                artifacts.append(
-                    Artifact(
-                        artifact_id=f"video-{idx}",
-                        name=getattr(video, "name", None) or f"video-{idx}",
-                        description="Video generated during task",
-                        parts=artifact_parts,
-                    )
-                )
+            _emit_media(completion_event.videos, "video/*", "video")
         if hasattr(completion_event, "audio") and completion_event.audio:
-            for idx, audio in enumerate(completion_event.audio):
-                artifact_parts = []
-                if audio.url:
-                    artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=audio.url, mime_type="audio/*"))))
-                artifacts.append(
-                    Artifact(
-                        artifact_id=f"audio-{idx}",
-                        name=getattr(audio, "name", None) or f"audio-{idx}",
-                        description="Audio generated during task",
-                        parts=artifact_parts,
-                    )
-                )
+            _emit_media(completion_event.audio, "audio/*", "audio")
         if hasattr(completion_event, "response_audio") and completion_event.response_audio:
             audio = completion_event.response_audio
-            artifact_parts = []
+            ap: List[Part] = []
             if audio.url:
-                artifact_parts.append(Part(root=FilePart(file=FileWithUri(uri=audio.url, mime_type="audio/*"))))
+                ap.append(_file_part_from_url(audio.url, "audio/*"))
             artifacts.append(
                 Artifact(
                     artifact_id="response-audio",
                     name=getattr(audio, "name", None) or "response-audio",
                     description="Audio response from agent",
-                    parts=artifact_parts,
+                    parts=ap,
                 )
             )
 
-        # Handle all other data as Message metadata
-        final_metadata: Dict[str, Any] = {}
+        final_metadata = {}
         if hasattr(completion_event, "metrics") and completion_event.metrics:  # type: ignore
             final_metadata["metrics"] = completion_event.metrics.to_dict()  # type: ignore
         if hasattr(completion_event, "metadata") and completion_event.metadata:
             final_metadata.update(completion_event.metadata)
 
-        final_message = A2AMessage(
-            message_id=message_id,
-            role=Role.agent,
+        final_message = _build_agent_message(
             parts=final_parts,
             context_id=context_id,
             task_id=task_id,
-            metadata=final_metadata if final_metadata else None,
-        )
-
-    else:
-        # Fallback in case we didn't find the completion event, using accumulated content
-        final_message = A2AMessage(
             message_id=message_id,
-            role=Role.agent,
-            parts=[Part(root=TextPart(text=accumulated_content))] if accumulated_content else [],
+            metadata=final_metadata or None,
+        )
+    else:
+        final_message = _build_agent_message(
+            parts=[_text_part(accumulated_content)] if accumulated_content else [],
             context_id=context_id,
             task_id=task_id,
+            message_id=message_id,
         )
-        artifacts = []
 
-    # Build and return the final Task
     task = Task(
         id=task_id,
         context_id=context_id,
-        status=TaskStatus(state=TaskState.completed),
+        status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
         history=[final_message],
-        artifacts=artifacts if artifacts else None,
     )
-    response = SendStreamingMessageSuccessResponse(id=request_id, result=task)
-    yield f"event: Task\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+    if artifacts:
+        task.artifacts.extend(artifacts)
+    yield _sse_event("Task", request_id, task)
 
 
 async def stream_a2a_response_with_error_handling(
     event_stream: AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, WorkflowRunOutputEvent, RunOutput]],
     request_id: Union[str, int],
 ) -> AsyncIterator[str]:
-    """Wrapper around stream_a2a_response to handle critical errors."""
+    """Wrapper around stream_a2a_response that surfaces critical errors as failed Task events."""
     task_id: str = str(uuid4())
     context_id: str = str(uuid4())
 
     try:
-        async for response_chunk in stream_a2a_response(event_stream, request_id):
-            yield response_chunk
+        async for chunk in stream_a2a_response(event_stream, request_id):
+            yield chunk
 
-    # Catch any critical errors, emit the expected status task and close the stream
     except Exception as e:
-        failed_status_event = TaskStatusUpdateEvent(
-            task_id=task_id,
-            context_id=context_id,
-            status=TaskStatus(state=TaskState.failed),
-            final=True,
-        )
-        response = SendStreamingMessageSuccessResponse(id=request_id, result=failed_status_event)
-        yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+        failed_status_event = _status_update(task_id, context_id, TaskState.TASK_STATE_FAILED)
+        yield _sse_event("TaskStatusUpdateEvent", request_id, failed_status_event)
 
-        # Send failed Task
-        error_message = A2AMessage(
-            message_id=str(uuid4()),
-            role=Role.agent,
-            parts=[Part(root=TextPart(text=f"Error: {str(e)}"))],
+        error_message = _build_agent_message(
+            parts=[_text_part(f"Error: {str(e)}")],
             context_id=context_id,
         )
         failed_task = Task(
             id=task_id,
             context_id=context_id,
-            status=TaskStatus(state=TaskState.failed),
+            status=TaskStatus(state=TaskState.TASK_STATE_FAILED),
             history=[error_message],
         )
-
-        response = SendStreamingMessageSuccessResponse(id=request_id, result=failed_task)
-        yield f"event: Task\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+        yield _sse_event("Task", request_id, failed_task)

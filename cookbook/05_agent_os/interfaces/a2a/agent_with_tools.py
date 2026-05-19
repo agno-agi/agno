@@ -50,13 +50,17 @@ app = agent_os.get_app()
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    """Run your AgentOS.
+    """Run your AgentOS with the A2A 1.0 interface.
 
-    You can run the Agent via A2A protocol:
-    POST http://localhost:7777/agents/{id}/v1/message:send
-    For streaming responses:
-    POST http://localhost:7777/agents/{id}/v1/message:stream
-    Retrieve the agent card at:
-    GET  http://localhost:7777/agents/{id}/.well-known/agent-card.json
+    Endpoints (A2A 1.0, JSON-RPC 2.0 envelope, flat Part with mediaType):
+        POST http://localhost:7777/a2a/agents/{id}/v1/message:send
+        POST http://localhost:7777/a2a/agents/{id}/v1/message:stream
+        GET  http://localhost:7777/a2a/agents/{id}/.well-known/agent-card.json
+
+    Tool-call lifecycle events surface over streaming as TaskStatusUpdateEvents
+    with metadata `agno_event_type=tool_call_started|tool_call_completed`.
+
+    Test with the official a2a-sdk client (see README.md for a runnable snippet)
+    or with the a2a-inspector at https://github.com/a2aproject/a2a-inspector.
     """
     agent_os.serve(app="agent_with_tools:app", port=7777, reload=True)
