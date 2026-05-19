@@ -683,7 +683,6 @@ def test_all_drives_search_files_returns_incomplete_search(all_drives_tools):
 
 
 def test_all_drives_incomplete_search_defaults_false(all_drives_tools):
-    """incompleteSearch defaults to False when Drive omits the field."""
     all_drives_tools.service.files.return_value.list.return_value.execute.return_value = {
         "files": [],
     }
@@ -692,7 +691,6 @@ def test_all_drives_incomplete_search_defaults_false(all_drives_tools):
 
 
 def test_all_drives_error_excludes_incomplete_search(all_drives_tools):
-    """Error response should not include stale incompleteSearch."""
     all_drives_tools.service.files.return_value.list.side_effect = Exception("API error")
     result = json.loads(all_drives_tools.search_files(query="x"))
     assert "error" in result
@@ -700,7 +698,6 @@ def test_all_drives_error_excludes_incomplete_search(all_drives_tools):
 
 
 def test_all_drives_log_debug_on_incomplete_search(all_drives_tools):
-    """log_debug fires when incompleteSearch=True."""
     all_drives_tools.service.files.return_value.list.return_value.execute.return_value = {
         "files": [],
         "incompleteSearch": True,
