@@ -56,7 +56,7 @@ if not txt_file:
 
 # Create a cache with 5min TTL
 cache = client.caches.create(
-    model="gemini-3-flash-preview",
+    model="gemini-3.5-flash",
     config={
         "system_instruction": "You are an expert at analyzing transcripts.",
         "contents": [txt_file],
@@ -70,7 +70,7 @@ cache = client.caches.create(
 
 if __name__ == "__main__":
     agent = Agent(
-        model=Gemini(id="gemini-3-flash-preview", cached_content=cache.name),
+        model=Gemini(id="gemini-3.5-flash", cached_content=cache.name),
     )
     run_output = agent.run(
         "Find a lighthearted moment from this transcript",  # No need to pass the txt file
