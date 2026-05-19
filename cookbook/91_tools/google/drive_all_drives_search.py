@@ -1,57 +1,30 @@
 """
-Drive All-Drives Search
-=======================
-Search across all drives (personal + shared) with incomplete result handling.
+Company-Wide Document Search
+=============================
+Search across personal and shared drives to find documents organization-wide.
 
-When searching with corpora="allDrives", Google may return incompleteSearch=true
-if it cannot search all drives within performance limits. This cookbook shows
-how to configure the toolkit and handle partial results.
+Useful for compliance audits, finding policy documents, or locating project
+resources scattered across team drives. Uses allDrives corpus which may return
+partial results if your organization has many shared drives.
 
 Key concepts:
-- corpora="allDrives": Search personal Drive AND all Shared Drives
-- incompleteSearch: Flag indicating some drives could not be searched
-- Agent guidance: Inform user about partial results, don't retry blindly
+- corpora="allDrives": Search personal Drive AND all Shared Drives you can access
+- incompleteSearch: Flag when Google couldn't search all drives (inform the user)
+- supports_all_drives: Required for accessing Shared Drive items
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Google Drive API)
 2. Export GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_PROJECT_ID env vars
 3. pip install openai google-api-python-client google-auth-httplib2 google-auth-oauthlib
 4. First run opens browser for OAuth consent, saves token.json for reuse
-
-Note: incompleteSearch typically occurs in organizations with many Shared Drives.
-For personal accounts with few drives, it usually returns False.
 """
-
-from typing import List, Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.google.drive import GoogleDriveTools
-from pydantic import BaseModel, Field
-
-
-class SearchResultFile(BaseModel):
-    file_id: str = Field(..., description="Google Drive file ID")
-    name: str = Field(..., description="File name")
-    mime_type: str = Field(..., description="MIME type")
-
-
-class AllDrivesSearchResult(BaseModel):
-    query: str = Field(..., description="The search query used")
-    total_found: int = Field(..., description="Number of files found")
-    incomplete_search: bool = Field(
-        ...,
-        description="True if some drives could not be searched (results may be partial)",
-    )
-    files: List[SearchResultFile] = Field(default_factory=list)
-    user_notice: Optional[str] = Field(
-        None,
-        description="Notice to user if results are incomplete",
-    )
-
 
 agent = Agent(
-    name="All-Drives Search Agent",
+    name="Company Search Agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[
         GoogleDriveTools(
@@ -61,12 +34,11 @@ agent = Agent(
         )
     ],
     instructions=[
-        "Search across all drives (personal and shared) for files matching user criteria.",
-        "IMPORTANT: Check the incompleteSearch field in results.",
-        "If incompleteSearch is true, inform the user that results may be partial.",
-        "Do NOT retry the same query - the limitation is server-side, not your query.",
+        "Search across all drives the user has access to.",
+        "If incompleteSearch is true, tell the user results may be partial.",
+        "Group results by shared drive or owner when possible.",
     ],
-    output_schema=AllDrivesSearchResult,
+    markdown=True,
 )
 
 # ---------------------------------------------------------------------------
@@ -74,8 +46,20 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    result = agent.run("Search for any spreadsheet files across all drives")
-    print(result.content)
+    # Find compliance documents across all drives
+    agent.print_response(
+        "Find any documents with 'policy' or 'compliance' in the name",
+        stream=True,
+    )
 
-    # If you have many shared drives, try a broad search to trigger incompleteSearch:
-    # agent.print_response("Find all files modified in the last year")
+    # Search for project resources
+    # agent.print_response(
+    #     "Find spreadsheets related to Q4 planning across all team drives",
+    #     stream=True,
+    # )
+
+    # Find recent presentations
+    # agent.print_response(
+    #     "What presentations were created in the last month?",
+    #     stream=True,
+    # )
