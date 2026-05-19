@@ -1,10 +1,12 @@
 import tempfile
+import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from agno.media import File
+from agno.exceptions import ModelProviderError
 from agno.models.google.gemini import Gemini
 from agno.models.message import Message
 
@@ -52,6 +54,39 @@ def test_gemini_get_client_ai_studio_mode():
         assert "credentials" not in kwargs
         assert "api_key" in kwargs
         assert kwargs.get("vertexai") is not True
+
+
+def test_gemini_formats_unexpected_error_message_with_type_when_message_empty():
+    model = Gemini(api_key="test-key")
+
+    assert model._format_unexpected_error_message(asyncio.TimeoutError()) == "TimeoutError"
+
+
+def test_gemini_formats_unexpected_error_message_passes_through_non_empty():
+    """When str(e) is non-empty, preserve the original message verbatim so that
+    existing log/user-facing semantics do not change."""
+    model = Gemini(api_key="test-key")
+
+    assert model._format_unexpected_error_message(ValueError("boom")) == "boom"
+    assert (
+        model._format_unexpected_error_message(ConnectionResetError("connection reset by peer"))
+        == "connection reset by peer"
+    )
+
+
+def test_gemini_invoke_wraps_generic_errors_with_exception_type():
+    model = Gemini(api_key="test-key")
+    assistant_message = Message(role="assistant")
+    mock_client = MagicMock()
+    mock_client.models.generate_content.side_effect = asyncio.TimeoutError()
+
+    with (
+        patch.object(model, "get_client", return_value=mock_client),
+        patch.object(model, "_format_messages", return_value=([], None)),
+        patch.object(model, "get_request_params", return_value={}),
+    ):
+        with pytest.raises(ModelProviderError, match="TimeoutError"):
+            model.invoke(messages=[Message(role="user", content="Hello")], assistant_message=assistant_message)
 
 
 class TestFormatFileForMessage:
