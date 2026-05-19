@@ -291,6 +291,105 @@ class TestGetRequestKwargs:
         kwargs = model._get_request_kwargs(messages)
         assert kwargs["response_modalities"] == ["text", "image"]
 
+    def test_generation_config_passthrough_merges_with_fields(self):
+        """Supported keys from generation_config are merged into the request config."""
+        model = self._make_model(
+            temperature=0.5,
+            generation_config={"top_p": 0.9, "thinking_summaries": "auto", "tool_choice": "auto"},
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
+        cfg = kwargs["generation_config"]
+        assert cfg["temperature"] == 0.5
+        assert cfg["top_p"] == 0.9
+        assert cfg["thinking_summaries"] == "auto"
+        assert cfg["tool_choice"] == "auto"
+
+    def test_generation_config_passthrough_overrides_fields(self):
+        """When the same key is set on both, the passthrough wins."""
+        model = self._make_model(temperature=0.5, generation_config={"temperature": 0.9})
+        kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
+        assert kwargs["generation_config"]["temperature"] == 0.9
+
+    def test_generation_config_accepts_pydantic_object(self):
+        """Pydantic models (e.g. GenerateContentConfig) are dumped with exclude_none."""
+        from typing import Optional as _Opt
+
+        from pydantic import BaseModel as _PydBase
+
+        class FakeConfig(_PydBase):
+            temperature: _Opt[float] = None
+            top_p: _Opt[float] = None
+            max_output_tokens: _Opt[int] = None  # unset, should be excluded
+
+        model = self._make_model(generation_config=FakeConfig(temperature=0.8, top_p=0.95))
+        kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
+        cfg = kwargs["generation_config"]
+        assert cfg["temperature"] == 0.8
+        assert cfg["top_p"] == 0.95
+        assert "max_output_tokens" not in cfg
+
+    def test_store_false_opts_out_of_server_state(self):
+        """store=False disables previous_interaction_id chaining; full history is sent."""
+        model = self._make_model(store=False)
+        messages = [
+            Message(role="user", content="First turn"),
+            Message(role="assistant", content="Reply 1", provider_data={"interaction_id": "interactions/abc"}),
+            Message(role="user", content="Follow up"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert "previous_interaction_id" not in kwargs
+        # Full history is sent: user1 + assistant1 (no tool calls -> skipped) + user2
+        # _build_input emits a user_input step for each user message
+        input_steps = kwargs["input"]
+        user_steps = [s for s in input_steps if s["type"] == "user_input"]
+        assert len(user_steps) == 2
+        assert user_steps[0]["content"][0]["text"] == "First turn"
+        assert user_steps[1]["content"][0]["text"] == "Follow up"
+
+    def test_input_sliced_when_previous_interaction_id_set(self):
+        """When previous_interaction_id is set, only messages after the prior assistant turn are sent."""
+        model = self._make_model()
+        messages = [
+            Message(role="user", content="First turn"),
+            Message(role="assistant", content="Reply 1", provider_data={"interaction_id": "interactions/abc"}),
+            Message(role="user", content="Follow up"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["previous_interaction_id"] == "interactions/abc"
+        # Only the new user message should be in input - server has the prior turns
+        input_steps = kwargs["input"]
+        assert len(input_steps) == 1
+        assert input_steps[0]["type"] == "user_input"
+        assert input_steps[0]["content"][0]["text"] == "Follow up"
+
+    def test_input_includes_all_messages_on_first_turn(self):
+        """Without a previous_interaction_id, full message history is sent."""
+        model = self._make_model()
+        messages = [Message(role="user", content="Hello")]
+        kwargs = model._get_request_kwargs(messages)
+        assert "previous_interaction_id" not in kwargs
+        assert kwargs["input"][0]["content"][0]["text"] == "Hello"
+
+    def test_input_sliced_includes_tool_results_after_assistant(self):
+        """Mid-tool-call: send only tool result steps after the prior assistant turn."""
+        model = self._make_model()
+        messages = [
+            Message(role="user", content="Weather?"),
+            Message(
+                role="assistant",
+                tool_calls=[{"id": "c1", "type": "function", "function": {"name": "weather", "arguments": "{}"}}],
+                provider_data={"interaction_id": "interactions/abc"},
+            ),
+            Message(role="tool", tool_call_id="c1", tool_name="weather", content="Sunny"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["previous_interaction_id"] == "interactions/abc"
+        input_steps = kwargs["input"]
+        assert len(input_steps) == 1
+        assert input_steps[0]["type"] == "function_result"
+        assert input_steps[0]["call_id"] == "c1"
+        assert input_steps[0]["result"] == "Sunny"
+
 
 class TestParseInteractionResponse:
     """Tests for parsing Interaction API responses."""

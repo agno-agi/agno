@@ -103,6 +103,13 @@ class GeminiInteractions(Model):
     seed: Optional[int] = None
     response_modalities: Optional[list[str]] = None
 
+    # Raw GenerationConfigParam passthrough. Accepts either a dict or a
+    # Pydantic model (e.g. google.genai.types.GenerateContentConfig). Merged
+    # into the generation_config built from the fields above; keys here
+    # override field-derived values. Pydantic models are dumped with
+    # exclude_none so unset fields don't flood the request.
+    generation_config: Optional[Union[Dict[str, Any], BaseModel]] = None
+
     # Interactions API specific parameters
     store: Optional[bool] = None  # Whether to persist interactions server-side (default: True)
 
@@ -127,19 +134,20 @@ class GeminiInteractions(Model):
     # Client instance
     client: Optional[GeminiClient] = None
 
-    def _get_previous_interaction_id(self, messages: List[Message]) -> Optional[str]:
-        """Extract the previous interaction ID from message provider_data.
+    def _find_previous_interaction(self, messages: List[Message]) -> tuple[Optional[str], int]:
+        """Find the most recent assistant message with an interaction_id.
 
-        Walks messages in reverse to find the most recent assistant message
-        with an interaction_id. This avoids storing state at instance level,
-        which would be unsafe if two concurrent agents share the same model.
+        Returns (interaction_id, index_in_messages) or (None, -1). The index
+        marks the last turn the server has seen; messages after it are the
+        new turns to send. Walks in reverse so we pick the most recent.
         """
-        for msg in reversed(messages):
+        for i in range(len(messages) - 1, -1, -1):
+            msg = messages[i]
             if msg.role == "assistant" and msg.provider_data:
                 iid = msg.provider_data.get("interaction_id")
                 if iid:
-                    return iid
-        return None
+                    return iid, i
+        return None, -1
 
     def get_client(self) -> GeminiClient:
         """Returns an instance of the GeminiClient.
@@ -187,6 +195,7 @@ class GeminiInteractions(Model):
                 "thinking_level": self.thinking_level,
                 "store": self.store,
                 "service_tier": self.service_tier,
+                "generation_config": self.generation_config,
             }
         )
         return {k: v for k, v in model_dict.items() if v is not None}
@@ -341,10 +350,6 @@ class GeminiInteractions(Model):
             "model": self.id,
         }
 
-        # Build input from messages
-        input_turns = self._build_input(messages)
-        kwargs["input"] = input_turns
-
         # System instruction from the last system message (consistent with gemini.py)
         system_message = None
         for msg in messages:
@@ -354,10 +359,20 @@ class GeminiInteractions(Model):
         if system_message:
             kwargs["system_instruction"] = system_message
 
-        # Previous interaction for multi-turn (read from message provider_data)
-        previous_interaction_id = self._get_previous_interaction_id(messages)
-        if previous_interaction_id:
-            kwargs["previous_interaction_id"] = previous_interaction_id
+        # When store=False, the user has opted out of server-side state - send
+        # the full message history and don't chain via previous_interaction_id.
+        # Otherwise, leverage server-side state: pass previous_interaction_id
+        # and send only the messages AFTER the prior assistant turn (the server
+        # already has everything up to that point).
+        if self.store is False:
+            input_messages: List[Message] = messages
+        else:
+            previous_interaction_id, boundary_idx = self._find_previous_interaction(messages)
+            input_messages = messages if boundary_idx == -1 else messages[boundary_idx + 1 :]
+            if previous_interaction_id:
+                kwargs["previous_interaction_id"] = previous_interaction_id
+
+        kwargs["input"] = self._build_input(input_messages)
 
         # Generation config (only params supported by the Interactions API SDK)
         generation_config: Dict[str, Any] = {}
@@ -373,6 +388,16 @@ class GeminiInteractions(Model):
             generation_config["seed"] = self.seed
         if self.thinking_level is not None:
             generation_config["thinking_level"] = self.thinking_level
+        # Merge user-provided raw config last - their keys override field-derived values.
+        # If it's a Pydantic model (e.g. GenerateContentConfig), dump it with
+        # exclude_none so the request isn't flooded with unset fields.
+        if self.generation_config:
+            extra = (
+                self.generation_config.model_dump(exclude_none=True)
+                if isinstance(self.generation_config, BaseModel)
+                else self.generation_config
+            )
+            generation_config.update(extra)
         if generation_config:
             kwargs["generation_config"] = generation_config
 
