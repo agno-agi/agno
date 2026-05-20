@@ -36,23 +36,151 @@ from agno.models.message import Message
 from agno.models.metrics import RunMetrics, SessionMetrics
 from agno.registry import Registry
 from agno.run import RunContext, RunStatus
-from agno.run.agent import RunContentEvent, RunEvent, RunOutput
+from agno.run.agent import (
+    CompressionCompletedEvent as AgentCompressionCompletedEvent,
+)
+from agno.run.agent import (
+    CompressionStartedEvent as AgentCompressionStartedEvent,
+)
+from agno.run.agent import (
+    ModelRequestCompletedEvent as AgentModelRequestCompletedEvent,
+)
+from agno.run.agent import (
+    ModelRequestStartedEvent as AgentModelRequestStartedEvent,
+)
+from agno.run.agent import (
+    OutputModelResponseCompletedEvent as AgentOutputModelResponseCompletedEvent,
+)
+from agno.run.agent import (
+    OutputModelResponseStartedEvent as AgentOutputModelResponseStartedEvent,
+)
+from agno.run.agent import (
+    ParserModelResponseCompletedEvent as AgentParserModelResponseCompletedEvent,
+)
+from agno.run.agent import (
+    ParserModelResponseStartedEvent as AgentParserModelResponseStartedEvent,
+)
+from agno.run.agent import (
+    PostHookCompletedEvent as AgentPostHookCompletedEvent,
+)
+from agno.run.agent import (
+    PostHookStartedEvent as AgentPostHookStartedEvent,
+)
+from agno.run.agent import (
+    PreHookCompletedEvent as AgentPreHookCompletedEvent,
+)
+from agno.run.agent import (
+    PreHookStartedEvent as AgentPreHookStartedEvent,
+)
+from agno.run.agent import (
+    ReasoningCompletedEvent as AgentReasoningCompletedEvent,
+)
+from agno.run.agent import (
+    ReasoningStartedEvent as AgentReasoningStartedEvent,
+)
+from agno.run.agent import (
+    RunCancelledEvent as AgentRunCancelledEvent,
+)
+from agno.run.agent import (
+    RunCompletedEvent as AgentRunCompletedEvent,
+)
+from agno.run.agent import (
+    RunContentCompletedEvent as AgentRunContentCompletedEvent,
+)
+from agno.run.agent import (
+    RunContentEvent,
+    RunEvent,
+    RunOutput,
+)
+from agno.run.agent import (
+    RunErrorEvent as AgentRunErrorEvent,
+)
+from agno.run.agent import (
+    ToolCallCompletedEvent as AgentToolCallCompletedEvent,
+)
+from agno.run.agent import (
+    ToolCallStartedEvent as AgentToolCallStartedEvent,
+)
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
 )
 from agno.run.cancel import (
+    acleanup_member_runs,
     acleanup_run,
+    aget_member_run_ids,
     araise_if_cancelled,
     aregister_run,
+    cleanup_member_runs,
     cleanup_run,
+    get_member_run_ids,
     raise_if_cancelled,
     register_run,
 )
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
+from agno.run.team import (
+    CompressionCompletedEvent as TeamCompressionCompletedEvent,
+)
+from agno.run.team import (
+    CompressionStartedEvent as TeamCompressionStartedEvent,
+)
+from agno.run.team import (
+    ModelRequestCompletedEvent as TeamModelRequestCompletedEvent,
+)
+from agno.run.team import (
+    ModelRequestStartedEvent as TeamModelRequestStartedEvent,
+)
+from agno.run.team import (
+    OutputModelResponseCompletedEvent as TeamOutputModelResponseCompletedEvent,
+)
+from agno.run.team import (
+    OutputModelResponseStartedEvent as TeamOutputModelResponseStartedEvent,
+)
+from agno.run.team import (
+    ParserModelResponseCompletedEvent as TeamParserModelResponseCompletedEvent,
+)
+from agno.run.team import (
+    ParserModelResponseStartedEvent as TeamParserModelResponseStartedEvent,
+)
+from agno.run.team import (
+    PostHookCompletedEvent as TeamPostHookCompletedEvent,
+)
+from agno.run.team import (
+    PostHookStartedEvent as TeamPostHookStartedEvent,
+)
+from agno.run.team import (
+    PreHookCompletedEvent as TeamPreHookCompletedEvent,
+)
+from agno.run.team import (
+    PreHookStartedEvent as TeamPreHookStartedEvent,
+)
+from agno.run.team import (
+    ReasoningCompletedEvent as TeamReasoningCompletedEvent,
+)
+from agno.run.team import (
+    ReasoningStartedEvent as TeamReasoningStartedEvent,
+)
+from agno.run.team import (
+    RunCancelledEvent as TeamRunCancelledEvent,
+)
+from agno.run.team import (
+    RunCompletedEvent as TeamRunCompletedEvent,
+)
+from agno.run.team import (
+    RunContentCompletedEvent as TeamRunContentCompletedEvent,
+)
 from agno.run.team import RunContentEvent as TeamRunContentEvent
+from agno.run.team import (
+    RunErrorEvent as TeamRunErrorEvent,
+)
 from agno.run.team import TeamRunEvent
+from agno.run.team import (
+    ToolCallCompletedEvent as TeamToolCallCompletedEvent,
+)
+from agno.run.team import (
+    ToolCallStartedEvent as TeamToolCallStartedEvent,
+)
 from agno.run.workflow import (
     StepContinuedEvent,
     StepErrorEvent,
@@ -132,6 +260,53 @@ STEP_TYPE_MAPPING = {
     Condition: StepType.CONDITION,
     Router: StepType.ROUTER,
 }
+
+# Paired *Started/*Completed events from a step's executor (agent or team)
+# bypass raise_if_cancelled so cancel doesn't orphan an executor event on the
+# wire. Cancel still fires on RunContent chunks between iterations. RunError
+# is included so an error that lands on the same tick as cancel isn't dropped.
+_EXECUTOR_CANCEL_BYPASS_EVENT_TYPES = (
+    AgentRunCancelledEvent,
+    AgentRunCompletedEvent,
+    AgentRunErrorEvent,
+    AgentModelRequestStartedEvent,
+    AgentModelRequestCompletedEvent,
+    AgentRunContentCompletedEvent,
+    AgentToolCallStartedEvent,
+    AgentToolCallCompletedEvent,
+    AgentReasoningStartedEvent,
+    AgentReasoningCompletedEvent,
+    AgentCompressionStartedEvent,
+    AgentCompressionCompletedEvent,
+    AgentParserModelResponseStartedEvent,
+    AgentParserModelResponseCompletedEvent,
+    AgentOutputModelResponseStartedEvent,
+    AgentOutputModelResponseCompletedEvent,
+    AgentPreHookStartedEvent,
+    AgentPreHookCompletedEvent,
+    AgentPostHookStartedEvent,
+    AgentPostHookCompletedEvent,
+    TeamRunCancelledEvent,
+    TeamRunCompletedEvent,
+    TeamRunErrorEvent,
+    TeamModelRequestStartedEvent,
+    TeamModelRequestCompletedEvent,
+    TeamRunContentCompletedEvent,
+    TeamToolCallStartedEvent,
+    TeamToolCallCompletedEvent,
+    TeamReasoningStartedEvent,
+    TeamReasoningCompletedEvent,
+    TeamCompressionStartedEvent,
+    TeamCompressionCompletedEvent,
+    TeamParserModelResponseStartedEvent,
+    TeamParserModelResponseCompletedEvent,
+    TeamOutputModelResponseStartedEvent,
+    TeamOutputModelResponseCompletedEvent,
+    TeamPreHookStartedEvent,
+    TeamPreHookCompletedEvent,
+    TeamPostHookStartedEvent,
+    TeamPostHookCompletedEvent,
+)
 
 
 # Any step-like component that can appear in a workflow (top-level or nested).
@@ -2202,6 +2377,14 @@ class Workflow:
                 # Preserve any completed step outputs before cancellation
                 if collected_step_outputs:
                     workflow_run_response.step_results = collected_step_outputs
+                    # Stop the timer for the Run duration
+                    if workflow_run_response.metrics:
+                        workflow_run_response.metrics.stop_timer()
+
+                    workflow_run_response.metrics = self._aggregate_workflow_metrics(
+                        collected_step_outputs,
+                        workflow_run_response.metrics,  # type: ignore[arg-type]
+                    )
             except Exception as e:
                 import traceback
 
@@ -2222,6 +2405,7 @@ class Workflow:
                 self.save_session(session=session)
                 # Always clean up the run tracking
                 cleanup_run(workflow_run_response.run_id)  # type: ignore
+                cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -2364,7 +2548,8 @@ class Workflow:
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                         ):
-                            raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                            if not isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
+                                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                             # Accumulate partial data from streaming events
                             partial_step_content = self._accumulate_partial_step_data(event, partial_step_content)  # type: ignore
@@ -2448,7 +2633,9 @@ class Workflow:
                                 enriched_event = self._enrich_event_with_workflow_context(
                                     event, workflow_run_response, step_index=i, step=step
                                 )
-                                if self.stream_executor_events:
+                                if self.stream_executor_events or isinstance(
+                                    event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES
+                                ):
                                     yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
                     except RunCancelledException:
                         raise
@@ -2642,7 +2829,7 @@ class Workflow:
                 # Capture partial progress from the step that was cancelled mid-stream
                 if partial_step_content:
                     logger.info(
-                        f"Step with name  '{current_step_name}' was cancelled. Setting its partial progress as step output."
+                        f"Step with name '{current_step_name}' was cancelled. Setting its partial progress as step output."
                     )
                     partial_step_output = StepOutput(
                         step_name=current_step_name,
@@ -2731,6 +2918,7 @@ class Workflow:
 
         # Always clean up the run tracking
         cleanup_run(workflow_run_response.run_id)  # type: ignore
+        cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -3085,6 +3273,14 @@ class Workflow:
                 # Preserve any completed step outputs before cancellation
                 if collected_step_outputs:
                     workflow_run_response.step_results = collected_step_outputs
+                    # Stop the timer for the Run duration
+                    if workflow_run_response.metrics:
+                        workflow_run_response.metrics.stop_timer()
+
+                    workflow_run_response.metrics = self._aggregate_workflow_metrics(
+                        collected_step_outputs,
+                        workflow_run_response.metrics,  # type: ignore[arg-type]
+                    )
             except Exception as e:
                 logger.exception("Workflow execution failed")
                 workflow_run_response.status = RunStatus.error
@@ -3103,6 +3299,7 @@ class Workflow:
             self.save_session(session=workflow_session)
         # Always clean up the run tracking
         await acleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -3244,6 +3441,7 @@ class Workflow:
                     step_error_occurred = False
                     step_output = None
                     step_error_exception = None
+                    draining_after_cancel = False
                     try:
                         async for event in step.aexecute_stream(  # type: ignore[union-attr]
                             step_input,
@@ -3264,8 +3462,18 @@ class Workflow:
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                         ):
-                            if workflow_run_response.run_id:
-                                await araise_if_cancelled(workflow_run_response.run_id)
+                            is_bypass = isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES)
+                            if workflow_run_response.run_id and not draining_after_cancel and not is_bypass:
+                                try:
+                                    await araise_if_cancelled(workflow_run_response.run_id)
+                                except RunCancelledException:
+                                    # Drain the executor generator so its own RunCancelled/RunCompleted
+                                    # terminal events (which are in the bypass tuple) can still surface
+                                    # on the wire. Cancellation is re-raised after the loop exits.
+                                    draining_after_cancel = True
+                                    continue
+                            if draining_after_cancel and not is_bypass:
+                                continue
 
                             # Accumulate partial data from streaming events
                             partial_step_content = self._accumulate_partial_step_data(event, partial_step_content)  # type: ignore
@@ -3349,10 +3557,15 @@ class Workflow:
                                 enriched_event = self._enrich_event_with_workflow_context(
                                     event, workflow_run_response, step_index=i, step=step
                                 )
-                                if self.stream_executor_events:
+                                if self.stream_executor_events or isinstance(
+                                    event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES
+                                ):
                                     yield self._handle_event(
                                         enriched_event, workflow_run_response, websocket_handler=websocket_handler
                                     )  # type: ignore
+
+                        if draining_after_cancel:
+                            raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
                     except RunCancelledException:
                         raise
                     except Exception as step_error:
@@ -3556,7 +3769,7 @@ class Workflow:
                 # Capture partial progress from the step that was cancelled mid-stream
                 if partial_step_content:
                     logger.info(
-                        f"Step with name  '{current_step_name}' was cancelled. Setting its partial progress as step output."
+                        f"Step with name '{current_step_name}' was cancelled. Setting its partial progress as step output."
                     )
                     partial_step_output = StepOutput(
                         step_name=current_step_name,
@@ -3656,6 +3869,7 @@ class Workflow:
 
         # Always clean up the run tracking
         await acleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
     async def _arun_background(
         self,
@@ -4993,24 +5207,50 @@ class Workflow:
     def cancel_run(self, run_id: str) -> bool:
         """Cancel a running workflow execution.
 
+        Also cascades the cancel to any in-flight executor (agent/team) runs
+        registered against this workflow run. Already-completed executor runs
+        are skipped so we don't leave stale cancellation intent for ids whose
+        own cleanup already ran.
+
         Args:
             run_id (str): The run_id to cancel.
 
         Returns:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
-        return cancel_run_global(run_id)
+        from agno.run.cancel import get_active_runs
+        from agno.team._run import cancel_run as team_cancel_run
+
+        result = cancel_run_global(run_id)
+        active_run_ids = set(get_active_runs().keys())
+        for executor_run_id in get_member_run_ids(run_id):
+            if executor_run_id in active_run_ids:
+                team_cancel_run(executor_run_id)
+        return result
 
     async def acancel_run(self, run_id: str) -> bool:
         """Cancel a running workflow execution (async version).
 
+        Also cascades the cancel to any in-flight executor (agent/team) runs
+        registered against this workflow run. Already-completed executor runs
+        are skipped so we don't leave stale cancellation intent for ids whose
+        own cleanup already ran.
+
         Args:
             run_id (str): The run_id to cancel.
 
         Returns:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
-        return await acancel_run_global(run_id)
+        from agno.run.cancel import aget_active_runs
+        from agno.team._run import acancel_run as team_acancel_run
+
+        result = await acancel_run_global(run_id)
+        active_run_ids = set((await aget_active_runs()).keys())
+        for executor_run_id in await aget_member_run_ids(run_id):
+            if executor_run_id in active_run_ids:
+                await team_acancel_run(executor_run_id)
+        return result
 
     @overload
     def continue_run(
@@ -5904,6 +6144,14 @@ class Workflow:
             # Preserve any completed step outputs before cancellation
             if collected_step_outputs:
                 workflow_run_response.step_results = collected_step_outputs
+                # Stop the timer for the Run duration
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+
+                workflow_run_response.metrics = self._aggregate_workflow_metrics(
+                    collected_step_outputs,
+                    workflow_run_response.metrics,  # type: ignore[arg-type]
+                )
         except Exception as e:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
@@ -5917,6 +6165,7 @@ class Workflow:
             session.upsert_run(run=workflow_run_response)
             self.save_session(session=session)
             cleanup_run(workflow_run_response.run_id)  # type: ignore
+            cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
         if self.telemetry:
             self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
@@ -6412,6 +6661,8 @@ class Workflow:
                         background_tasks=background_tasks,
                         force_else_branch=True,
                     ):
+                        if not isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
+                            raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                         if isinstance(event, StepOutput):
                             condition_step_output = event
                         elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
@@ -6423,7 +6674,7 @@ class Workflow:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
-                            if self.stream_executor_events:
+                            if self.stream_executor_events or isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
                                 yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                     if condition_step_output is None:
@@ -6513,6 +6764,8 @@ class Workflow:
                                 num_history_runs=self.num_history_runs,
                                 background_tasks=background_tasks,
                             ):
+                                if not isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
+                                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                                 if isinstance(event, StepOutput):
                                     router_step_output = event
                                 elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
@@ -6524,7 +6777,9 @@ class Workflow:
                                     enriched_event = self._enrich_event_with_workflow_context(
                                         event, workflow_run_response, step_index=i, step=step
                                     )
-                                    if self.stream_executor_events:
+                                    if self.stream_executor_events or isinstance(
+                                        event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES
+                                    ):
                                         yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
                         finally:
                             # Restore original selector even if execution fails
@@ -6651,6 +6906,7 @@ class Workflow:
                 step_error_occurred = False
                 step_error_exception = None
                 step_output = None
+                draining_after_cancel = False
                 try:
                     for event in step.execute_stream(  # type: ignore[union-attr]
                         step_input,
@@ -6669,7 +6925,18 @@ class Workflow:
                         num_history_runs=self.num_history_runs,
                         background_tasks=background_tasks,
                     ):
-                        raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        is_bypass = isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES)
+                        if not draining_after_cancel and not is_bypass:
+                            try:
+                                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                            except RunCancelledException:
+                                # Drain the executor generator so its own RunCancelled/RunCompleted
+                                # terminal events (which are in the bypass tuple) can still surface
+                                # on the wire. Cancellation is re-raised after the loop exits.
+                                draining_after_cancel = True
+                                continue
+                        if draining_after_cancel and not is_bypass:
+                            continue
 
                         if isinstance(event, StepOutput):
                             step_output = event
@@ -6739,8 +7006,11 @@ class Workflow:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
-                            if self.stream_executor_events:
+                            if self.stream_executor_events or isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
                                 yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                    if draining_after_cancel:
+                        raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
                 except RunCancelledException:
                     raise
                 except Exception as step_error:
@@ -6876,6 +7146,14 @@ class Workflow:
             # Preserve any completed step outputs before cancellation
             if collected_step_outputs:
                 workflow_run_response.step_results = collected_step_outputs
+                # Stop the timer for the Run duration
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+
+                workflow_run_response.metrics = self._aggregate_workflow_metrics(
+                    collected_step_outputs,
+                    workflow_run_response.metrics,  # type: ignore[arg-type]
+                )
 
             cancelled_event = WorkflowCancelledEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -6890,6 +7168,9 @@ class Workflow:
             workflow_run_response.status = RunStatus.error
             workflow_run_response.content = f"Workflow execution failed: {e}"
             raise e
+        finally:
+            cleanup_run(workflow_run_response.run_id)  # type: ignore
+            cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
         # Yield workflow completed event
         workflow_completed_event = WorkflowCompletedEvent(
@@ -6909,7 +7190,6 @@ class Workflow:
         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
-        cleanup_run(workflow_run_response.run_id)  # type: ignore
 
         if self.telemetry:
             self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
@@ -7774,6 +8054,14 @@ class Workflow:
             # Preserve any completed step outputs before cancellation
             if collected_step_outputs:
                 workflow_run_response.step_results = collected_step_outputs
+                # Stop the timer for the Run duration
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+
+                workflow_run_response.metrics = self._aggregate_workflow_metrics(
+                    collected_step_outputs,
+                    workflow_run_response.metrics,  # type: ignore[arg-type]
+                )
         except Exception as e:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
@@ -7787,6 +8075,7 @@ class Workflow:
             session.upsert_run(run=workflow_run_response)
             await self.asave_session(session=session)
             await acleanup_run(workflow_run_response.run_id)  # type: ignore
+            await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
         if self.telemetry:
             self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
@@ -8017,6 +8306,8 @@ class Workflow:
                         background_tasks=background_tasks,
                         force_else_branch=True,
                     ):
+                        if not isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                         if isinstance(event, StepOutput):
                             condition_step_output = event
                         elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
@@ -8028,7 +8319,7 @@ class Workflow:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
-                            if self.stream_executor_events:
+                            if self.stream_executor_events or isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
                                 yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                     if condition_step_output is None:
@@ -8119,6 +8410,8 @@ class Workflow:
                                 num_history_runs=self.num_history_runs,
                                 background_tasks=background_tasks,
                             ):
+                                if not isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
+                                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                                 if isinstance(event, StepOutput):
                                     router_step_output = event
                                 elif isinstance(event, WorkflowRunOutputEvent):  # type: ignore
@@ -8130,7 +8423,9 @@ class Workflow:
                                     enriched_event = self._enrich_event_with_workflow_context(
                                         event, workflow_run_response, step_index=i, step=step
                                     )
-                                    if self.stream_executor_events:
+                                    if self.stream_executor_events or isinstance(
+                                        event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES
+                                    ):
                                         yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
                         finally:
                             # Restore original selector even if execution fails
@@ -8257,6 +8552,7 @@ class Workflow:
                 step_error_occurred = False
                 step_error_exception = None
                 step_output = None
+                draining_after_cancel = False
                 try:
                     async for event in step.aexecute_stream(  # type: ignore[union-attr]
                         step_input,
@@ -8275,7 +8571,18 @@ class Workflow:
                         num_history_runs=self.num_history_runs,
                         background_tasks=background_tasks,
                     ):
-                        await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                        is_bypass = isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES)
+                        if not draining_after_cancel and not is_bypass:
+                            try:
+                                await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                            except RunCancelledException:
+                                # Drain the executor generator so its own RunCancelled/RunCompleted
+                                # terminal events (which are in the bypass tuple) can still surface
+                                # on the wire. Cancellation is re-raised after the loop exits.
+                                draining_after_cancel = True
+                                continue
+                        if draining_after_cancel and not is_bypass:
+                            continue
 
                         if isinstance(event, StepOutput):
                             step_output = event
@@ -8345,8 +8652,11 @@ class Workflow:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
-                            if self.stream_executor_events:
+                            if self.stream_executor_events or isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
                                 yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
+
+                    if draining_after_cancel:
+                        raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
                 except RunCancelledException:
                     raise
                 except Exception as step_error:
@@ -8482,6 +8792,14 @@ class Workflow:
             # Preserve any completed step outputs before cancellation
             if collected_step_outputs:
                 workflow_run_response.step_results = collected_step_outputs
+                # Stop the timer for the Run duration
+                if workflow_run_response.metrics:
+                    workflow_run_response.metrics.stop_timer()
+
+                workflow_run_response.metrics = self._aggregate_workflow_metrics(
+                    collected_step_outputs,
+                    workflow_run_response.metrics,  # type: ignore[arg-type]
+                )
 
             cancelled_event = WorkflowCancelledEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -8516,6 +8834,7 @@ class Workflow:
         session.upsert_run(run=workflow_run_response)
         await self.asave_session(session=session)
         await acleanup_run(workflow_run_response.run_id)  # type: ignore
+        await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
         if self.telemetry:
             self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)

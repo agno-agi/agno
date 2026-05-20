@@ -35,10 +35,55 @@ from agno.memory import MemoryManager
 from agno.models.message import Message, MessageReferences
 from agno.run import RunContext
 from agno.run.agent import (
+    CompressionCompletedEvent as AgentCompressionCompletedEvent,
+)
+from agno.run.agent import (
+    CompressionStartedEvent as AgentCompressionStartedEvent,
+)
+from agno.run.agent import (
+    ModelRequestCompletedEvent as AgentModelRequestCompletedEvent,
+)
+from agno.run.agent import (
+    ModelRequestStartedEvent as AgentModelRequestStartedEvent,
+)
+from agno.run.agent import (
+    OutputModelResponseCompletedEvent as AgentOutputModelResponseCompletedEvent,
+)
+from agno.run.agent import (
+    OutputModelResponseStartedEvent as AgentOutputModelResponseStartedEvent,
+)
+from agno.run.agent import (
+    ParserModelResponseCompletedEvent as AgentParserModelResponseCompletedEvent,
+)
+from agno.run.agent import (
+    ParserModelResponseStartedEvent as AgentParserModelResponseStartedEvent,
+)
+from agno.run.agent import (
+    PostHookCompletedEvent as AgentPostHookCompletedEvent,
+)
+from agno.run.agent import (
+    PostHookStartedEvent as AgentPostHookStartedEvent,
+)
+from agno.run.agent import (
+    PreHookCompletedEvent as AgentPreHookCompletedEvent,
+)
+from agno.run.agent import (
+    PreHookStartedEvent as AgentPreHookStartedEvent,
+)
+from agno.run.agent import (
+    ReasoningCompletedEvent as AgentReasoningCompletedEvent,
+)
+from agno.run.agent import (
+    ReasoningStartedEvent as AgentReasoningStartedEvent,
+)
+from agno.run.agent import (
     RunCancelledEvent as AgentRunCancelledEvent,
 )
 from agno.run.agent import (
     RunCompletedEvent as AgentRunCompletedEvent,
+)
+from agno.run.agent import (
+    RunContentCompletedEvent as AgentRunContentCompletedEvent,
 )
 from agno.run.agent import (
     RunErrorEvent as AgentRunErrorEvent,
@@ -47,7 +92,55 @@ from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
 )
+from agno.run.agent import (
+    ToolCallCompletedEvent as AgentToolCallCompletedEvent,
+)
+from agno.run.agent import (
+    ToolCallStartedEvent as AgentToolCallStartedEvent,
+)
 from agno.run.cancel import aregister_member_run, raise_if_cancelled, register_member_run
+from agno.run.team import (
+    CompressionCompletedEvent as TeamMemberCompressionCompletedEvent,
+)
+from agno.run.team import (
+    CompressionStartedEvent as TeamMemberCompressionStartedEvent,
+)
+from agno.run.team import (
+    ModelRequestCompletedEvent as TeamMemberModelRequestCompletedEvent,
+)
+from agno.run.team import (
+    ModelRequestStartedEvent as TeamMemberModelRequestStartedEvent,
+)
+from agno.run.team import (
+    OutputModelResponseCompletedEvent as TeamMemberOutputModelResponseCompletedEvent,
+)
+from agno.run.team import (
+    OutputModelResponseStartedEvent as TeamMemberOutputModelResponseStartedEvent,
+)
+from agno.run.team import (
+    ParserModelResponseCompletedEvent as TeamMemberParserModelResponseCompletedEvent,
+)
+from agno.run.team import (
+    ParserModelResponseStartedEvent as TeamMemberParserModelResponseStartedEvent,
+)
+from agno.run.team import (
+    PostHookCompletedEvent as TeamMemberPostHookCompletedEvent,
+)
+from agno.run.team import (
+    PostHookStartedEvent as TeamMemberPostHookStartedEvent,
+)
+from agno.run.team import (
+    PreHookCompletedEvent as TeamMemberPreHookCompletedEvent,
+)
+from agno.run.team import (
+    PreHookStartedEvent as TeamMemberPreHookStartedEvent,
+)
+from agno.run.team import (
+    ReasoningCompletedEvent as TeamMemberReasoningCompletedEvent,
+)
+from agno.run.team import (
+    ReasoningStartedEvent as TeamMemberReasoningStartedEvent,
+)
 from agno.run.team import (
     RunCancelledEvent as TeamMemberRunCancelledEvent,
 )
@@ -55,11 +148,20 @@ from agno.run.team import (
     RunCompletedEvent as TeamMemberRunCompletedEvent,
 )
 from agno.run.team import (
+    RunContentCompletedEvent as TeamMemberRunContentCompletedEvent,
+)
+from agno.run.team import (
     RunErrorEvent as TeamMemberRunErrorEvent,
 )
 from agno.run.team import (
     TeamRunOutput,
     TeamRunOutputEvent,
+)
+from agno.run.team import (
+    ToolCallCompletedEvent as TeamMemberToolCallCompletedEvent,
+)
+from agno.run.team import (
+    ToolCallStartedEvent as TeamMemberToolCallStartedEvent,
 )
 from agno.session import TeamSession
 from agno.tools.function import Function
@@ -89,6 +191,46 @@ _MEMBER_TERMINAL_EVENT_TYPES = (
     TeamMemberRunCancelledEvent,
     TeamMemberRunCompletedEvent,
     TeamMemberRunErrorEvent,
+)
+
+# Paired *Started/*Completed events forwarded during cancel-drain so the wire
+# stream stays well-formed even when the member is being torn down. Kept in
+# sync with workflow.py's _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES.
+_MEMBER_COMPLETION_EVENT_TYPES = (
+    AgentModelRequestStartedEvent,
+    AgentModelRequestCompletedEvent,
+    AgentRunContentCompletedEvent,
+    AgentToolCallStartedEvent,
+    AgentToolCallCompletedEvent,
+    AgentReasoningStartedEvent,
+    AgentReasoningCompletedEvent,
+    AgentCompressionStartedEvent,
+    AgentCompressionCompletedEvent,
+    AgentParserModelResponseStartedEvent,
+    AgentParserModelResponseCompletedEvent,
+    AgentOutputModelResponseStartedEvent,
+    AgentOutputModelResponseCompletedEvent,
+    AgentPreHookStartedEvent,
+    AgentPreHookCompletedEvent,
+    AgentPostHookStartedEvent,
+    AgentPostHookCompletedEvent,
+    TeamMemberModelRequestStartedEvent,
+    TeamMemberModelRequestCompletedEvent,
+    TeamMemberRunContentCompletedEvent,
+    TeamMemberToolCallStartedEvent,
+    TeamMemberToolCallCompletedEvent,
+    TeamMemberReasoningStartedEvent,
+    TeamMemberReasoningCompletedEvent,
+    TeamMemberCompressionStartedEvent,
+    TeamMemberCompressionCompletedEvent,
+    TeamMemberParserModelResponseStartedEvent,
+    TeamMemberParserModelResponseCompletedEvent,
+    TeamMemberOutputModelResponseStartedEvent,
+    TeamMemberOutputModelResponseCompletedEvent,
+    TeamMemberPreHookStartedEvent,
+    TeamMemberPreHookCompletedEvent,
+    TeamMemberPostHookStartedEvent,
+    TeamMemberPostHookCompletedEvent,
 )
 
 
@@ -656,10 +798,20 @@ def _get_delegate_task_function(
                             draining_after_cancel = True
                         continue
 
+                    if draining_after_cancel and not isinstance(
+                        member_agent_run_output_event, _MEMBER_COMPLETION_EVENT_TYPES
+                    ):
+                        continue
+
+                    # Yield in-hand event before the cancel check so a same-tick paired Completed isn't dropped.
+                    member_agent_run_output_event.parent_run_id = (
+                        member_agent_run_output_event.parent_run_id or run_response.run_id
+                    )
+                    yield member_agent_run_output_event  # type: ignore
+
                     if draining_after_cancel:
                         continue
 
-                    # Check if the parent team's run is cancelled - propagate to member
                     try:
                         if run_response.run_id is not None:
                             raise_if_cancelled(run_response.run_id)
@@ -668,12 +820,6 @@ def _get_delegate_task_function(
                             _cascading_cancel_run(member_run_id)
                         draining_after_cancel = True
                         continue
-
-                    # Yield the member event directly
-                    member_agent_run_output_event.parent_run_id = (
-                        member_agent_run_output_event.parent_run_id or run_response.run_id
-                    )
-                    yield member_agent_run_output_event  # type: ignore
                 if draining_after_cancel:
                     raise RunCancelledException("")
             else:
@@ -839,10 +985,20 @@ def _get_delegate_task_function(
                             draining_after_cancel = True
                         continue
 
+                    if draining_after_cancel and not isinstance(
+                        member_agent_run_response_event, _MEMBER_COMPLETION_EVENT_TYPES
+                    ):
+                        continue
+
+                    # Yield in-hand event before the cancel check so a same-tick paired Completed isn't dropped.
+                    member_agent_run_response_event.parent_run_id = member_agent_run_response_event.parent_run_id or (
+                        run_response.run_id if run_response is not None else None
+                    )
+                    yield member_agent_run_response_event  # type: ignore
+
                     if draining_after_cancel:
                         continue
 
-                    # Check if the parent team's run is cancelled - propagate to member
                     try:
                         if run_response.run_id is not None:
                             raise_if_cancelled(run_response.run_id)
@@ -851,12 +1007,6 @@ def _get_delegate_task_function(
                             await _acascading_cancel_run(member_run_id)
                         draining_after_cancel = True
                         continue
-
-                    # Yield the member event directly
-                    member_agent_run_response_event.parent_run_id = member_agent_run_response_event.parent_run_id or (
-                        run_response.run_id if run_response is not None else None
-                    )
-                    yield member_agent_run_response_event  # type: ignore
                 if draining_after_cancel:
                     raise RunCancelledException("")
             else:
@@ -1012,10 +1162,21 @@ def _get_delegate_task_function(
                                 draining_after_cancel = True
                             continue
 
+                        if draining_after_cancel and not isinstance(
+                            member_agent_run_response_chunk, _MEMBER_COMPLETION_EVENT_TYPES
+                        ):
+                            continue
+
+                        # Yield in-hand event before the cancel check so a same-tick paired Completed isn't dropped.
+                        member_agent_run_response_chunk.parent_run_id = (
+                            member_agent_run_response_chunk.parent_run_id
+                            or (run_response.run_id if run_response is not None else None)
+                        )
+                        yield member_agent_run_response_chunk  # type: ignore
+
                         if draining_after_cancel:
                             continue
 
-                        # Check if the parent team's run is cancelled - propagate to member
                         try:
                             if run_response.run_id is not None:
                                 raise_if_cancelled(run_response.run_id)
@@ -1024,13 +1185,6 @@ def _get_delegate_task_function(
                                 _cascading_cancel_run(member_run_id)
                             draining_after_cancel = True
                             continue
-
-                        # Yield the member event directly
-                        member_agent_run_response_chunk.parent_run_id = (
-                            member_agent_run_response_chunk.parent_run_id
-                            or (run_response.run_id if run_response is not None else None)
-                        )
-                        yield member_agent_run_response_chunk  # type: ignore
                     if draining_after_cancel:
                         raise RunCancelledException("")
 
@@ -1185,6 +1339,18 @@ def _get_delegate_task_function(
                                     draining_after_cancel = True
                                 continue
 
+                            if draining_after_cancel and not isinstance(
+                                member_agent_run_output_event, _MEMBER_COMPLETION_EVENT_TYPES
+                            ):
+                                continue
+
+                            # Yield in-hand event before the cancel check so a same-tick paired Completed isn't dropped.
+                            member_agent_run_output_event.parent_run_id = (
+                                member_agent_run_output_event.parent_run_id
+                                or (run_response.run_id if run_response is not None else None)
+                            )
+                            await queue.put(member_agent_run_output_event)
+
                             if draining_after_cancel:
                                 continue
 
@@ -1197,12 +1363,6 @@ def _get_delegate_task_function(
                                     await _acascading_cancel_run(member_run_id)
                                 draining_after_cancel = True
                                 continue
-
-                            member_agent_run_output_event.parent_run_id = (
-                                member_agent_run_output_event.parent_run_id
-                                or (run_response.run_id if run_response is not None else None)
-                            )
-                            await queue.put(member_agent_run_output_event)
                         if draining_after_cancel:
                             raise RunCancelledException("")
                     finally:

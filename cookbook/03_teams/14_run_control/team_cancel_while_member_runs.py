@@ -103,19 +103,19 @@ if __name__ == "__main__":
     print("\n--- Verification ---")
     session = team.get_session(session_id=team.session_id)
     if session and session.runs:
-        team_runs = [r for r in session.runs if getattr(r, "team_id", None)]
-        member_runs = [r for r in session.runs if getattr(r, "agent_id", None)]
+        team_runs = [run for run in session.runs if getattr(run, "team_id", None)]
+        member_runs = [run for run in session.runs if getattr(run, "agent_id", None)]
 
-        for r in team_runs:
+        for run in team_runs:
             print(
-                f"Team run {r.run_id}: status={r.status}, "
-                f"content_length={len(str(r.content or ''))}, "
-                f"messages={len(r.messages or [])}"
+                f"Team run {run.run_id}: status={run.status}, "
+                f"content_length={len(str(run.content or ''))}, "
+                f"messages={len(run.messages or [])}"
             )
 
-        for r in member_runs:
+        for run in member_runs:
             print(
-                f"Member run {r.run_id} (agent={r.agent_name}, parent={r.parent_run_id}): "
-                f"status={r.status}, content_length={len(str(r.content or ''))}, "
-                f"messages={len(r.messages or [])}"
+                f"Member run {run.run_id} (agent={run.agent_name}, parent={run.parent_run_id}): "
+                f"status={run.status}, content_length={len(str(run.content or ''))}, "
+                f"messages={len(run.messages or [])}"
             )

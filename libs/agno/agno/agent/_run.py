@@ -44,11 +44,26 @@ from agno.models.metrics import RunMetrics, merge_background_metrics
 from agno.models.response import ModelResponse, ToolExecution
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
+    CompressionCompletedEvent,
+    CompressionStartedEvent,
+    ModelRequestCompletedEvent,
+    ModelRequestStartedEvent,
+    OutputModelResponseCompletedEvent,
+    OutputModelResponseStartedEvent,
+    ParserModelResponseCompletedEvent,
+    ParserModelResponseStartedEvent,
+    PreHookCompletedEvent,
+    PreHookStartedEvent,
+    ReasoningCompletedEvent,
+    ReasoningStartedEvent,
     RunCancelledEvent,
     RunCompletedEvent,
+    RunContentCompletedEvent,
     RunInput,
     RunOutput,
     RunOutputEvent,
+    ToolCallCompletedEvent,
+    ToolCallStartedEvent,
 )
 from agno.run.approval import (
     acreate_approval_from_pause,
@@ -113,6 +128,29 @@ from agno.utils.response import get_paused_content
 # Strong references to background tasks so they aren't garbage-collected mid-execution.
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
 _background_tasks: set[asyncio.Task[None]] = set()
+
+# Paired *Started/*Completed events bypass raise_if_cancelled so cancel doesn't
+# orphan a Started without its Completed (or vice-versa) on the wire. Cancel
+# still fires on RunContentEvent chunks between iterations.
+_CANCEL_BYPASS_EVENT_TYPES = (
+    ModelRequestStartedEvent,
+    ModelRequestCompletedEvent,
+    RunContentCompletedEvent,
+    ToolCallStartedEvent,
+    ToolCallCompletedEvent,
+    ReasoningStartedEvent,
+    ReasoningCompletedEvent,
+    CompressionStartedEvent,
+    CompressionCompletedEvent,
+    ParserModelResponseStartedEvent,
+    ParserModelResponseCompletedEvent,
+    OutputModelResponseStartedEvent,
+    OutputModelResponseCompletedEvent,
+    PreHookStartedEvent,
+    PreHookCompletedEvent,
+    RunCancelledEvent,
+    RunCompletedEvent,
+)
 
 # ---------------------------------------------------------------------------
 # Run dependency resolution
@@ -388,6 +426,10 @@ def _run(
         for attempt in range(num_attempts):
             if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
+
+            # Bind run_messages early — pre-hook iteration checks cancellation
+            # before run_messages is built, and the cancellation handler reads it.
+            run_messages: Optional[RunMessages] = None
             try:
                 # 1. Read or create session. Reuse pre-read session on first attempt.
                 if attempt == 0 and pre_session is not None:
@@ -415,6 +457,8 @@ def _run(
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
                     resolve_run_dependencies(agent, run_context=run_context)
+
+                raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 4. Execute pre-hooks
                 run_input = cast(RunInput, run_response.input)
@@ -453,7 +497,7 @@ def _run(
                 )
 
                 # 6. Prepare run messages
-                run_messages: RunMessages = get_run_messages(
+                run_messages = get_run_messages(
                     agent,
                     run_response=run_response,
                     run_context=run_context,
@@ -782,6 +826,10 @@ def _run_stream(
         for attempt in range(num_attempts):
             if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
+
+            # Bind run_messages early — pre-hook iteration checks cancellation
+            # before run_messages is built, and the cancellation handler reads it.
+            run_messages: Optional[RunMessages] = None
             try:
                 # 1. Read or create session. Reuse pre-read session on first attempt.
                 if attempt == 0 and pre_session is not None:
@@ -809,6 +857,8 @@ def _run_stream(
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
                     resolve_run_dependencies(agent, run_context=run_context)
+
+                raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 4. Execute pre-hooks
                 run_input = cast(RunInput, run_response.input)
@@ -848,7 +898,7 @@ def _run_stream(
                 )
 
                 # 6. Prepare run messages
-                run_messages: RunMessages = get_run_messages(
+                run_messages = get_run_messages(
                     agent,
                     run_response=run_response,
                     input=run_input.input_content,
@@ -928,7 +978,8 @@ def _run_stream(
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
                 else:
                     from agno.run.agent import (
@@ -947,7 +998,8 @@ def _run_stream(
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
                         if isinstance(event, RunContentEvent):
                             if stream_events:
                                 yield IntermediateRunContentEvent(
@@ -965,27 +1017,34 @@ def _run_stream(
                         run_messages=run_messages,
                         stream_events=stream_events,
                     ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event  # type: ignore
 
                 # Check for cancellation after model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 7. Parse response with parser model if provided
-                yield from parse_response_with_parser_model_stream(
+                for event in parse_response_with_parser_model_stream(
                     agent,  # type: ignore
                     session=agent_session,
                     run_response=run_response,
                     stream_events=stream_events,
                     run_context=run_context,
-                )
+                ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
 
                 # 7b. Generate follow-up suggestions if enabled
-                yield from generate_followups_stream(
+                for event in generate_followups_stream(
                     agent,  # type: ignore
                     run_response=run_response,
                     stream_events=stream_events,
-                )
+                ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
 
                 # We should break out of the run function
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -1489,6 +1548,9 @@ async def _arun(
             if attempt > 0:
                 log_debug(f"Retrying Agent run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
+            # Bind run_messages early — pre-hook iteration checks cancellation
+            # before run_messages is built, and the cancellation handler reads it.
+            run_messages: Optional[RunMessages] = None
             try:
                 # 1. Read or create session. Reuse pre-read session on first attempt.
                 if attempt == 0 and pre_session is not None:
@@ -1516,6 +1578,8 @@ async def _arun(
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
                     await aresolve_run_dependencies(agent, run_context=run_context)
+
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # 4. Execute pre-hooks
                 run_input = cast(RunInput, run_response.input)
@@ -1558,7 +1622,7 @@ async def _arun(
                 )
 
                 # 6. Prepare run messages
-                run_messages: RunMessages = await aget_run_messages(
+                run_messages = await aget_run_messages(
                     agent,
                     run_response=run_response,
                     run_context=run_context,
@@ -2174,6 +2238,8 @@ async def _arun_stream(
                 if run_context.dependencies is not None:
                     await aresolve_run_dependencies(agent, run_context=run_context)
 
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
+
                 # 4. Execute pre-hooks
                 run_input = cast(RunInput, run_response.input)
                 agent.model = cast(Model, agent.model)
@@ -2192,7 +2258,8 @@ async def _arun_stream(
                         **kwargs,
                     )
                     async for event in pre_hook_iterator:
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
 
                 # 5. Determine tools for model
@@ -2269,7 +2336,8 @@ async def _arun_stream(
                     run_context=run_context,
                     stream_events=stream_events,
                 ):
-                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+                    if not isinstance(item, _CANCEL_BYPASS_EVENT_TYPES):
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield item
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2287,7 +2355,8 @@ async def _arun_stream(
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
                 else:
                     from agno.run.agent import (
@@ -2306,7 +2375,8 @@ async def _arun_stream(
                         session_state=run_context.session_state,
                         run_context=run_context,
                     ):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                         if isinstance(event, RunContentEvent):
                             if stream_events:
                                 yield IntermediateRunContentEvent(
@@ -2324,8 +2394,9 @@ async def _arun_stream(
                         run_messages=run_messages,
                         stream_events=stream_events,
                     ):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        yield event
 
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2338,6 +2409,8 @@ async def _arun_stream(
                     stream_events=stream_events,
                     run_context=run_context,
                 ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event  # type: ignore
 
                 # 10b. Generate follow-up suggestions if enabled
@@ -2346,6 +2419,8 @@ async def _arun_stream(
                     run_response=run_response,
                     stream_events=stream_events,
                 ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event  # type: ignore
 
                 if stream_events:
@@ -3368,13 +3443,16 @@ def _continue_run_stream(
                     )
 
                 # 2. Handle the updated tools
-                yield from handle_tool_call_updates_stream(
+                for event in handle_tool_call_updates_stream(
                     agent,
                     run_response=run_response,
                     run_messages=run_messages,
                     tools=tools,
                     stream_events=stream_events,
-                )
+                ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
 
                 # 3. Process model response
                 for event in handle_model_response_stream(
@@ -3388,23 +3466,31 @@ def _continue_run_stream(
                     session_state=run_context.session_state,
                     run_context=run_context,
                 ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
                 # Parse response with parser model if provided
-                yield from parse_response_with_parser_model_stream(
+                for event in parse_response_with_parser_model_stream(
                     agent,  # type: ignore
                     session=session,
                     run_response=run_response,
                     stream_events=stream_events,
                     run_context=run_context,
-                )
+                ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
 
                 # Generate follow-up suggestions if enabled
-                yield from generate_followups_stream(
+                for event in generate_followups_stream(
                     agent,  # type: ignore
                     run_response=run_response,
                     stream_events=stream_events,
-                )
+                ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
 
                 # Yield RunContentCompletedEvent
                 if stream_events:
@@ -4076,7 +4162,7 @@ async def _acontinue_run(
                 )
 
                 # 6. Prepare run messages
-                run_messages: RunMessages = get_continue_run_messages(
+                run_messages = get_continue_run_messages(
                     agent,
                     input=input,
                     session=agent_session,
@@ -4454,7 +4540,7 @@ async def _acontinue_run_stream(
                 )
 
                 # 6. Prepare run messages
-                run_messages: RunMessages = get_continue_run_messages(
+                run_messages = get_continue_run_messages(
                     agent,
                     input=input,
                     session=agent_session,
@@ -4484,7 +4570,8 @@ async def _acontinue_run_stream(
                     tools=_tools,
                     stream_events=stream_events,
                 ):
-                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
                 # 8. Process model response
@@ -4499,7 +4586,8 @@ async def _acontinue_run_stream(
                         stream_events=stream_events,
                         run_context=run_context,
                     ):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
                 else:
                     from agno.run.agent import (
@@ -4517,7 +4605,8 @@ async def _acontinue_run_stream(
                         stream_events=stream_events,
                         run_context=run_context,
                     ):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                         if isinstance(event, RunContentEvent):
                             if stream_events:
                                 yield IntermediateRunContentEvent(
@@ -4535,8 +4624,9 @@ async def _acontinue_run_stream(
                         run_messages=run_messages,
                         stream_events=stream_events,
                     ):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event  # type: ignore
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        yield event
 
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -4549,6 +4639,8 @@ async def _acontinue_run_stream(
                     stream_events=stream_events,
                     run_context=run_context,
                 ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event  # type: ignore
 
                 # Generate follow-up suggestions if enabled
@@ -4557,6 +4649,8 @@ async def _acontinue_run_stream(
                     run_response=run_response,
                     stream_events=stream_events,
                 ):
+                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event  # type: ignore
 
                 # Yield RunContentCompletedEvent
@@ -4878,7 +4972,7 @@ def _handle_run_cancellation(
 ) -> RunOutput:
     """Prepare a run response for cancellation: set status, preserve content and messages."""
     reason = _normalize_cancellation_reason(run_response, error)
-    log_info(f"Run {run_response.run_id} was cancelled")
+    log_debug(f"Run {run_response.run_id} was cancelled")
     run_response.status = RunStatus.cancelled
     if not run_response.content:
         run_response.content = reason
@@ -4886,6 +4980,18 @@ def _handle_run_cancellation(
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
         if messages_for_run_response:
             run_response.messages = messages_for_run_response
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
+    # Clear pause state so cancel wins over a paused HITL run
+    if run_response.requirements:
+        run_response.requirements = [req for req in run_response.requirements if req.is_resolved()]
+    if run_response.tools:
+        for tool in run_response.tools:
+            if tool.is_paused:
+                tool.requires_confirmation = False
+                tool.requires_user_input = False
+                tool.external_execution_required = False
     return run_response
 
 

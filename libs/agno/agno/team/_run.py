@@ -37,14 +37,65 @@ from agno.models.metrics import RunMetrics, merge_background_metrics
 from agno.models.response import ModelResponse, ToolExecution
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
+    CompressionCompletedEvent as AgentCompressionCompletedEvent,
+)
+from agno.run.agent import (
+    CompressionStartedEvent as AgentCompressionStartedEvent,
+)
+from agno.run.agent import (
+    ModelRequestCompletedEvent as AgentModelRequestCompletedEvent,
+)
+from agno.run.agent import (
+    ModelRequestStartedEvent as AgentModelRequestStartedEvent,
+)
+from agno.run.agent import (
+    OutputModelResponseCompletedEvent as AgentOutputModelResponseCompletedEvent,
+)
+from agno.run.agent import (
+    OutputModelResponseStartedEvent as AgentOutputModelResponseStartedEvent,
+)
+from agno.run.agent import (
+    ParserModelResponseCompletedEvent as AgentParserModelResponseCompletedEvent,
+)
+from agno.run.agent import (
+    ParserModelResponseStartedEvent as AgentParserModelResponseStartedEvent,
+)
+from agno.run.agent import (
+    PostHookCompletedEvent as AgentPostHookCompletedEvent,
+)
+from agno.run.agent import (
+    PostHookStartedEvent as AgentPostHookStartedEvent,
+)
+from agno.run.agent import (
+    PreHookCompletedEvent as AgentPreHookCompletedEvent,
+)
+from agno.run.agent import (
+    PreHookStartedEvent as AgentPreHookStartedEvent,
+)
+from agno.run.agent import (
+    ReasoningCompletedEvent as AgentReasoningCompletedEvent,
+)
+from agno.run.agent import (
+    ReasoningStartedEvent as AgentReasoningStartedEvent,
+)
+from agno.run.agent import (
     RunCancelledEvent as AgentRunCancelledEvent,
 )
 from agno.run.agent import (
     RunCompletedEvent as AgentRunCompletedEvent,
 )
 from agno.run.agent import (
+    RunContentCompletedEvent as AgentRunContentCompletedEvent,
+)
+from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
+)
+from agno.run.agent import (
+    ToolCallCompletedEvent as AgentToolCallCompletedEvent,
+)
+from agno.run.agent import (
+    ToolCallStartedEvent as AgentToolCallStartedEvent,
 )
 from agno.run.cancel import (
     acancel_run as acancel_run_global,
@@ -68,16 +119,67 @@ from agno.run.cancel import (
 )
 from agno.run.messages import RunMessages
 from agno.run.team import (
+    CompressionCompletedEvent as TeamCompressionCompletedEvent,
+)
+from agno.run.team import (
+    CompressionStartedEvent as TeamCompressionStartedEvent,
+)
+from agno.run.team import (
+    ModelRequestCompletedEvent as TeamModelRequestCompletedEvent,
+)
+from agno.run.team import (
+    ModelRequestStartedEvent as TeamModelRequestStartedEvent,
+)
+from agno.run.team import (
+    OutputModelResponseCompletedEvent as TeamOutputModelResponseCompletedEvent,
+)
+from agno.run.team import (
+    OutputModelResponseStartedEvent as TeamOutputModelResponseStartedEvent,
+)
+from agno.run.team import (
+    ParserModelResponseCompletedEvent as TeamParserModelResponseCompletedEvent,
+)
+from agno.run.team import (
+    ParserModelResponseStartedEvent as TeamParserModelResponseStartedEvent,
+)
+from agno.run.team import (
+    PostHookCompletedEvent as TeamPostHookCompletedEvent,
+)
+from agno.run.team import (
+    PostHookStartedEvent as TeamPostHookStartedEvent,
+)
+from agno.run.team import (
+    PreHookCompletedEvent as TeamPreHookCompletedEvent,
+)
+from agno.run.team import (
+    PreHookStartedEvent as TeamPreHookStartedEvent,
+)
+from agno.run.team import (
+    ReasoningCompletedEvent as TeamReasoningCompletedEvent,
+)
+from agno.run.team import (
+    ReasoningStartedEvent as TeamReasoningStartedEvent,
+)
+from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
 )
 from agno.run.team import (
     RunCompletedEvent as TeamRunCompletedEvent,
 )
 from agno.run.team import (
+    RunContentCompletedEvent as TeamRunContentCompletedEvent,
+)
+from agno.run.team import (
     TaskData,
     TeamRunInput,
     TeamRunOutput,
     TeamRunOutputEvent,
+)
+from agno.run.team import (
+    ToolCallCompletedEvent as TeamToolCallCompletedEvent,
+)
+from agno.run.team import (
+    ToolCallStartedEvent as TeamToolCallStartedEvent,
 )
 from agno.session import TeamSession
 from agno.tools.function import Function
@@ -117,13 +219,48 @@ from agno.utils.log import (
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
 _background_tasks: set[asyncio.Task[None]] = set()
 
-# Member terminals that bypass raise_if_cancelled so cancel-state can finalise downstream.
-# RunError is excluded: in a cancel race the team's cancel wins.
+# Paired *Started/*Completed events bypass raise_if_cancelled so cancel doesn't
+# orphan a member event on the wire. Terminals let the member finish its own
+# cancellation. RunError is excluded — in a cancel race the team's cancel wins.
 _MEMBER_CANCEL_BYPASS_EVENT_TYPES = (
     AgentRunCancelledEvent,
     AgentRunCompletedEvent,
+    AgentModelRequestStartedEvent,
+    AgentModelRequestCompletedEvent,
+    AgentRunContentCompletedEvent,
+    AgentToolCallStartedEvent,
+    AgentToolCallCompletedEvent,
+    AgentReasoningStartedEvent,
+    AgentReasoningCompletedEvent,
+    AgentCompressionStartedEvent,
+    AgentCompressionCompletedEvent,
+    AgentParserModelResponseStartedEvent,
+    AgentParserModelResponseCompletedEvent,
+    AgentOutputModelResponseStartedEvent,
+    AgentOutputModelResponseCompletedEvent,
+    AgentPreHookStartedEvent,
+    AgentPreHookCompletedEvent,
+    AgentPostHookStartedEvent,
+    AgentPostHookCompletedEvent,
     TeamRunCancelledEvent,
     TeamRunCompletedEvent,
+    TeamModelRequestStartedEvent,
+    TeamModelRequestCompletedEvent,
+    TeamRunContentCompletedEvent,
+    TeamToolCallStartedEvent,
+    TeamToolCallCompletedEvent,
+    TeamReasoningStartedEvent,
+    TeamReasoningCompletedEvent,
+    TeamCompressionStartedEvent,
+    TeamCompressionCompletedEvent,
+    TeamParserModelResponseStartedEvent,
+    TeamParserModelResponseCompletedEvent,
+    TeamOutputModelResponseStartedEvent,
+    TeamOutputModelResponseCompletedEvent,
+    TeamPreHookStartedEvent,
+    TeamPreHookCompletedEvent,
+    TeamPostHookStartedEvent,
+    TeamPostHookCompletedEvent,
 )
 
 if TYPE_CHECKING:
@@ -132,11 +269,15 @@ if TYPE_CHECKING:
 
 
 def cancel_run(run_id: str) -> bool:
-    """Cancel a team run and cascade to its in-flight member runs."""
+    """Cancel a team run and cascade to its in-flight member runs.
+
+    Member mappings are *not* cleaned up here — the team's own
+    ``_cleanup_and_store`` path owns that cleanup. Removing them mid-cascade
+    would break recursive bookkeeping for nested team hierarchies.
+    """
     result = cancel_run_global(run_id)
     for member_run_id in get_member_run_ids(run_id):
         cancel_run(member_run_id)
-    cleanup_member_runs(run_id)
     return result
 
 
@@ -145,7 +286,6 @@ async def acancel_run(run_id: str) -> bool:
     result = await acancel_run_global(run_id)
     for member_run_id in await aget_member_run_ids(run_id):
         await acancel_run(member_run_id)
-    await acleanup_member_runs(run_id)
     return result
 
 
@@ -234,9 +374,13 @@ def _run_tasks(
     memory_future = None
     learning_future = None
 
+    # Bind run_messages early so the cancellation handler can read it
+    # if cancel fires before the message list is built.
+    run_messages: Optional[RunMessages] = None
     try:
         run_input = cast(TeamRunInput, run_response.input)
         team.model = cast(Model, team.model)
+        raise_if_cancelled(run_response.run_id)  # type: ignore
 
         # 1. Execute pre-hooks
         if team.pre_hooks is not None:
@@ -553,9 +697,13 @@ def _run_tasks_stream(
     memory_future = None
     learning_future = None
 
+    # Bind run_messages early so the cancellation handler can read it
+    # if cancel fires before the message list is built.
+    run_messages: Optional[RunMessages] = None
     try:
         run_input = cast(TeamRunInput, run_response.input)
         team.model = cast(Model, team.model)
+        raise_if_cancelled(run_response.run_id)  # type: ignore
 
         # 1. Execute pre-hooks
         if team.pre_hooks is not None:
@@ -931,6 +1079,8 @@ def _run_tasks_stream(
             _cleanup_and_store(team, run_response=run_response, session=session)
         except Exception as store_err:
             log_warning(f"Failed to persist cancelled run: {store_err}")
+        for _pending in _build_team_pending_tool_completed_events(team, run_response):
+            yield _pending  # type: ignore
         yield cancelled_event  # type: ignore
         yield completed_event  # type: ignore
         if yield_run_output:
@@ -964,6 +1114,8 @@ def _run_tasks_stream(
             _cleanup_and_store(team, run_response=run_response, session=session)
         except Exception as store_err:
             log_warning(f"Failed to persist cancelled run: {store_err}")
+        for _pending in _build_team_pending_tool_completed_events(team, run_response):
+            yield _pending  # type: ignore
         yield cancelled_event  # type: ignore
         yield completed_event  # type: ignore
         if yield_run_output:
@@ -1067,7 +1219,11 @@ def _run(
             if attempt > 0:
                 log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
+            # Bind run_messages early — pre-hook iteration checks cancellation
+            # before run_messages is built, and the cancellation handler reads it.
+            run_messages: Optional[RunMessages] = None
             try:
+                raise_if_cancelled(run_response.run_id)  # type: ignore
                 # 1. Execute pre-hooks
                 run_input = cast(TeamRunInput, run_response.input)
                 team.model = cast(Model, team.model)
@@ -1117,7 +1273,7 @@ def _run(
                 )
 
                 # 3. Prepare run messages
-                run_messages: RunMessages = _get_run_messages(
+                run_messages = _get_run_messages(
                     team,
                     run_response=run_response,
                     session=session,
@@ -1414,7 +1570,11 @@ def _run_stream(
             if attempt > 0:
                 log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
+            # Bind run_messages early — pre-hook iteration checks cancellation
+            # before run_messages is built, and the cancellation handler reads it.
+            run_messages: Optional[RunMessages] = None
             try:
+                raise_if_cancelled(run_response.run_id)  # type: ignore
                 # 1. Execute pre-hooks
                 run_input = cast(TeamRunInput, run_response.input)
                 team.model = cast(Model, team.model)
@@ -1465,7 +1625,7 @@ def _run_stream(
                 )
 
                 # 3. Prepare run messages
-                run_messages: RunMessages = _get_run_messages(
+                run_messages = _get_run_messages(
                     team,
                     run_response=run_response,
                     run_context=run_context,
@@ -1710,6 +1870,8 @@ def _run_stream(
                     _cleanup_and_store(team, run_response=run_response, session=session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
+                for _pending in _build_team_pending_tool_completed_events(team, run_response):
+                    yield _pending  # type: ignore
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -1746,6 +1908,8 @@ def _run_stream(
                     _cleanup_and_store(team, run_response=run_response, session=session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
+                for _pending in _build_team_pending_tool_completed_events(team, run_response):
+                    yield _pending  # type: ignore
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -2030,6 +2194,10 @@ async def _arun_tasks(
     learning_task = None
     team_session: Optional[TeamSession] = None
 
+    # Bind run_messages early so the cancellation handler can read it
+    # if cancel fires before the message list is built.
+    run_messages: Optional[RunMessages] = None
+
     try:
         # Register run for cancellation tracking
         await aregister_run(run_context.run_id)
@@ -2045,6 +2213,7 @@ async def _arun_tasks(
 
         run_input = cast(TeamRunInput, run_response.input)
         team.model = cast(Model, team.model)
+        await araise_if_cancelled(run_response.run_id)  # type: ignore
 
         # 1. Execute pre-hooks
         if team.pre_hooks is not None:
@@ -2369,6 +2538,10 @@ async def _arun_tasks_stream(
     learning_task = None
     team_session: Optional[TeamSession] = None
 
+    # Bind run_messages early so the cancellation handler can read it
+    # if cancel fires before the message list is built.
+    run_messages: Optional[RunMessages] = None
+
     try:
         # Register run for cancellation tracking
         await aregister_run(run_context.run_id)
@@ -2384,6 +2557,7 @@ async def _arun_tasks_stream(
 
         run_input = cast(TeamRunInput, run_response.input)
         team.model = cast(Model, team.model)
+        await araise_if_cancelled(run_response.run_id)  # type: ignore
 
         # 1. Execute pre-hooks
         if team.pre_hooks is not None:
@@ -2767,6 +2941,8 @@ async def _arun_tasks_stream(
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
         except Exception as store_err:
             log_warning(f"Failed to persist cancelled run: {store_err}")
+        for _pending in _build_team_pending_tool_completed_events(team, run_response):
+            yield _pending  # type: ignore
         yield cancelled_event  # type: ignore
         yield completed_event  # type: ignore
         if yield_run_output:
@@ -2802,6 +2978,8 @@ async def _arun_tasks_stream(
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
         except Exception as store_err:
             log_warning(f"Failed to persist cancelled run: {store_err}")
+        for _pending in _build_team_pending_tool_completed_events(team, run_response):
+            yield _pending  # type: ignore
         yield cancelled_event  # type: ignore
         yield completed_event  # type: ignore
         if yield_run_output:
@@ -2929,7 +3107,11 @@ async def _arun(
             if attempt > 0:
                 log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
+            # Bind run_messages early — pre-hook iteration checks cancellation
+            # before run_messages is built, and the cancellation handler reads it.
+            run_messages: Optional[RunMessages] = None
             try:
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
                 run_input = cast(TeamRunInput, run_response.input)
 
                 # 1. Execute pre-hooks after session is loaded but before processing starts
@@ -3531,7 +3713,11 @@ async def _arun_stream(
             if attempt > 0:
                 log_debug(f"Retrying Team run {run_response.run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
+            # Bind run_messages early — pre-hook iteration checks cancellation
+            # before run_messages is built, and the cancellation handler reads it.
+            run_messages: Optional[RunMessages] = None
             try:
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
                 # 1. Execute pre-hooks
                 run_input = cast(TeamRunInput, run_response.input)
                 team.model = cast(Model, team.model)
@@ -3837,6 +4023,8 @@ async def _arun_stream(
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
+                for _pending in _build_team_pending_tool_completed_events(team, run_response):
+                    yield _pending  # type: ignore
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -3876,6 +4064,8 @@ async def _arun_stream(
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
+                for _pending in _build_team_pending_tool_completed_events(team, run_response):
+                    yield _pending  # type: ignore
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -4177,7 +4367,7 @@ def _handle_team_run_cancellation(
 ) -> TeamRunOutput:
     """Prepare a team run response for cancellation: set status, preserve content and messages."""
     reason = _normalize_team_cancellation_reason(run_response, error)
-    log_info(f"Team run {run_response.run_id} was cancelled")
+    log_debug(f"Team run {run_response.run_id} was cancelled")
     run_response.status = RunStatus.cancelled
     if not run_response.content:
         run_response.content = reason
@@ -4185,7 +4375,52 @@ def _handle_team_run_cancellation(
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
         if messages_for_run_response:
             run_response.messages = messages_for_run_response
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
+    # Clear pause state so cancel wins over a paused HITL run
+    if run_response.requirements:
+        run_response.requirements = [req for req in run_response.requirements if req.is_resolved()]
+    if run_response.tools:
+        for tool in run_response.tools:
+            if tool.is_paused:
+                tool.requires_confirmation = False
+                tool.requires_user_input = False
+                tool.external_execution_required = False
     return run_response
+
+
+def _build_team_pending_tool_completed_events(
+    team: "Team",
+    run_response: TeamRunOutput,
+) -> List[TeamRunOutputEvent]:
+    """Synthesize TeamToolCallCompleted for tools still in flight at cancel time."""
+    from agno.utils.events import create_team_tool_call_completed_event
+
+    if not run_response.tools:
+        return []
+
+    events: List[TeamRunOutputEvent] = []
+    for tool in run_response.tools:
+        # Skip completed, errored, and paused tools — they don't need a synthetic completion
+        if tool.result is not None or tool.tool_call_error or tool.is_paused:
+            continue
+        events.append(
+            cast(
+                TeamRunOutputEvent,
+                handle_event(
+                    create_team_tool_call_completed_event(
+                        from_run_response=run_response,
+                        tool=tool,
+                        content=None,
+                    ),
+                    run_response,
+                    events_to_skip=team.events_to_skip,
+                    store_events=team.store_events,
+                ),
+            )
+        )
+    return events
 
 
 def _build_team_cancel_terminal_events(
@@ -4951,23 +5186,24 @@ def _route_requirements_to_members(
         # session/DB lookup (which fails without a database since
         # initialize_team clears the cached session).
         member_run_output = getattr(reqs[0], "_member_run_response", None)
+        member_run_id = reqs[0].member_run_id if reqs else None
 
-        # If _member_run_response is not available (e.g., API flow where it's lost during
-        # JSON serialization), try to find the member's run from run_response.member_responses.
-        # This requires store_member_responses=True on the team.
-        if member_run_output is None:
-            member_run_id = reqs[0].member_run_id if reqs else None
-            if member_run_id and run_response.member_responses:
-                for mr in run_response.member_responses:
-                    if getattr(mr, "run_id", None) == member_run_id:
-                        member_run_output = mr
+        if member_run_output is None and member_run_id:
+            # Same-process resume: the paused member output is still held on the live team run.
+            if run_response.member_responses:
+                for sibling_response in run_response.member_responses:
+                    if getattr(sibling_response, "run_id", None) == member_run_id:
+                        member_run_output = sibling_response
+                        break
+            # After process restart: member_responses is empty (it's only assembled at runtime),
+            # so fall back to the team session's sibling runs persisted in the DB.
+            if member_run_output is None and session is not None and session.runs:
+                for session_run in session.runs:
+                    if getattr(session_run, "run_id", None) == member_run_id:
+                        member_run_output = session_run  # type: ignore[assignment]
                         break
 
-        member_run_id = (
-            getattr(member_run_output, "run_id", None)
-            if member_run_output is not None
-            else (reqs[0].member_run_id if reqs else None)
-        )
+        member_run_id = getattr(member_run_output, "run_id", None) if member_run_output is not None else member_run_id
         if member_run_id and run_response.run_id is not None:
             register_member_run(run_response.run_id, member_run_id)
 
@@ -5053,20 +5289,24 @@ def _route_requirements_to_members_stream(
         _, member = route_result
 
         member_run_output = getattr(reqs[0], "_member_run_response", None)
+        member_run_id = reqs[0].member_run_id if reqs else None
 
-        if member_run_output is None:
-            member_run_id = reqs[0].member_run_id if reqs else None
-            if member_run_id and run_response.member_responses:
-                for mr in run_response.member_responses:
-                    if getattr(mr, "run_id", None) == member_run_id:
-                        member_run_output = mr
+        if member_run_output is None and member_run_id:
+            # Same-process resume: the paused member output is still held on the live team run.
+            if run_response.member_responses:
+                for sibling_response in run_response.member_responses:
+                    if getattr(sibling_response, "run_id", None) == member_run_id:
+                        member_run_output = sibling_response
+                        break
+            # After process restart: member_responses is empty (it's only assembled at runtime),
+            # so fall back to the team session's sibling runs persisted in the DB.
+            if member_run_output is None and session is not None and session.runs:
+                for session_run in session.runs:
+                    if getattr(session_run, "run_id", None) == member_run_id:
+                        member_run_output = session_run  # type: ignore[assignment]
                         break
 
-        member_run_id = (
-            getattr(member_run_output, "run_id", None)
-            if member_run_output is not None
-            else (reqs[0].member_run_id if reqs else None)
-        )
+        member_run_id = getattr(member_run_output, "run_id", None) if member_run_output is not None else member_run_id
         if member_run_id and run_response.run_id is not None:
             register_member_run(run_response.run_id, member_run_id)
 
@@ -5095,7 +5335,7 @@ def _route_requirements_to_members_stream(
             )
 
         # Iterate the member's streaming response — yield intermediate events,
-        member_response = None
+        member_response: Optional[Union[RunOutput, TeamRunOutput]] = None
         for event in member_response_stream:  # type: ignore[union-attr]
             if isinstance(event, (RunOutput, TeamRunOutput)):
                 member_response = event
@@ -5166,25 +5406,25 @@ async def _aroute_requirements_to_members(
             return f"[{member_id}]: Could not route requirement — member not found"
 
         _, member = route_result
-        # Get the member's paused RunOutput from the requirement
         member_run_output = getattr(reqs[0], "_member_run_response", None)
+        member_run_id = reqs[0].member_run_id if reqs else None
 
-        # If _member_run_response is not available (e.g., API flow where it's lost during
-        # JSON serialization), try to find the member's run from run_response.member_responses.
-        # This requires store_member_responses=True on the team.
-        if member_run_output is None:
-            member_run_id = reqs[0].member_run_id if reqs else None
-            if member_run_id and run_response.member_responses:
-                for mr in run_response.member_responses:
-                    if getattr(mr, "run_id", None) == member_run_id:
-                        member_run_output = mr
+        if member_run_output is None and member_run_id:
+            # Same-process resume: the paused member output is still held on the live team run.
+            if run_response.member_responses:
+                for sibling_response in run_response.member_responses:
+                    if getattr(sibling_response, "run_id", None) == member_run_id:
+                        member_run_output = sibling_response
+                        break
+            # After process restart: member_responses is empty (it's only assembled at runtime),
+            # so fall back to the team session's sibling runs persisted in the DB.
+            if member_run_output is None and session is not None and session.runs:
+                for session_run in session.runs:
+                    if getattr(session_run, "run_id", None) == member_run_id:
+                        member_run_output = session_run  # type: ignore[assignment]
                         break
 
-        member_run_id = (
-            getattr(member_run_output, "run_id", None)
-            if member_run_output is not None
-            else (reqs[0].member_run_id if reqs else None)
-        )
+        member_run_id = getattr(member_run_output, "run_id", None) if member_run_output is not None else member_run_id
         if member_run_id and run_response.run_id is not None:
             await aregister_member_run(run_response.run_id, member_run_id)
 
@@ -5280,20 +5520,24 @@ async def _aroute_requirements_to_members_stream(
         _, member = route_result
 
         member_run_output = getattr(reqs[0], "_member_run_response", None)
+        member_run_id = reqs[0].member_run_id if reqs else None
 
-        if member_run_output is None:
-            member_run_id = reqs[0].member_run_id if reqs else None
-            if member_run_id and run_response.member_responses:
-                for mr in run_response.member_responses:
-                    if getattr(mr, "run_id", None) == member_run_id:
-                        member_run_output = mr
+        if member_run_output is None and member_run_id:
+            # Same-process resume: the paused member output is still held on the live team run.
+            if run_response.member_responses:
+                for sibling_response in run_response.member_responses:
+                    if getattr(sibling_response, "run_id", None) == member_run_id:
+                        member_run_output = sibling_response
+                        break
+            # After process restart: member_responses is empty (it's only assembled at runtime),
+            # so fall back to the team session's sibling runs persisted in the DB.
+            if member_run_output is None and session is not None and session.runs:
+                for session_run in session.runs:
+                    if getattr(session_run, "run_id", None) == member_run_id:
+                        member_run_output = session_run  # type: ignore[assignment]
                         break
 
-        member_run_id = (
-            getattr(member_run_output, "run_id", None)
-            if member_run_output is not None
-            else (reqs[0].member_run_id if reqs else None)
-        )
+        member_run_id = getattr(member_run_output, "run_id", None) if member_run_output is not None else member_run_id
         if member_run_id and run_response.run_id is not None:
             await aregister_member_run(run_response.run_id, member_run_id)
 
@@ -5322,7 +5566,7 @@ async def _aroute_requirements_to_members_stream(
             )
 
         # Iterate the member's async streaming response — yield intermediate events,
-        member_response = None
+        member_response: Optional[Union[RunOutput, TeamRunOutput]] = None
         async for event in member_response_stream:  # type: ignore[union-attr]
             if isinstance(event, (RunOutput, TeamRunOutput)):
                 member_response = event
@@ -5895,6 +6139,24 @@ def _continue_run_dispatch_stream_with_member_events(
             _cleanup_and_store(team, run_response=run_response, session=team_session, run_context=run_context)
         except Exception as store_err:
             log_warning(f"Failed to persist cancelled run: {store_err}")
+        for _pending in _build_team_pending_tool_completed_events(team, run_response):
+            yield _pending
+        yield cancelled_event
+        yield completed_event
+        if opts.yield_run_output:
+            yield run_response
+        return
+    except KeyboardInterrupt:
+        run_response = _handle_team_run_cancellation(run_response, KeyboardInterrupt())
+        cancelled_event, completed_event = _build_team_cancel_terminal_events(
+            team, run_response, error=KeyboardInterrupt(), run_context=run_context
+        )
+        try:
+            _cleanup_and_store(team, run_response=run_response, session=team_session, run_context=run_context)
+        except Exception as store_err:
+            log_warning(f"Failed to persist cancelled run: {store_err}")
+        for _pending in _build_team_pending_tool_completed_events(team, run_response):
+            yield _pending
         yield cancelled_event
         yield completed_event
         if opts.yield_run_output:
@@ -6428,6 +6690,8 @@ def _continue_run_stream(
                     _cleanup_and_store(team, run_response=run_response, session=session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
+                for _pending in _build_team_pending_tool_completed_events(team, run_response):
+                    yield _pending  # type: ignore
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -6463,6 +6727,8 @@ def _continue_run_stream(
                     _cleanup_and_store(team, run_response=run_response, session=session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
+                for _pending in _build_team_pending_tool_completed_events(team, run_response):
+                    yield _pending  # type: ignore
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -7434,6 +7700,8 @@ async def _acontinue_run_stream(
                         await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
+                for _pending in _build_team_pending_tool_completed_events(team, run_response):
+                    yield _pending  # type: ignore
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
@@ -7475,6 +7743,8 @@ async def _acontinue_run_stream(
                         await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
+                for _pending in _build_team_pending_tool_completed_events(team, run_response):
+                    yield _pending  # type: ignore
                 yield cancelled_event  # type: ignore
                 yield completed_event  # type: ignore
                 if yield_run_output:
