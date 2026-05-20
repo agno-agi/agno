@@ -186,6 +186,12 @@ class MCPTools(Toolkit):
         self._session_ttl_seconds: float = 300.0  # 5 minutes TTL for MCP sessions
         self._session_lock: Optional[asyncio.Lock] = None  # Lazily created lock for session creation
 
+        # Lazily created lock serializing connect() / close() / __aenter__ / __aexit__
+        # so parallel callers (e.g. a Team delegating multiple tool calls to the same
+        # member in one turn) share a single underlying session instead of each opening
+        # their own and racing GC into anyio.BrokenResourceError.
+        self._lifecycle_lock_inst: Optional[asyncio.Lock] = None
+
         def cleanup():
             """Cancel active connections"""
             if self._connection_task and not self._connection_task.done():
@@ -204,6 +210,19 @@ class MCPTools(Toolkit):
         if self._session_lock is None:
             self._session_lock = asyncio.Lock()
         return self._session_lock
+
+    @property
+    def _lifecycle_lock(self) -> asyncio.Lock:
+        """Lock serializing ``connect()`` / ``close()`` / ``__aenter__`` / ``__aexit__``.
+
+        Lazy because constructing the lock in ``__init__`` would bind it to whichever
+        event loop happens to be running at construction time (often a different
+        loop than the one running the agent). Creating it on first use binds it to
+        the loop that actually serializes connects.
+        """
+        if self._lifecycle_lock_inst is None:
+            self._lifecycle_lock_inst = asyncio.Lock()
+        return self._lifecycle_lock_inst
 
     def _call_header_provider(
         self,
@@ -451,24 +470,32 @@ class MCPTools(Toolkit):
             return False
 
     async def connect(self, force: bool = False):
-        """Initialize a MCPTools instance and connect to the contextual MCP server"""
+        """Initialize a MCPTools instance and connect to the contextual MCP server.
 
-        if force:
-            # Clean up the session and context so we force a new connection
-            self.session = None
-            self._context = None
-            self._session_context = None
-            self._initialized = False
-            self._connection_task = None
-            self._active_contexts = []
-
-        if self._initialized:
+        Single-flight under ``_lifecycle_lock``: parallel callers share one underlying
+        session. Failures are logged but NOT re-raised so ``pre_run_hook`` can iterate
+        every MCP tool on an agent without one bad server aborting the whole run; use
+        ``async with`` (or check ``self.initialized``) if you need failures to propagate.
+        """
+        # Fast path: already initialized and no force-reconnect requested.
+        # Skipping the lock here keeps the steady-state per-run hot path cost-free.
+        if not force and self._initialized:
             return
 
-        try:
-            await self._connect()
-        except (RuntimeError, BaseException):
-            log_error(f"Failed to connect to {str(self)}")
+        async with self._lifecycle_lock:
+            if force:
+                # Direct call avoids re-acquiring the lock (would self-deadlock).
+                await self._close_locked()
+
+            # Re-check after acquiring the lock; another caller may have connected
+            # while we were waiting. This is the double-checked-locking pattern.
+            if self._initialized:
+                return
+
+            try:
+                await self._connect()
+            except (RuntimeError, BaseException):
+                log_error(f"Failed to connect to {str(self)}")
 
     async def _connect(self) -> None:
         """Connects to the MCP server and initializes the tools"""
@@ -530,8 +557,19 @@ class MCPTools(Toolkit):
         await self.initialize()
 
     async def close(self) -> None:
-        """Close the MCP connection and clean up resources"""
-        if not self._initialized:
+        """Close the MCP connection and clean up resources.
+
+        Waits for any in-flight ``connect()`` to complete before tearing down so a
+        racing ``close()`` cannot strand a session another caller is still bringing up.
+        """
+        async with self._lifecycle_lock:
+            await self._close_locked()
+
+    async def _close_locked(self) -> None:
+        """Body of :meth:`close`. Caller must hold ``_lifecycle_lock``."""
+        # Also clean up partial state from a failed connect (session_context / context
+        # entered but initialize() raised before _initialized flipped to True).
+        if not self._initialized and self._session_context is None and self._context is None:
             return
 
         import warnings
@@ -568,21 +606,23 @@ class MCPTools(Toolkit):
         self._initialized = False
 
     async def __aenter__(self) -> "MCPTools":
-        await self._connect()
+        """Enter the async context manager; raises on init failure.
+
+        Calls ``_connect()`` directly (not :meth:`connect`) so failures surface at the
+        ``async with`` boundary instead of being swallowed by ``connect()``'s
+        log-and-continue contract.
+        """
+        if self._initialized:
+            return self
+        async with self._lifecycle_lock:
+            if self._initialized:
+                return self
+            await self._connect()
         return self
 
     async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
         """Exit the async context manager."""
-        if self._session_context is not None:
-            await self._session_context.__aexit__(_exc_type, _exc_val, _exc_tb)
-            self.session = None
-            self._session_context = None
-
-        if self._context is not None:
-            await self._context.__aexit__(_exc_type, _exc_val, _exc_tb)
-            self._context = None
-
-        self._initialized = False
+        await self.close()
 
     async def build_tools(self) -> None:
         """Build the tools for the MCP toolkit"""
