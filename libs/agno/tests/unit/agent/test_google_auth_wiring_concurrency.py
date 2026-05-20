@@ -1,7 +1,7 @@
-"""Tests for per-tool _wired_config_id tracking in concurrent scenarios.
+"""Tests for Google OAuth wiring and concurrency isolation.
 
-These tests verify the per-tool tracking mechanism works correctly
-for various usage patterns, especially concurrent requests.
+Verifies that _wire_google_auth correctly wires Google toolkits to shared
+GoogleAuthConfig, and that concurrent/multi-user scenarios maintain isolation.
 """
 
 import asyncio
@@ -15,6 +15,7 @@ from agno.run.agent import RunOutput
 from agno.run.base import RunContext
 
 try:
+    from agno.tools.google.auth import GoogleAuthConfig
     from agno.tools.google.gmail import GmailTools
     from agno.tools.google.oauth_tools import GoogleOAuthTools
 
@@ -25,12 +26,119 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not HAS_GOOGLE, reason="Google dependencies not installed")
 
 
-class TestGoogleAuthWiringIdempotent:
-    """Test that _wire_google_auth is idempotent and safe for all scenarios."""
+class TestWireGoogleAuthBasic:
+    """Test basic _wire_google_auth functionality."""
 
-    def test_wire_called_every_get_tools(self):
-        """_wire_google_auth is called every get_tools() but is idempotent."""
-        agent = Agent(model="openai:gpt-4o", tools=[GmailTools()])
+    def test_wire_creates_shared_auth_config(self):
+        """Multiple Google toolkits get the same shared auth_config."""
+        gmail = GmailTools()
+        oauth = GoogleOAuthTools()
+        assert gmail.auth_config is None
+        assert oauth.auth_config is None
+
+        _tools._wire_google_auth([oauth, gmail])
+
+        assert gmail.auth_config is not None
+        assert oauth.auth_config is not None
+        assert gmail.auth_config is oauth.auth_config
+
+    def test_wire_registers_scopes(self):
+        """Wiring registers the toolkit's scopes with the shared config."""
+        gmail = GmailTools()
+        _tools._wire_google_auth([gmail])
+
+        assert gmail.auth_config is not None
+        assert "gmail" in gmail.auth_config._services
+        assert len(gmail.auth_config._services["gmail"]) > 0
+
+    def test_wire_with_existing_config_uses_it(self):
+        """Toolkits with pre-existing auth_config keep their config."""
+        custom_config = GoogleAuthConfig()
+        gmail = GmailTools(auth_config=custom_config)
+
+        _tools._wire_google_auth([gmail])
+
+        assert gmail.auth_config is custom_config
+
+    def test_wire_returns_tools_unchanged_when_no_google_tools(self):
+        """Non-Google tools pass through unchanged."""
+        mock_tool = MagicMock()
+        result = _tools._wire_google_auth([mock_tool])
+        assert result == [mock_tool]
+
+    def test_wire_returns_none_when_tools_is_none(self):
+        """None input returns None."""
+        result = _tools._wire_google_auth(None)
+        assert result is None
+
+
+class TestWireGoogleAuthIdempotency:
+    """Test that wiring is idempotent."""
+
+    def test_wire_is_idempotent_same_config(self):
+        """Repeated wiring doesn't change the config."""
+        gmail = GmailTools()
+        oauth = GoogleOAuthTools()
+
+        _tools._wire_google_auth([oauth, gmail])
+        first_config = gmail.auth_config
+        first_config_id = gmail._wired_config_id
+
+        _tools._wire_google_auth([oauth, gmail])
+
+        assert gmail.auth_config is first_config
+        assert gmail._wired_config_id == first_config_id
+
+    def test_wire_tracks_config_id_per_tool(self):
+        """Each tool tracks its wired config via _wired_config_id."""
+        gmail = GmailTools()
+        oauth = GoogleOAuthTools()
+
+        _tools._wire_google_auth([oauth, gmail])
+
+        assert hasattr(gmail, "_wired_config_id")
+        assert hasattr(oauth, "_wired_config_id")
+        assert gmail._wired_config_id == oauth._wired_config_id
+
+
+class TestWireGoogleAuthWithAgent:
+    """Test wiring propagation from agent context."""
+
+    def test_wire_propagates_store_token_in_db_from_agent_db(self):
+        """When agent.db.store_auth_tokens=True, toolkits get store_token_in_db=True."""
+        mock_db = MagicMock()
+        mock_db.store_auth_tokens = True
+
+        mock_agent = MagicMock()
+        mock_agent.db = mock_db
+
+        gmail = GmailTools()
+        assert not getattr(gmail, "store_token_in_db", False)
+
+        _tools._wire_google_auth([gmail], agent=mock_agent)
+
+        assert gmail.store_token_in_db is True
+
+    def test_wire_propagates_service_account_from_auth_config(self):
+        """Service account config propagates from auth_config to toolkit."""
+        config = GoogleAuthConfig(
+            service_account_path="/path/to/key.json",
+            delegated_user="admin@company.com",
+        )
+        gmail = GmailTools(auth_config=config)
+
+        _tools._wire_google_auth([gmail])
+
+        assert gmail.service_account_path == "/path/to/key.json"
+        assert gmail.delegated_user == "admin@company.com"
+
+
+class TestAgentGetToolsWiring:
+    """Test wiring integration with Agent.get_tools()."""
+
+    def test_get_tools_calls_wire_every_time(self):
+        """_wire_google_auth is called on every get_tools() call."""
+        agent = Agent(model="openai:gpt-5.4", tools=[GmailTools()])
         run_context = RunContext(run_id="test", session_id="test")
         run_response = RunOutput(run_id="test")
         session = MagicMock()
@@ -38,65 +146,38 @@ class TestGoogleAuthWiringIdempotent:
         call_count = 0
         original_wire = _tools._wire_google_auth
 
-        def counting_wire(tools):
+        def counting_wire(tools, agent=None):
             nonlocal call_count
             call_count += 1
-            return original_wire(tools)
+            return original_wire(tools, agent)
 
         with patch.object(_tools, "_wire_google_auth", side_effect=counting_wire):
-            # Call get_tools multiple times (simulates retries)
             agent.get_tools(run_response=run_response, run_context=run_context, session=session)
             agent.get_tools(run_response=run_response, run_context=run_context, session=session)
             agent.get_tools(run_response=run_response, run_context=run_context, session=session)
 
-        # Called every time, but idempotent - no duplicate wiring
-        assert call_count == 3, f"Expected 3 calls, got {call_count}"
+        assert call_count == 3
 
-    def test_tools_wired_correctly_after_multiple_calls(self):
-        """Tools should remain wired after multiple get_tools() calls."""
-        agent = Agent(model="openai:gpt-4o", tools=[GoogleOAuthTools(), GmailTools()])
+    def test_get_tools_wires_gmail_tools(self):
+        """get_tools() wires GmailTools with auth_config."""
+        agent = Agent(model="openai:gpt-5.4", tools=[GoogleOAuthTools(), GmailTools()])
         run_context = RunContext(run_id="test", session_id="test")
         run_response = RunOutput(run_id="test")
         session = MagicMock()
 
-        # Call multiple times
-        for _ in range(3):
-            agent.get_tools(run_response=run_response, run_context=run_context, session=session)
+        agent.get_tools(run_response=run_response, run_context=run_context, session=session)
 
-        # Tools should be wired
         gmail = next((t for t in agent.tools if isinstance(t, GmailTools)), None)
-        assert gmail.oauth_config is not None
-
-    def test_per_tool_tracking_skips_already_wired(self):
-        """Tools track their wired state via _wired_config_id."""
-        gmail = GmailTools()
-        oauth = GoogleOAuthTools()
-
-        # First wire
-        _tools._wire_google_auth([oauth, gmail])
-
-        # Tools should have _wired_config_id set
-        assert hasattr(gmail, "_wired_config_id")
-        assert hasattr(oauth, "_wired_config_id")
-        assert gmail._wired_config_id == oauth._wired_config_id
-
-        # Both should share same config
-        assert gmail.oauth_config is oauth.oauth_config
-
-        # Second wire should be a no-op (same config)
-        original_config = gmail.oauth_config
-        _tools._wire_google_auth([oauth, gmail])
-
-        # Config should be unchanged
-        assert gmail.oauth_config is original_config
+        assert gmail is not None
+        assert gmail.auth_config is not None
 
 
-class TestAgentOSDeepCopyIsolation:
-    """Test that deep_copy provides proper isolation (AgentOS pattern)."""
+class TestDeepCopyIsolation:
+    """Test that deep_copy creates isolated tool instances."""
 
     def test_deep_copy_creates_independent_tools(self):
-        """Each deep_copy should have its own tools list."""
-        template = Agent(model="openai:gpt-4o", tools=[GmailTools()])
+        """deep_copy creates new tool list instances."""
+        template = Agent(model="openai:gpt-5.4", tools=[GmailTools()])
 
         copy_a = template.deep_copy()
         copy_b = template.deep_copy()
@@ -105,55 +186,14 @@ class TestAgentOSDeepCopyIsolation:
         assert id(copy_a.tools) != id(copy_b.tools)
 
     @pytest.mark.asyncio
-    async def test_agentos_concurrent_requests_isolated(self):
-        """Simulate AgentOS: concurrent requests with deep_copy are isolated."""
-        template = Agent(model="openai:gpt-4o", tools=[GoogleOAuthTools(), GmailTools()])
+    async def test_concurrent_deep_copy_requests_isolated(self):
+        """Concurrent requests via deep_copy get independently wired tools."""
+        template = Agent(model="openai:gpt-5.4", tools=[GoogleOAuthTools(), GmailTools()])
 
         results = {}
 
-        async def simulate_request(user_id: str, delay: float = 0):
-            await asyncio.sleep(delay)
-            # AgentOS does deep_copy per request
+        async def simulate_request(user_id: str):
             agent = template.deep_copy()
-
-            run_context = RunContext(run_id=f"run-{user_id}", session_id=f"s-{user_id}", user_id=user_id)
-            run_response = RunOutput(run_id=f"run-{user_id}")
-
-            tools = await agent.aget_tools(
-                run_response=run_response, run_context=run_context, session=MagicMock(), user_id=user_id
-            )
-
-            # Check if tools are wired
-            gmail = next((t for t in agent.tools if isinstance(t, GmailTools)), None)
-            results[user_id] = {
-                "tools_count": len(tools),
-                "gmail_wired": gmail.oauth_config is not None if gmail else False,
-            }
-
-        await asyncio.gather(
-            simulate_request("alice", 0),
-            simulate_request("bob", 0.01),
-            simulate_request("charlie", 0.02),
-        )
-
-        # All users should have wired tools
-        for user_id, result in results.items():
-            assert result["gmail_wired"], f"{user_id}'s GmailTools not wired"
-
-
-class TestSharedAgentStaticTools:
-    """Test shared agent with static tools (same tool objects)."""
-
-    @pytest.mark.asyncio
-    async def test_shared_agent_static_tools_all_wired(self):
-        """Shared agent with static tools: all users see wired tools."""
-        # Same agent instance shared across requests
-        agent = Agent(model="openai:gpt-4o", tools=[GoogleOAuthTools(), GmailTools()])
-
-        results = {}
-
-        async def simulate_request(user_id: str, delay: float = 0):
-            await asyncio.sleep(delay)
             run_context = RunContext(run_id=f"run-{user_id}", session_id=f"s-{user_id}", user_id=user_id)
             run_response = RunOutput(run_id=f"run-{user_id}")
 
@@ -162,30 +202,24 @@ class TestSharedAgentStaticTools:
             )
 
             gmail = next((t for t in agent.tools if isinstance(t, GmailTools)), None)
-            results[user_id] = gmail.oauth_config is not None if gmail else False
+            results[user_id] = gmail.auth_config is not None if gmail else False
 
         await asyncio.gather(
-            simulate_request("alice", 0),
-            simulate_request("bob", 0.01),
-            simulate_request("charlie", 0.02),
+            simulate_request("alice"),
+            simulate_request("bob"),
+            simulate_request("charlie"),
         )
 
-        # All users see the SAME tool objects, which are wired by first user
         for user_id, is_wired in results.items():
             assert is_wired, f"{user_id}'s GmailTools not wired"
 
 
-class TestSharedAgentCallableFactory:
-    """Test shared agent with callable factory (different tool objects per user)."""
+class TestCallableFactoryWiring:
+    """Test wiring with callable tool factories."""
 
     @pytest.mark.asyncio
-    async def test_shared_agent_cached_factory_all_wired(self):
-        """Shared agent with cached factory: ALL users get wired tools.
-
-        Even with different user_ids (different cache keys), each user's
-        tools are wired because _wire_google_auth is called every time
-        and is idempotent.
-        """
+    async def test_callable_factory_tools_get_wired(self):
+        """Tools from callable factories get wired per-user."""
         user_tools = {}
 
         def get_tools(run_context: RunContext):
@@ -193,14 +227,8 @@ class TestSharedAgentCallableFactory:
             user_tools[run_context.user_id] = tools
             return tools
 
-        # Shared agent with cached callable factory (default)
-        agent = Agent(
-            model="openai:gpt-4o",
-            tools=get_tools,
-            cache_callables=True,
-        )
+        agent = Agent(model="openai:gpt-5.4", tools=get_tools)
 
-        # Sequential requests
         for user_id in ["alice", "bob", "charlie"]:
             run_context = RunContext(run_id=f"run-{user_id}", session_id=f"s-{user_id}", user_id=user_id)
             run_response = RunOutput(run_id=f"run-{user_id}")
@@ -209,76 +237,6 @@ class TestSharedAgentCallableFactory:
                 run_response=run_response, run_context=run_context, session=MagicMock(), user_id=user_id
             )
 
-        # ALL users should have wired tools
         for user_id, tools in user_tools.items():
             gmail = next((t for t in tools if isinstance(t, GmailTools)), None)
-            assert gmail.oauth_config is not None, f"{user_id}'s GmailTools not wired"
-
-    @pytest.mark.asyncio
-    async def test_shared_agent_uncached_factory_all_wired(self):
-        """Shared agent with uncached factory: ALL users get wired tools.
-
-        Even with fresh tool instances per call, each user's tools are
-        wired because _wire_google_auth is called every time and is idempotent.
-        """
-        user_tools = {}
-
-        def get_tools(run_context: RunContext):
-            tools = [GoogleOAuthTools(), GmailTools()]
-            user_tools[run_context.user_id] = tools
-            return tools
-
-        # Shared agent with UNCACHED callable factory
-        agent = Agent(
-            model="openai:gpt-4o",
-            tools=get_tools,
-            cache_callables=False,
-        )
-
-        # Sequential requests
-        for user_id in ["alice", "bob", "charlie"]:
-            run_context = RunContext(run_id=f"run-{user_id}", session_id=f"s-{user_id}", user_id=user_id)
-            run_response = RunOutput(run_id=f"run-{user_id}")
-
-            await agent.aget_tools(
-                run_response=run_response, run_context=run_context, session=MagicMock(), user_id=user_id
-            )
-
-        # ALL users should have wired tools
-        for user_id, tools in user_tools.items():
-            gmail = next((t for t in tools if isinstance(t, GmailTools)), None)
-            assert gmail.oauth_config is not None, f"{user_id}'s GmailTools not wired"
-
-
-class TestWiringAcrossRuns:
-    """Test wiring behavior across multiple runs."""
-
-    @pytest.mark.asyncio
-    async def test_wiring_works_across_runs(self):
-        """Wiring should work correctly across multiple runs."""
-        agent = Agent(model="openai:gpt-4o", tools=[GmailTools()])
-
-        call_count = 0
-        original_wire = _tools._wire_google_auth
-
-        def counting_wire(tools):
-            nonlocal call_count
-            call_count += 1
-            return original_wire(tools)
-
-        with patch.object(_tools, "_wire_google_auth", side_effect=counting_wire):
-            # Run 1
-            run_context1 = RunContext(run_id="run-1", session_id="s-1")
-            run_response1 = RunOutput(run_id="run-1")
-            await agent.aget_tools(run_response=run_response1, run_context=run_context1, session=MagicMock())
-            assert call_count == 1
-
-            # Run 2
-            run_context2 = RunContext(run_id="run-2", session_id="s-2")
-            run_response2 = RunOutput(run_id="run-2")
-            await agent.aget_tools(run_response=run_response2, run_context=run_context2, session=MagicMock())
-            assert call_count == 2, "Wire called each run"
-
-        # Tools should still be wired
-        gmail = next((t for t in agent.tools if isinstance(t, GmailTools)), None)
-        assert gmail.oauth_config is not None
+            assert gmail.auth_config is not None, f"{user_id}'s GmailTools not wired"
