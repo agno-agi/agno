@@ -38,6 +38,7 @@ from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
 from agno.tools.google.oauth_tools import GoogleOAuthTools
 
+# Optional: db.encrypt_auth_tokens = False to skip AGNO_ENCRYPTION_KEY requirement
 db = SqliteDb(db_file="tmp/slack_gmail_calendar.db")
 
 agent = Agent(
