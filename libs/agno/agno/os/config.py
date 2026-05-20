@@ -30,7 +30,6 @@ class EvalsDomainConfig(BaseModel):
     """Configuration for the Evals domain of the AgentOS"""
 
     display_name: Optional[str] = None
-    available_models: Optional[List[str]] = None
 
 
 class SessionDomainConfig(BaseModel):

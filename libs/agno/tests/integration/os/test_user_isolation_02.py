@@ -459,8 +459,8 @@ class TestContinueRunOwnership:
             data={"tools": ""},
             headers=auth_header(token),
         )
-        # Either ownership-check 400 ("session_id required") or
-        # session_id-check 400 ("session_id is required to continue a run").
+        # Either ownership-check or session_id-check 400 (both now use
+        # SESSION_ID_REQUIRED = "session_id is required for this action").
         assert resp.status_code == 400, resp.text
 
     def test_agent_continue_foreign_run_returns_404(self, client):
