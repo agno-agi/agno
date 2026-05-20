@@ -16,7 +16,7 @@ from agno.models.google import GeminiInteractions
 
 agent = Agent(
     model=GeminiInteractions(
-        id="gemini-3-flash-preview",
+        id="gemini-3.5-flash",
         thinking_level="high",
     ),
     markdown=True,

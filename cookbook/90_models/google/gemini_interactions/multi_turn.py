@@ -21,7 +21,7 @@ from agno.models.google import GeminiInteractions
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=GeminiInteractions(id="gemini-3-flash-preview"),
+    model=GeminiInteractions(id="gemini-3.5-flash"),
     add_history_to_context=True,
     db=SqliteDb(db_file="tmp/data.db"),
     markdown=True,

@@ -4,7 +4,7 @@
 
 - Python: 3.12
 - SDK: google-genai (latest)
-- Model: gemini-3-flash-preview
+- Model: gemini-3.5-flash
 - Date: 2026-05-14
 
 ---
@@ -113,7 +113,7 @@
 
 **Status:** FAIL (API limitation)
 
-**Description:** Tests image generation using response_modalities=["text", "image"]. The Interactions API does not currently support image generation output with gemini-3-flash-preview.
+**Description:** Tests image generation using response_modalities=["text", "image"]. The Interactions API does not currently support image generation output with gemini-3.5-flash.
 
 **Result:** Model returned text instead of generating an image. Image generation is not yet supported through the Interactions API. The cookbook is kept as a reference for when support is added.
 
