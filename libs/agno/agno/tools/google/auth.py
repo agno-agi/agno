@@ -334,6 +334,9 @@ class GoogleOAuthConfig:
         login_hint: Optional[str] = None,
         # Route configuration
         callback_path: Optional[str] = None,
+        # Service account authentication (alternative to OAuth)
+        service_account_path: Optional[str] = None,
+        delegated_user: Optional[str] = None,
     ):
         self.client_id = client_id or os.getenv("GOOGLE_CLIENT_ID")
         self.client_secret = client_secret or os.getenv("GOOGLE_CLIENT_SECRET")
@@ -358,6 +361,9 @@ class GoogleOAuthConfig:
         self._callback_path = callback_path or os.getenv("GOOGLE_OAUTH_CALLBACK_PATH", "/google/oauth/callback")
         self._prompt = prompt
         self._login_hint = login_hint
+        # Service account auth (when set, OAuth is skipped)
+        self._service_account_path = service_account_path or os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
+        self._delegated_user = delegated_user or os.getenv("GOOGLE_DELEGATED_USER")
 
     def register_service(self, service: str, scopes: List[str]) -> None:
         # Union scopes if service already registered (multiple toolkits, different scopes)

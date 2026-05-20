@@ -134,6 +134,18 @@ def _wire_google_auth(
                     log_debug(f"Propagated store_token_in_db=True to {t.__class__.__name__}")
             break
 
+    # Propagate service account config from GoogleOAuthConfig to all Google toolkits
+    if shared_config:
+        sa_path = getattr(shared_config, "_service_account_path", None)
+        delegated = getattr(shared_config, "_delegated_user", None)
+        for t in google_toolkits:
+            if sa_path and not getattr(t, "service_account_path", None):
+                t.service_account_path = sa_path
+                log_debug(f"Propagated service_account_path to {t.__class__.__name__}")
+            if delegated and not getattr(t, "delegated_user", None):
+                t.delegated_user = delegated
+                log_debug(f"Propagated delegated_user to {t.__class__.__name__}")
+
     return tools
 
 

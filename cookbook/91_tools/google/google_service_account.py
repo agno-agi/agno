@@ -29,13 +29,24 @@ import os
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
+from agno.tools.google.auth import GoogleOAuthConfig
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
+from agno.tools.google.oauth_tools import GoogleOAuthTools
+
+# Configure service account ONCE — auto-propagates to all Google toolkits
+service_account_config = GoogleOAuthConfig(
+    service_account_path=os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE"),
+    delegated_user=os.getenv("GOOGLE_DELEGATED_USER"),
+)
 
 calendar_agent = Agent(
     name="Calendar Service Account Agent",
     model=OpenAIResponses(id="gpt-5.4"),
-    tools=[GoogleCalendarTools()],
+    tools=[
+        GoogleOAuthTools(oauth_config=service_account_config),
+        GoogleCalendarTools(),
+    ],
     instructions="You have Calendar access via service account. Only shared calendars are visible.",
     add_datetime_to_context=True,
     markdown=True,
@@ -44,7 +55,10 @@ calendar_agent = Agent(
 gmail_agent = Agent(
     name="Gmail Service Account Agent",
     model=OpenAIResponses(id="gpt-5.4"),
-    tools=[GmailTools(include_tools=["get_latest_emails", "search_emails"])],
+    tools=[
+        GoogleOAuthTools(oauth_config=service_account_config),
+        GmailTools(include_tools=["get_latest_emails", "search_emails"]),
+    ],
     instructions="You have Gmail access via service account with domain-wide delegation.",
     markdown=True,
 )
@@ -53,6 +67,7 @@ workspace_agent = Agent(
     name="Workspace Service Account Agent",
     model=OpenAIResponses(id="gpt-5.4"),
     tools=[
+        GoogleOAuthTools(oauth_config=service_account_config),
         GmailTools(include_tools=["get_latest_emails", "search_emails", "get_thread"]),
         GoogleCalendarTools(include_tools=["list_events", "get_event", "create_event"]),
     ],
