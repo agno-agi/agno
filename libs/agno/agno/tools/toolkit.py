@@ -305,11 +305,7 @@ class Toolkit:
             log_debug(f"Function: {f.name} registered with {self.name} (from @tool decorator)")
 
     def get_functions(self) -> Dict[str, Function]:
-        """Get sync functions dict.
-
-        Returns:
-            Dict of function name to Function for sync execution
-        """
+        """Get sync functions dict."""
         return self.functions
 
     def get_async_functions(self) -> Dict[str, Function]:
@@ -333,19 +329,11 @@ class Toolkit:
         return self._requires_connect
 
     def connect(self) -> None:
-        """
-        Establish any required connections for the toolkit.
-        Override this method in subclasses that require connection management.
-        Called automatically by the Agent when _requires_connect is True.
-        """
+        """Override in subclasses that require connection management."""
         pass
 
     def close(self) -> None:
-        """
-        Close any open connections for the toolkit.
-        Override this method in subclasses that require connection management.
-        Called automatically by the Agent when _requires_connect is True.
-        """
+        """Override in subclasses that require connection management."""
         pass
 
     def _clone_for_run(self) -> "Toolkit":
