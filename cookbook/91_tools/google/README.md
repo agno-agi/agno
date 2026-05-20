@@ -161,6 +161,7 @@ export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail, optional
 |------|-------------|
 | `google_workspace_agent.py` | Gmail + Calendar + Drive with shared OAuth (file storage) |
 | `google_workspace_with_db.py` | Gmail + Calendar + Drive with DB token storage |
+| `google_oauth_server.py` | AgentOS server with auto-mounted OAuth callback |
 | `google_service_account.py` | Service account with domain-wide delegation |
 | `google_enterprise_oauth.py` | OAuth with `hosted_domain` restriction for enterprise |
 | `calendar_gmail_meeting_prep.py` | Calendar + Gmail: meeting prep briefs with attendee email context |
