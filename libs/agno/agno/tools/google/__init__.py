@@ -43,10 +43,4 @@ def __getattr__(name: str):
         from agno.tools.google.sheets import GoogleSheetsTools
 
         return GoogleSheetsTools
-    if name == "GoogleAuth":
-        raise ImportError(
-            "GoogleAuth has been replaced. Use GoogleOAuthTools (the LLM tool) "
-            "and GoogleAuthConfig (the OAuth coordinator) instead. "
-            "See cookbook/91_tools/google/ for examples."
-        )
     raise AttributeError(f"module 'agno.tools.google' has no attribute {name!r}")
