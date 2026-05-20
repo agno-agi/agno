@@ -1063,7 +1063,7 @@ class AgentOS:
         seen_configs: set = set()
 
         try:
-            from agno.tools.google.auth import GoogleOAuthConfig
+            from agno.tools.google.auth import GoogleAuthConfig
             from agno.tools.google.oauth_tools import GoogleOAuthTools
         except ImportError:
             return routers
@@ -1076,16 +1076,15 @@ class AgentOS:
                 if not isinstance(tool, GoogleOAuthTools):
                     continue
 
-                oauth_config = getattr(tool, "oauth_config", None)
-                # Auto-create config from env vars if not provided
-                if oauth_config is None:
-                    oauth_config = GoogleOAuthConfig()
-                    tool.oauth_config = oauth_config
+                auth_config = getattr(tool, "auth_config", None)
+                if auth_config is None:
+                    auth_config = GoogleAuthConfig()
+                    tool.auth_config = auth_config
 
                 # Deduplicate by config object identity
-                if id(oauth_config) in seen_configs:
+                if id(auth_config) in seen_configs:
                     continue
-                seen_configs.add(id(oauth_config))
+                seen_configs.add(id(auth_config))
 
                 # Resolve DB: agent.db or AgentOS.db
                 db = agent.db or self.db
@@ -1097,14 +1096,14 @@ class AgentOS:
                     continue
 
                 try:
-                    router = oauth_config.get_oauth_router(db=db)
+                    router = auth_config.get_oauth_router(db=db)
                     routers.append(router)
-                    callback_path = getattr(oauth_config, "_callback_path", "/google/oauth/callback")
+                    callback_path = getattr(auth_config, "_callback_path", "/google/oauth/callback")
                     self._oauth_callback_paths.append(callback_path)
                     log_warning(
                         f"Auto-mounted Google OAuth callback at {callback_path}. "
                         f"Set GOOGLE_REDIRECT_URI to match (e.g., https://your-domain{callback_path}). "
-                        "To customize the path, use GoogleOAuthConfig(callback_path='/your/path')."
+                        "To customize the path, use GoogleAuthConfig(callback_path='/your/path')."
                     )
                 except Exception as e:
                     log_warning(f"Failed to auto-mount OAuth router: {e}")
