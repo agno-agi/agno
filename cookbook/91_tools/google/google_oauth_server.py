@@ -25,9 +25,10 @@ Run:
   .venvs/demo/bin/python cookbook/91_tools/google/google_oauth_server.py
 
 Test:
-  1. Open http://localhost:8000/google/oauth/callback?initiate=true in browser
-  2. Complete Google OAuth consent
-  3. Call the agent API with user_id to use the stored token
+  1. POST to /agents/gmail-agent/runs with message="Get my latest email"
+  2. Agent returns OAuth URL (via oauth_google tool)
+  3. Open URL in browser, complete Google consent
+  4. Token stored in DB, subsequent requests work
 
 For production:
   - Use PostgresDb instead of SqliteDb
@@ -69,4 +70,6 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="google_oauth_server:app", port=8000, reload=True)
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
