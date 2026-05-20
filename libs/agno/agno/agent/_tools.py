@@ -495,7 +495,7 @@ def parse_tools(
                     continue
                 _function_names.append(name)
                 _func = _func.model_copy(deep=True)
-                # model_copy shallow-copies entrypoint, leaving it bound to original toolkit
+                # Rebind entrypoint to cloned toolkit instance
                 if _func.entrypoint is not None:
                     bound = getattr(tool, name, None)
                     if bound is not None:
