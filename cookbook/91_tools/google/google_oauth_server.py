@@ -1,40 +1,4 @@
-"""
-Google OAuth Server with AgentOS
-================================
-
-Run a multi-user Gmail agent as a web server. Users authenticate via OAuth
-callback, and tokens are stored in the database for reuse.
-
-Key features:
-- AgentOS auto-mounts /google/oauth/callback from GoogleOAuthTools
-- Tokens persisted in SqliteDb (or PostgresDb for production)
-- Multi-user: each user_id gets their own token
-- Works with Slack, WhatsApp, or any interface that passes user_id
-
-Setup:
-  1. Enable Gmail API at https://console.cloud.google.com
-  2. Create OAuth 2.0 credentials (Web application, not Desktop)
-  3. Add authorized redirect URI: http://localhost:8000/google/oauth/callback
-  4. Export env vars:
-       export GOOGLE_CLIENT_ID=...
-       export GOOGLE_CLIENT_SECRET=...
-       export GOOGLE_REDIRECT_URI=http://localhost:8000/google/oauth/callback
-  5. pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
-
-Run:
-  .venvs/demo/bin/python cookbook/91_tools/google/google_oauth_server.py
-
-Test:
-  1. POST to /agents/gmail-agent/runs with message="Get my latest email"
-  2. Agent returns OAuth URL (via oauth_google tool)
-  3. Open URL in browser, complete Google consent
-  4. Token stored in DB, subsequent requests work
-
-For production:
-  - Use PostgresDb instead of SqliteDb
-  - Set GOOGLE_REDIRECT_URI to your public URL (e.g., https://your-app.com/google/oauth/callback)
-  - Use ngrok or cloudflared for local development with public URL
-"""
+"""Multi-user Gmail agent with AgentOS and OAuth callback."""
 
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
@@ -43,11 +7,19 @@ from agno.os import AgentOS
 from agno.tools.google.gmail import GmailTools
 from agno.tools.google.oauth_tools import GoogleOAuthTools
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+
 db = SqliteDb(
     db_file="tmp/google_oauth_server.db",
     store_auth_tokens=True,
     encrypt_auth_tokens=False,
 )
+
+# ---------------------------------------------------------------------------
+# Create Agent
+# ---------------------------------------------------------------------------
 
 gmail_agent = Agent(
     name="Gmail Agent",
@@ -62,6 +34,10 @@ gmail_agent = Agent(
     markdown=True,
 )
 
+# ---------------------------------------------------------------------------
+# Create AgentOS
+# ---------------------------------------------------------------------------
+
 agent_os = AgentOS(
     name="Google OAuth Demo",
     agents=[gmail_agent],
@@ -69,7 +45,22 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 
+# ---------------------------------------------------------------------------
+# Run
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
+    """
+    Run: GOOGLE_OAUTH_STATE_SECRET=secret python google_oauth_server.py
+
+    Setup:
+      1. Enable Gmail API at console.cloud.google.com
+      2. Create OAuth credentials (Web application)
+      3. Add redirect URI: http://localhost:8000/google/oauth/callback
+      4. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_OAUTH_STATE_SECRET
+
+    AgentOS auto-mounts /google/oauth/callback from GoogleOAuthTools.
+    """
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
