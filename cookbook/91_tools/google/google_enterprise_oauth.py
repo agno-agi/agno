@@ -8,15 +8,11 @@ Workspace domain (e.g., @company.com) can authenticate.
 Setup:
   1. Google Cloud Console -> OAuth consent screen -> Add your domain
   2. Create OAuth 2.0 Client ID (Desktop app for local testing)
-  3. Export env vars:
-       GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
-       GOOGLE_HOSTED_DOMAIN=company.com  # Restrict to this domain
+  3. Export GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET env vars
 
 Run:
   .venvs/demo/bin/python cookbook/91_tools/google/google_enterprise_oauth.py
 """
-
-import os
 
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
@@ -26,8 +22,8 @@ from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
 from agno.tools.google.oauth_tools import GoogleOAuthTools
 
-hosted_domain = os.getenv("GOOGLE_HOSTED_DOMAIN")
-oauth_config = GoogleOAuthConfig(hosted_domain=hosted_domain)
+# Restrict OAuth to users from this domain only (set to None to allow all domains)
+oauth_config = GoogleOAuthConfig(hosted_domain="agno.com")
 
 agent = Agent(
     name="Enterprise OAuth Agent",
@@ -47,5 +43,4 @@ agent = Agent(
 
 
 if __name__ == "__main__":
-    print(f"Hosted domain restriction: {hosted_domain or 'none (all domains allowed)'}")
     agent.print_response("What tools do you have access to?")
