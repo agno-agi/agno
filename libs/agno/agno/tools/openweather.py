@@ -70,7 +70,7 @@ class OpenWeatherTools(Toolkit):
         """
         try:
             params["appid"] = self.api_key
-            response = requests.get(url, params=params)
+            response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:

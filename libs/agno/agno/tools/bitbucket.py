@@ -74,7 +74,7 @@ class BitbucketTools(Toolkit):
         data: Optional[Dict[str, Any]] = None,
     ) -> Union[str, Dict[str, Any]]:
         url = f"{self.base_url}{endpoint}"
-        response = requests.request(method, url, headers=self.headers, json=data, params=params)
+        response = requests.request(method, url, headers=self.headers, json=data, params=params, timeout=10)
         response.raise_for_status()
         encoding_type = response.headers.get("Content-Type", "application/json")
         if encoding_type.startswith("application/json"):

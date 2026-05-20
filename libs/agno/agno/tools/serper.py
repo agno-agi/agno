@@ -88,7 +88,7 @@ class SerperTools(Toolkit):
             payload = json.dumps(params)
 
             log_debug(f"Making request to {url} with params: {params}")
-            response = requests.request("POST", url, headers=headers, data=payload)
+            response = requests.request("POST", url, headers=headers, data=payload, timeout=10)
             response.raise_for_status()
 
             log_debug(f"Successfully received response from {endpoint} endpoint")

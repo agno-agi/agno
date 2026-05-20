@@ -73,7 +73,7 @@ class ZendeskTools(Toolkit):
         auth = (self.username, self.password)
         url = f"https://{self.company_name}.zendesk.com/api/v2/help_center/articles/search.json?query={search_string}"
         try:
-            response = requests.get(url, auth=auth)
+            response = requests.get(url, auth=auth, timeout=10)
             response.raise_for_status()
             clean = re.compile("<.*?>")
             articles = [re.sub(clean, "", article["body"]) for article in response.json()["results"]]
