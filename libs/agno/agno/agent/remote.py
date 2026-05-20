@@ -7,9 +7,9 @@ from pydantic import BaseModel
 from agno.media import Audio, File, Image, Video
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.response import ToolExecution
 from agno.remote.base import BaseRemote, RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutput, RunOutputEvent
+from agno.run.requirement import RunRequirement
 from agno.utils.agent import validate_input
 from agno.utils.log import log_warning
 from agno.utils.remote import serialize_input
@@ -440,7 +440,7 @@ class RemoteAgent(BaseRemote):
     async def acontinue_run(
         self,
         run_id: str,
-        updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[False] = False,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -452,7 +452,7 @@ class RemoteAgent(BaseRemote):
     def acontinue_run(
         self,
         run_id: str,
-        updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[True] = True,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -463,7 +463,7 @@ class RemoteAgent(BaseRemote):
     def acontinue_run(  # type: ignore
         self,
         run_id: str,  # type: ignore
-        updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         stream: Optional[bool] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -476,7 +476,9 @@ class RemoteAgent(BaseRemote):
         headers = self._get_auth_headers(auth_token)
 
         if self.agentos_client:
-            tools_list = updated_tools or []
+            tools_list = (
+                [r.tool_execution for r in requirements if r.tool_execution is not None] if requirements else []
+            )
             if stream:
                 # Handle streaming response
                 return self.agentos_client.continue_agent_run_stream(  # type: ignore
