@@ -4919,7 +4919,7 @@ class SqliteDb(BaseDb):
                 return False
             token_id = self._auth_token_id(provider, user_id, service)
             now = int(time.time())
-            data = {
+            data: dict[str, Any] = {
                 "id": token_id,
                 "provider": provider,
                 "user_id": user_id,
