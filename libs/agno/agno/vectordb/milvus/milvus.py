@@ -175,7 +175,7 @@ class Milvus(VectorDb):
             ("content", DataType.VARCHAR, 65535, False),
             ("content_id", DataType.VARCHAR, 1000, False),
             ("content_hash", DataType.VARCHAR, 1000, False),
-            ("text", DataType.VARCHAR, 1000, False),
+            ("text", DataType.VARCHAR, 65535, False),
             ("meta_data", DataType.VARCHAR, 65535, False),
             ("usage", DataType.VARCHAR, 65535, False),
         ]
@@ -432,9 +432,9 @@ class Milvus(VectorDb):
                     "vector": document.embedding,
                     "name": document.name,
                     "content_id": document.content_id or "",
-                    "meta_data": meta_data,
+                    "meta_data": json.dumps(meta_data),
                     "content": cleaned_content,
-                    "usage": document.usage,
+                    "usage": json.dumps(document.usage) if document.usage else "{}",
                     "content_hash": content_hash,
                 }
                 self.client.insert(
@@ -515,9 +515,9 @@ class Milvus(VectorDb):
                     "vector": document.embedding,
                     "name": document.name,
                     "content_id": document.content_id or "",
-                    "meta_data": meta_data,
+                    "meta_data": json.dumps(meta_data),
                     "content": cleaned_content,
-                    "usage": document.usage,
+                    "usage": json.dumps(document.usage) if document.usage else "{}",
                     "content_hash": content_hash,
                 }
                 await self.async_client.insert(
@@ -574,9 +574,9 @@ class Milvus(VectorDb):
                     "vector": document.embedding,
                     "name": document.name,
                     "content_id": document.content_id or "",
-                    "meta_data": meta_data,  # type: ignore[dict-item]
+                    "meta_data": json.dumps(meta_data),
                     "content": cleaned_content,
-                    "usage": document.usage,  # type: ignore[dict-item]
+                    "usage": json.dumps(document.usage) if document.usage else "{}",
                     "content_hash": content_hash,
                 }
                 self.client.upsert(
@@ -656,9 +656,9 @@ class Milvus(VectorDb):
                     "vector": document.embedding,
                     "name": document.name,
                     "content_id": document.content_id or "",
-                    "meta_data": meta_data,  # type: ignore[dict-item]
+                    "meta_data": json.dumps(meta_data),
                     "content": cleaned_content,
-                    "usage": document.usage,  # type: ignore[dict-item]
+                    "usage": json.dumps(document.usage) if document.usage else "{}",
                     "content_hash": content_hash,
                 }
                 await self.async_client.upsert(
@@ -726,16 +726,19 @@ class Milvus(VectorDb):
         # Build search results
         search_results: List[Document] = []
         for result in results[0]:
+            entity = result["entity"]
+            meta_data = self._decode_json_field(entity.get("meta_data"), default={})
+            usage = self._decode_json_field(entity.get("usage"), default=None)
             search_results.append(
                 Document(
                     id=result["id"],
-                    name=result["entity"].get("name", None),
-                    meta_data=result["entity"].get("meta_data", {}),
-                    content=result["entity"].get("content", ""),
-                    content_id=result["entity"].get("content_id", None),
+                    name=entity.get("name", None),
+                    meta_data=meta_data,
+                    content=entity.get("content", ""),
+                    content_id=entity.get("content_id", None),
                     embedder=self.embedder,
-                    embedding=result["entity"].get("vector", None),
-                    usage=result["entity"].get("usage", None),
+                    embedding=entity.get("vector", None),
+                    usage=usage,
                 )
             )
 
@@ -792,16 +795,19 @@ class Milvus(VectorDb):
         # Build search results
         search_results: List[Document] = []
         for result in results[0]:
+            entity = result["entity"]
+            meta_data = self._decode_json_field(entity.get("meta_data"), default={})
+            usage = self._decode_json_field(entity.get("usage"), default=None)
             search_results.append(
                 Document(
                     id=result["id"],
-                    name=result["entity"].get("name", None),
-                    meta_data=result["entity"].get("meta_data", {}),
-                    content=result["entity"].get("content", ""),
-                    content_id=result["entity"].get("content_id", None),
+                    name=entity.get("name", None),
+                    meta_data=meta_data,
+                    content=entity.get("content", ""),
+                    content_id=entity.get("content_id", None),
                     embedder=self.embedder,
-                    embedding=result["entity"].get("vector", None),
-                    usage=result["entity"].get("usage", None),
+                    embedding=entity.get("vector", None),
+                    usage=usage,
                 )
             )
 
@@ -874,8 +880,8 @@ class Milvus(VectorDb):
             for hits in results:
                 for hit in hits:
                     entity = hit.get("entity", {})
-                    meta_data = json.loads(entity.get("meta_data", "{}")) if entity.get("meta_data") else {}
-                    usage = json.loads(entity.get("usage", "{}")) if entity.get("usage") else None
+                    meta_data = self._decode_json_field(entity.get("meta_data"), default={})
+                    usage = self._decode_json_field(entity.get("usage"), default=None)
 
                     search_results.append(
                         Document(
@@ -963,8 +969,8 @@ class Milvus(VectorDb):
             for hits in results:
                 for hit in hits:
                     entity = hit.get("entity", {})
-                    meta_data = json.loads(entity.get("meta_data", "{}")) if entity.get("meta_data") else {}
-                    usage = json.loads(entity.get("usage", "{}")) if entity.get("usage") else None
+                    meta_data = self._decode_json_field(entity.get("meta_data"), default={})
+                    usage = self._decode_json_field(entity.get("usage"), default=None)
 
                     search_results.append(
                         Document(
@@ -1123,6 +1129,18 @@ class Milvus(VectorDb):
             log_info(f"Error deleting documents with content_id {content_id}: {e}")
             return False
 
+    @staticmethod
+    def _decode_json_field(value: Any, default: Any) -> Any:
+        """Decode a Milvus VARCHAR field that stores JSON."""
+        if value is None or value == "":
+            return default
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except (ValueError, TypeError):
+                return default
+        return value
+
     def _build_expr(self, filters: Optional[Dict[str, Any]]) -> Optional[str]:
         """Build Milvus expression from filters."""
         if not filters:
@@ -1168,40 +1186,45 @@ class Milvus(VectorDb):
             metadata (Dict[str, Any]): The metadata to update
         """
         try:
-            # Search for documents with the given content_id
+            # Fetch the full row so we can do a complete upsert. Milvus only supports
+            # partial-field upsert from 2.6.2+, so we read every field and rewrite it.
             search_expr = f'content_id == "{content_id}"'
             results = self.client.query(
-                collection_name=self.collection, filter=search_expr, output_fields=["id", "meta_data", "filters"]
+                collection_name=self.collection,
+                filter=search_expr,
+                output_fields=["*"],
             )
 
             if not results:
                 log_debug(f"No documents found with content_id: {content_id}")
                 return
 
-            # Update each document
             updated_count = 0
-            for result in results:
-                doc_id = result["id"]
-                current_metadata = result.get("meta_data", {})
-                current_filters = result.get("filters", {})
+            for row in results:
+                current_metadata = self._decode_json_field(row.get("meta_data"), default={})
+                if not isinstance(current_metadata, dict):
+                    current_metadata = {}
 
-                # Merge existing metadata with new metadata
-                if isinstance(current_metadata, dict):
-                    updated_metadata = current_metadata.copy()
-                    updated_metadata.update(metadata)
-                else:
-                    updated_metadata = metadata
+                current_filters = self._decode_json_field(row.get("filters"), default={})
+                if not isinstance(current_filters, dict):
+                    current_filters = {}
 
-                if isinstance(current_filters, dict):
-                    updated_filters = current_filters.copy()
-                    updated_filters.update(metadata)
-                else:
-                    updated_filters = metadata
+                updated_metadata = {**current_metadata, **metadata}
+                updated_filters = {**current_filters, **metadata}
 
-                # Update the document
+                # Rebuild the full row.
+                new_row: Dict[str, Any] = dict(row)
+                new_row["meta_data"] = json.dumps(updated_metadata)
+                new_row["filters"] = json.dumps(updated_filters)
+                usage_value = row.get("usage")
+                if isinstance(usage_value, (dict, list)):
+                    new_row["usage"] = json.dumps(usage_value)
+                elif usage_value is None:
+                    new_row["usage"] = "{}"
+
                 self.client.upsert(
                     collection_name=self.collection,
-                    data=[{"id": doc_id, "meta_data": updated_metadata, "filters": updated_filters}],
+                    data=[new_row],
                 )
                 updated_count += 1
 
