@@ -16,6 +16,10 @@ Setup:
        SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET
        GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
        GOOGLE_REDIRECT_URI=https://<your-domain>/google/oauth/callback
+       GOOGLE_OAUTH_STATE_SECRET=<random-secret>  # CSRF protection
+       AGNO_ENCRYPTION_KEY=<random-secret>        # Token encryption at rest
+
+     Generate secrets with: python -c "import secrets; print(secrets.token_urlsafe(32))"
 
      To customize the callback path:
        GoogleOAuthConfig(callback_path="/auth/google/callback")
