@@ -1058,12 +1058,7 @@ class AgentOS:
         }
 
     def _discover_oauth_routers(self) -> List[APIRouter]:
-        """Find GoogleOAuthTools in agents and return their OAuth callback routers.
-
-        When GoogleOAuthTools is present in an agent's tools, this auto-mounts the
-        /google/oauth/callback endpoint so users don't need to manually call
-        `app.include_router(oauth_config.get_oauth_router(db=db))`.
-        """
+        """Find GoogleOAuthTools in agents and return their OAuth callback routers."""
         routers: List[APIRouter] = []
         seen_configs: set = set()
 
