@@ -125,6 +125,15 @@ def _wire_google_auth(
         # Mark as wired to this config
         t._wired_config_id = config_id  # type: ignore[attr-defined]
 
+    # Propagate store_token_in_db from GoogleOAuthTools to all Google toolkits
+    for oauth_tool in oauth_tools:
+        if getattr(oauth_tool, "store_token_in_db", False):
+            for t in google_toolkits:
+                if not getattr(t, "store_token_in_db", False):
+                    t.store_token_in_db = True
+                    log_debug(f"Propagated store_token_in_db=True to {t.__class__.__name__}")
+            break
+
     return tools
 
 

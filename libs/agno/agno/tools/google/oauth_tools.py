@@ -58,6 +58,7 @@ class GoogleOAuthTools(Toolkit):
     def __init__(
         self,
         oauth_config: Optional["GoogleOAuthConfig"] = None,
+        store_token_in_db: bool = False,
         name: str = "google_oauth_tools",
         **kwargs: Any,
     ):
@@ -71,6 +72,8 @@ class GoogleOAuthTools(Toolkit):
         )
         # May be None — wired later by framework in _wire_google_auth()
         self.oauth_config = oauth_config
+        # Propagated to all Google toolkits via _wire_google_auth
+        self.store_token_in_db = store_token_in_db
         self.register(self.oauth_google)
 
     def oauth_google(

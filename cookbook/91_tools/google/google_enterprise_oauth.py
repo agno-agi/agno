@@ -30,9 +30,10 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     db=SqliteDb(db_file="tmp/enterprise_oauth.db", encrypt_auth_tokens=False),
     tools=[
-        GoogleOAuthTools(oauth_config=oauth_config),
-        GmailTools(include_tools=["get_latest_emails", "search_emails"], store_token_in_db=True),
-        GoogleCalendarTools(include_tools=["list_events", "create_event"], store_token_in_db=True),
+        # store_token_in_db here auto-applies to all Google toolkits
+        GoogleOAuthTools(oauth_config=oauth_config, store_token_in_db=True),
+        GmailTools(include_tools=["get_latest_emails", "search_emails"]),
+        GoogleCalendarTools(include_tools=["list_events", "create_event"]),
     ],
     instructions=(
         "You are an enterprise assistant with Gmail and Calendar access. "
