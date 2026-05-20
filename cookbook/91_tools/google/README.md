@@ -144,6 +144,7 @@ export GOOGLE_DELEGATED_USER=user@yourdomain.com  # required for Gmail, optional
 | `drive_file_search.py` | Search files with structured output schema and pagination |
 | `drive_document_reader.py` | Read and summarize Google Docs, Sheets, and Slides as text |
 | `drive_folder_organizer.py` | Browse folder structure, upload local files, and download from Drive |
+| `drive_all_drives_search.py` | Search across personal and shared drives organization-wide |
 
 ### Slides
 
