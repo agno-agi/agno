@@ -4845,6 +4845,17 @@ class SqliteDb(BaseDb):
         return f"{provider}:{user_id or ''}:{service}"
 
     def get_auth_token(self, provider: str, user_id: Optional[str], service: str) -> Optional[Dict[str, Any]]:
+        """
+        Get an OAuth token from the database.
+
+        Args:
+            provider: OAuth provider name (e.g., "google")
+            user_id: User identifier, or None for single-user mode
+            service: Service name (e.g., "gmail", "calendar")
+
+        Returns:
+            Token dict with decrypted token_data, or None if not found.
+        """
         try:
             table = self._get_table(table_type="auth_tokens")
             if table is None:
@@ -4862,6 +4873,18 @@ class SqliteDb(BaseDb):
             return None
 
     def upsert_auth_token(self, token: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Insert or update an OAuth token.
+
+        Args:
+            token: Dict with provider, user_id, service, token_data, granted_scopes.
+
+        Returns:
+            The stored token dict.
+
+        Raises:
+            RuntimeError: If table creation fails.
+        """
         try:
             self._validate_auth_token_payload(token)
             table = self._get_table(table_type="auth_tokens", create_table_if_not_found=True)
@@ -4892,6 +4915,17 @@ class SqliteDb(BaseDb):
             raise
 
     def delete_auth_token(self, provider: str, user_id: Optional[str], service: str) -> bool:
+        """
+        Delete an OAuth token from the database.
+
+        Args:
+            provider: OAuth provider name (e.g., "google")
+            user_id: User identifier, or None for single-user mode
+            service: Service name (e.g., "gmail", "calendar")
+
+        Returns:
+            True if a token was deleted, False otherwise.
+        """
         try:
             table = self._get_table(table_type="auth_tokens")
             if table is None:
@@ -4914,6 +4948,21 @@ class SqliteDb(BaseDb):
         expires_at: int,
         scopes: Optional[list] = None,
     ) -> bool:
+        """
+        Store PKCE state for an in-progress OAuth flow.
+
+        Args:
+            provider: OAuth provider name (e.g., "google")
+            user_id: User identifier, or None for single-user mode
+            service: Service name (e.g., "gmail", "calendar")
+            verifier: PKCE code verifier
+            state_id: State parameter for callback validation
+            expires_at: Unix timestamp when this PKCE state expires
+            scopes: Requested OAuth scopes
+
+        Returns:
+            True if state was stored successfully.
+        """
         try:
             table = self._get_table(table_type="auth_tokens", create_table_if_not_found=True)
             if table is None:
