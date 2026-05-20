@@ -50,7 +50,6 @@ db = SqliteDb(
 
 gmail_agent = Agent(
     name="Gmail Agent",
-    agent_id="gmail-agent",
     model=OpenAIResponses(id="gpt-5.4"),
     db=db,
     tools=[
@@ -62,11 +61,12 @@ gmail_agent = Agent(
     markdown=True,
 )
 
-app = AgentOS(
+agent_os = AgentOS(
     name="Google OAuth Demo",
     agents=[gmail_agent],
     db=db,
 )
+app = agent_os.get_app()
 
 if __name__ == "__main__":
-    app.serve(port=8000)
+    agent_os.serve(app="google_oauth_server:app", port=8000, reload=True)
