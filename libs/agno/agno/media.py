@@ -103,6 +103,7 @@ class Image(BaseModel):
         try:
             content_bytes = base64.b64decode(base64_content)
         except Exception:
+            log_error(f"Failed to decode base64 content for Image, treating as raw UTF-8")
             content_bytes = base64_content.encode("utf-8")
 
         return cls(content=content_bytes, id=id or str(uuid4()), mime_type=mime_type, format=format, **kwargs)
@@ -222,6 +223,7 @@ class Audio(BaseModel):
         try:
             content_bytes = base64.b64decode(base64_content)
         except Exception:
+            log_error(f"Failed to decode base64 content for Audio, treating as raw UTF-8")
             # If not valid base64, encode as UTF-8 bytes
             content_bytes = base64_content.encode("utf-8")
 
@@ -351,6 +353,7 @@ class Video(BaseModel):
         try:
             content_bytes = base64.b64decode(base64_content)
         except Exception:
+            log_error(f"Failed to decode base64 content for Video, treating as raw UTF-8")
             content_bytes = base64_content.encode("utf-8")
 
         return cls(content=content_bytes, id=id or str(uuid4()), mime_type=mime_type, format=format, **kwargs)
@@ -458,6 +461,7 @@ class File(BaseModel):
         try:
             content_bytes = base64.b64decode(base64_content)
         except Exception:
+            log_error(f"Failed to decode base64 content for File, treating as raw UTF-8")
             # If not valid base64, it might be plain text content (text/csv, text/plain, etc.)
             # which is stored as UTF-8 strings, not base64
             content_bytes = base64_content.encode("utf-8")
@@ -540,8 +544,8 @@ class File(BaseModel):
                 try:
                     if isinstance(self.content, bytes):
                         content_normalised = b64encode(self.content).decode("utf-8")
-                except Exception:
-                    pass
+                except Exception as e:
+                    log_error(f"Failed to normalise File content: {e}")
         return content_normalised
 
     def to_dict(self) -> Dict[str, Any]:
