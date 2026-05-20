@@ -26,7 +26,7 @@ Setup:
 from typing import List, Literal, Optional
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
 from pydantic import BaseModel, Field
@@ -76,7 +76,7 @@ class MeetingPrepBrief(BaseModel):
 
 agent = Agent(
     name="Meeting Prep Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=[
         GoogleCalendarTools(
             create_event=False,

@@ -20,12 +20,12 @@ Setup:
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.google.slides import GoogleSlidesTools
 
 agent = Agent(
     name="Media Slides Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=[GoogleSlidesTools()],
     instructions=[
         "Create visually engaging slides with media content.",

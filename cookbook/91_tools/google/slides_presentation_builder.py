@@ -23,7 +23,7 @@ Setup:
 from typing import List, Optional
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.google.slides import GoogleSlidesTools
 from pydantic import BaseModel, Field
 
@@ -43,7 +43,7 @@ class PresentationPlan(BaseModel):
 
 agent = Agent(
     name="Presentation Builder",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=[GoogleSlidesTools()],
     instructions=[
         "Create well-structured presentations with logical slide flow.",

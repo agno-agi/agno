@@ -19,12 +19,12 @@ Setup:
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.google.calendar import GoogleCalendarTools
 
 agent = Agent(
     name="Event Creator",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=[GoogleCalendarTools()],
     instructions=[
         "When creating events, always include a clear title and appropriate timezone.",

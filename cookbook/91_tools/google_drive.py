@@ -3,7 +3,7 @@ Google Drive Agent that can search, list, read, upload, and download files using
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.google.drive import GoogleDriveTools
 
 # ---------------------------------------------------------------------------
@@ -13,7 +13,7 @@ from agno.tools.google.drive import GoogleDriveTools
 # Example 1: Read-only Drive agent (default — upload and download disabled)
 read_only_agent = Agent(
     name="Drive Reader Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=[GoogleDriveTools()],
     description="You are a Google Drive specialist that can search and read files.",
     instructions=[
@@ -28,7 +28,7 @@ read_only_agent = Agent(
 # Example 2: Full Drive agent with upload enabled
 full_drive_agent = Agent(
     name="Full Drive Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=[GoogleDriveTools(upload_file=True, download_file=True)],
     description="You are a Google Drive agent with full read and write capabilities.",
     instructions=[

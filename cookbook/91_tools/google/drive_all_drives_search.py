@@ -21,7 +21,7 @@ Setup:
 from typing import List, Optional
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.google.drive import GoogleDriveTools
 from pydantic import BaseModel, Field
 
@@ -45,7 +45,7 @@ class CompanySearchResult(BaseModel):
 
 agent = Agent(
     name="Compliance Document Finder",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=[
         GoogleDriveTools(
             corpora="allDrives",
