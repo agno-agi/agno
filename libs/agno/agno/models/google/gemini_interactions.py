@@ -12,7 +12,7 @@ import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Literal, Optional, Type, Union
+from typing import Any, ClassVar, Dict, Iterator, List, Literal, Optional, Tuple, Type, Union
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -36,6 +36,7 @@ try:
     from google.genai._interactions.types.model_output_step import ModelOutputStep
     from google.genai._interactions.types.step_delta import (
         DeltaArgumentsDelta,
+        DeltaImage,
         DeltaText,
         DeltaThoughtSignature,
         DeltaThoughtSummary,
@@ -103,6 +104,13 @@ class GeminiInteractions(Model):
     seed: Optional[int] = None
     response_modalities: Optional[list[str]] = None
 
+    # Raw GenerationConfigParam passthrough. Accepts either a dict or a
+    # Pydantic model (e.g. google.genai.types.GenerateContentConfig). Merged
+    # into the generation_config built from the fields above; keys here
+    # override field-derived values. Pydantic models are dumped with
+    # exclude_none so unset fields don't flood the request.
+    generation_config: Optional[Union[Dict[str, Any], BaseModel]] = None
+
     # Interactions API specific parameters
     store: Optional[bool] = None  # Whether to persist interactions server-side (default: True)
 
@@ -113,6 +121,43 @@ class GeminiInteractions(Model):
     search: bool = False
     url_context: bool = False
     code_execution: bool = False
+    # Remote MCP servers. Supported on the model path and on Deep Research;
+    # NOT supported on Antigravity (the docs list it as out-of-scope).
+    # Each entry:
+    #   {"name": "...", "url": "https://...", "headers": {...}, "allowed_tools": [...]}
+    # `type` is added automatically; only `url` is strictly required.
+    mcp_servers: Optional[List[Dict[str, Any]]] = None
+    # File Search store names to ground responses on your own corpora, e.g.
+    # ["fileSearchStores/my-store-name"]. Supported on the model path and on
+    # Deep Research; NOT supported on Antigravity.
+    file_search_store_names: Optional[List[str]] = None
+
+    # Agent path (e.g. Deep Research, Antigravity). When `agent` is set, the
+    # request uses the agent + agent_config path instead of model +
+    # generation_config. The SDK enforces these are mutually exclusive.
+    # Examples:
+    #   agent="deep-research-preview-04-2026"
+    #   agent="antigravity-preview-05-2026"
+    agent: Optional[str] = None
+    # Deep Research agent_config knobs (only sent when `agent` is a deep-research id):
+    collaborative_planning: Optional[bool] = None  # turn 1 returns a plan; flip to False to execute
+    thinking_summaries: Optional[Literal["auto", "none"]] = None
+    visualization: Optional[Literal["off", "auto"]] = None
+    # Antigravity environment. One of:
+    #   - "remote"                  -> provision a fresh remote sandbox
+    #   - "env_<id>"                -> reuse an existing environment by id
+    #   - {...EnvironmentConfig}    -> custom sources / network rules
+    # Only forwarded on the agent path; ignored otherwise.
+    environment: Optional[Union[str, Dict[str, Any]]] = None
+    # Background polling cadence. Used for agents that run in background
+    # mode (Deep Research). Antigravity runs in the foreground and does
+    # not engage these knobs.
+    agent_poll_interval: float = 10.0  # seconds between status polls
+    agent_max_wait: float = 1800.0  # max seconds to wait for a terminal status (Deep Research can take minutes)
+    # Terminal statuses for a background agent interaction. "completed" /
+    # "failed" are documented; the rest are defensive. ClassVar so the
+    # dataclass does not treat it as an instance field.
+    _TERMINAL_STATUSES: ClassVar[Tuple[str, ...]] = ("completed", "failed", "cancelled", "incomplete")
 
     # Inference tier: "flex" (lower cost, higher latency), "standard", or "priority" (lowest latency)
     service_tier: Optional[Literal["flex", "standard", "priority"]] = None
@@ -127,19 +172,20 @@ class GeminiInteractions(Model):
     # Client instance
     client: Optional[GeminiClient] = None
 
-    def _get_previous_interaction_id(self, messages: List[Message]) -> Optional[str]:
-        """Extract the previous interaction ID from message provider_data.
+    def _find_previous_interaction(self, messages: List[Message]) -> tuple[Optional[str], int]:
+        """Find the most recent assistant message with an interaction_id.
 
-        Walks messages in reverse to find the most recent assistant message
-        with an interaction_id. This avoids storing state at instance level,
-        which would be unsafe if two concurrent agents share the same model.
+        Returns (interaction_id, index_in_messages) or (None, -1). The index
+        marks the last turn the server has seen; messages after it are the
+        new turns to send. Walks in reverse so we pick the most recent.
         """
-        for msg in reversed(messages):
+        for i in range(len(messages) - 1, -1, -1):
+            msg = messages[i]
             if msg.role == "assistant" and msg.provider_data:
                 iid = msg.provider_data.get("interaction_id")
                 if iid:
-                    return iid
-        return None
+                    return iid, i
+        return None, -1
 
     def get_client(self) -> GeminiClient:
         """Returns an instance of the GeminiClient.
@@ -187,6 +233,9 @@ class GeminiInteractions(Model):
                 "thinking_level": self.thinking_level,
                 "store": self.store,
                 "service_tier": self.service_tier,
+                "generation_config": self.generation_config,
+                "agent": self.agent,
+                "environment": self.environment,
             }
         )
         return {k: v for k, v in model_dict.items() if v is not None}
@@ -336,14 +385,19 @@ class GeminiInteractions(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> Dict[str, Any]:
-        """Build keyword arguments for interactions.create()."""
-        kwargs: Dict[str, Any] = {
-            "model": self.id,
-        }
+        """Build keyword arguments for interactions.create().
 
-        # Build input from messages
-        input_turns = self._build_input(messages)
-        kwargs["input"] = input_turns
+        Two mutually exclusive paths (enforced by the SDK):
+          - model path:  model + generation_config (default)
+          - agent path:  agent + agent_config (when self.agent is set, e.g.
+            a Deep Research agent id)
+        """
+        use_agent_path = self.agent is not None
+        kwargs: Dict[str, Any] = {}
+        if use_agent_path:
+            kwargs["agent"] = self.agent
+        else:
+            kwargs["model"] = self.id
 
         # System instruction from the last system message (consistent with gemini.py)
         system_message = None
@@ -351,30 +405,73 @@ class GeminiInteractions(Model):
             if msg.role == "system":
                 if isinstance(msg.content, str):
                     system_message = msg.content
-        if system_message:
+
+        if system_message and not use_agent_path:
+            # Agent path (Deep Research, etc.) rejects `system_instruction` and
+            # treats anything in `input` as the research request. Agno's
+            # auto-injected formatting boilerplate is not user research intent,
+            # so it is dropped on the agent path rather than folded in.
             kwargs["system_instruction"] = system_message
 
-        # Previous interaction for multi-turn (read from message provider_data)
-        previous_interaction_id = self._get_previous_interaction_id(messages)
-        if previous_interaction_id:
-            kwargs["previous_interaction_id"] = previous_interaction_id
+        # When store=False on the model path, the user has opted out of
+        # server-side state - send the full message history and don't chain
+        # via previous_interaction_id. Otherwise (including the agent path,
+        # which forces store=True), leverage server-side state: pass
+        # previous_interaction_id and send only the messages AFTER the prior
+        # assistant turn (the server already has everything up to that point).
+        if self.store is False and not use_agent_path:
+            input_messages: List[Message] = messages
+        else:
+            previous_interaction_id, boundary_idx = self._find_previous_interaction(messages)
+            input_messages = messages if boundary_idx == -1 else messages[boundary_idx + 1 :]
+            if previous_interaction_id:
+                kwargs["previous_interaction_id"] = previous_interaction_id
 
-        # Generation config (only params supported by the Interactions API SDK)
-        generation_config: Dict[str, Any] = {}
-        if self.temperature is not None:
-            generation_config["temperature"] = self.temperature
-        if self.top_p is not None:
-            generation_config["top_p"] = self.top_p
-        if self.max_output_tokens is not None:
-            generation_config["max_output_tokens"] = self.max_output_tokens
-        if self.stop_sequences is not None:
-            generation_config["stop_sequences"] = self.stop_sequences
-        if self.seed is not None:
-            generation_config["seed"] = self.seed
-        if self.thinking_level is not None:
-            generation_config["thinking_level"] = self.thinking_level
-        if generation_config:
-            kwargs["generation_config"] = generation_config
+        kwargs["input"] = self._build_input(input_messages)
+
+        if use_agent_path:
+            # agent_config is only valid with the agent path. For Deep Research
+            # agents, send the deep-research config knobs. The SDK rejects
+            # generation_config on this path.
+            agent_config: Dict[str, Any] = {}
+            if str(self.agent).startswith("deep-research"):
+                agent_config["type"] = "deep-research"
+                if self.collaborative_planning is not None:
+                    agent_config["collaborative_planning"] = self.collaborative_planning
+                if self.thinking_summaries is not None:
+                    agent_config["thinking_summaries"] = self.thinking_summaries
+                if self.visualization is not None:
+                    agent_config["visualization"] = self.visualization
+            # Only send agent_config if it carries a discriminating `type`.
+            if agent_config.get("type"):
+                kwargs["agent_config"] = agent_config
+        else:
+            # Generation config (only params supported by the Interactions API SDK)
+            generation_config: Dict[str, Any] = {}
+            if self.temperature is not None:
+                generation_config["temperature"] = self.temperature
+            if self.top_p is not None:
+                generation_config["top_p"] = self.top_p
+            if self.max_output_tokens is not None:
+                generation_config["max_output_tokens"] = self.max_output_tokens
+            if self.stop_sequences is not None:
+                generation_config["stop_sequences"] = self.stop_sequences
+            if self.seed is not None:
+                generation_config["seed"] = self.seed
+            if self.thinking_level is not None:
+                generation_config["thinking_level"] = self.thinking_level
+            # Merge user-provided raw config last - their keys override field-derived values.
+            # If it's a Pydantic model (e.g. GenerateContentConfig), dump it with
+            # exclude_none so the request isn't flooded with unset fields.
+            if self.generation_config:
+                extra = (
+                    self.generation_config.model_dump(exclude_none=True)
+                    if isinstance(self.generation_config, BaseModel)
+                    else self.generation_config
+                )
+                generation_config.update(extra)
+            if generation_config:
+                kwargs["generation_config"] = generation_config
 
         # Response modalities
         if self.response_modalities:
@@ -402,6 +499,13 @@ class GeminiInteractions(Model):
             all_tools.append({"type": "url_context"})
         if self.code_execution:
             all_tools.append({"type": "code_execution"})
+        if self.mcp_servers:
+            for server in self.mcp_servers:
+                # Discriminator goes last so a stray "type" in the user's
+                # server dict can't clobber it.
+                all_tools.append({**server, "type": "mcp_server"})
+        if self.file_search_store_names:
+            all_tools.append({"type": "file_search", "file_search_store_names": self.file_search_store_names})
         if all_tools:
             kwargs["tools"] = all_tools
 
@@ -412,6 +516,35 @@ class GeminiInteractions(Model):
         # Store
         if self.store is not None:
             kwargs["store"] = self.store
+
+        if use_agent_path:
+            # The agent path always requires server-side state.
+            kwargs["store"] = True
+
+            # Per-agent background semantics:
+            #   - Deep Research REQUIRES background=True (long-running, server
+            #     drives the autonomous loop).
+            #   - Antigravity does NOT support background=True (the SDK
+            #     rejects it; the agent runs in the foreground).
+            # Anything else: leave background unset and let the SDK default
+            # apply.
+            agent_id = str(self.agent)
+            if agent_id.startswith("deep-research"):
+                kwargs["background"] = True
+                log_debug(
+                    "Deep Research requires background execution; forcing background=True and store=True.",
+                    log_level=2,
+                )
+            else:
+                log_debug(
+                    "Agent path forcing store=True (server-side state is required).",
+                    log_level=2,
+                )
+
+            # Antigravity (and any future agent that takes one) reads its
+            # sandbox spec from `environment`. Forwarded as-is.
+            if self.environment is not None:
+                kwargs["environment"] = self.environment
 
         return kwargs
 
@@ -460,6 +593,20 @@ class GeminiInteractions(Model):
 
         interaction_id = getattr(response, "id", None)
 
+        # Surface any non-success terminal status as an error rather than
+        # returning a silently empty/partial response. "completed" is the
+        # only success state; "failed" carries an error reason, while
+        # "cancelled" / "incomplete" indicate the autonomous loop stopped
+        # before finishing the work.
+        status = getattr(response, "status", None)
+        if status in ("failed", "cancelled", "incomplete"):
+            error_detail = getattr(response, "error", None)
+            raise ModelProviderError(
+                message=f"Interaction ended with status '{status}': {error_detail or 'no error detail provided'}",
+                model_name=self.name,
+                model_id=self.id,
+            )
+
         steps = getattr(response, "steps", None)
         if not steps:
             if model_response.provider_data is None:
@@ -477,17 +624,21 @@ class GeminiInteractions(Model):
                                 model_response.content = text
                             else:
                                 model_response.content += text
-                            # Extract citations from annotations
+                            # Extract citations from annotations. Deep Research
+                            # also emits file_citation / place_citation in
+                            # addition to url_citation.
                             annotations = getattr(content_item, "annotations", None)
                             if annotations:
                                 for annotation in annotations:
                                     ann_type = getattr(annotation, "type", None)
+                                    if ann_type not in ("url_citation", "file_citation", "place_citation"):
+                                        continue
+                                    if model_response.citations is None:
+                                        model_response.citations = Citations(raw=[], urls=[])
+                                    if model_response.citations.raw is None:
+                                        model_response.citations.raw = []
+                                    model_response.citations.raw.append(annotation)
                                     if ann_type == "url_citation":
-                                        if model_response.citations is None:
-                                            model_response.citations = Citations(raw=[], urls=[])
-                                        if model_response.citations.raw is None:
-                                            model_response.citations.raw = []
-                                        model_response.citations.raw.append(annotation)
                                         if model_response.citations.urls is None:
                                             model_response.citations.urls = []
                                         model_response.citations.urls.append(
@@ -576,15 +727,50 @@ class GeminiInteractions(Model):
         """
         model_response = ModelResponse()
 
+        # Every event carries an event_id used to resume a dropped/ended stream
+        # (background interactions like Deep Research end the initial SSE early
+        # and continue server-side; we reconnect from last_event_id).
+        event_id = getattr(stream_event, "event_id", None)
+        if event_id:
+            stream_state["last_event_id"] = event_id
+
         if isinstance(stream_event, interaction_types.InteractionCreatedEvent):
             if stream_event.interaction and hasattr(stream_event.interaction, "id"):
-                model_response.provider_data = {"interaction_id": stream_event.interaction.id}
+                iid = stream_event.interaction.id
+                model_response.provider_data = {"interaction_id": iid}
+                stream_state["interaction_id"] = iid
             model_response.role = "assistant"
+
+        elif isinstance(stream_event, interaction_types.InteractionStatusUpdate):
+            # Progress ping for a background interaction. No user-visible
+            # content; just record the latest status for the reconnect loop.
+            status = getattr(stream_event, "status", None)
+            if status:
+                stream_state["status"] = status
+            iid = getattr(stream_event, "interaction_id", None)
+            if iid:
+                stream_state["interaction_id"] = iid
+
+        elif isinstance(stream_event, interaction_types.ErrorEvent):
+            stream_state["completed"] = True
+            detail = getattr(stream_event, "error", None) or getattr(stream_event, "message", None)
+            raise ModelProviderError(
+                message=f"Interaction stream error: {detail or 'no detail provided'}",
+                model_name=self.name,
+                model_id=self.id,
+            )
 
         elif isinstance(stream_event, interaction_types.StepDelta):
             delta = stream_event.delta
             if isinstance(delta, DeltaText):
                 model_response.content = delta.text or ""
+            elif isinstance(delta, DeltaImage):
+                # Streamed visualization charts (visualization="auto").
+                image = self._parse_image_content(delta)
+                if image:
+                    if model_response.images is None:
+                        model_response.images = []
+                    model_response.images.append(image)
             elif isinstance(delta, DeltaThoughtSummary):
                 summary_content = getattr(delta, "content", None)
                 if summary_content and isinstance(summary_content, TextContent):
@@ -623,6 +809,7 @@ class GeminiInteractions(Model):
                 model_response.tool_calls.append(pending["tool_call"])
 
         elif isinstance(stream_event, interaction_types.InteractionCompletedEvent):
+            stream_state["completed"] = True
             if stream_event.interaction:
                 if hasattr(stream_event.interaction, "usage") and stream_event.interaction.usage:
                     usage = stream_event.interaction.usage
@@ -639,6 +826,67 @@ class GeminiInteractions(Model):
                     model_response.provider_data["interaction_id"] = stream_event.interaction.id
 
         return model_response, stream_state
+
+    def _poll_until_terminal(self, interaction: Any) -> Any:
+        """Poll interactions.get() until the background interaction is terminal.
+
+        Used for the agent path (background=True), where create() returns an
+        in_progress interaction. Returns the final interaction.
+        """
+        import time
+
+        status = getattr(interaction, "status", None)
+        if status is None or status in self._TERMINAL_STATUSES:
+            return interaction
+
+        interaction_id = getattr(interaction, "id", None)
+        if not interaction_id:
+            return interaction
+
+        deadline = time.monotonic() + self.agent_max_wait
+        client = self.get_client()
+        while True:
+            if time.monotonic() > deadline:
+                raise ModelProviderError(
+                    message=f"Agent interaction did not complete within {self.agent_max_wait}s (last status: {status})",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
+            time.sleep(self.agent_poll_interval)
+            interaction = client.interactions.get(interaction_id)
+            status = getattr(interaction, "status", None)
+            log_debug(f"Agent interaction {interaction_id} status: {status}", log_level=2)
+            if status is None or status in self._TERMINAL_STATUSES:
+                return interaction
+
+    async def _apoll_until_terminal(self, interaction: Any) -> Any:
+        """Async variant of _poll_until_terminal."""
+        import asyncio
+
+        status = getattr(interaction, "status", None)
+        if status is None or status in self._TERMINAL_STATUSES:
+            return interaction
+
+        interaction_id = getattr(interaction, "id", None)
+        if not interaction_id:
+            return interaction
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.agent_max_wait
+        client = self.get_client()
+        while True:
+            if loop.time() > deadline:
+                raise ModelProviderError(
+                    message=f"Agent interaction did not complete within {self.agent_max_wait}s (last status: {status})",
+                    model_name=self.name,
+                    model_id=self.id,
+                )
+            await asyncio.sleep(self.agent_poll_interval)
+            interaction = await client.aio.interactions.get(interaction_id)
+            status = getattr(interaction, "status", None)
+            log_debug(f"Agent interaction {interaction_id} status: {status}", log_level=2)
+            if status is None or status in self._TERMINAL_STATUSES:
+                return interaction
 
     def invoke(
         self,
@@ -658,6 +906,9 @@ class GeminiInteractions(Model):
         try:
             assistant_message.metrics.start_timer()
             interaction = self.get_client().interactions.create(**request_kwargs)
+            # Agent path runs in the background; poll until the result is ready.
+            if request_kwargs.get("background"):
+                interaction = self._poll_until_terminal(interaction)
             assistant_message.metrics.stop_timer()
 
             return self._parse_provider_response(interaction)
@@ -682,9 +933,14 @@ class GeminiInteractions(Model):
         request_kwargs["stream"] = True
         log_debug(f"Calling Gemini Interactions API (stream) with params: {list(request_kwargs.keys())}", log_level=2)
 
+        is_background = bool(request_kwargs.get("background"))
+
         try:
+            import time
+
             assistant_message.metrics.start_timer()
-            stream = self.get_client().interactions.create(**request_kwargs)
+            client = self.get_client()
+            stream = client.interactions.create(**request_kwargs)
             stream_state: Dict[str, Any] = {"pending_calls": {}}
 
             for event in stream:
@@ -692,6 +948,41 @@ class GeminiInteractions(Model):
                     stream_event=event, assistant_message=assistant_message, stream_state=stream_state
                 )
                 yield model_response
+
+            # Background interactions (Deep Research) end the initial SSE early
+            # and continue server-side. Reconnect from last_event_id until the
+            # interaction reaches a terminal state, per the API guidance.
+            if is_background:
+                deadline = time.monotonic() + self.agent_max_wait
+                while not stream_state.get("completed"):
+                    interaction_id = stream_state.get("interaction_id")
+                    if not interaction_id:
+                        break
+                    if time.monotonic() > deadline:
+                        raise ModelProviderError(
+                            message=f"Streaming interaction did not complete within {self.agent_max_wait}s",
+                            model_name=self.name,
+                            model_id=self.id,
+                        )
+                    snapshot = client.interactions.get(interaction_id)
+                    status = getattr(snapshot, "status", None)
+                    if status != "in_progress":
+                        # Doc guidance: any non-in_progress status ends the loop.
+                        # Surface the final snapshot through the non-stream parser
+                        # so content + errors (failed) are handled.
+                        yield self._parse_provider_response(snapshot)
+                        break
+                    time.sleep(self.agent_poll_interval)
+                    resumed = client.interactions.get(
+                        id=interaction_id,
+                        stream=True,
+                        last_event_id=stream_state.get("last_event_id"),
+                    )
+                    for event in resumed:
+                        model_response, stream_state = self._parse_provider_response_delta(
+                            stream_event=event, assistant_message=assistant_message, stream_state=stream_state
+                        )
+                        yield model_response
 
             assistant_message.metrics.stop_timer()
 
@@ -717,6 +1008,9 @@ class GeminiInteractions(Model):
         try:
             assistant_message.metrics.start_timer()
             interaction = await self.get_client().aio.interactions.create(**request_kwargs)
+            # Agent path runs in the background; poll until the result is ready.
+            if request_kwargs.get("background"):
+                interaction = await self._apoll_until_terminal(interaction)
             assistant_message.metrics.stop_timer()
 
             return self._parse_provider_response(interaction)
@@ -743,9 +1037,14 @@ class GeminiInteractions(Model):
             f"Calling Gemini Interactions API (async stream) with params: {list(request_kwargs.keys())}", log_level=2
         )
 
+        is_background = bool(request_kwargs.get("background"))
+
         try:
+            import asyncio
+
             assistant_message.metrics.start_timer()
-            stream = await self.get_client().aio.interactions.create(**request_kwargs)
+            client = self.get_client()
+            stream = await client.aio.interactions.create(**request_kwargs)
             stream_state: Dict[str, Any] = {"pending_calls": {}}
 
             async for event in stream:
@@ -753,6 +1052,36 @@ class GeminiInteractions(Model):
                     stream_event=event, assistant_message=assistant_message, stream_state=stream_state
                 )
                 yield model_response
+
+            if is_background:
+                loop = asyncio.get_running_loop()
+                deadline = loop.time() + self.agent_max_wait
+                while not stream_state.get("completed"):
+                    interaction_id = stream_state.get("interaction_id")
+                    if not interaction_id:
+                        break
+                    if loop.time() > deadline:
+                        raise ModelProviderError(
+                            message=f"Streaming interaction did not complete within {self.agent_max_wait}s",
+                            model_name=self.name,
+                            model_id=self.id,
+                        )
+                    snapshot = await client.aio.interactions.get(interaction_id)
+                    status = getattr(snapshot, "status", None)
+                    if status != "in_progress":
+                        yield self._parse_provider_response(snapshot)
+                        break
+                    await asyncio.sleep(self.agent_poll_interval)
+                    resumed = await client.aio.interactions.get(
+                        id=interaction_id,
+                        stream=True,
+                        last_event_id=stream_state.get("last_event_id"),
+                    )
+                    async for event in resumed:
+                        model_response, stream_state = self._parse_provider_response_delta(
+                            stream_event=event, assistant_message=assistant_message, stream_state=stream_state
+                        )
+                        yield model_response
 
             assistant_message.metrics.stop_timer()
 
