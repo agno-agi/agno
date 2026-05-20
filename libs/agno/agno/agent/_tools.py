@@ -47,16 +47,7 @@ def _wire_google_auth(
     tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]],
     agent: Optional["Agent"] = None,
 ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
-    """Consolidate OAuth scopes across Google toolkits.
-
-    If no toolkit has auth_config= set, auto-creates a shared GoogleAuthConfig for
-    scope consolidation. If any toolkit has auth_config=, wires that coordinator to
-    all others.
-
-    This function is idempotent: it tracks wired tools via _wired_config_id and skips
-    tools that have already been wired to the same config. Safe for concurrent requests
-    and callable factories that create fresh tool instances.
-    """
+    """Wire Google toolkits to a shared GoogleAuthConfig for scope consolidation."""
     if tools is None:
         return tools
 
