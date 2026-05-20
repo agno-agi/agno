@@ -76,7 +76,7 @@ class GoogleSheetsTools(GoogleToolkit):
 
     def __init__(
         self,
-        oauth_config: Optional[Any] = None,
+        auth_config: Optional[Any] = None,
         store_token_in_db: bool = False,
         scopes: Optional[List[str]] = None,
         spreadsheet_id: Optional[str] = None,
@@ -168,7 +168,7 @@ class GoogleSheetsTools(GoogleToolkit):
             token_path=token_path,
             credentials_path=creds_path,
             service_account_path=service_account_path,
-            oauth_config=oauth_config,
+            auth_config=auth_config,
             store_token_in_db=store_token_in_db,
             oauth_port=oauth_port,
             **kwargs,

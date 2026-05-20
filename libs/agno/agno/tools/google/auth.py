@@ -196,15 +196,15 @@ def _valid_auth_token_db(db: Any) -> Any:
 def get_token_db(toolkit: Any, agent: Optional[Any] = None) -> Any:
     """Resolve the DB to use for token storage. Returns None if no DB available.
 
-    Priority: agent.db (framework-injected) > explicit db on oauth_config/toolkit.
+    Priority: agent.db (framework-injected) > explicit db on auth_config/toolkit.
     """
     # Primary: agent.db (the modern pattern)
     agent_db = _valid_auth_token_db(getattr(agent, "db", None))
     if agent_db:
         return agent_db
 
-    # Fallback: explicit db on oauth_config (legacy)
-    ga = getattr(toolkit, "oauth_config", None)
+    # Fallback: explicit db on auth_config (legacy)
+    ga = getattr(toolkit, "auth_config", None)
     if ga is not None:
         explicit_db = _valid_auth_token_db(getattr(ga, "_db", None))
         if explicit_db:
@@ -287,7 +287,7 @@ def save_token(
     agent: Optional[Any] = None,
 ) -> bool:
     """Persist credentials to DB. Returns True on success."""
-    ga = getattr(toolkit, "oauth_config", None)
+    ga = getattr(toolkit, "auth_config", None)
     return _persist_google_token(
         db=get_token_db(toolkit, agent=agent),
         creds=creds,
@@ -296,7 +296,7 @@ def save_token(
     )
 
 
-class GoogleOAuthConfig:
+class GoogleAuthConfig:
     """OAuth coordinator for Google toolkits — NOT a Toolkit itself.
 
     Handles:
@@ -308,11 +308,11 @@ class GoogleOAuthConfig:
         gmail = GmailTools()
 
     Usage (interface — client-side OAuth, opt-in):
-        oauth_config = GoogleOAuthConfig(hosted_domain="mycompany.com")
+        auth_config = GoogleAuthConfig(hosted_domain="mycompany.com")
         agent = Agent(
             db=db,
             tools=[
-                GoogleOAuthTools(oauth_config=oauth_config),
+                GoogleOAuthTools(auth_config=auth_config),
                 GmailTools(),  # Auto-wired from GoogleOAuthTools
             ],
         )
@@ -521,7 +521,7 @@ class GoogleOAuthConfig:
         if not self._state_secret:
             raise RuntimeError(
                 "GOOGLE_OAUTH_STATE_SECRET is required for OAuth callback security. "
-                "Set it via environment variable or GoogleOAuthConfig(state_secret=...)."
+                "Set it via environment variable or GoogleAuthConfig(state_secret=...)."
             )
 
         # Resolve db: explicit param > GoogleAuth(db=...) > fail

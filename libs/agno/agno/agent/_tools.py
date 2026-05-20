@@ -48,8 +48,8 @@ def _wire_google_auth(
 ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
     """Consolidate OAuth scopes across Google toolkits.
 
-    If no toolkit has oauth_config= set, auto-creates a shared GoogleOAuthConfig for
-    scope consolidation. If any toolkit has oauth_config=, wires that coordinator to
+    If no toolkit has auth_config= set, auto-creates a shared GoogleAuthConfig for
+    scope consolidation. If any toolkit has auth_config=, wires that coordinator to
     all others.
 
     This function is idempotent: it tracks wired tools via _wired_config_id and skips
@@ -61,7 +61,7 @@ def _wire_google_auth(
 
     # Lazy import to avoid circular dependency
     try:
-        from agno.tools.google.auth import GoogleOAuthConfig
+        from agno.tools.google.auth import GoogleAuthConfig
         from agno.tools.google.base import GoogleToolkit
         from agno.tools.google.oauth_tools import GoogleOAuthTools
     except ImportError:
@@ -75,31 +75,31 @@ def _wire_google_auth(
     if not google_toolkits and not oauth_tools:
         return tools
 
-    # Check if any toolkit/oauth_tool has a custom GoogleOAuthConfig configured
+    # Check if any toolkit/oauth_tool has a custom GoogleAuthConfig configured
     shared_config = None
     for t in google_toolkits + oauth_tools:
-        ga = getattr(t, "oauth_config", None)
+        ga = getattr(t, "auth_config", None)
         if ga is not None:
             shared_config = ga
             break
 
-    # Auto-create GoogleOAuthConfig if none provided (cookbook mode)
+    # Auto-create GoogleAuthConfig if none provided (cookbook mode)
     if shared_config is None:
-        shared_config = GoogleOAuthConfig()
-        log_debug("Auto-created GoogleOAuthConfig for scope consolidation (cookbook mode)")
+        shared_config = GoogleAuthConfig()
+        log_debug("Auto-created GoogleAuthConfig for scope consolidation (cookbook mode)")
 
     config_id = id(shared_config)
 
-    # Wire GoogleOAuthConfig to each Google toolkit and register scopes
+    # Wire GoogleAuthConfig to each Google toolkit and register scopes
     for t in google_toolkits:
         # Skip if already wired to this config
         if getattr(t, "_wired_config_id", None) == config_id:
             continue
 
-        if getattr(t, "oauth_config", None) is None:
-            t.oauth_config = shared_config
+        if getattr(t, "auth_config", None) is None:
+            t.auth_config = shared_config
 
-        ga = t.oauth_config
+        ga = t.auth_config
         service_name = getattr(t, "google_service_name", None)
         scopes = getattr(t, "scopes", None)
         if ga is not None and service_name and scopes:
@@ -107,20 +107,20 @@ def _wire_google_auth(
             required = set(scopes)
             if service_name not in ga._services or not required.issubset(registered):
                 ga.register_service(service_name, scopes)
-                log_debug(f"Registered {service_name} scopes with GoogleOAuthConfig")
+                log_debug(f"Registered {service_name} scopes with GoogleAuthConfig")
 
         # Mark as wired to this config
         t._wired_config_id = config_id  # type: ignore[attr-defined]
 
-    # Wire GoogleOAuthConfig to GoogleOAuthTools if not already set
+    # Wire GoogleAuthConfig to GoogleOAuthTools if not already set
     for t in oauth_tools:
         # Skip if already wired to this config
         if getattr(t, "_wired_config_id", None) == config_id:
             continue
 
-        if getattr(t, "oauth_config", None) is None:
-            t.oauth_config = shared_config
-            log_debug("Wired GoogleOAuthConfig to GoogleOAuthTools")
+        if getattr(t, "auth_config", None) is None:
+            t.auth_config = shared_config
+            log_debug("Wired GoogleAuthConfig to GoogleOAuthTools")
 
         # Mark as wired to this config
         t._wired_config_id = config_id  # type: ignore[attr-defined]
@@ -134,7 +134,7 @@ def _wire_google_auth(
                     log_debug(f"Propagated store_token_in_db=True to {t.__class__.__name__}")
             break
 
-    # Propagate service account config from GoogleOAuthConfig to all Google toolkits
+    # Propagate service account config from GoogleAuthConfig to all Google toolkits
     if shared_config:
         sa_path = getattr(shared_config, "_service_account_path", None)
         delegated = getattr(shared_config, "_delegated_user", None)

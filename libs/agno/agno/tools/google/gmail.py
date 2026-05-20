@@ -137,7 +137,7 @@ class GmailTools(GoogleToolkit):
 
     def __init__(
         self,
-        oauth_config: Optional[Any] = None,
+        auth_config: Optional[Any] = None,
         store_token_in_db: bool = False,
         creds: Optional[Union[Credentials, ServiceAccountCredentials]] = None,
         credentials_path: Optional[str] = None,
@@ -317,7 +317,7 @@ class GmailTools(GoogleToolkit):
             credentials_path=credentials_path,
             service_account_path=service_account_path,
             delegated_user=delegated_user,
-            oauth_config=oauth_config,
+            auth_config=auth_config,
             store_token_in_db=store_token_in_db,
             oauth_port=oauth_port,
             login_hint=login_hint,

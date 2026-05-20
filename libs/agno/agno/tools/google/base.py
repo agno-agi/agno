@@ -7,7 +7,7 @@ from agno.tools.google.auth import _persist_google_token, get_current_service, g
 from agno.utils.log import log_debug
 
 if TYPE_CHECKING:
-    from agno.tools.google.auth import GoogleOAuthConfig
+    from agno.tools.google.auth import GoogleAuthConfig
 
 
 class GoogleToolkit(Toolkit):
@@ -48,7 +48,7 @@ class GoogleToolkit(Toolkit):
         credentials_path: Optional[str] = None,
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
-        oauth_config: Optional["GoogleOAuthConfig"] = None,
+        auth_config: Optional["GoogleAuthConfig"] = None,
         store_token_in_db: bool = False,
         oauth_port: Optional[int] = 0,
         login_hint: Optional[str] = None,
@@ -61,14 +61,14 @@ class GoogleToolkit(Toolkit):
         self.credentials_path = credentials_path
         self.service_account_path = service_account_path
         self.delegated_user = delegated_user
-        self.oauth_config = oauth_config
+        self.auth_config = auth_config
         self.store_token_in_db = store_token_in_db
         self._db: Optional[Any] = None
         self.oauth_port = oauth_port
         self.login_hint = login_hint
 
-        if self.oauth_config and self.google_service_name:
-            self.oauth_config.register_service(self.google_service_name, self.scopes)
+        if self.auth_config and self.google_service_name:
+            self.auth_config.register_service(self.google_service_name, self.scopes)
 
     @property
     def service(self) -> Any:
@@ -143,7 +143,7 @@ class GoogleToolkit(Toolkit):
             try:
                 creds.refresh(Request())
                 # Use db directly — no need to re-lookup via get_token_db
-                ga = getattr(self, "oauth_config", None)
+                ga = getattr(self, "auth_config", None)
                 _persist_google_token(
                     db=db,
                     creds=creds,
@@ -179,7 +179,7 @@ class GoogleToolkit(Toolkit):
             if creds:
                 return creds
             # Server mode: don't fall through to browser OAuth
-            if self.oauth_config and self.oauth_config._callback_configured:
+            if self.auth_config and self.auth_config._callback_configured:
                 raise PermissionError(
                     f"{self.google_service_name.title()} not authenticated — user must complete OAuth via oauth_google"
                 )
@@ -206,8 +206,8 @@ class GoogleToolkit(Toolkit):
             return creds
 
         # 5. Interactive OAuth (local only)
-        if self.oauth_config is not None and self.oauth_config._services:
-            consent_scopes = sorted({s for scope_list in self.oauth_config._services.values() for s in scope_list})
+        if self.auth_config is not None and self.auth_config._services:
+            consent_scopes = sorted({s for scope_list in self.auth_config._services.values() for s in scope_list})
         else:
             consent_scopes = self.scopes
 
@@ -230,8 +230,8 @@ class GoogleToolkit(Toolkit):
         oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
         if self.login_hint:
             oauth_kwargs["login_hint"] = self.login_hint
-        if self.oauth_config and self.oauth_config._hosted_domain:
-            oauth_kwargs["hd"] = self.oauth_config._hosted_domain
+        if self.auth_config and self.auth_config._hosted_domain:
+            oauth_kwargs["hd"] = self.auth_config._hosted_domain
         creds = flow.run_local_server(port=self.oauth_port or 0, **oauth_kwargs)
 
         # Save to DB or file

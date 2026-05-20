@@ -17,13 +17,13 @@ Run:
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.tools.google.auth import GoogleOAuthConfig
+from agno.tools.google.auth import GoogleAuthConfig
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
 from agno.tools.google.oauth_tools import GoogleOAuthTools
 
 # Restrict OAuth to users from this domain only (set to None to allow all domains)
-oauth_config = GoogleOAuthConfig(hosted_domain="agno.com")
+auth_config = GoogleAuthConfig(hosted_domain="agno.com")
 
 agent = Agent(
     name="Enterprise OAuth Agent",
@@ -31,7 +31,7 @@ agent = Agent(
     db=SqliteDb(db_file="tmp/enterprise_oauth.db", encrypt_auth_tokens=False),
     tools=[
         # store_token_in_db here auto-applies to all Google toolkits
-        GoogleOAuthTools(oauth_config=oauth_config, store_token_in_db=True),
+        GoogleOAuthTools(auth_config=auth_config, store_token_in_db=True),
         GmailTools(include_tools=["get_latest_emails", "search_emails"]),
         GoogleCalendarTools(include_tools=["list_events", "create_event"]),
     ],
