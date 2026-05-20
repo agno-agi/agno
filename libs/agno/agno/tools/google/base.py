@@ -230,6 +230,8 @@ class GoogleToolkit(Toolkit):
         oauth_kwargs: Dict[str, Any] = {"prompt": "consent"}
         if self.login_hint:
             oauth_kwargs["login_hint"] = self.login_hint
+        if self.oauth_config and self.oauth_config._hosted_domain:
+            oauth_kwargs["hd"] = self.oauth_config._hosted_domain
         creds = flow.run_local_server(port=self.oauth_port or 0, **oauth_kwargs)
 
         # Save to DB or file
