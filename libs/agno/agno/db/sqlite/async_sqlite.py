@@ -3791,7 +3791,3 @@ class AsyncSqliteDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error updating approval run_status: {e}")
             return 0
-
-    # -- Auth Token methods --
-    # Async CRUD intentionally not implemented; see async_postgres.py for rationale.
-    # Sync SqliteDb handles OAuth token storage; async support is a follow-up.
