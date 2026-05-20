@@ -51,6 +51,10 @@ def _wire_google_auth(
     If no toolkit has oauth_config= set, auto-creates a shared GoogleOAuthConfig for
     scope consolidation. If any toolkit has oauth_config=, wires that coordinator to
     all others.
+
+    This function is idempotent: it tracks wired tools via _wired_config_id and skips
+    tools that have already been wired to the same config. Safe for concurrent requests
+    and callable factories that create fresh tool instances.
     """
     if tools is None:
         return tools
@@ -84,8 +88,14 @@ def _wire_google_auth(
         shared_config = GoogleOAuthConfig()
         log_debug("Auto-created GoogleOAuthConfig for scope consolidation (cookbook mode)")
 
+    config_id = id(shared_config)
+
     # Wire GoogleOAuthConfig to each Google toolkit and register scopes
     for t in google_toolkits:
+        # Skip if already wired to this config
+        if getattr(t, "_wired_config_id", None) == config_id:
+            continue
+
         if getattr(t, "oauth_config", None) is None:
             t.oauth_config = shared_config
 
@@ -93,14 +103,27 @@ def _wire_google_auth(
         service_name = getattr(t, "google_service_name", None)
         scopes = getattr(t, "scopes", None)
         if ga is not None and service_name and scopes:
-            ga.register_service(service_name, scopes)
-            log_debug(f"Registered {service_name} scopes with GoogleOAuthConfig")
+            registered = set(ga._services.get(service_name, []))
+            required = set(scopes)
+            if service_name not in ga._services or not required.issubset(registered):
+                ga.register_service(service_name, scopes)
+                log_debug(f"Registered {service_name} scopes with GoogleOAuthConfig")
+
+        # Mark as wired to this config
+        t._wired_config_id = config_id  # type: ignore[attr-defined]
 
     # Wire GoogleOAuthConfig to GoogleOAuthTools if not already set
     for t in oauth_tools:
+        # Skip if already wired to this config
+        if getattr(t, "_wired_config_id", None) == config_id:
+            continue
+
         if getattr(t, "oauth_config", None) is None:
             t.oauth_config = shared_config
             log_debug("Wired GoogleOAuthConfig to GoogleOAuthTools")
+
+        # Mark as wired to this config
+        t._wired_config_id = config_id  # type: ignore[attr-defined]
 
     return tools
 
@@ -188,7 +211,7 @@ def get_tools(
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
 
-    # Auto-register oauth_google when Google toolkits have client-side OAuth enabled
+    # Auto-wire Google OAuth config across Google toolkits (idempotent)
     resolved_tools = _wire_google_auth(resolved_tools)
 
     # Connect tools that require connection management
@@ -295,7 +318,7 @@ async def aget_tools(
     resolved_tools = get_resolved_tools(agent, run_context)
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
 
-    # Auto-register oauth_google when Google toolkits have client-side OAuth enabled
+    # Auto-wire Google OAuth config across Google toolkits (idempotent)
     resolved_tools = _wire_google_auth(resolved_tools)
 
     # Connect tools that require connection management

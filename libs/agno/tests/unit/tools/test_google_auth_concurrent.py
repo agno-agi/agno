@@ -128,7 +128,11 @@ class _MockGmailToolkit(Toolkit):
 
 
 @pytest.fixture
-def temp_db(tmp_path):
+def temp_db(tmp_path, monkeypatch):
+    # Encryption key required for upsert_auth_token - use a test key
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("AGNO_ENCRYPTION_KEY", Fernet.generate_key().decode())
     return SqliteDb(db_file=str(tmp_path / "auth.db"))
 
 

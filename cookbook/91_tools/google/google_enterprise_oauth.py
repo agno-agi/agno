@@ -5,7 +5,6 @@ Enterprise Google OAuth Configuration
 Demonstrates enterprise-grade OAuth features:
 - hosted_domain: Restrict to specific Google Workspace domain (@company.com)
 - login_hint: Pre-fill email in Google's login form
-- Token encryption at rest (configured on DB)
 
 Setup:
   1. Google Cloud Console -> OAuth consent screen -> Add your domain
@@ -31,26 +30,17 @@ oauth_config = GoogleOAuthConfig(
     login_hint=os.getenv("GOOGLE_LOGIN_HINT"),
 )
 
-# Encryption configured once on DB — all toolkits inherit it
-db = SqliteDb(
-    db_file="tmp/enterprise_oauth.db",
-    encrypt_auth_tokens=True,
-    auth_token_encryption_key=os.getenv("AGNO_ENCRYPTION_KEY"),
-)
+db = SqliteDb(db_file="tmp/enterprise_oauth.db")
 
 agent = Agent(
     name="Enterprise OAuth Agent",
     model=OpenAIResponses(id="gpt-5.4"),
     db=db,
     tools=[
+        # Only need oauth_config on one toolkit — auto-wiring shares it with all others
         GoogleOAuthTools(oauth_config=oauth_config),
-        GmailTools(
-            oauth_config=oauth_config,
-            include_tools=["get_latest_emails", "search_emails"],
-        ),
-        GoogleCalendarTools(
-            oauth_config=oauth_config, include_tools=["list_events", "create_event"]
-        ),
+        GmailTools(include_tools=["get_latest_emails", "search_emails"]),
+        GoogleCalendarTools(include_tools=["list_events", "create_event"]),
     ],
     instructions=(
         "You are an enterprise assistant with Gmail and Calendar access. "
@@ -62,5 +52,4 @@ agent = Agent(
 
 if __name__ == "__main__":
     print(f"Hosted domain: {oauth_config._hosted_domain or 'all domains'}")
-    print(f"Token encryption: {'enabled' if db.encrypt_auth_tokens else 'disabled'}")
     agent.print_response("What tools do you have access to?")

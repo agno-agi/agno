@@ -123,9 +123,9 @@ class GoogleOAuthTools(Toolkit):
             )
 
         # PKCE: generate code_verifier and code_challenge
-        from agno.tools.google.auth import _generate_pkce_pair
+        from agno.tools.google.auth import generate_pkce_pair
 
-        code_verifier, code_challenge = _generate_pkce_pair()
+        code_verifier, code_challenge = generate_pkce_pair()
         state_id = secrets.token_urlsafe(16)
 
         # Signed JWT carries user_id + state_id through Google redirect
