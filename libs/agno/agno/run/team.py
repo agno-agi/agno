@@ -761,6 +761,9 @@ class TeamRunOutput:
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
 
+    # Resolved approval record exposed to post-hooks after a paused run resumes; None otherwise.
+    resolved_approval: Optional[Dict[str, Any]] = None
+
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None

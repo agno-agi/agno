@@ -416,11 +416,9 @@ def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any)
 
     _apply_approval_to_tools(tools, status, approval.get("resolution_data"))
 
-    # Expose the resolved approval record to post-hooks via run_response.metadata
-    if hasattr(run_response, "metadata"):
-        if run_response.metadata is None:
-            run_response.metadata = {}
-        run_response.metadata["_approval"] = approval
+    # Expose the resolved approval record to post-hooks via a typed attribute
+    # on RunOutput / TeamRunOutput.
+    run_response.resolved_approval = approval
 
 
 async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any) -> None:
@@ -444,11 +442,9 @@ async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_respons
 
     _apply_approval_to_tools(tools, status, approval.get("resolution_data"))
 
-    # Expose the resolved approval record to post-hooks via run_response.metadata
-    if hasattr(run_response, "metadata"):
-        if run_response.metadata is None:
-            run_response.metadata = {}
-        run_response.metadata["_approval"] = approval
+    # Expose the resolved approval record to post-hooks via a typed attribute
+    # on RunOutput / TeamRunOutput.
+    run_response.resolved_approval = approval
 
 
 async def acreate_audit_approval(
