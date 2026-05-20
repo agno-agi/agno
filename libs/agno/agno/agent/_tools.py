@@ -51,7 +51,6 @@ def _wire_google_auth(
     if tools is None:
         return tools
 
-    # Lazy import to avoid circular dependency
     try:
         from agno.tools.google.auth import GoogleAuthConfig
         from agno.tools.google.base import GoogleToolkit
