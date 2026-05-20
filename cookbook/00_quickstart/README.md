@@ -74,7 +74,7 @@ Agent OS provides a web interface for interacting with your agents. Start the se
 python cookbook/00_quickstart/run.py
 ```
 
-Then visit [os.agno.com](https://os.agno.com) and add `http://localhost:7777` as an endpoint.
+Then visit [os.agno.com](https://os.agno.com?utm_source=github&utm_medium=example-repo&utm_campaign=ab-examples-data-labeling&utm_term=data-labeling&utm_content=agentos) and add `http://localhost:7777` as an endpoint.
 
 Here's how it looks in action — chat with your agents, explore sessions, monitor traces, manage knowledge and memories, all through a beautiful visual UI.
 
@@ -150,5 +150,5 @@ All examples in this Quick Start use synchronous code for simplicity. For async/
 
 ## Learn More
 
-- [Agno Documentation](https://docs.agno.com)
-- [Agent OS Overview](https://docs.agno.com/agent-os/introduction)
+- [Agno Documentation](https://docs.agno.com?utm_source=github&utm_medium=example-repo&utm_campaign=ab-examples-data-labeling&utm_term=data-labeling&utm_content=docs)
+- [Agent OS Overview](https://docs.agno.com/agent-os/introduction?utm_source=github&utm_medium=example-repo&utm_campaign=ab-examples-data-labeling&utm_term=data-labeling&utm_content=docs)
