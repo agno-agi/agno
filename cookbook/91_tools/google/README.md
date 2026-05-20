@@ -2,6 +2,17 @@
 
 Build agents with Gmail, Google Calendar, Google Drive, and Google Slides. Supports OAuth (browser), service accounts (server), and multi-user interfaces.
 
+## Which Cookbook?
+
+| Need | Start Here |
+|:-----|:-----------|
+| Simple dev/testing | `gmail_tools.py`, `calendar_event_creator.py` |
+| Persist tokens in DB | `google_workspace_with_db.py` |
+| Multi-user (Slack/WhatsApp) | `slack/gmail_oauth.py` |
+| Service account (no browser) | `google_service_account.py` |
+| Restrict to company domain | `google_enterprise_oauth.py` |
+| Multiple Google APIs | `google_workspace_agent.py` |
+
 ## What You'll Build
 
 | File | What You'll Learn | Key Features |
