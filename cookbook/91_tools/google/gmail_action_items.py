@@ -22,7 +22,7 @@ Setup:
 from typing import List, Literal, Optional
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
+from agno.models.openai import OpenAIChat
 from agno.tools.google.gmail import GmailTools
 from pydantic import BaseModel, Field
 
@@ -52,7 +52,7 @@ class ThreadActionItems(BaseModel):
 
 agent = Agent(
     name="Action Item Extractor",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=OpenAIChat(id="gpt-4o"),
     tools=[GmailTools()],
     instructions=[
         "Search for the requested thread, then use get_thread to read all messages.",

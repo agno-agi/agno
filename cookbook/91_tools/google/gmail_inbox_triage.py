@@ -26,14 +26,14 @@ Setup:
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.learn import LearningMachine, LearningMode, UserMemoryConfig
-from agno.models.openai import OpenAIResponses
+from agno.models.openai import OpenAIChat
 from agno.tools.google.gmail import GmailTools
 
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 agent = Agent(
     name="Inbox Triage Agent",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=OpenAIChat(id="gpt-4o"),
     tools=[GmailTools(download_attachment=True, archive_email=True)],
     db=db,
     learning=LearningMachine(

@@ -19,12 +19,12 @@ Setup:
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
+from agno.models.openai import OpenAIChat
 from agno.tools.google.drive import GoogleDriveTools
 
 agent = Agent(
     name="Drive Organizer",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=OpenAIChat(id="gpt-4o"),
     tools=[GoogleDriveTools(upload_file=True, download_file=True)],
     instructions=[
         "Help the user explore and organize their Google Drive.",

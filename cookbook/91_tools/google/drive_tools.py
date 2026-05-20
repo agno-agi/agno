@@ -14,7 +14,7 @@ Setup:
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
+from agno.models.openai import OpenAIChat
 from agno.tools.google.drive import GoogleDriveTools
 
 # ---------------------------------------------------------------------------
@@ -24,7 +24,7 @@ from agno.tools.google.drive import GoogleDriveTools
 # Read-only agent (default -- upload and download disabled)
 read_only_agent = Agent(
     name="Drive Reader",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=OpenAIChat(id="gpt-4o"),
     tools=[GoogleDriveTools()],
     instructions=[
         "When listing or searching files, show the file ID, name, type, and last modified date.",
@@ -37,7 +37,7 @@ read_only_agent = Agent(
 # Full-access agent with upload and download enabled
 full_agent = Agent(
     name="Drive Agent",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=OpenAIChat(id="gpt-4o"),
     tools=[GoogleDriveTools(upload_file=True, download_file=True)],
     instructions=[
         "When uploading files, confirm the file path with the user first.",

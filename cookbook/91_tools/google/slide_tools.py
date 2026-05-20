@@ -20,13 +20,13 @@ Setup:
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
+from agno.models.openai import OpenAIChat
 from agno.tools.google.slides import GoogleSlidesTools
 
 # Example 1: Basic presentation creation
 agent = Agent(
     name="Slides Assistant",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=OpenAIChat(id="gpt-4o"),
     tools=[
         GoogleSlidesTools(
             # delete_presentation=True,  # Destructive, enable if needed

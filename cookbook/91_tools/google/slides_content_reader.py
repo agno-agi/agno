@@ -22,7 +22,7 @@ Setup:
 from typing import List
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
+from agno.models.openai import OpenAIChat
 from agno.tools.google.slides import GoogleSlidesTools
 from pydantic import BaseModel, Field
 
@@ -47,7 +47,7 @@ class PresentationSummary(BaseModel):
 
 agent = Agent(
     name="Slides Reader",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=OpenAIChat(id="gpt-4o"),
     tools=[GoogleSlidesTools()],
     instructions=[
         "Use get_presentation_metadata first to understand structure.",

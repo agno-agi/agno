@@ -15,7 +15,7 @@ Setup:
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
+from agno.models.openai import OpenAIChat
 from agno.tools.google.gmail import GmailTools
 
 # ---------------------------------------------------------------------------
@@ -24,7 +24,7 @@ from agno.tools.google.gmail import GmailTools
 
 agent = Agent(
     name="Draft Reply Agent",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=OpenAIChat(id="gpt-4o"),
     tools=[GmailTools()],
     instructions=[
         "Match the tone and formality of the existing conversation.",

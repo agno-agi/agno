@@ -19,7 +19,7 @@ Setup:
 from typing import List
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
+from agno.models.openai import OpenAIChat
 from agno.tools.google.gmail import GmailTools
 from pydantic import BaseModel, Field
 
@@ -53,7 +53,7 @@ class FollowUpReport(BaseModel):
 
 agent = Agent(
     name="Follow-Up Tracker",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=OpenAIChat(id="gpt-4o"),
     tools=[GmailTools()],
     instructions=[
         "Use search_threads with 'from:me' to find sent threads, then check if the last message is from you.",
