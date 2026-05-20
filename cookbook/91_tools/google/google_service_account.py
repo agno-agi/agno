@@ -49,4 +49,6 @@ if __name__ == "__main__":
     if not os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE"):
         print("Set GOOGLE_SERVICE_ACCOUNT_FILE and GOOGLE_DELEGATED_USER env vars")
     else:
-        agent.print_response("List my recent emails and today's calendar events", stream=True)
+        agent.print_response(
+            "List my recent emails and today's calendar events", stream=True
+        )

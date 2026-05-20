@@ -25,7 +25,11 @@ from agno.tools.google.gmail import GmailTools
 agent = Agent(
     name="Google Workspace Agent",
     model=OpenAIResponses(id="gpt-5.4"),
-    db=SqliteDb(db_file="tmp/google_workspace.db", store_auth_tokens=True, encrypt_auth_tokens=False),
+    db=SqliteDb(
+        db_file="tmp/google_workspace.db",
+        store_auth_tokens=True,
+        encrypt_auth_tokens=False,
+    ),
     tools=[
         GmailTools(include_tools=["get_latest_emails", "search_emails"]),
         GoogleCalendarTools(create_event=False, update_event=False, delete_event=False),

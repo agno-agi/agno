@@ -28,7 +28,11 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     # encrypt_auth_tokens=False for simpler local dev (no AGNO_ENCRYPTION_KEY needed)
     db=SqliteDb(db_file="tmp/gmail_tokens.db", encrypt_auth_tokens=False),
-    tools=[GmailTools(include_tools=["get_latest_emails", "search_emails"], store_token_in_db=True)],
+    tools=[
+        GmailTools(
+            include_tools=["get_latest_emails", "search_emails"], store_token_in_db=True
+        )
+    ],
     instructions="You are a Gmail assistant. Show sender, subject, and brief preview for each email.",
     markdown=True,
 )
