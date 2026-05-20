@@ -1860,8 +1860,3 @@ class AsyncBaseDb(ABC):
             Number of approvals updated.
         """
         raise NotImplementedError
-
-    # Async auth-token CRUD is deliberately not part of AsyncBaseDb. All OAuth
-    # token callers (agno.tools.google.auth) invoke these synchronously, so
-    # routing them through an async backend would return unawaited coroutines.
-    # Use sync PostgresDb / SqliteDb for OAuth token storage.
