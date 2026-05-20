@@ -3624,10 +3624,3 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error updating approval run_status: {e}")
             return 0
-
-    # --- Auth Tokens ---
-    # Async CRUD intentionally not implemented: all callers (agno.tools.google.auth)
-    # invoke these synchronously, so routing them through an async backend would
-    # return coroutine objects instead of rows. Sync PostgresDb supports OAuth
-    # token storage; async support is tracked for a follow-up when the Google
-    # toolkit grows an async-aware auth decorator.
