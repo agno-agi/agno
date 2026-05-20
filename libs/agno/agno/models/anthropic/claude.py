@@ -1021,13 +1021,11 @@ class Claude(Model):
                     model_response.reasoning_content = block.thinking
                     model_response.provider_data = model_response.provider_data or {}
                     model_response.provider_data["signature"] = block.signature
-                elif block.type == "redacted_thinking":
-                    model_response.redacted_reasoning_content = block.data
+                elif block.type in ("redacted_thinking", "redacted_reasoning_content"):
+                    model_response.redacted_reasoning_content = getattr(block, "data", None)
                 elif block.type not in ("tool_use",):
                     # Preserve all non-text/thinking blocks for conversation history reconstruction.
-                    # thinking/redacted_thinking already handled by elif branches above;
-                    # streaming path uses ("thinking", "redacted_thinking", "tool_use") tuple instead.
-                    # tool_use is handled separately below via stop_reason check.
+                    # thinking / redacted variants handled above; tool_use extracted via stop_reason below.
                     if model_response.provider_data is None:
                         model_response.provider_data = {}
                     server_blocks = model_response.provider_data.setdefault("server_tool_blocks", [])
@@ -1119,8 +1117,11 @@ class Claude(Model):
         model_response = ModelResponse()
 
         if isinstance(response, (ContentBlockStartEvent, BetaRawContentBlockStartEvent)):
-            if response.content_block.type == "redacted_reasoning_content":
-                model_response.redacted_reasoning_content = response.content_block.data
+            # The Anthropic SDK emits "redacted_thinking" for these blocks; accept the legacy
+            # "redacted_reasoning_content" spelling too in case it appears via a rehydrated event.
+            block_type = getattr(response.content_block, "type", None)
+            if block_type in ("redacted_thinking", "redacted_reasoning_content"):
+                model_response.redacted_reasoning_content = getattr(response.content_block, "data", None)
 
         if isinstance(response, (ContentBlockDeltaEvent, BetaRawContentBlockDeltaEvent)):
             # Handle text content
@@ -1172,7 +1173,12 @@ class Claude(Model):
                 # Handle text blocks for structured output parsing
                 if block.type == "text":
                     accumulated_text += block.text  # type: ignore
-                elif block.type not in ("thinking", "redacted_thinking", "tool_use"):
+                elif block.type not in (
+                    "thinking",
+                    "redacted_thinking",
+                    "redacted_reasoning_content",
+                    "tool_use",
+                ):
                     # Preserve all non-text/thinking/tool_use blocks for history
                     server_tool_blocks.append(block.model_dump())
 

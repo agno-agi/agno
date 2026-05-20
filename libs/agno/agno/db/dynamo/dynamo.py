@@ -2261,22 +2261,26 @@ class DynamoDb(BaseDb):
                     expression_attr_names["#name"] = "name"
                     expression_attr_values[":name"] = {"S": trace.name}
 
-                if trace.run_id is not None:
+                # Preserve existing non-null context values: only fill in fields
+                # that the existing row left blank. Otherwise a later upsert from
+                # a child span (e.g. a post-hook agent's run with a different
+                # session_id) would overwrite the trace's already-correct context.
+                if existing.get("run_id") is None and trace.run_id is not None:
                     update_parts.append("run_id = :run_id")
                     expression_attr_values[":run_id"] = {"S": trace.run_id}
-                if trace.session_id is not None:
+                if existing.get("session_id") is None and trace.session_id is not None:
                     update_parts.append("session_id = :session_id")
                     expression_attr_values[":session_id"] = {"S": trace.session_id}
-                if trace.user_id is not None:
+                if existing.get("user_id") is None and trace.user_id is not None:
                     update_parts.append("user_id = :user_id")
                     expression_attr_values[":user_id"] = {"S": trace.user_id}
-                if trace.agent_id is not None:
+                if existing.get("agent_id") is None and trace.agent_id is not None:
                     update_parts.append("agent_id = :agent_id")
                     expression_attr_values[":agent_id"] = {"S": trace.agent_id}
-                if trace.team_id is not None:
+                if existing.get("team_id") is None and trace.team_id is not None:
                     update_parts.append("team_id = :team_id")
                     expression_attr_values[":team_id"] = {"S": trace.team_id}
-                if trace.workflow_id is not None:
+                if existing.get("workflow_id") is None and trace.workflow_id is not None:
                     update_parts.append("workflow_id = :workflow_id")
                     expression_attr_values[":workflow_id"] = {"S": trace.workflow_id}
 
