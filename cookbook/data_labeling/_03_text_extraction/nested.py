@@ -11,7 +11,7 @@ This example extracts action items from a meeting transcript.
 from typing import List, Optional
 
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.openai import OpenAIResponses
+from agno.models.google import Gemini
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -44,7 +44,7 @@ due date is not mentioned, leave it null.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     output_schema=Meeting,
 )

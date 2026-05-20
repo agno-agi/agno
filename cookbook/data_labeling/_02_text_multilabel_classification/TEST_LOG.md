@@ -1,6 +1,6 @@
 # Test Log - _02_text_multilabel_classification
 
-Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses), agno 2.6.6.
+Tested 2026-05-19 against `gemini-3.5-flash` (Gemini), agno 2.6.8.
 
 ### basic.py
 
@@ -12,16 +12,6 @@ Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses), agno 2.6.6.
 
 ---
 
-### with_confidence.py
-
-**Status:** PASS
-
-**Description:** Same task with per-tag confidence.
-
-**Result:** Reasonable tag/confidence pairs; empty list returned when no aspects are addressed.
-
----
-
 ### hierarchical.py
 
 **Status:** PASS
@@ -29,5 +19,15 @@ Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses), agno 2.6.6.
 **Description:** Two-level (parent/child) tagging on news snippets.
 
 **Result:** Tags correctly nested (e.g. business -> markets, tech -> ai chips).
+
+---
+
+### with_confidence.py
+
+**Status:** PASS
+
+**Description:** Same task with per-tag confidence.
+
+**Result:** Reasonable tag/confidence pairs; empty list returned when no aspects are addressed.
 
 ---
