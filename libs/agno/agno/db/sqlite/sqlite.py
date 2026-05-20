@@ -69,6 +69,7 @@ class SqliteDb(BaseDb):
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
+        encrypt_auth_tokens: bool = True,
         id: Optional[str] = None,
     ):
         """
@@ -128,6 +129,7 @@ class SqliteDb(BaseDb):
             schedule_runs_table=schedule_runs_table,
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
+            encrypt_auth_tokens=encrypt_auth_tokens,
         )
 
         _engine: Optional[Engine] = db_engine
