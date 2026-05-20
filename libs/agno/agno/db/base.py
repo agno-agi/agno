@@ -52,7 +52,7 @@ class BaseDb(ABC):
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
-        encrypt_auth_tokens: Optional[bool] = None,
+        encrypt_auth_tokens: bool = True,
         auth_token_encryption_key: Optional[str] = None,
         id: Optional[str] = None,
     ):
@@ -127,7 +127,7 @@ class BaseDb(ABC):
             schedule_runs_table=data.get("schedule_runs_table"),
             approvals_table=data.get("approvals_table"),
             auth_tokens_table=data.get("auth_tokens_table"),
-            encrypt_auth_tokens=data.get("encrypt_auth_tokens"),
+            encrypt_auth_tokens=data.get("encrypt_auth_tokens", True),
             auth_token_encryption_key=data.get("auth_token_encryption_key"),
             id=data.get("id"),
         )
@@ -1123,12 +1123,8 @@ class BaseDb(ABC):
             raise ValueError("Auth token 'token_data' must be a dict")
 
     def _should_encrypt_auth_tokens(self) -> bool:
-        """Check if auth token encryption is enabled (param or env var)."""
-        import os
-
-        if self.encrypt_auth_tokens is not None:
-            return self.encrypt_auth_tokens
-        return os.getenv("AGNO_AUTH_TOKEN_ENCRYPTION", "false").lower() == "true"
+        """Check if auth token encryption is enabled (default: True)."""
+        return self.encrypt_auth_tokens
 
     def _encrypt_token_data(self, token_data: Dict[str, Any]) -> Dict[str, Any]:
         """Encrypt token_data if encryption is enabled."""

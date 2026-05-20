@@ -5023,14 +5023,16 @@ class PostgresDb(BaseDb):
             data["updated_at"] = now
             with self.Session() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(**data)
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["id"],
-                    set_={
-                        "token_data": stmt.excluded.token_data,
-                        "granted_scopes": stmt.excluded.granted_scopes,
-                        "updated_at": stmt.excluded.updated_at,
-                    },
-                )
+                set_dict: Dict[str, Any] = {
+                    "token_data": stmt.excluded.token_data,
+                    "granted_scopes": stmt.excluded.granted_scopes,
+                    "updated_at": stmt.excluded.updated_at,
+                }
+                if "pkce_verifier" in token:
+                    set_dict["pkce_verifier"] = stmt.excluded.pkce_verifier
+                    set_dict["pkce_state_id"] = stmt.excluded.pkce_state_id
+                    set_dict["pkce_expires_at"] = stmt.excluded.pkce_expires_at
+                stmt = stmt.on_conflict_do_update(index_elements=["id"], set_=set_dict)
                 sess.execute(stmt)
             return data
         except Exception as e:
@@ -5048,4 +5050,51 @@ class PostgresDb(BaseDb):
                 return result.rowcount > 0
         except Exception as e:
             log_debug(f"Error deleting auth token: {e}")
+            return False
+
+    def set_pkce_state(
+        self,
+        provider: str,
+        user_id: Optional[str],
+        service: str,
+        verifier: str,
+        state_id: str,
+        expires_at: int,
+        scopes: Optional[list] = None,
+    ) -> bool:
+        try:
+            table = self._get_table(table_type="auth_tokens", create_table_if_not_found=True)
+            if table is None:
+                return False
+            token_id = self._auth_token_id(provider, user_id, service)
+            now = int(time.time())
+            data = {
+                "id": token_id,
+                "provider": provider,
+                "user_id": user_id,
+                "service": service,
+                "token_data": {},
+                "granted_scopes": scopes,
+                "pkce_verifier": verifier,
+                "pkce_state_id": state_id,
+                "pkce_expires_at": expires_at,
+                "created_at": now,
+                "updated_at": now,
+            }
+            with self.Session() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(**data)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["id"],
+                    set_={
+                        "pkce_verifier": stmt.excluded.pkce_verifier,
+                        "pkce_state_id": stmt.excluded.pkce_state_id,
+                        "pkce_expires_at": stmt.excluded.pkce_expires_at,
+                        "granted_scopes": stmt.excluded.granted_scopes,
+                        "updated_at": stmt.excluded.updated_at,
+                    },
+                )
+                sess.execute(stmt)
+            return True
+        except Exception as e:
+            log_error(f"Error setting PKCE state: {e}")
             return False

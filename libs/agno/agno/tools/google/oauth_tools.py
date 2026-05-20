@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any, Dict, Optional, Set
 from urllib.parse import urlencode
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error
 
 if TYPE_CHECKING:
     from agno.tools.google.auth import GoogleOAuthConfig
@@ -102,9 +102,11 @@ class GoogleOAuthTools(Toolkit):
             scopes.update(service_scopes)
 
         if not ga._state_secret:
-            log_warning(
-                "GOOGLE_OAUTH_STATE_SECRET not set - OAuth state will be unsigned. "
-                "This is INSECURE and should only be used in development."
+            return json.dumps(
+                {
+                    "error": "GOOGLE_OAUTH_STATE_SECRET is required for secure OAuth. "
+                    "Set it via environment variable or GoogleOAuthConfig(state_secret=...)."
+                }
             )
 
         # Resolve DB for PKCE state storage
@@ -128,16 +130,12 @@ class GoogleOAuthTools(Toolkit):
 
         # Signed JWT carries user_id + state_id through Google redirect
         user_id = getattr(run_context, "user_id", None) if run_context else None
-        # Use configured secret, or generate ephemeral one for dev (won't survive restart)
-        signing_secret = ga._state_secret or secrets.token_urlsafe(32)
-        if not ga._state_secret:
-            ga._state_secret = signing_secret  # Cache for callback verification
         try:
             from agno.utils.oauth_state import sign_state
 
             state = sign_state(
                 {"user_id": user_id, "services": list(services), "state_id": state_id},
-                secret=signing_secret,
+                secret=ga._state_secret,
                 ttl_seconds=ga._state_ttl_seconds,
             )
         except ImportError:
@@ -148,21 +146,21 @@ class GoogleOAuthTools(Toolkit):
                 }
             )
 
-        # Store PKCE state in DB
+        # Store PKCE state in DB (preserves existing token_data if present)
         try:
-            db.upsert_auth_token(
-                {
-                    "provider": "google",
-                    "user_id": user_id,
-                    "service": "google",
-                    "token_data": {
-                        "pkce_verifier": code_verifier,
-                        "pkce_state_id": state_id,
-                        "pending": True,
-                    },
-                    "granted_scopes": list(scopes),
-                }
-            )
+            import time
+
+            expires_at = int(time.time()) + ga._state_ttl_seconds
+            if not db.set_pkce_state(
+                provider="google",
+                user_id=user_id,
+                service="google",
+                verifier=code_verifier,
+                state_id=state_id,
+                expires_at=expires_at,
+                scopes=list(scopes),
+            ):
+                return json.dumps({"error": "Failed to store PKCE state"})
         except Exception as e:
             log_error(f"Failed to store PKCE state: {e}")
             return json.dumps({"error": f"Failed to initialize OAuth flow: {e}"})

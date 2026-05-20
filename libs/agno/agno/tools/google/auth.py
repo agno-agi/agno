@@ -9,7 +9,7 @@ from functools import wraps
 from typing import Any, Dict, List, Optional
 
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.oauth_state import decode_state_insecure, verify_state
+from agno.utils.oauth_state import verify_state
 
 
 def _generate_pkce_pair() -> tuple[str, str]:
@@ -156,6 +156,9 @@ def _persist_google_token(
                 "service": "google",
                 "token_data": token_data,
                 "granted_scopes": granted_scopes,
+                "pkce_verifier": None,
+                "pkce_state_id": None,
+                "pkce_expires_at": None,
             }
         )
         return True
@@ -176,7 +179,14 @@ def _valid_auth_token_db(db: Any) -> Any:
     if db is None:
         return None
 
-    from agno.db.base import BaseDb
+    from agno.db.base import AsyncBaseDb, BaseDb
+
+    if isinstance(db, AsyncBaseDb):
+        log_warning(
+            "Async database detected but Google OAuth requires sync DB for token storage. "
+            "Token persistence will be disabled. Use a sync DB (e.g., SqliteDb, PgDb) for multi-user OAuth."
+        )
+        return None
 
     if isinstance(db, BaseDb) and type(db).get_auth_token is not BaseDb.get_auth_token:
         return db
@@ -381,15 +391,14 @@ class GoogleOAuthConfig:
                 "Install with `pip install PyJWT` or `pip install agno[os]`."
             }
 
+        if not self._state_secret:
+            return {
+                "error": "GOOGLE_OAUTH_STATE_SECRET not configured. "
+                "OAuth callback cannot verify state without a signing secret."
+            }
+
         try:
-            if self._state_secret:
-                state_data = verify_state(state, secret=self._state_secret)
-            else:
-                log_warning(
-                    "GOOGLE_OAUTH_STATE_SECRET not set - skipping state verification. "
-                    "This is INSECURE and should only be used in development."
-                )
-                state_data = decode_state_insecure(state)
+            state_data = verify_state(state, secret=self._state_secret)
         except jwt.InvalidTokenError as e:
             log_warning(f"Rejected OAuth callback: {e}")
             return {"error": f"Invalid state: {e}"}
@@ -413,9 +422,10 @@ class GoogleOAuthConfig:
             log_warning(f"No PKCE state found for user={user_id}")
             return {"error": "OAuth session expired or invalid. Please try again."}
 
-        token_data = row.get("token_data", {})
-        stored_state_id = token_data.get("pkce_state_id")
-        code_verifier = token_data.get("pkce_verifier")
+        # Read PKCE from dedicated columns
+        stored_state_id = row.get("pkce_state_id")
+        code_verifier = row.get("pkce_verifier")
+        pkce_expires_at = row.get("pkce_expires_at")
 
         if not stored_state_id or stored_state_id != state_id:
             log_warning(f"PKCE state_id mismatch for user={user_id}: expected {stored_state_id}, got {state_id}")
@@ -424,6 +434,13 @@ class GoogleOAuthConfig:
         if not code_verifier:
             log_warning(f"Missing code_verifier for user={user_id}")
             return {"error": "OAuth session corrupted. Please try again."}
+
+        # Check PKCE expiry
+        import time
+
+        if pkce_expires_at and int(time.time()) > pkce_expires_at:
+            log_warning(f"PKCE state expired for user={user_id}")
+            return {"error": "OAuth session expired. Please try again."}
 
         try:
             from google_auth_oauthlib.flow import Flow
@@ -496,9 +513,9 @@ class GoogleOAuthConfig:
             app.include_router(google_auth.get_oauth_router(db=agent.db))
         """
         if not self._state_secret:
-            log_warning(
-                "GOOGLE_OAUTH_STATE_SECRET not set - OAuth state verification disabled. "
-                "This is INSECURE and should only be used in development."
+            raise RuntimeError(
+                "GOOGLE_OAUTH_STATE_SECRET is required for OAuth callback security. "
+                "Set it via environment variable or GoogleOAuthConfig(state_secret=...)."
             )
 
         # Resolve db: explicit param > GoogleAuth(db=...) > fail

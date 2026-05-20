@@ -314,6 +314,9 @@ AUTH_TOKEN_TABLE_SCHEMA = {
     "service": {"type": String, "nullable": False, "index": True},
     "token_data": {"type": JSONB, "nullable": False},
     "granted_scopes": {"type": JSONB, "nullable": True},
+    "pkce_verifier": {"type": String, "nullable": True},
+    "pkce_state_id": {"type": String, "nullable": True},
+    "pkce_expires_at": {"type": BigInteger, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }
