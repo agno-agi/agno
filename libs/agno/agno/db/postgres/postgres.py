@@ -80,6 +80,8 @@ class PostgresDb(BaseDb):
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
+        store_auth_tokens: bool = False,
+        encrypt_auth_tokens: bool = True,
         id: Optional[str] = None,
         create_schema: bool = True,
     ):
@@ -157,6 +159,8 @@ class PostgresDb(BaseDb):
             schedule_runs_table=schedule_runs_table,
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
+            store_auth_tokens=store_auth_tokens,
+            encrypt_auth_tokens=encrypt_auth_tokens,
         )
 
         self.db_schema: str = db_schema if db_schema is not None else "ai"

@@ -52,6 +52,7 @@ class BaseDb(ABC):
         schedule_runs_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
+        store_auth_tokens: bool = False,
         encrypt_auth_tokens: bool = True,
         auth_token_encryption_key: Optional[str] = None,
         id: Optional[str] = None,
@@ -74,6 +75,7 @@ class BaseDb(ABC):
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
+        self.store_auth_tokens = store_auth_tokens
         self.encrypt_auth_tokens = encrypt_auth_tokens
         self.auth_token_encryption_key = auth_token_encryption_key
 

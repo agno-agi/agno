@@ -45,6 +45,7 @@ from agno.utils.log import log_debug, log_warning
 
 def _wire_google_auth(
     tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]],
+    agent: Optional["Agent"] = None,
 ) -> Optional[List[Union[Toolkit, Callable, Function, Dict]]]:
     """Consolidate OAuth scopes across Google toolkits.
 
@@ -125,14 +126,21 @@ def _wire_google_auth(
         # Mark as wired to this config
         t._wired_config_id = config_id  # type: ignore[attr-defined]
 
-    # Propagate store_token_in_db from GoogleOAuthTools to all Google toolkits
-    for oauth_tool in oauth_tools:
-        if getattr(oauth_tool, "store_token_in_db", False):
-            for t in google_toolkits:
-                if not getattr(t, "store_token_in_db", False):
-                    t.store_token_in_db = True
-                    log_debug(f"Propagated store_token_in_db=True to {t.__class__.__name__}")
-            break
+    # Propagate store_token_in_db: DB setting takes priority, then GoogleOAuthTools
+    db_store = getattr(getattr(agent, "db", None), "store_auth_tokens", False) if agent else False
+    if db_store:
+        for t in google_toolkits:
+            if not getattr(t, "store_token_in_db", False):
+                t.store_token_in_db = True
+                log_debug(f"Propagated store_token_in_db=True from DB to {t.__class__.__name__}")
+    else:
+        for oauth_tool in oauth_tools:
+            if getattr(oauth_tool, "store_token_in_db", False):
+                for t in google_toolkits:
+                    if not getattr(t, "store_token_in_db", False):
+                        t.store_token_in_db = True
+                        log_debug(f"Propagated store_token_in_db=True to {t.__class__.__name__}")
+                break
 
     # Propagate service account config from GoogleAuthConfig to all Google toolkits
     if shared_config:
@@ -233,7 +241,7 @@ def get_tools(
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
 
     # Auto-wire Google OAuth config across Google toolkits (idempotent)
-    resolved_tools = _wire_google_auth(resolved_tools)
+    resolved_tools = _wire_google_auth(resolved_tools, agent)
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
@@ -340,7 +348,7 @@ async def aget_tools(
     resolved_knowledge = get_resolved_knowledge(agent, run_context)
 
     # Auto-wire Google OAuth config across Google toolkits (idempotent)
-    resolved_tools = _wire_google_auth(resolved_tools)
+    resolved_tools = _wire_google_auth(resolved_tools, agent)
 
     # Connect tools that require connection management
     _init.connect_connectable_tools(agent)
