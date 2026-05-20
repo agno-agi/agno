@@ -32,7 +32,6 @@ from agno.models.openai import OpenAIResponses
 from agno.tools.google.auth import GoogleAuthConfig
 from agno.tools.google.calendar import GoogleCalendarTools
 from agno.tools.google.gmail import GmailTools
-from agno.tools.google.oauth_tools import GoogleOAuthTools
 
 # Configure service account ONCE — auto-propagates to all Google toolkits
 service_account_config = GoogleAuthConfig(
@@ -40,35 +39,35 @@ service_account_config = GoogleAuthConfig(
     delegated_user=os.getenv("GOOGLE_DELEGATED_USER"),
 )
 
+# Calendar only (no delegation needed)
 calendar_agent = Agent(
     name="Calendar Service Account Agent",
     model=OpenAIResponses(id="gpt-5.4"),
     tools=[
-        GoogleOAuthTools(auth_config=service_account_config),
-        GoogleCalendarTools(),
+        GoogleCalendarTools(auth_config=service_account_config),
     ],
     instructions="You have Calendar access via service account. Only shared calendars are visible.",
     add_datetime_to_context=True,
     markdown=True,
 )
 
+# Gmail requires domain-wide delegation
 gmail_agent = Agent(
     name="Gmail Service Account Agent",
     model=OpenAIResponses(id="gpt-5.4"),
     tools=[
-        GoogleOAuthTools(auth_config=service_account_config),
-        GmailTools(include_tools=["get_latest_emails", "search_emails"]),
+        GmailTools(auth_config=service_account_config, include_tools=["get_latest_emails", "search_emails"]),
     ],
     instructions="You have Gmail access via service account with domain-wide delegation.",
     markdown=True,
 )
 
+# Multiple toolkits — pass auth_config to first, others auto-inherit
 workspace_agent = Agent(
     name="Workspace Service Account Agent",
     model=OpenAIResponses(id="gpt-5.4"),
     tools=[
-        GoogleOAuthTools(auth_config=service_account_config),
-        GmailTools(include_tools=["get_latest_emails", "search_emails", "get_thread"]),
+        GmailTools(auth_config=service_account_config, include_tools=["get_latest_emails", "search_emails"]),
         GoogleCalendarTools(include_tools=["list_events", "get_event", "create_event"]),
     ],
     instructions="You are a workspace assistant with Gmail and Calendar via service account.",
