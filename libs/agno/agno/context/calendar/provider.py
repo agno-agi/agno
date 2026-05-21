@@ -44,46 +44,28 @@ if TYPE_CHECKING:
 DEFAULT_READ_INSTRUCTIONS = """\
 You answer questions by searching and reading Google Calendar.
 
-## Tools
+## When to use which tool
 
-- `list_events` — upcoming events
-- `search_events` — free-text search across titles/descriptions
-- `get_event` — full details for one event
-- `check_availability` — busy/free slots for attendees
-- `find_available_slots` — suggest meeting times
-- `list_calendars` — all calendars the user can access
-
-## When to use which
-
-1. "What's on my calendar today/this week?" → `list_events`
-2. "Find meetings about X" → `search_events`
-3. "Am I free at 2pm?" → `check_availability`
-4. "When can we meet?" → `find_available_slots`
+- "What's on my calendar today/this week?" → `list_events`
+- "Find meetings about X" → `search_events`
+- "Am I free at 2pm?" → `check_availability`
+- "When can we meet?" → `find_available_slots`
 
 ## Time zones
 
 - Always ask the user's timezone if not obvious from context.
 - Return times in the user's local timezone, not UTC.
-- When listing events, show both date and time clearly.
 
 ## Citing results
 
 - Include event IDs so the user can reference them later.
 - Link to the event's `htmlLink` when available.
-- For recurring events, clarify which instance you're referring to.
 
 **Read-only.** No creating, updating, or deleting events.
 """
 
 DEFAULT_WRITE_INSTRUCTIONS = """\
 You manage Google Calendar — searching, reading, and modifying events.
-
-## Tools
-
-- `create_event` — create new event
-- `update_event` — modify existing event
-- `delete_event` — remove an event
-- `list_events`, `search_events`, `get_event` — for lookups
 
 ## Before modifying
 
@@ -97,10 +79,6 @@ You manage Google Calendar — searching, reading, and modifying events.
 
 - Always confirm the timezone with the user if not explicit.
 - For all-day events, use date format (`2026-05-01`), not datetime.
-
-## Updating events
-
-- Only specify fields that should change — omit unchanged fields.
 
 ## Deleting events
 
