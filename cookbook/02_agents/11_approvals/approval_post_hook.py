@@ -85,8 +85,11 @@ if __name__ == "__main__":
     print(f"  Resolved by: {resolved['resolved_by']}")
 
     print("\n--- Step 3: Continuing run (post-hook should see resolution) ---")
-    run = agent.continue_run(run_id=run.run_id, requirements=run.requirements)
-    assert not run.is_paused, "Expected run to complete"
+    # Calling continue_run with run_id and NO requirements triggers the admin/API
+    # resolution path: check_and_apply_approval_resolution reads the resolved
+    # record from the DB and attaches it to run_response.metadata["approval"].
+    run = agent.continue_run(run_id=run.run_id)
+    assert not run.is_paused, f"Expected run to complete, got {run.status}"
 
     print("\n--- Step 4: Verifying metadata exposed on RunOutput ---")
     assert run.metadata is not None, "Expected metadata to be populated"
