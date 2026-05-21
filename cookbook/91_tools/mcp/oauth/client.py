@@ -1,45 +1,50 @@
-"""Agent with MCPTools using native OAuth2.1 client_credentials flow.
+"""Agno agent connecting to an OAuth-protected MCP server via OAuthConfig.
 
-This example shows how to connect an Agno agent to an OAuth-protected MCP server
-without any manual token management.
+`MCPTools(oauth=...)` performs OIDC discovery from the MCP server's
+protected-resource metadata, fetches a `client_credentials` access token, and
+injects `Authorization: Bearer <token>` on every request — all transparently.
+
+Defaults match the preconfigured client (`mcp-client` / `mcp-client-secret`) in
+the Keycloak realm at `~/code/tools/keycloak`. Override via env vars to point
+at any other OIDC provider:
+
+    MCP_URL              MCP server URL (e.g. https://api.example.com/mcp)
+    OAUTH_CLIENT_ID      client_credentials client ID
+    OAUTH_CLIENT_SECRET  client_credentials client secret
 
 Prerequisites:
-    1. Start the server:   .venvs/demo/bin/python cookbook/91_tools/mcp/oauth/server.py
-    2. Run this client:    .venvs/demo/bin/python cookbook/91_tools/mcp/oauth/client.py
-
-The OAuthConfig instructs MCPTools to:
-    1. Perform OIDC discovery on the MCP server URL
-    2. Acquire a client_credentials access token
-    3. Inject Authorization: Bearer <token> on every request
-    4. Refresh the token transparently when it expires
+    1. OIDC provider running and reachable
+    2. Protected MCP server running:
+         .venvs/demo/bin/python cookbook/91_tools/mcp/oauth/server.py
+    3. OPENAI_API_KEY set (the agent uses an OpenAI model)
 """
 
 import asyncio
+import os
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.tools.mcp import MCPTools, OAuthConfig
 
+MCP_URL = os.environ.get("MCP_URL", "http://localhost:9000/mcp")
+CLIENT_ID = os.environ.get("OAUTH_CLIENT_ID", "mcp-client")
+CLIENT_SECRET = os.environ.get("OAUTH_CLIENT_SECRET", "mcp-client-secret")
+
 
 async def main():
-    oauth_config = OAuthConfig(
-        client_id="demo-client-id",
-        client_secret="demo-client-secret",
-    )
-
     async with MCPTools(
-        url="http://localhost:8000/mcp",
+        url=MCP_URL,
         transport="streamable-http",
-        oauth=oauth_config,
+        oauth=OAuthConfig(
+            client_id=CLIENT_ID,
+            client_secret=CLIENT_SECRET,
+        ),
     ) as mcp_tools:
-        print(f"Connected. Available tools: {list(mcp_tools.functions.keys())}")
-
         agent = Agent(
             model=OpenAIResponses(id="gpt-5.4"),
             tools=[mcp_tools],
             markdown=False,
         )
-
         await agent.aprint_response(
             "Fetch the secret data using the get_secret_data tool."
         )
