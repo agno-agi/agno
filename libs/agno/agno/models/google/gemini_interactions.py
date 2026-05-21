@@ -674,6 +674,13 @@ class GeminiInteractions(Model):
                     model_response.provider_data["thought_signature"] = step.signature
 
             elif isinstance(step, FunctionCallStep):
+                # On the agent path (Antigravity, Deep Research) tools execute
+                # server-side inside the sandbox; the API rejects client-sent
+                # function_result follow-ups with 400. Surface these steps as
+                # observability only and don't queue them for local dispatch.
+                if self.agent is not None:
+                    continue
+
                 args = step.arguments
                 if isinstance(args, dict):
                     args_str = json.dumps(args)
@@ -785,7 +792,11 @@ class GeminiInteractions(Model):
 
         elif isinstance(stream_event, interaction_types.StepStart):
             step = stream_event.step
-            if isinstance(step, FunctionCallStep):
+            # On the agent path, FunctionCallSteps describe server-side sandbox
+            # tools (Antigravity file ops, Deep Research lookups). Don't track
+            # them as pending client calls - the autonomous loop runs them and
+            # would 400 if we tried to send function_result back.
+            if isinstance(step, FunctionCallStep) and self.agent is None:
                 idx = stream_event.index
                 tool_call = {
                     "id": step.id or str(uuid4()),

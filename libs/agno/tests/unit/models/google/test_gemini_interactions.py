@@ -912,6 +912,24 @@ class TestParseInteractionResponse:
         assert response.tool_calls[0]["function"]["name"] == "get_weather"
         assert response.tool_calls[0]["function"]["arguments"] == '{"city": "Paris"}'
 
+    def test_agent_path_skips_function_call_steps(self):
+        """Antigravity/Deep Research tools run server-side; surfacing them as
+        local tool_calls makes Agno try to dispatch them and then send
+        function_results back, which the API rejects with 400."""
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/ag1"
+        mock_interaction.steps = [
+            self._make_model_output_step("Listing the sandbox..."),
+            self._make_function_call_step("call_ag_1", "list_files", {"path": "."}),
+        ]
+        mock_interaction.usage = None
+
+        response = model._parse_provider_response(mock_interaction)
+        assert response.content == "Listing the sandbox..."
+        assert response.tool_calls == []
+
     def test_parse_thought_response(self):
         model = self._make_model()
 
@@ -1344,6 +1362,52 @@ class TestInvokeStream:
         assert len(tool_responses) == 1
         assert tool_responses[0].tool_calls[0]["function"]["name"] == "get_weather"
         assert tool_responses[0].tool_calls[0]["function"]["arguments"] == '{"city": "London"}'
+
+    def test_invoke_stream_agent_path_skips_function_call_steps(self):
+        """Streaming variant of the agent-path guard: FunctionCallStep
+        StepStart/StepStop on Antigravity should not yield tool_calls."""
+        from agno.models.google.gemini_interactions import (
+            DeltaArgumentsDelta,
+            FunctionCallStep,
+            interaction_types,
+        )
+
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        mock_step = MagicMock(spec=FunctionCallStep)
+        mock_step.__class__ = FunctionCallStep
+        mock_step.id = "call_ag_stream_1"
+        mock_step.name = "list_files"
+        mock_step.arguments = {}
+        mock_step.signature = None
+
+        mock_start = MagicMock(spec=interaction_types.StepStart)
+        mock_start.__class__ = interaction_types.StepStart
+        mock_start.step = mock_step
+        mock_start.index = 0
+
+        mock_delta = MagicMock(spec=DeltaArgumentsDelta)
+        mock_delta.__class__ = DeltaArgumentsDelta
+        mock_delta.arguments = '{"path": "."}'
+
+        mock_delta_event = MagicMock(spec=interaction_types.StepDelta)
+        mock_delta_event.__class__ = interaction_types.StepDelta
+        mock_delta_event.delta = mock_delta
+        mock_delta_event.index = 0
+
+        mock_stop = MagicMock(spec=interaction_types.StepStop)
+        mock_stop.__class__ = interaction_types.StepStop
+        mock_stop.index = 0
+
+        mock_client.interactions.create.return_value = iter([mock_start, mock_delta_event, mock_stop])
+
+        messages = [Message(role="user", content="What's in the sandbox?")]
+        assistant_message = Message(role="assistant")
+
+        responses = list(model.invoke_stream(messages, assistant_message))
+        assert all(not r.tool_calls for r in responses)
 
     def test_invoke_stream_error_raises_model_provider_error(self):
         from agno.exceptions import ModelProviderError
