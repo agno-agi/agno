@@ -67,7 +67,7 @@ def test_init_with_selective_tools():
             enable_list_rooms=False,
         )
 
-        assert "send_message" in [func.name for func in tools.functions.values()]
+        assert "webex_send_message" in [func.name for func in tools.functions.values()]
         assert "list_rooms" not in [func.name for func in tools.functions.values()]
 
 
@@ -83,7 +83,7 @@ def test_send_message_success(webex_tools, mock_webex_api):
 
     mock_webex_api.messages.create.return_value = mock_response
 
-    result = webex_tools.send_message("room123", "Test message")
+    result = webex_tools.webex_send_message("room123", "Test message")
     result_data = json.loads(result)
 
     assert result_data["id"] == "msg123"
@@ -153,7 +153,7 @@ def test_send_message_rate_limit(webex_tools, mock_webex_api):
     response.reason = "Too Many Requests"
     mock_webex_api.messages.create.side_effect = RateLimitError(response)
 
-    result = webex_tools.send_message("room123", "")
+    result = webex_tools.webex_send_message("room123", "")
     result_data = json.loads(result)
 
     assert "error" in result_data

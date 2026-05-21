@@ -27,7 +27,7 @@ class Crawl4aiTools(Toolkit):
     ):
         tools = []
         if all or enable_crawl:
-            tools.append(self.crawl)
+            tools.append(self.crawl4ai_crawl)
 
         super().__init__(name="crawl4ai_tools", tools=tools, **kwargs)
         self.max_length = max_length
@@ -77,12 +77,14 @@ class Crawl4aiTools(Toolkit):
 
         return config_params
 
-    def crawl(self, url: Union[str, List[str]], search_query: Optional[str] = None) -> Union[str, Dict[str, str]]:
+    def crawl4ai_crawl(
+        self, url: Union[str, List[str]], search_query: Optional[str] = None
+    ) -> Union[str, Dict[str, str]]:
         """
         Crawl URLs and extract their text content.
 
         Args:
-            url: Single URL string or list of URLs to crawl
+            url: Single URL string or list of URLs to crawl4ai_crawl
             search_query: Optional query string to filter content using BM25 algorithm
 
         Returns:
@@ -160,5 +162,5 @@ class Crawl4aiTools(Toolkit):
                 return content
 
         except Exception as e:
-            log_warning(f"Exception during crawl: {str(e)}")
+            log_warning(f"Exception during crawl4ai_crawl: {str(e)}")
             return f"Error crawling {url}: {str(e)}"

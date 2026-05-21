@@ -102,7 +102,7 @@ describe_image_step = Step(
 )
 
 generate_video_step = Step(
-    name="generate_video",
+    name="gemini_generate_video",
     agent=video_generator,
     description="Create a comprehensive video production plan and storyboard",
 )

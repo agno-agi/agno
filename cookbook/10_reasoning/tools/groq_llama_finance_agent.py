@@ -25,13 +25,13 @@ def run_example() -> None:
         ],
         instructions=dedent("""\
         ## General Instructions
-        - Always start by using the think tool to map out the steps needed to complete the task.
-        - After receiving tool results, use the think tool as a scratchpad to validate the results for correctness
-        - Before responding to the user, use the think tool to jot down final thoughts and ideas.
+        - Always start by using the reasoning_think tool to map out the steps needed to complete the task.
+        - After receiving tool results, use the reasoning_think tool as a scratchpad to validate the results for correctness
+        - Before responding to the user, use the reasoning_think tool to jot down final thoughts and ideas.
         - Present final outputs in well-organized tables whenever possible.
 
-        ## Using the think tool
-        At every step, use the think tool as a scratchpad to:
+        ## Using the reasoning_think tool
+        At every step, use the reasoning_think tool as a scratchpad to:
         - Restate the object in your own words to ensure full comprehension.
         - List the  specific rules that apply to the current request
         - Check if all required information is collected and is valid

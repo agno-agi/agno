@@ -87,7 +87,7 @@ agent = Agent(
             include_tools=[
                 "search_emails",
                 "get_emails_by_context",
-                "get_thread",
+                "gmail_get_thread",
             ]
         ),
     ],
@@ -95,7 +95,7 @@ agent = Agent(
         "When asked to prep for a meeting:",
         "1. Use list_events to find the meeting, then get_event_attendees for RSVP details.",
         "2. For each attendee, use search_emails to find recent emails (last 7 days).",
-        "3. If relevant threads exist, use get_thread to read the full conversation.",
+        "3. If relevant threads exist, use gmail_get_thread to read the full conversation.",
         "4. Identify open threads where the last message needs the user's reply.",
         "5. Generate talking points from email topics related to the meeting subject.",
         "6. Write a prep_summary covering: who is attending, key open topics, any pending replies.",

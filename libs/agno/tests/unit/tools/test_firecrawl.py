@@ -52,7 +52,7 @@ def test_init_with_params():
 
 
 def test_scrape_website(firecrawl_tools, mock_firecrawl):
-    """Test scrape_website method."""
+    """Test firecrawl_scrape_website method."""
     # Setup mock response
     mock_response = Mock()
     mock_response.model_dump.return_value = {
@@ -63,7 +63,7 @@ def test_scrape_website(firecrawl_tools, mock_firecrawl):
     mock_firecrawl.scrape.return_value = mock_response
 
     # Call the method
-    result = firecrawl_tools.scrape_website("https://example.com")
+    result = firecrawl_tools.firecrawl_scrape_website("https://example.com")
     result_data = json.loads(result)
 
     # Verify results
@@ -74,7 +74,7 @@ def test_scrape_website(firecrawl_tools, mock_firecrawl):
 
 
 def test_scrape_website_with_formats(firecrawl_tools, mock_firecrawl):
-    """Test scrape_website method with formats."""
+    """Test firecrawl_scrape_website method with formats."""
     # Setup mock response
     mock_response = Mock()
     mock_response.model_dump.return_value = {
@@ -88,7 +88,7 @@ def test_scrape_website_with_formats(firecrawl_tools, mock_firecrawl):
     firecrawl_tools.formats = ["html", "text"]
 
     # Call the method
-    result = firecrawl_tools.scrape_website("https://example.com")
+    result = firecrawl_tools.firecrawl_scrape_website("https://example.com")
     result_data = json.loads(result)
 
     # Verify results
@@ -99,7 +99,7 @@ def test_scrape_website_with_formats(firecrawl_tools, mock_firecrawl):
 
 
 def test_crawl_website(firecrawl_tools, mock_firecrawl):
-    """Test crawl_website method."""
+    """Test firecrawl_crawl_website method."""
     # Setup mock response
     mock_response = Mock()
     mock_response.model_dump.return_value = {
@@ -110,7 +110,7 @@ def test_crawl_website(firecrawl_tools, mock_firecrawl):
     mock_firecrawl.crawl.return_value = mock_response
 
     # Call the method
-    result = firecrawl_tools.crawl_website("https://example.com")
+    result = firecrawl_tools.firecrawl_crawl_website("https://example.com")
     result_data = json.loads(result)
 
     # Verify results
@@ -121,7 +121,7 @@ def test_crawl_website(firecrawl_tools, mock_firecrawl):
 
 
 def test_crawl_website_with_custom_limit(firecrawl_tools, mock_firecrawl):
-    """Test crawl_website method with custom limit."""
+    """Test firecrawl_crawl_website method with custom limit."""
     # Reset the default limit
     firecrawl_tools.limit = None
     # Setup mock response
@@ -134,7 +134,7 @@ def test_crawl_website_with_custom_limit(firecrawl_tools, mock_firecrawl):
     mock_firecrawl.crawl.return_value = mock_response
 
     # Call the method with custom limit
-    result = firecrawl_tools.crawl_website("https://example.com", limit=5)
+    result = firecrawl_tools.firecrawl_crawl_website("https://example.com", limit=5)
     result_data = json.loads(result)
 
     # Verify results
@@ -175,7 +175,7 @@ def test_search(firecrawl_tools, mock_firecrawl):
     mock_firecrawl.search.return_value = mock_response
 
     # Call the method
-    result = firecrawl_tools.search_web("test query")
+    result = firecrawl_tools.firecrawl_search_web("test query")
     result_data = json.loads(result)
 
     # Verify results
@@ -194,7 +194,7 @@ def test_search_with_error(firecrawl_tools, mock_firecrawl):
     mock_firecrawl.search.return_value = mock_response
 
     # Call the method
-    result = firecrawl_tools.search_web("test query")
+    result = firecrawl_tools.firecrawl_search_web("test query")
 
     # Verify results
     assert result == "Error searching with the Firecrawl tool: Search failed"
@@ -213,7 +213,7 @@ def test_search_with_custom_params(firecrawl_tools, mock_firecrawl):
     firecrawl_tools.search_params = {"language": "en", "region": "us"}
 
     # Call the method
-    result = firecrawl_tools.search_web("test query")
+    result = firecrawl_tools.firecrawl_search_web("test query")
     result_data = json.loads(result)
 
     # Verify results
@@ -231,7 +231,7 @@ def test_search_tool_response(firecrawl_tools, mock_firecrawl):
     }
     mock_firecrawl.search.return_value = mock_response
 
-    result = firecrawl_tools.search_web("test query")
+    result = firecrawl_tools.firecrawl_search_web("test query")
     result_data = json.loads(result)
 
     assert result_data["query"] == "test query"

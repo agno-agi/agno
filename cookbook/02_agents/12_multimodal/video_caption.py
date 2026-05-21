@@ -30,7 +30,7 @@ video_caption_agent = Agent(
         "When a user provides a video, process it to generate captions.",
         "Use the video processing tools in this sequence:",
         "1. Extract audio from the video using extract_audio",
-        "2. Transcribe the audio using transcribe_audio",
+        "2. Transcribe the audio using openai_transcribe_audio",
         "3. Generate SRT captions using create_srt",
         "4. Embed captions into the video using embed_captions",
     ],

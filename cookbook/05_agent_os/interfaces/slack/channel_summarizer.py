@@ -47,7 +47,7 @@ summarizer = Agent(
         "When asked about a channel:",
         "1. Use get_channel_history with the channel_id to fetch recent messages",
         "2. Look for messages with thread_ts and reply_count > 0 — these have threaded replies",
-        "3. Use get_thread with the channel_id and thread_ts to expand important threads",
+        "3. Use slack_get_thread with the channel_id and thread_ts to expand important threads",
         "4. Group messages by topic/theme",
         "5. Highlight decisions, action items, and blockers",
         "Format summaries with clear sections:",

@@ -126,7 +126,7 @@ class TestValyuTools:
         mock_response = MockSearchResponse(success=True, results=[MockSearchResult(title="Web Article")])
         valyu_tools.valyu.search.return_value = mock_response
 
-        result = valyu_tools.search_web("test query")
+        result = valyu_tools.valyu_search_web("test query")
         data = json.loads(result)
 
         assert len(data) == 1
@@ -140,7 +140,7 @@ class TestValyuTools:
         mock_response = MockSearchResponse(success=True, results=[])
         valyu_tools.valyu.search.return_value = mock_response
 
-        valyu_tools.search_web("test query", content_category="technology")
+        valyu_tools.valyu_search_web("test query", content_category="technology")
 
         call_args = valyu_tools.valyu.search.call_args[1]
         assert call_args["category"] == "technology"
@@ -208,7 +208,7 @@ class TestValyuTools:
         mock_response = MockSearchResponse(success=True, results=[])
         valyu_tools.valyu.search.return_value = mock_response
 
-        valyu_tools.search_web("test query", content_category="override_category", start_date="2024-01-01")
+        valyu_tools.valyu_search_web("test query", content_category="override_category", start_date="2024-01-01")
 
         call_args = valyu_tools.valyu.search.call_args[1]
         assert call_args["category"] == "override_category"
@@ -217,7 +217,7 @@ class TestValyuTools:
     def test_tools_registration(self, valyu_tools):
         """Test that all tools are properly registered."""
         tool_names = list(valyu_tools.functions.keys())
-        expected_tools = ["search_academic_sources", "search_web", "search_within_paper"]
+        expected_tools = ["search_academic_sources", "valyu_search_web", "search_within_paper"]
 
         for tool in expected_tools:
             assert tool in tool_names

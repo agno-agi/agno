@@ -38,5 +38,5 @@ agent = agent_all
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     agent.print_response(
-        'Can you scrape the first search result from a search on "news in USA"?'
+        'Can you spider_scrape the first search result from a search on "news in USA"?'
     )

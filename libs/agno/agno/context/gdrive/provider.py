@@ -109,9 +109,9 @@ class GoogleDriveContextProvider(ContextProvider):
     def instructions(self) -> str:
         if self.mode == ContextMode.tools:
             return (
-                f"`{self.name}`: `search_files(query)` or `list_files(query)` with Drive query syntax "
+                f"`{self.name}`: `gdrive_search_files(query)` or `gdrive_list_files(query)` with Drive query syntax "
                 "(e.g. `name contains 'roadmap'`, `mimeType = 'application/vnd.google-apps.document'`). "
-                "Then `read_file(file_id)` to read contents. Read-only. Note: these share tool names "
+                "Then `gdrive_read_file(file_id)` to read contents. Read-only. Note: these share tool names "
                 "with other providers — mode=tools only works in isolation."
             )
         return (
@@ -124,7 +124,7 @@ class GoogleDriveContextProvider(ContextProvider):
     # ------------------------------------------------------------------
 
     # Wrap in a `query_gdrive` sub-agent because `GoogleDriveTools` exposes
-    # `list_files` / `search_files` / `read_file` — names that collide with
+    # `gdrive_list_files` / `gdrive_search_files` / `gdrive_read_file` — names that collide with
     # `FileTools`, and agno's tool resolver dedupes by name across the whole
     # list (silently dropping the second toolkit). mode=tools only works when
     # Drive is the sole file-like provider.
@@ -179,20 +179,20 @@ folders. Always escalate when the first search comes back empty.
 ## Search workflow (escalate on empty)
 
 1. **First try a bare name search.**
-   `search_files(query="name contains 'X'")`
+   `gdrive_search_files(query="name contains 'X'")`
    — catches files directly owned by the SA, or files the SA can
    reach via an ancestor shared with it.
 
 2. **If step 1 returns zero results, search shared items.**
-   `search_files(query="sharedWithMe and name contains 'X'")`
+   `gdrive_search_files(query="sharedWithMe and name contains 'X'")`
    — catches files + folders shared with the SA directly. The folder
    itself is here even if its contents aren't.
 
 3. **If step 2 still returns zero, traverse shared folders.**
-   a. `search_files(query="mimeType = 'application/vnd.google-apps.folder' and sharedWithMe")`
+   a. `gdrive_search_files(query="mimeType = 'application/vnd.google-apps.folder' and sharedWithMe")`
       — enumerate every folder shared with the SA.
    b. For each returned folder id, search inside it:
-      `search_files(query="'<folder_id>' in parents and name contains 'X'")`
+      `gdrive_search_files(query="'<folder_id>' in parents and name contains 'X'")`
    Stop as soon as you find matches. If the user's query refers to a
    topic (e.g. "growth"), match folder names first — a folder named
    "Growth" probably has the files inside.
@@ -203,7 +203,7 @@ folders. Always escalate when the first search comes back empty.
 
 ## After you find the files
 
-- **Open the most relevant hit.** `read_file(file_id)` returns plain
+- **Open the most relevant hit.** `gdrive_read_file(file_id)` returns plain
   text for Docs, CSV for Sheets, raw text for non-Workspace files.
 - **Don't read everything** — search metadata (name, mimeType,
   modifiedTime, webViewLink) is usually enough to decide what to open.

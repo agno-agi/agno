@@ -37,7 +37,7 @@ class FalTools(Toolkit):
 
         tools = []
         if all or enable_generate_media:
-            tools.append(self.generate_media)
+            tools.append(self.fal_generate_media)
         if all or enable_image_to_image:
             tools.append(self.image_to_image)
 
@@ -51,7 +51,7 @@ class FalTools(Toolkit):
                     log_info(message)
                     self.seen_logs.add(message)
 
-    def generate_media(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
+    def fal_generate_media(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
         """
         Use this function to run a model with a given prompt.
 

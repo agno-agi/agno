@@ -149,7 +149,7 @@ agent_default_exclusions = Agent(
     ],
     description="You help users explore a project, skipping build and dependency noise.",
     instructions=[
-        "Use list_files and search_content to answer questions about the project",
+        "Use file_list and search_content to answer questions about the project",
     ],
     markdown=True,
 )
@@ -173,7 +173,7 @@ agent_can_read_venv = Agent(
     ],
     description="You inspect installed Python packages to answer version and source questions.",
     instructions=[
-        "Use search_content and search_files to look inside .venv when asked",
+        "Use search_content and file_search to look inside .venv when asked",
         "Report package versions and the file path where you found them",
     ],
     markdown=True,

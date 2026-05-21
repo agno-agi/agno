@@ -14,7 +14,7 @@ from agno.tools.websearch import WebSearchTools
 
 
 # Example 1: Basic web search with auto backend selection (default)
-# Both web_search and search_news are enabled by default
+# Both web_search and web_search_news are enabled by default
 agent = Agent(
     tools=[WebSearchTools()],
     description="You are a web search agent that helps users find information online.",

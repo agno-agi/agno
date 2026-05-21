@@ -54,15 +54,15 @@ class SlackTools(Toolkit):
                 "When to use: reading the latest activity in a known channel.\n"
                 "Note: returns only top-level messages, not thread replies."
             )
-            # Only reference get_thread if the LLM can actually call it
-            if "get_thread" in enabled:
-                text += "\nLook for thread_ts and reply_count, then use get_thread to expand."
+            # Only reference slack_get_thread if the LLM can actually call it
+            if "slack_get_thread" in enabled:
+                text += "\nLook for thread_ts and reply_count, then use slack_get_thread to expand."
             text += "\nRequires: bot must be a member of the channel."
             sections.append(text)
 
-        if "get_thread" in enabled:
+        if "slack_get_thread" in enabled:
             text = (
-                "**get_thread** — full thread replies given a channel and thread timestamp.\n"
+                "**slack_get_thread** — full thread replies given a channel and thread timestamp.\n"
                 "When to use: expanding a message with replies into its full discussion."
             )
             # Reference chaining sources that are actually available
@@ -71,9 +71,9 @@ class SlackTools(Toolkit):
                 text += f"\nChain after {' or '.join(sources)} for complete context."
             sections.append(text)
 
-        if "get_channel_info" in enabled:
+        if "slack_get_channel_info" in enabled:
             sections.append(
-                "**get_channel_info** — channel metadata (topic, purpose, member count).\n"
+                "**slack_get_channel_info** — channel metadata (topic, purpose, member count).\n"
                 "When to use: understanding what a channel is about."
             )
 
@@ -84,13 +84,13 @@ class SlackTools(Toolkit):
             sections.append(text)
 
         # Messaging guidance — critical for thread-aware responses
-        if "send_message" in enabled and "send_message_thread" in enabled:
+        if "slack_send_message" in enabled and "send_message_thread" in enabled:
             sections.append(
-                "**send_message** vs **send_message_thread** — choosing correctly:\n"
+                "**slack_send_message** vs **send_message_thread** — choosing correctly:\n"
                 "- If you have a `Slack thread_ts` in your context/dependencies, "
                 "ALWAYS use send_message_thread with that thread_ts. "
-                "Never use send_message when replying inside a thread.\n"
-                "- Only use send_message for new top-level channel messages."
+                "Never use slack_send_message when replying inside a thread.\n"
+                "- Only use slack_send_message for new top-level channel messages."
             )
         elif "send_message_thread" in enabled:
             sections.append(
@@ -109,14 +109,14 @@ class SlackTools(Toolkit):
         if "search_workspace" in enabled and "get_channel_history" in enabled:
             routing.append("- Topic search, catch-up, cross-channel → search_workspace")
             routing.append("- Latest messages in a specific channel → get_channel_history")
-        if "get_thread" in enabled:
-            routing.append("- Deep-dive into a message → get_thread with channel_id and ts")
+        if "slack_get_thread" in enabled:
+            routing.append("- Deep-dive into a message → slack_get_thread with channel_id and ts")
             routing.append("- Always expand threads with high reply_count before summarizing")
         if "search_messages" in enabled and "search_workspace" in enabled:
             routing.append("- Fallback (user-token only) → search_messages")
-        if "send_message" in enabled and "send_message_thread" in enabled:
+        if "slack_send_message" in enabled and "send_message_thread" in enabled:
             routing.append("- Replying in a thread → send_message_thread (use Slack thread_ts from context)")
-            routing.append("- New top-level channel message → send_message")
+            routing.append("- New top-level channel message → slack_send_message")
 
         if routing:
             result += "\n\n## When to use which\n" + "\n".join(routing)
@@ -155,24 +155,24 @@ class SlackTools(Toolkit):
             token (str): The Slack API token. Defaults to the SLACK_TOKEN environment variable.
             markdown (bool): Whether to enable Slack markdown formatting. Defaults to True.
             output_directory (str): Optional path to save downloaded/uploaded files locally.
-            enable_send_message (bool): Whether to enable the send_message tool. Defaults to True.
+            enable_send_message (bool): Whether to enable the slack_send_message tool. Defaults to True.
             enable_send_message_thread (bool): Whether to enable the send_message_thread tool. Defaults to True.
-            enable_list_channels (bool): Whether to enable the list_channels tool. Defaults to True.
+            enable_list_channels (bool): Whether to enable the slack_list_channels tool. Defaults to True.
             enable_get_channel_history (bool): Whether to enable the get_channel_history tool. Defaults to True.
-            enable_upload_file (bool): Whether to enable the upload_file tool. Defaults to True.
-            enable_download_file (bool): Whether to enable the download_file tool. Defaults to True.
+            enable_upload_file (bool): Whether to enable the slack_upload_file tool. Defaults to True.
+            enable_download_file (bool): Whether to enable the slack_download_file tool. Defaults to True.
             enable_search_messages (bool): Whether to enable the search_messages tool (legacy API). Defaults to False.
             enable_search_workspace (bool): Whether to enable the search_workspace tool (assistant.search.context API).
                 Requires search:read.public, search:read.files, and search:read.users bot scopes.
                 The action_token is read from run_context.metadata at call time. Defaults to False.
-            enable_get_thread (bool): Whether to enable the get_thread tool. Defaults to False.
+            enable_get_thread (bool): Whether to enable the slack_get_thread tool. Defaults to False.
             enable_list_users (bool): Whether to enable the list_users tool. Defaults to False.
             enable_get_user_info (bool): Whether to enable the get_user_info tool. Defaults to False.
-            enable_get_channel_info (bool): Whether to enable the get_channel_info tool. Defaults to False.
+            enable_get_channel_info (bool): Whether to enable the slack_get_channel_info tool. Defaults to False.
             all (bool): Whether to enable all tools. Defaults to False.
             ssl (SSLContext): Optional SSL context for the Slack WebClient. Defaults to None.
             max_file_size (int): Maximum file size in bytes for uploads and downloads. Defaults to 1GB.
-            thread_message_limit (int): Maximum number of messages to fetch in get_thread. Defaults to 20.
+            thread_message_limit (int): Maximum number of messages to fetch in slack_get_thread. Defaults to 20.
         """
         _token = token or getenv("SLACK_TOKEN")
         if not _token:
@@ -191,29 +191,29 @@ class SlackTools(Toolkit):
 
         tools: List[Any] = []
         if enable_send_message or all:
-            tools.append(self.send_message)
+            tools.append(self.slack_send_message)
         if enable_send_message_thread or all:
             tools.append(self.send_message_thread)
         if enable_list_channels or all:
-            tools.append(self.list_channels)
+            tools.append(self.slack_list_channels)
         if enable_get_channel_history or all:
             tools.append(self.get_channel_history)
         if enable_upload_file or all:
-            tools.append(self.upload_file)
+            tools.append(self.slack_upload_file)
         if enable_download_file or all:
-            tools.append(self.download_file)
+            tools.append(self.slack_download_file)
         if enable_search_messages or all:
             tools.append(self.search_messages)
         if enable_search_workspace or all:
             tools.append(self.search_workspace)
         if enable_get_thread or all:
-            tools.append(self.get_thread)
+            tools.append(self.slack_get_thread)
         if enable_list_users or all:
             tools.append(self.list_users)
         if enable_get_user_info or all:
             tools.append(self.get_user_info)
         if enable_get_channel_info or all:
-            tools.append(self.get_channel_info)
+            tools.append(self.slack_get_channel_info)
 
         # Build tool instructions dynamically based on enabled tools
         if kwargs.get("instructions") is None:
@@ -377,7 +377,7 @@ class SlackTools(Toolkit):
         """Shape raw assistant.search.context results for LLM consumption.
 
         Extracts only fields the LLM needs to synthesize answers and offer
-        drill-downs (via ts + channel_id -> get_thread). Drops API noise like
+        drill-downs (via ts + channel_id -> slack_get_thread). Drops API noise like
         team_id, blocks, and redundant uploader fields.
         """
         output: Dict[str, Any] = {}
@@ -440,7 +440,7 @@ class SlackTools(Toolkit):
         """Extract LLM-relevant fields from a single search result message.
 
         Field renames: author_name -> author, message_ts -> ts, is_author_bot -> is_bot.
-        Keeps channel_id + ts so LLM can chain into get_thread.
+        Keeps channel_id + ts so LLM can chain into slack_get_thread.
         """
         entry: Dict[str, Any] = {
             "content": msg.get("content", ""),
@@ -454,7 +454,7 @@ class SlackTools(Toolkit):
         }
 
         # Surrounding messages give the LLM conversation context without
-        # needing a separate get_thread call; omit when empty to save tokens
+        # needing a separate slack_get_thread call; omit when empty to save tokens
         if include_context:
             ctx = msg.get("context_messages", {})
             before = [{"text": cm.get("text", ""), "user_id": cm.get("user_id", "")} for cm in ctx.get("before", [])]
@@ -468,7 +468,7 @@ class SlackTools(Toolkit):
 
     # ── Public tool methods ──────────────────────────────────────────
 
-    def send_message(self, channel: str, text: str) -> str:
+    def slack_send_message(self, channel: str, text: str) -> str:
         """Send a message to a Slack channel.
 
         Args:
@@ -505,7 +505,7 @@ class SlackTools(Toolkit):
             logger.exception("Error sending message")
             return json.dumps({"error": str(e)})
 
-    def list_channels(self, include_private: bool = False) -> str:
+    def slack_list_channels(self, include_private: bool = False) -> str:
         """List all channels in the Slack workspace.
 
         Args:
@@ -587,7 +587,7 @@ class SlackTools(Toolkit):
                 )
             )
 
-    def upload_file(
+    def slack_upload_file(
         self,
         channel: str,
         content: Union[str, bytes],
@@ -643,7 +643,7 @@ class SlackTools(Toolkit):
             logger.exception("Error uploading file")
             return json.dumps({"error": str(e)})
 
-    def download_file(self, file_id: str, dest_path: Optional[str] = None) -> str:
+    def slack_download_file(self, file_id: str, dest_path: Optional[str] = None) -> str:
         """Download a file from Slack by its file ID.
 
         Args:
@@ -822,7 +822,7 @@ class SlackTools(Toolkit):
             logger.exception("Error in search_workspace")
             return json.dumps({"error": str(e)})
 
-    def get_thread(self, channel: str, thread_ts: str, limit: int = 20) -> str:
+    def slack_get_thread(self, channel: str, thread_ts: str, limit: int = 20) -> str:
         """Get all messages in a thread by the parent message's timestamp.
 
         Args:
@@ -926,7 +926,7 @@ class SlackTools(Toolkit):
             logger.exception("Error getting user info")
             return json.dumps({"error": str(e)})
 
-    def get_channel_info(self, channel: str) -> str:
+    def slack_get_channel_info(self, channel: str) -> str:
         """Get detailed information about a Slack channel by its ID or name.
 
         Args:

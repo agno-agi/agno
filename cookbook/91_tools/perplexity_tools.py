@@ -2,7 +2,7 @@
 Perplexity Search Tools
 =============================
 
-Demonstrates Perplexity Search tools for web search.
+Demonstrates Perplexity Search tools for web perplexity_search.
 """
 
 from agno.agent import Agent
@@ -13,7 +13,7 @@ from agno.tools.perplexity import PerplexitySearch
 # Create Agent
 # ---------------------------------------------------------------------------
 
-# Example 1: Basic search with default settings
+# Example 1: Basic perplexity_search with default settings
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[PerplexitySearch()],

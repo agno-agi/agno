@@ -55,15 +55,15 @@ class SQLTools(Toolkit):
 
         tools: List[Any] = []
         if enable_list_tables or all:
-            tools.append(self.list_tables)
+            tools.append(self.sql_list_tables)
         if enable_describe_table or all:
-            tools.append(self.describe_table)
+            tools.append(self.sql_describe_table)
         if enable_run_sql_query or all:
-            tools.append(self.run_sql_query)
+            tools.append(self.sql_query)
 
         super().__init__(name="sql_tools", tools=tools, **kwargs)
 
-    def list_tables(self) -> str:
+    def sql_list_tables(self) -> str:
         """Use this function to get a list of table names in the database.
 
         Returns:
@@ -85,7 +85,7 @@ class SQLTools(Toolkit):
             logger.exception("Error getting tables")
             return f"Error getting tables: {e}"
 
-    def describe_table(self, table_name: str) -> str:
+    def sql_describe_table(self, table_name: str) -> str:
         """Use this function to describe a table.
 
         Args:
@@ -114,7 +114,7 @@ class SQLTools(Toolkit):
             logger.exception("Error getting table schema")
             return f"Error getting table schema: {e}"
 
-    def run_sql_query(self, query: str, limit: Optional[int] = 10) -> str:
+    def sql_query(self, query: str, limit: Optional[int] = 10) -> str:
         """Use this function to run a SQL query and return the result.
 
         Args:

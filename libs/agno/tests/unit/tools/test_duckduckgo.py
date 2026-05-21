@@ -113,7 +113,7 @@ def test_backward_compat_aliases():
     with patch("agno.tools.websearch.DDGS"):
         tools = DuckDuckGoTools()
         assert tools.duckduckgo_search == tools.web_search
-        assert tools.duckduckgo_news == tools.search_news
+        assert tools.duckduckgo_news == tools.web_search_news
 
 
 # ============================================================================
@@ -138,7 +138,7 @@ def test_search_news_with_timelimit(mock_ddgs):
     mock_instance.news.return_value = []
 
     tools = DuckDuckGoTools(timelimit="w")
-    tools.search_news("test news")
+    tools.web_search_news("test news")
 
     mock_instance.news.assert_called_once_with(query="test news", max_results=5, backend="duckduckgo", timelimit="w")
 
@@ -176,7 +176,7 @@ def test_search_news_with_region(mock_ddgs):
     mock_instance.news.return_value = []
 
     tools = DuckDuckGoTools(region="uk-en")
-    tools.search_news("test news")
+    tools.web_search_news("test news")
 
     mock_instance.news.assert_called_once_with(query="test news", max_results=5, backend="duckduckgo", region="uk-en")
 
@@ -214,7 +214,7 @@ def test_search_news_with_custom_backend(mock_ddgs):
     mock_instance.news.return_value = []
 
     tools = DuckDuckGoTools(backend="lite")
-    tools.search_news("test news")
+    tools.web_search_news("test news")
 
     mock_instance.news.assert_called_once_with(query="test news", max_results=5, backend="lite")
 
@@ -264,7 +264,7 @@ def test_search_news_with_all_params(mock_ddgs):
         backend="html",
         fixed_max_results=3,
     )
-    result = tools.search_news("breaking news")
+    result = tools.web_search_news("breaking news")
     result_data = json.loads(result)
 
     assert len(result_data) == 1

@@ -21,7 +21,7 @@ class YFinanceTools(Toolkit):
         enable_income_statements (bool): Enable the get_income_statements tool. Default: False.
         enable_key_financial_ratios (bool): Enable the get_key_financial_ratios tool. Default: False.
         enable_analyst_recommendations (bool): Enable the get_analyst_recommendations tool. Default: False.
-        enable_company_news (bool): Enable the get_company_news tool. Default: False.
+        enable_company_news (bool): Enable the yfinance_get_company_news tool. Default: False.
         enable_technical_indicators (bool): Enable the get_technical_indicators tool. Default: False.
         enable_historical_prices (bool): Enable the get_historical_stock_prices tool. Default: False.
         all (bool): Enable all tools. Overrides individual flags when True. Default: False.
@@ -59,7 +59,7 @@ class YFinanceTools(Toolkit):
         if all or enable_analyst_recommendations:
             tools.append(self.get_analyst_recommendations)
         if all or enable_company_news:
-            tools.append(self.get_company_news)
+            tools.append(self.yfinance_get_company_news)
         if all or enable_technical_indicators:
             tools.append(self.get_technical_indicators)
         if all or enable_historical_prices:
@@ -254,7 +254,7 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return f"Error fetching analyst recommendations for {symbol}: {e}"
 
-    def get_company_news(self, symbol: str, num_stories: int = 3) -> str:
+    def yfinance_get_company_news(self, symbol: str, num_stories: int = 3) -> str:
         """Use this function to get company news and press releases for a given stock symbol.
 
         Args:

@@ -44,9 +44,9 @@ class SerperTools(Toolkit):
 
         tools: List[Any] = []
         if all or enable_search:
-            tools.append(self.search_web)
+            tools.append(self.serper_search_web)
         if all or enable_search_news:
-            tools.append(self.search_news)
+            tools.append(self.serper_search_news)
         if all or enable_search_scholar:
             tools.append(self.search_scholar)
         if all or enable_scrape_webpage:
@@ -97,7 +97,7 @@ class SerperTools(Toolkit):
             log_error(f"Serper API error: {str(e)}")
             return {"success": False, "error": str(e)}
 
-    def search_web(
+    def serper_search_web(
         self,
         query: str,
         num_results: Optional[int] = None,
@@ -136,7 +136,7 @@ class SerperTools(Toolkit):
             log_error(f"Unexpected error searching Google for query {query}: {str(e)}")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
 
-    def search_news(
+    def serper_search_news(
         self,
         query: str,
         num_results: Optional[int] = None,

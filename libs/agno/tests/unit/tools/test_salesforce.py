@@ -142,7 +142,7 @@ class TestSalesforceInit:
         assert "update_record" in fn_names
         assert "delete_record" in fn_names
         assert "query" in fn_names
-        assert "search" in fn_names
+        assert "salesforce_search" in fn_names
         assert "get_report" in fn_names
 
     def test_default_registration_read_only(self, mock_sf_client):
@@ -157,7 +157,7 @@ class TestSalesforceInit:
         assert "describe_object" in fn_names
         assert "get_record" in fn_names
         assert "query" in fn_names
-        assert "search" in fn_names
+        assert "salesforce_search" in fn_names
         # Write ops disabled by default
         assert "create_record" not in fn_names
         assert "update_record" not in fn_names
@@ -417,13 +417,13 @@ class TestQuerySearch:
         assert len(result["records"]) == 5
 
     def test_search_success(self, sf_tools, mock_sf_client):
-        mock_sf_client.search.return_value = {
+        mock_sf_client.salesforce_search.return_value = {
             "searchRecords": [
                 {"Id": "003A", "attributes": {"type": "Contact"}},
             ]
         }
 
-        result = json.loads(sf_tools.search(sosl="FIND {John} RETURNING Contact(Id)"))
+        result = json.loads(sf_tools.salesforce_search(sosl="FIND {John} RETURNING Contact(Id)"))
         assert "searchRecords" in result
 
     def test_query_large_result_parseable(self, mock_sf_client):

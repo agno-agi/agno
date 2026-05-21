@@ -16,7 +16,7 @@ audio_agent = Agent(
     tools=[DesiVocalTools()],
     description="You are an AI agent that can generate audio using the DesiVocal API.",
     instructions=[
-        "When the user asks you to generate audio, use the `text_to_speech` tool to generate the audio.",
+        "When the user asks you to generate audio, use the `desi_vocal_text_to_speech` tool to generate the audio.",
         "You'll generate the appropriate prompt to send to the tool to generate audio.",
         "You don't need to find the appropriate voice first, I already specified the voice to user.",
         "Return the audio file name in your response. Don't convert it to markdown.",

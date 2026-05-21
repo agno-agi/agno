@@ -76,7 +76,7 @@ def run_example() -> None:
     # reasoning_agent.print_response(
     #     "A startup has $500,000 in funding and needs to decide between spending it on marketing or "
     #     "product development. They want to maximize growth and user acquisition within 12 months. "
-    #     "What factors should they consider and how should they analyze this decision?",
+    #     "What factors should they consider and how should they reasoning_analyze this decision?",
     #     stream=True
     # )
 

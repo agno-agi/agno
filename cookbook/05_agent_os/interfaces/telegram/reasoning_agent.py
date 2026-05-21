@@ -7,7 +7,7 @@ search. Uses ReasoningTools for structured thinking and DuckDuckGo for
 live information retrieval.
 
 Key concepts:
-  - ``ReasoningTools`` gives the agent explicit think/reason tool calls.
+  - ``ReasoningTools`` gives the agent explicit reasoning_think/reason tool calls.
   - ``DuckDuckGoTools`` provides web search for up-to-date information.
   - SQLite session persistence keeps conversation history across restarts.
 

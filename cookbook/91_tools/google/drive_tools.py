@@ -3,8 +3,8 @@ Google Drive Tools
 ==================
 Core examples: read-only agent, full-access agent with upload and download.
 
-All five Drive tools are demonstrated: list_files, search_files,
-read_file, upload_file, download_file.
+All five Drive tools are demonstrated: gdrive_list_files, gdrive_search_files,
+gdrive_read_file, gdrive_upload_file, gdrive_download_file.
 
 Setup:
 1. Create OAuth credentials at https://console.cloud.google.com (enable Google Drive API)
@@ -38,7 +38,7 @@ read_only_agent = Agent(
 full_agent = Agent(
     name="Drive Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GoogleDriveTools(upload_file=True, download_file=True)],
+    tools=[GoogleDriveTools(gdrive_upload_file=True, gdrive_download_file=True)],
     instructions=[
         "When uploading files, confirm the file path with the user first.",
         "When downloading files, ask for the destination path.",
@@ -52,31 +52,31 @@ full_agent = Agent(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    # list_files
+    # gdrive_list_files
     read_only_agent.print_response(
         "List the 5 most recent files in my Google Drive",
         stream=True,
     )
 
-    # search_files
+    # gdrive_search_files
     read_only_agent.print_response(
         "Search my Google Drive for spreadsheets",
         stream=True,
     )
 
-    # read_file
+    # gdrive_read_file
     # read_only_agent.print_response(
     #     "Read the file with ID <FILE_ID> and summarize it",
     #     stream=True,
     # )
 
-    # upload_file (requires full_agent)
+    # gdrive_upload_file (requires full_agent)
     # full_agent.print_response(
     #     "Upload the file at /path/to/document.pdf to my Google Drive",
     #     stream=True,
     # )
 
-    # download_file (requires full_agent)
+    # gdrive_download_file (requires full_agent)
     # full_agent.print_response(
     #     "Download the file with ID <FILE_ID> to /tmp/report.csv",
     #     stream=True,

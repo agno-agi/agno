@@ -55,7 +55,7 @@ class BitbucketTools(Toolkit):
                 self.list_all_pull_requests,
                 self.get_pull_request_details,
                 self.get_pull_request_changes,
-                self.list_issues,
+                self.bitbucket_list_issues,
             ],
             **kwargs,
         )
@@ -270,7 +270,7 @@ class BitbucketTools(Toolkit):
             logger.exception(f"Error retrieving changes for pull request {pull_request_id} in {self.repo_slug}")
             return json.dumps({"error": str(e)})
 
-    def list_issues(self, count: int = 10) -> str:
+    def bitbucket_list_issues(self, count: int = 10) -> str:
         """
         Retrieves all issues for a repository.
 

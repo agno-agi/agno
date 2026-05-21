@@ -31,7 +31,7 @@ class Mem0Tools(Toolkit):
     ):
         tools: List[Any] = []
         if enable_add_memory or all:
-            tools.append(self.add_memory)
+            tools.append(self.mem0_add_memory)
         if enable_search_memory or all:
             tools.append(self.search_memory)
         if enable_get_all_memories or all:
@@ -84,7 +84,7 @@ class Mem0Tools(Toolkit):
             return error_msg
         return resolved_user_id
 
-    def add_memory(
+    def mem0_add_memory(
         self,
         run_context: RunContext,
         content: Union[str, Dict[str, str]],
@@ -99,8 +99,8 @@ class Mem0Tools(Toolkit):
             str: JSON-encoded Mem0 response or an error message.
         """
 
-        resolved_user_id = self._get_user_id("add_memory", run_context=run_context)
-        if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in add_memory:"):
+        resolved_user_id = self._get_user_id("mem0_add_memory", run_context=run_context)
+        if isinstance(resolved_user_id, str) and resolved_user_id.startswith("Error in mem0_add_memory:"):
             return resolved_user_id
         try:
             if isinstance(content, dict):

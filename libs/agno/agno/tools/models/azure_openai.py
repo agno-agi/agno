@@ -58,7 +58,7 @@ class AzureOpenAITools(Toolkit):
             # Create and store the base URL
             self.image_base_url = f"{self.azure_endpoint}/openai/deployments/{self.image_deployment}/images/generations?api-version={self.api_version}"
             if all or enable_generate_image:
-                tools.append(self.generate_image)
+                tools.append(self.azure_openai_generate_image)
         else:
             log_error("Missing required image generation parameters or invalid model")
 
@@ -97,7 +97,7 @@ class AzureOpenAITools(Toolkit):
 
         return enforced
 
-    def generate_image(
+    def azure_openai_generate_image(
         self,
         agent: Agent,
         prompt: str,

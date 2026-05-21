@@ -53,7 +53,7 @@ class DalleTools(Toolkit):
 
         tools: List[Any] = []
         if all or enable_create_image:
-            tools.append(self.create_image)
+            tools.append(self.dalle_create_image)
 
         super().__init__(name="dalle", tools=tools, **kwargs)
 
@@ -62,7 +62,7 @@ class DalleTools(Toolkit):
         # - Add support for saving images
         # - Add support for editing images
 
-    def create_image(self, prompt: str) -> ToolResult:
+    def dalle_create_image(self, prompt: str) -> ToolResult:
         """Use this function to generate an image for a prompt.
 
         Args:

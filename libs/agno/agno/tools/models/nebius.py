@@ -44,7 +44,7 @@ class NebiusTools(Toolkit):
         """
         tools = []
         if all or enable_generate_image:
-            tools.append(self.generate_image)
+            tools.append(self.nebius_generate_image)
 
         super().__init__(name="nebius_tools", tools=tools, **kwargs)
 
@@ -64,7 +64,7 @@ class NebiusTools(Toolkit):
             self._nebius_client = Nebius(api_key=self.api_key, base_url=self.base_url, id=self.image_model).get_client()  # type: ignore
         return self._nebius_client
 
-    def generate_image(
+    def nebius_generate_image(
         self,
         agent: Agent,
         prompt: str,

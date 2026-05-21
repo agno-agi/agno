@@ -52,7 +52,7 @@ read_only_agent = Agent(
 safe_gmail_agent = Agent(
     name="Safe Gmail Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[GmailTools(exclude_tools=["send_email", "send_email_reply"])],
+    tools=[GmailTools(exclude_tools=["gmail_send_email", "send_email_reply"])],
     description="You are a Gmail agent with safe operations only.",
     instructions=[
         "You can read and draft emails but cannot send them.",

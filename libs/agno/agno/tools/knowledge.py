@@ -42,11 +42,11 @@ class KnowledgeTools(Toolkit):
 
         tools: List[Any] = []
         if enable_think or all:
-            tools.append(self.think)
+            tools.append(self.knowledge_think)
         if enable_search or all:
             tools.append(self.search_knowledge)
         if enable_analyze or all:
-            tools.append(self.analyze)
+            tools.append(self.knowledge_analyze)
 
         super().__init__(
             name="knowledge_tools",
@@ -56,10 +56,10 @@ class KnowledgeTools(Toolkit):
             **kwargs,
         )
 
-    def think(self, run_context: RunContext, thought: str) -> str:
+    def knowledge_think(self, run_context: RunContext, thought: str) -> str:
         """Use this tool as a scratchpad to reason about the question, refine your approach, brainstorm search terms, or revise your plan.
 
-        Call `Think` whenever you need to figure out what to do next, analyze the user's question, or plan your approach.
+        Call `Think` whenever you need to figure out what to do next, knowledge_analyze the user's question, or plan your approach.
         You should use this tool as frequently as needed.
 
         Args:
@@ -114,12 +114,12 @@ class KnowledgeTools(Toolkit):
             log_error(f"Error searching knowledge base: {str(e)}")
             return f"Error searching knowledge base: {e}"
 
-    def analyze(self, run_context: RunContext, analysis: str) -> str:
+    def knowledge_analyze(self, run_context: RunContext, analysis: str) -> str:
         """Use this tool to evaluate whether the returned documents are correct and sufficient.
         If not, go back to "Think" or "Search" with refined queries.
 
         Args:
-            analysis: A thought to think about and log.
+            analysis: A thought to knowledge_think about and log.
 
         Returns:
             str: The full log of thoughts and the new thought.
@@ -154,7 +154,7 @@ class KnowledgeTools(Toolkit):
         ## How to use the Think, Search, and Analyze tools:
         1. **Think**
         - Purpose: A scratchpad for planning, brainstorming keywords, and refining your approach. You never reveal your "Think" content to the user.
-        - Usage: Call `think` whenever you need to figure out what to do next, analyze your approach, or decide new search terms before (or after) you look up documents.
+        - Usage: Call `knowledge_think` whenever you need to figure out what to do next, knowledge_analyze your approach, or decide new search terms before (or after) you look up documents.
 
         2. **Search**
         - Purpose: Executes a query against the knowledge base.
@@ -165,7 +165,7 @@ class KnowledgeTools(Toolkit):
 
         3. **Analyze**
         - Purpose: Evaluate whether the returned documents are correct and sufficient. If not, go back to "Think" or "Search" with refined queries.
-        - Usage: Call `analyze` after getting search results to verify the quality and correctness of that information. Consider:
+        - Usage: Call `knowledge_analyze` after getting search results to verify the quality and correctness of that information. Consider:
             - Relevance: Do the documents directly address the user's question?
             - Completeness: Is there enough information to provide a thorough answer?
             - Reliability: Are the sources credible and up-to-date?

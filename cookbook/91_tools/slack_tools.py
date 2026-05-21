@@ -32,7 +32,7 @@ agent_specific = Agent(
     markdown=True,
 )
 
-# Example 3: Read-only agent (no send_message)
+# Example 3: Read-only agent (no slack_send_message)
 agent_readonly = Agent(
     tools=[
         SlackTools(

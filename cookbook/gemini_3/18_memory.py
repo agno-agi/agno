@@ -7,7 +7,7 @@ Key concepts:
 - LearningMachine: Manages knowledge the agent discovers during conversations
 - LearningMode.AGENTIC: Agent decides when to save insights (vs ALWAYS or NEVER)
 - enable_agentic_memory: Builds user profiles from conversation patterns
-- ReasoningTools: Lets the agent "think" before responding (separate from model thinking)
+- ReasoningTools: Lets the agent "reasoning_think" before responding (separate from model thinking)
 - Two knowledge stores: Static (docs) + dynamic (learned), searched together
 
 Example prompts to try:
@@ -85,7 +85,7 @@ tutor_agent = Agent(
     name="Personal Tutor",
     model=Gemini(id="gemini-3-flash-preview"),
     instructions=instructions,
-    # ReasoningTools gives the agent a "think" tool for structured reasoning
+    # ReasoningTools gives the agent a "reasoning_think" tool for structured reasoning
     tools=[ReasoningTools()],
     knowledge=docs_knowledge,
     search_knowledge=True,

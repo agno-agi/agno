@@ -64,7 +64,7 @@ class ModelsLabTools(Toolkit):
             log_error("MODELS_LAB_API_KEY not set. Please set the MODELS_LAB_API_KEY environment variable.")
 
         tools: List[Any] = []
-        tools.append(self.generate_media)
+        tools.append(self.models_lab_generate_media)
 
         super().__init__(name="models_labs", tools=tools, **kwargs)
 
@@ -161,7 +161,7 @@ class ModelsLabTools(Toolkit):
 
         return False
 
-    def generate_media(self, prompt: str) -> ToolResult:
+    def models_lab_generate_media(self, prompt: str) -> ToolResult:
         """Generate media (video, image, or audio) given a prompt."""
         if not self.api_key:
             return ToolResult(content="Please set the MODELS_LAB_API_KEY")

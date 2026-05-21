@@ -42,15 +42,15 @@ class SpiderTools(Toolkit):
 
         tools: List[Any] = []
         if enable_search or all:
-            tools.append(self.search_web)
+            tools.append(self.spider_search_web)
         if enable_scrape or all:
-            tools.append(self.scrape)
+            tools.append(self.spider_scrape)
         if enable_crawl or all:
-            tools.append(self.crawl)
+            tools.append(self.spider_crawl)
 
         super().__init__(name="spider", tools=tools, **kwargs)
 
-    def search_web(self, query: str, max_results: int = 5) -> str:
+    def spider_search_web(self, query: str, max_results: int = 5) -> str:
         """Use this function to search the web.
         Args:
             query (str): The query to search the web with.
@@ -61,22 +61,22 @@ class SpiderTools(Toolkit):
         max_results = self.max_results or max_results
         return self._search(query, max_results=max_results)
 
-    def scrape(self, url: str) -> str:
-        """Use this function to scrape the content of a webpage.
+    def spider_scrape(self, url: str) -> str:
+        """Use this function to spider_scrape the content of a webpage.
         Args:
-            url (str): The URL of the webpage to scrape.
+            url (str): The URL of the webpage to spider_scrape.
         Returns:
             Markdown of the webpage.
         """
         return self._scrape(url)
 
-    def crawl(self, url: str, limit: Optional[int] = None) -> str:
-        """Use this function to crawl the web.
+    def spider_crawl(self, url: str, limit: Optional[int] = None) -> str:
+        """Use this function to spider_crawl the web.
         Args:
-            url (str): The URL of the webpage to crawl.
-            limit (int, optional): The maximum number of pages to crawl. Defaults to 10.
+            url (str): The URL of the webpage to spider_crawl.
+            limit (int, optional): The maximum number of pages to spider_crawl. Defaults to 10.
         Returns:
-            The results of the crawl.
+            The results of the spider_crawl.
         """
         return self._crawl(url, limit=limit)
 

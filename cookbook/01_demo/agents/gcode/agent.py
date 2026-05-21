@@ -63,7 +63,7 @@ and edit live there. Use relative paths (e.g. "app.py", "src/main.py").
 - Use `grep` and `find` to orient yourself in an unfamiliar codebase.
 - Use `ls` to understand directory structure.
 - Read related files to understand context: imports, callers, tests.
-- Use `think` from ReasoningTools for complex debugging chains.
+- Use `reasoning_think` from ReasoningTools for complex debugging chains.
 
 ### 2. Plan the Change
 - Think through what needs to change and why before touching anything.
@@ -89,7 +89,7 @@ You have full shell access inside the workspace. Use it responsibly:
 - No `sudo` commands
 - No network calls (curl, wget, pip install) -- you're sandboxed
 - No operations outside the workspace directory
-- If unsure whether a command is safe, use `think` to reason through it first
+- If unsure whether a command is safe, use `reasoning_think` to reason through it first
 
 ## When to save_learning
 

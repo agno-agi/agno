@@ -213,7 +213,7 @@ class GoogleDriveTools(Toolkit):
         "full": "https://www.googleapis.com/auth/drive",
     }
 
-    # Used by read_file — export Workspace files to text formats the LLM can consume
+    # Used by gdrive_read_file — export Workspace files to text formats the LLM can consume
     TEXT_EXPORT_TYPES = {
         WorkspaceType.DOCUMENT: "text/plain",
         WorkspaceType.SPREADSHEET: "text/csv",
@@ -221,7 +221,7 @@ class GoogleDriveTools(Toolkit):
         WorkspaceType.SCRIPT: "application/json",
     }
 
-    # Used by download_file — export Workspace files to best native format + extension
+    # Used by gdrive_download_file — export Workspace files to best native format + extension
     DOWNLOAD_EXPORT_TYPES = {
         WorkspaceType.DOCUMENT: (
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -261,17 +261,17 @@ class GoogleDriveTools(Toolkit):
         # Bills API usage to a different GCP project than the credential owner
         quota_project_id: Optional[str] = None,
         # Reading tools — enabled by default
-        list_files: bool = True,
-        search_files: bool = True,
-        read_file: bool = True,
+        gdrive_list_files: bool = True,
+        gdrive_search_files: bool = True,
+        gdrive_read_file: bool = True,
         # Writing tools — disabled by default for safety
-        upload_file: bool = False,
-        download_file: bool = False,
-        # Save location for download_file; defaults to cwd, sandboxes writes to this directory
+        gdrive_upload_file: bool = False,
+        gdrive_download_file: bool = False,
+        # Save location for gdrive_download_file; defaults to cwd, sandboxes writes to this directory
         download_dir: Path = Path("."),
         # When False, trashed files are excluded from search/list results automatically
         include_trashed: bool = False,
-        # Maximum file size (bytes) read_file will load into memory for non-Workspace files
+        # Maximum file size (bytes) gdrive_read_file will load into memory for non-Workspace files
         max_read_size: int = 10 * 1024 * 1024,
         # Shared Drive support — passthrough to Google Drive API
         # See: https://developers.google.com/drive/api/guides/enable-shareddrives
@@ -310,14 +310,14 @@ class GoogleDriveTools(Toolkit):
 
         self.auth_port = auth_port
 
-        read_tools_enabled = any([list_files, search_files, read_file, download_file])
+        read_tools_enabled = any([gdrive_list_files, gdrive_search_files, gdrive_read_file, gdrive_download_file])
 
         # Auto-infer minimal scopes from enabled tools
         if scopes is None:
             resolved_scopes: List[str] = []
             if read_tools_enabled:
                 resolved_scopes.append(self.DEFAULT_SCOPES["read"])
-            if upload_file:
+            if gdrive_upload_file:
                 resolved_scopes.append(self.DEFAULT_SCOPES["write"])
             if not resolved_scopes:
                 resolved_scopes.append(self.DEFAULT_SCOPES["read"])
@@ -331,29 +331,29 @@ class GoogleDriveTools(Toolkit):
 
         if read_tools_enabled and not any(s in self.scopes for s in read_scopes):
             raise ValueError("A Google Drive read scope is required for enabled tools")
-        if upload_file and not any(s in self.scopes for s in write_scopes):
+        if gdrive_upload_file and not any(s in self.scopes for s in write_scopes):
             raise ValueError("A Google Drive write scope is required for enabled tools")
 
         tools: List[Any] = []
         async_tools: List[Tuple[Any, str]] = []
 
         # Reading
-        if list_files:
-            tools.append(self.list_files)
-            async_tools.append((self.alist_files, "list_files"))
-        if search_files:
-            tools.append(self.search_files)
-            async_tools.append((self.asearch_files, "search_files"))
-        if read_file:
-            tools.append(self.read_file)
-            async_tools.append((self.aread_file, "read_file"))
+        if gdrive_list_files:
+            tools.append(self.gdrive_list_files)
+            async_tools.append((self.agdrive_list_files, "gdrive_list_files"))
+        if gdrive_search_files:
+            tools.append(self.gdrive_search_files)
+            async_tools.append((self.agdrive_search_files, "gdrive_search_files"))
+        if gdrive_read_file:
+            tools.append(self.gdrive_read_file)
+            async_tools.append((self.agdrive_read_file, "gdrive_read_file"))
         # Writing
-        if upload_file:
-            tools.append(self.upload_file)
-            async_tools.append((self.aupload_file, "upload_file"))
-        if download_file:
-            tools.append(self.download_file)
-            async_tools.append((self.adownload_file, "download_file"))
+        if gdrive_upload_file:
+            tools.append(self.gdrive_upload_file)
+            async_tools.append((self.agdrive_upload_file, "gdrive_upload_file"))
+        if gdrive_download_file:
+            tools.append(self.gdrive_download_file)
+            async_tools.append((self.agdrive_download_file, "gdrive_download_file"))
 
         super().__init__(
             name="google_drive_tools",
@@ -442,8 +442,10 @@ class GoogleDriveTools(Toolkit):
             _, done = downloader.next_chunk()
         return buffer.getvalue()
 
-    # No @authenticate — delegates to search_files which handles auth
-    def list_files(self, query: Optional[str] = None, page_size: int = 10, page_token: Optional[str] = None) -> str:
+    # No @authenticate — delegates to gdrive_search_files which handles auth
+    def gdrive_list_files(
+        self, query: Optional[str] = None, page_size: int = 10, page_token: Optional[str] = None
+    ) -> str:
         """
         List recent files and folders from Google Drive.
 
@@ -455,9 +457,9 @@ class GoogleDriveTools(Toolkit):
         Returns:
             str: JSON string containing file metadata or error message
         """
-        return self.search_files(query=query, max_results=page_size, page_token=page_token)
+        return self.gdrive_search_files(query=query, max_results=page_size, page_token=page_token)
 
-    async def alist_files(
+    async def agdrive_list_files(
         self, query: Optional[str] = None, page_size: int = 10, page_token: Optional[str] = None
     ) -> str:
         """
@@ -471,10 +473,12 @@ class GoogleDriveTools(Toolkit):
         Returns:
             str: JSON string containing file metadata or error message
         """
-        return await asyncio.to_thread(self.list_files, query=query, page_size=page_size, page_token=page_token)
+        return await asyncio.to_thread(self.gdrive_list_files, query=query, page_size=page_size, page_token=page_token)
 
     @authenticate
-    def search_files(self, query: Optional[str] = None, max_results: int = 10, page_token: Optional[str] = None) -> str:
+    def gdrive_search_files(
+        self, query: Optional[str] = None, max_results: int = 10, page_token: Optional[str] = None
+    ) -> str:
         """
         Search Google Drive using a query expression.
         Searches in file name, type, folder, owner, and modification date.
@@ -527,7 +531,7 @@ class GoogleDriveTools(Toolkit):
             log_error(f"Could not search Google Drive files: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def asearch_files(
+    async def agdrive_search_files(
         self, query: Optional[str] = None, max_results: int = 10, page_token: Optional[str] = None
     ) -> str:
         """
@@ -541,10 +545,12 @@ class GoogleDriveTools(Toolkit):
         Returns:
             str: JSON string containing matching files and metadata or error message
         """
-        return await asyncio.to_thread(self.search_files, query=query, max_results=max_results, page_token=page_token)
+        return await asyncio.to_thread(
+            self.gdrive_search_files, query=query, max_results=max_results, page_token=page_token
+        )
 
     @authenticate
-    def read_file(self, file_id: str) -> str:
+    def gdrive_read_file(self, file_id: str) -> str:
         """
         Read a Drive file and return its text content.
 
@@ -565,7 +571,7 @@ class GoogleDriveTools(Toolkit):
             elif mime_type.startswith(WorkspaceType.WORKSPACE_PREFIX):
                 # Drawings, Vids, etc. have no text export — get_media() would crash
                 return json.dumps(
-                    {"error": f"Cannot read {mime_type} as text. Use download_file instead.", "file": metadata}
+                    {"error": f"Cannot read {mime_type} as text. Use gdrive_download_file instead.", "file": metadata}
                 )
             elif mime_type in OFFICE_MIME_TYPES:
                 file_size = int(metadata.get("size", 0))
@@ -574,7 +580,7 @@ class GoogleDriveTools(Toolkit):
                         {
                             "error": (
                                 f"File is {file_size} bytes, exceeds max_read_size "
-                                f"({self.max_read_size}). Use download_file instead."
+                                f"({self.max_read_size}). Use gdrive_download_file instead."
                             ),
                             "file": metadata,
                         }
@@ -636,7 +642,7 @@ class GoogleDriveTools(Toolkit):
                 if file_size > self.max_read_size:
                     return json.dumps(
                         {
-                            "error": f"File is {file_size} bytes, exceeds max_read_size ({self.max_read_size}). Use download_file instead.",
+                            "error": f"File is {file_size} bytes, exceeds max_read_size ({self.max_read_size}). Use gdrive_download_file instead.",
                             "file": metadata,
                         }
                     )
@@ -658,7 +664,7 @@ class GoogleDriveTools(Toolkit):
             log_error(f"Could not read Google Drive file {file_id}: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def aread_file(self, file_id: str) -> str:
+    async def agdrive_read_file(self, file_id: str) -> str:
         """
         Read a Drive file and return its text content (async).
 
@@ -668,10 +674,10 @@ class GoogleDriveTools(Toolkit):
         Returns:
             str: JSON string containing file metadata and text content or error message
         """
-        return await asyncio.to_thread(self.read_file, file_id)
+        return await asyncio.to_thread(self.gdrive_read_file, file_id)
 
     @authenticate
-    def upload_file(self, file_path: Union[str, Path]) -> str:
+    def gdrive_upload_file(self, file_path: Union[str, Path]) -> str:
         """
         Upload a local file to Google Drive.
 
@@ -707,7 +713,7 @@ class GoogleDriveTools(Toolkit):
             log_error(f"Could not upload file '{path}': {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def aupload_file(self, file_path: Union[str, Path]) -> str:
+    async def agdrive_upload_file(self, file_path: Union[str, Path]) -> str:
         """
         Upload a local file to Google Drive (async).
 
@@ -717,10 +723,10 @@ class GoogleDriveTools(Toolkit):
         Returns:
             str: JSON string with uploaded file metadata (id, name, webViewLink)
         """
-        return await asyncio.to_thread(self.upload_file, file_path)
+        return await asyncio.to_thread(self.gdrive_upload_file, file_path)
 
     @authenticate
-    def download_file(self, file_id: str, export_format: Optional[str] = None) -> str:
+    def gdrive_download_file(self, file_id: str, export_format: Optional[str] = None) -> str:
         """
         Download a Drive file and save it locally.
 
@@ -782,7 +788,7 @@ class GoogleDriveTools(Toolkit):
             log_error(f"Could not download file '{file_id}': {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def adownload_file(self, file_id: str, export_format: Optional[str] = None) -> str:
+    async def agdrive_download_file(self, file_id: str, export_format: Optional[str] = None) -> str:
         """
         Download a Drive file and save it locally (async).
 
@@ -793,4 +799,4 @@ class GoogleDriveTools(Toolkit):
         Returns:
             str: JSON string containing saved file path and status or error message
         """
-        return await asyncio.to_thread(self.download_file, file_id, export_format=export_format)
+        return await asyncio.to_thread(self.gdrive_download_file, file_id, export_format=export_format)

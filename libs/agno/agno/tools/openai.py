@@ -72,15 +72,15 @@ class OpenAITools(Toolkit):
 
         tools: List[Any] = []
         if all or enable_transcription:
-            tools.append(self.transcribe_audio)
+            tools.append(self.openai_transcribe_audio)
         if all or enable_image_generation:
-            tools.append(self.generate_image)
+            tools.append(self.openai_generate_image)
         if all or enable_speech_generation:
-            tools.append(self.generate_speech)
+            tools.append(self.openai_generate_speech)
 
         super().__init__(name="openai_tools", tools=tools, **kwargs)
 
-    def transcribe_audio(self, audio_path: str) -> str:
+    def openai_transcribe_audio(self, audio_path: str) -> str:
         """Transcribe audio file using OpenAI's Whisper API
         Args:
             audio_path: Path to the audio file
@@ -101,7 +101,7 @@ class OpenAITools(Toolkit):
         log_debug(f"Transcript: {transcript}")
         return transcript  # type: ignore[return-value]
 
-    def generate_image(
+    def openai_generate_image(
         self,
         prompt: str,
     ) -> ToolResult:
@@ -166,7 +166,7 @@ class OpenAITools(Toolkit):
             log_error(f"Failed to generate image using {self.image_model}: {str(e)}")
             return ToolResult(content=f"Failed to generate image: {e}")
 
-    def generate_speech(
+    def openai_generate_speech(
         self,
         agent: Union[Agent, Team],
         text_input: str,

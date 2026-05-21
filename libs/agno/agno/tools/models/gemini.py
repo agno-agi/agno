@@ -35,9 +35,9 @@ class GeminiTools(Toolkit):
     ):
         tools = []
         if all or enable_generate_image:
-            tools.append(self.generate_image)
+            tools.append(self.gemini_generate_image)
         if all or enable_generate_video:
-            tools.append(self.generate_video)
+            tools.append(self.gemini_generate_video)
 
         super().__init__(name="gemini_tools", tools=tools, **kwargs)
 
@@ -73,7 +73,7 @@ class GeminiTools(Toolkit):
         self.image_model = image_generation_model
         self.video_model = video_generation_model
 
-    def generate_image(
+    def gemini_generate_image(
         self,
         agent: Agent,
         prompt: str,
@@ -130,7 +130,7 @@ class GeminiTools(Toolkit):
             log_error(f"Failed to generate image: Client or method not available (): {str(e)}")
             return ToolResult(content=f"Failed to generate image: Client or method not available ({e})")
 
-    def generate_video(
+    def gemini_generate_video(
         self,
         agent: Agent,
         prompt: str,

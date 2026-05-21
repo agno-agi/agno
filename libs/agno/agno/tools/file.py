@@ -59,7 +59,7 @@ def _extract_snippet(content: str, query: str, context_chars: int = 200) -> str:
 class FileTools(Toolkit):
     """Toolkit for read/write access to a local directory tree.
 
-    By default, results from ``list_files``, ``search_files``, and ``search_content``
+    By default, results from ``file_list``, ``file_search``, and ``search_content``
     skip common noise directories (``.venv``, ``.venvs``, ``.context``,
     ``.git``, ``__pycache__``, ``node_modules``, etc.). See
     ``DEFAULT_EXCLUDE_PATTERNS`` for the full list.
@@ -109,11 +109,11 @@ class FileTools(Toolkit):
         if all or enable_save_file:
             tools.append(self.save_file)
         if all or enable_read_file:
-            tools.append(self.read_file)
+            tools.append(self.file_read)
         if all or enable_list_files:
-            tools.append(self.list_files)
+            tools.append(self.file_list)
         if all or enable_search_files:
-            tools.append(self.search_files)
+            tools.append(self.file_search)
         if all or enable_delete_file:
             tools.append(self.delete_file)
         if all or enable_read_file_chunk:
@@ -221,7 +221,7 @@ class FileTools(Toolkit):
             log_error(f"Error patching file: {str(e)}")
             return f"Error patching file: {e}"
 
-    def read_file(self, file_name: str, encoding: str = "utf-8") -> str:
+    def file_read(self, file_name: str, encoding: str = "utf-8") -> str:
         """Reads the contents of the file `file_name` and returns the contents if successful.
 
         :param file_name: The name of the file to read.
@@ -266,7 +266,7 @@ class FileTools(Toolkit):
             log_error(f"Error removing {file_name}: {str(e)}")
             return f"Error removing file: {e}"
 
-    def list_files(self, **kwargs) -> str:
+    def file_list(self, **kwargs) -> str:
         """Returns a list of files in directory
         :param directory: (Optional) name of directory to list.
 
@@ -291,7 +291,7 @@ class FileTools(Toolkit):
             log_error(f"Error reading files: {str(e)}")
             return f"Error reading files: {e}"
 
-    def search_files(self, pattern: str) -> str:
+    def file_search(self, pattern: str) -> str:
         """Searches for files in the base directory that match the pattern
 
         :param pattern: The pattern to search for, e.g. "*.txt", "file*.csv", "**/*.py".

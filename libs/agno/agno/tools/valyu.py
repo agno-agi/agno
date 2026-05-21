@@ -72,7 +72,7 @@ class ValyuTools(Toolkit):
         if all or enable_academic_search:
             tools.append(self.search_academic_sources)
         if all or enable_web_search:
-            tools.append(self.search_web)
+            tools.append(self.valyu_search_web)
         if all or enable_paper_search:
             tools.append(self.search_within_paper)
 
@@ -177,7 +177,7 @@ class ValyuTools(Toolkit):
             end_date=end_date,
         )
 
-    def search_web(
+    def valyu_search_web(
         self,
         query: str,
         start_date: Optional[str] = None,

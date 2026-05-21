@@ -8,7 +8,7 @@ This builds on Level 2 by adding:
 - LearningMachine: Captures insights and user preferences
 - LearnedKnowledge (AGENTIC mode): Agent decides what to save and retrieve
 - Agentic memory: Builds user profiles over time
-- ReasoningTools: The think tool for structured reasoning
+- ReasoningTools: The reasoning_think tool for structured reasoning
 
 Run standalone:
     python cookbook/levels_of_agentic_software/level_3_memory_learning.py

@@ -104,7 +104,7 @@ def test_tool_use_tool_call_limit():
             YFinanceTools(
                 include_tools=[
                     "get_current_stock_price",
-                    "get_company_news",
+                    "yfinance_get_company_news",
                 ],
                 cache_results=True,
             )
