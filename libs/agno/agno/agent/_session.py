@@ -221,12 +221,20 @@ def save_session(agent: Agent, session: Union[AgentSession, TeamSession, Workflo
 
     if _init.has_async_db(agent):
         raise ValueError("Cannot use sync save_session() with an async database. Use asave_session() instead.")
+    # Paused team-member sessions must be persisted so acontinue_run() can locate
+    # the run from a fresh process on HITL resume.
+    _has_paused_run = any(
+        getattr(run, "status", None) == RunStatus.paused
+        for run in (session.runs or [])
+    )
+
     # If the agent is a member of a team, do not save the session to the database
+    # unless a run is paused (HITL pending).
     if (
         agent.db is not None
-        and agent.team_id is None
+        and (agent.team_id is None or _has_paused_run)
         and agent.workflow_id is None
-        and session.session_data is not None
+        and (session.session_data is not None or _has_paused_run)
     ):
         if session.session_data is not None and isinstance(session.session_data.get("session_state"), dict):
             session.session_data["session_state"].pop("current_session_id", None)
@@ -243,12 +251,20 @@ async def asave_session(agent: Agent, session: Union[AgentSession, TeamSession, 
     """
     from agno.agent import _init, _storage
 
+    # Paused team-member sessions must be persisted so acontinue_run() can locate
+    # the run from a fresh process on HITL resume.
+    _has_paused_run = any(
+        getattr(run, "status", None) == RunStatus.paused
+        for run in (session.runs or [])
+    )
+
     # If the agent is a member of a team, do not save the session to the database
+    # unless a run is paused (HITL pending).
     if (
         agent.db is not None
-        and agent.team_id is None
+        and (agent.team_id is None or _has_paused_run)
         and agent.workflow_id is None
-        and session.session_data is not None
+        and (session.session_data is not None or _has_paused_run)
     ):
         if session.session_data is not None and isinstance(session.session_data.get("session_state"), dict):
             session.session_data["session_state"].pop("current_session_id", None)
