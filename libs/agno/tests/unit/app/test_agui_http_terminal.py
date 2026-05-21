@@ -7,7 +7,9 @@ closes cleanly on the success path and transmits terminal events (per
 the production bug where SSE connections hang open indefinitely).
 """
 
+import asyncio
 import json
+import threading
 from typing import Any, AsyncIterator, List
 from unittest.mock import MagicMock
 
@@ -16,6 +18,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agno.agent import Agent
+from agno.os.interfaces.agui import utils as agui_utils
 from agno.os.interfaces.agui.router import attach_routes
 from agno.run.agent import RunCompletedEvent, RunContentEvent
 
@@ -181,7 +184,6 @@ def test_agui_success_path_terminates_after_run_completed_even_if_iterator_linge
     RUN_FINISHED and terminates the SSE response without waiting for
     post-completion iterator cleanup.
     """
-    import asyncio
 
     async def hanging_after_complete() -> AsyncIterator[Any]:
         yield RunContentEvent(content="Hello")
@@ -196,11 +198,6 @@ def test_agui_success_path_terminates_after_run_completed_even_if_iterator_linge
     app = _build_app(agent)
 
     with TestClient(app) as client:
-        # TestClient has its own timeout handling; apply a short one.
-        import threading
-
-        from httpx import ReadTimeout
-
         result: dict = {}
 
         def _run():
@@ -216,13 +213,7 @@ def test_agui_success_path_terminates_after_run_completed_even_if_iterator_linge
                         "context": [],
                         "forwarded_props": {},
                     },
-                    timeout=5.0,
                 )
-            except ReadTimeout as e:
-                # Classify timeout distinctly from other errors so the
-                # parent thread can differentiate "SSE hung" from
-                # "unexpected exception in worker".
-                result["timeout"] = e
             except Exception as e:
                 result["error"] = e
 
@@ -230,14 +221,13 @@ def test_agui_success_path_terminates_after_run_completed_even_if_iterator_linge
         t.start()
         t.join(timeout=8.0)
 
-        # A ReadTimeout (or a still-alive worker thread) indicates the
-        # SSE response never closed — the exact production symptom.
-        if t.is_alive() or "timeout" in result:
+        # A still-alive worker thread indicates the SSE response never
+        # closed — the exact production symptom.
+        if t.is_alive():
             pytest.fail(
                 "AGUI SSE response hung after agent emitted RUN_COMPLETED "
                 "— matches the production symptom of SSE connections not "
-                f"closing after successful run. thread_alive={t.is_alive()} "
-                f"timeout={result.get('timeout')!r}"
+                "closing after a successful run."
             )
 
         assert "response" in result, f"Request failed: {result.get('error')!r}"
@@ -281,7 +271,8 @@ def test_agui_stream_with_no_completion_event_still_terminates():
     assert types[-1] == "RUN_FINISHED", f"Synthetic RUN_FINISHED expected, got {types}"
 
 
-def test_async_stream_logs_warning_when_aclose_raises(monkeypatch):
+@pytest.mark.asyncio
+async def test_async_stream_logs_warning_when_aclose_raises(monkeypatch):
     """If the upstream iterator's aclose() raises, the AGUI translator
     must log a warning (not silently swallow) so production bugs in
     upstream cleanup code are visible. Terminal RUN_FINISHED must still
@@ -292,10 +283,6 @@ def test_async_stream_logs_warning_when_aclose_raises(monkeypatch):
     `caplog`, because agno wires its own RichHandler and the default
     caplog capture does not always intercept it.
     """
-    import asyncio
-
-    from agno.os.interfaces.agui import utils as agui_utils
-
     captured: List[str] = []
 
     def _fake_log_warning(msg, *args, **kwargs):
@@ -336,7 +323,7 @@ def test_async_stream_logs_warning_when_aclose_raises(monkeypatch):
             out.append(ev)
         return out
 
-    events = asyncio.run(drain())
+    events = await drain()
 
     # Terminal event must still be emitted even though aclose raised.
     types = [getattr(e, "type", None) for e in events]
@@ -349,7 +336,8 @@ def test_async_stream_logs_warning_when_aclose_raises(monkeypatch):
     )
 
 
-def test_async_stream_aclose_hang_does_not_block_terminal_event(monkeypatch):
+@pytest.mark.asyncio
+async def test_async_stream_aclose_hang_does_not_block_terminal_event(monkeypatch):
     """Round 2 / finding #1: if the upstream iterator's aclose() hangs
     (e.g. nested try/finally with telemetry flush / DB close that awaits
     indefinitely), `await response_stream.aclose()` re-introduces the
@@ -363,10 +351,6 @@ def test_async_stream_aclose_hang_does_not_block_terminal_event(monkeypatch):
     resolves). The test runs the async generator with a wall-clock
     deadline and asserts RUN_FINISHED is emitted inside that budget.
     """
-    import asyncio
-
-    from agno.os.interfaces.agui import utils as agui_utils
-
     captured: List[str] = []
 
     def _fake_log_warning(msg, *args, **kwargs):
@@ -408,12 +392,9 @@ def test_async_stream_aclose_hang_does_not_block_terminal_event(monkeypatch):
         return out
 
     # Bound the whole drain call. If aclose blocks the generator, this
-    # outer wait_for will fire and the test fails; the fix's internal
+    # outer wait_for fires and the test fails; the fix's internal
     # wait_for should prevent that and complete well under this budget.
-    async def runner():
-        return await asyncio.wait_for(drain(), timeout=5.0)
-
-    events = asyncio.run(runner())
+    events = await asyncio.wait_for(drain(), timeout=5.0)
 
     types = [getattr(e, "type", None) for e in events]
     type_values = [t.value if hasattr(t, "value") else t for t in types]
@@ -430,16 +411,14 @@ def test_async_stream_aclose_hang_does_not_block_terminal_event(monkeypatch):
     )
 
 
-def test_async_stream_propagates_exception_without_synthetic_completion(monkeypatch):
+@pytest.mark.asyncio
+async def test_async_stream_propagates_exception_without_synthetic_completion(monkeypatch):
     """Round 2 / finding #2: if the `async for` loop raises (e.g. the
     upstream agent's iterator errors mid-stream), the translator must
     NOT emit a synthetic `RunCompletedEvent` that masks the failure —
     the original exception must propagate to the caller and no
     `RUN_FINISHED` must be yielded.
     """
-    import asyncio
-
-    from agno.os.interfaces.agui import utils as agui_utils
 
     class RaisingIterator:
         def __init__(self, events, exc):
@@ -477,7 +456,7 @@ def test_async_stream_propagates_exception_without_synthetic_completion(monkeypa
             collected.append(ev)
 
     with pytest.raises(RuntimeError, match="agent iterator blew up"):
-        asyncio.run(drain())
+        await drain()
 
     # aclose must still have run (finally cleanup).
     assert stream.aclose_called, "aclose() must still be invoked via finally on exception path"

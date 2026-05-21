@@ -641,13 +641,6 @@ async def async_stream_agno_response_as_agui_events(
     stream_completed = False
     completion_chunk = None
 
-    # Track whether the `async for` raised so we can skip synthetic
-    # completion emission on the exception path (synthetic RUN_FINISHED
-    # would mask the failure from downstream clients). Python's
-    # exception semantics already prevent post-`finally` code from
-    # executing on an uncaught exception, but this explicit flag makes
-    # the intent obvious and guards against future reorderings.
-    exception_occurred = False
     try:
         async for chunk in response_stream:
             # Check if this is a completion event
@@ -656,13 +649,14 @@ async def async_stream_agno_response_as_agui_events(
                 or chunk.event == TeamRunEvent.run_completed
                 or chunk.event == RunEvent.run_paused
             ):
-                # Store completion chunk and stop consuming the iterator.
-                # Any post-completion events or lingering awaits in the
-                # agent stream would otherwise keep the SSE connection
-                # open indefinitely (observed in production: agent iterator
-                # performs cleanup/telemetry after run_completed, blocking
-                # the async for loop and preventing RUN_FINISHED from ever
-                # being yielded to the client).
+                # Store the completion chunk and stop consuming the iterator.
+                # Post-completion awaits in the agent stream (telemetry, DB
+                # close) would otherwise block this loop and prevent
+                # RUN_FINISHED from reaching the client — the production SSE
+                # hang. Note: break + aclose() close the agent generator
+                # here, so its post-completion telemetry call is skipped for
+                # AG-UI runs; run/session persistence is unaffected
+                # (acleanup_and_store runs before the completion event).
                 completion_chunk = chunk
                 stream_completed = True
                 break
@@ -675,25 +669,12 @@ async def async_stream_agno_response_as_agui_events(
                 events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
                 for emit_event in events_to_emit:
                     yield emit_event
-    except BaseException:
-        # Mark that the loop raised. We do NOT swallow the exception;
-        # it continues to propagate after the finally block runs.
-        # `BaseException` intentionally covers asyncio.CancelledError
-        # as well — we only need to observe, not handle.
-        exception_occurred = True
-        raise
     finally:
-        # Close the upstream iterator promptly so its cleanup does not
-        # block the SSE response after terminal events are emitted.
-        # If the iterator's cleanup path has its own nested
-        # try/finally with additional awaits (telemetry flush, DB
-        # close, etc.), `aclose()` would await those too — which can
-        # reintroduce the exact hang we are guarding against. Bound
-        # it with a short timeout; on timeout, log and continue so
-        # terminal event emission is still guaranteed.
-        # `asyncio.CancelledError` (BaseException subclass) from a
-        # *real* cancellation propagates through `wait_for` correctly;
-        # only `asyncio.TimeoutError` is caught here.
+        # Close the upstream iterator promptly so its own cleanup cannot
+        # block the SSE response. That cleanup may itself await (telemetry,
+        # DB close), so bound aclose() with a short timeout; on timeout,
+        # log and continue so terminal-event emission is still guaranteed.
+        # A real cancellation still propagates out of the try/finally.
         aclose = getattr(response_stream, "aclose", None)
         if aclose is not None:
             try:
@@ -711,12 +692,6 @@ async def async_stream_agno_response_as_agui_events(
                     f"AGUI response_stream.aclose() failed ({type(e).__name__}): {e} "
                     f"(thread_id={thread_id!r}, run_id={run_id!r})"
                 )
-
-    # If the loop raised, `raise` above already propagated the
-    # exception — this code is unreachable on the exception path, but
-    # we gate explicitly as a defensive measure.
-    if exception_occurred:  # pragma: no cover — defensive
-        return
 
     # Process ONLY completion cleanup events, not content from completion chunk
     if completion_chunk is not None:
