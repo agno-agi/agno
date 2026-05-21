@@ -179,7 +179,7 @@ def _decode_agui_base64_content(value: str) -> Tuple[Optional[bytes], Optional[s
             mime_type = metadata[5:].split(";", 1)[0] or None
 
     try:
-        return base64.b64decode(encoded_value), mime_type
+        return base64.b64decode(encoded_value, validate=True), mime_type
     except ValueError:  # b64decode raises binascii.Error or UnicodeEncodeError, both ValueError subclasses
         log_warning("Failed to decode AG-UI data source. Content part will be ignored.")
         return None, mime_type

@@ -1645,6 +1645,7 @@ def test_extract_agui_user_input_and_media_skips_malformed_base64():
             content=[
                 TextInputContent(text="check this"),
                 ImageInputContent(source=InputContentDataSource(value="!!!not-valid-base64!!!", mime_type="image/png")),
+                ImageInputContent(source=InputContentDataSource(value="!!!!", mime_type="image/png")),
             ],
         ),
     ]
