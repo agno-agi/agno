@@ -23,7 +23,7 @@ from agno.models.base import Model
 from agno.models.google.utils import media_to_content_item
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import MessageMetrics
-from agno.models.response import ModelResponse, ToolExecution
+from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import RunOutput
 from agno.utils.gemini import inject_agno_client_header
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -1143,6 +1143,7 @@ class GeminiInteractions(Model):
                             tool_call_error=bool(is_error) if is_error is not None else None,
                         )
                     )
+                    model_response.event = ModelResponseEvent.tool_call_completed.value
                     args_repr = json.dumps(pending_call["tool_args"]) if pending_call["tool_args"] else ""
                     log_info(f"Server-side tool call: {pending_call['tool_name']}({args_repr})")
 

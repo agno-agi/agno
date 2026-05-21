@@ -1158,6 +1158,10 @@ class Model(ABC):
             model_response.provider_data = provider_response.provider_data
         if provider_response.response_usage is not None:
             model_response.response_usage = provider_response.response_usage
+        if provider_response.tool_executions:
+            if model_response.tool_executions is None:
+                model_response.tool_executions = []
+            model_response.tool_executions.extend(provider_response.tool_executions)
 
     async def _aprocess_model_response(
         self,
@@ -1221,6 +1225,10 @@ class Model(ABC):
             model_response.provider_data = provider_response.provider_data
         if provider_response.response_usage is not None:
             model_response.response_usage = provider_response.response_usage
+        if provider_response.tool_executions:
+            if model_response.tool_executions is None:
+                model_response.tool_executions = []
+            model_response.tool_executions.extend(provider_response.tool_executions)
 
     def _populate_assistant_message(
         self,
