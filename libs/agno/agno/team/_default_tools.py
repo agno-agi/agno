@@ -598,6 +598,24 @@ def _get_delegate_task_function(
                     member_agent_run_output_event.parent_run_id or run_response.run_id
                 )
                 yield member_agent_run_output_event  # type: ignore
+
+            # Explicitly yield a completion event for the delegate tool call
+            # This ensures the stream signals completion immediately after member run ends
+            # rather than waiting for provider-level timeout (often 60s)
+            from agno.utils.events import create_team_tool_call_completed_event
+            from agno.run.team import ToolExecution
+
+            delegate_tool = ToolExecution(
+                id=run_response.tools[0].id if run_response.tools else "",  # type: ignore
+                name="delegate_task_to_member",
+                args={"member_id": member_id, "task": task},
+            )
+            if member_agent_run_response is not None:
+                yield create_team_tool_call_completed_event(
+                    from_run_response=run_response,  # type: ignore
+                    tool=delegate_tool,
+                    content=member_agent_run_response.content,  # type: ignore
+                )
         else:
             member_agent_run_response = member_agent.run(  # type: ignore
                 input=member_agent_task if not history else history,  # type: ignore
