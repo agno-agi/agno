@@ -9,7 +9,7 @@ from typing_extensions import Literal
 
 from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
 from agno.media import File
-from agno.models.base import Model
+from agno.models.base import Model, SupportsInternalToolFieldsMixin
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
@@ -28,7 +28,7 @@ except ImportError as e:
 
 
 @dataclass
-class OpenAIResponses(Model):
+class OpenAIResponses(Model, SupportsInternalToolFieldsMixin):
     """
     A class for interacting with OpenAI models using the Responses API.
 
@@ -331,7 +331,15 @@ class OpenAIResponses(Model):
                 log_debug(f"Added web_search_preview tool for deep research model: {self.id}")
 
         if tools:
-            request_params["tools"] = self._format_tool_params(messages=messages, tools=tools)  # type: ignore
+            formatted_tools = self._format_tool_params(messages=messages, tools=tools)  # type: ignore
+
+            if not self._supports_internal_tool_fields():
+                for tool in formatted_tools:
+                    if tool.get("type") == "function":
+                        for _internal_key in ("requires_confirmation", "external_execution", "approval_type"):
+                            tool.pop(_internal_key, None)
+
+            request_params["tools"] = formatted_tools
 
         if tool_choice is not None:
             request_params["tool_choice"] = tool_choice
@@ -1195,6 +1203,8 @@ class OpenAIResponses(Model):
             elif output.type == "function_call":
                 if model_response.tool_calls is None:
                     model_response.tool_calls = []
+                if not hasattr(output, "arguments"):
+                    log_warning("Function call missing required field `arguments`. Some vendors may not strictly follow the standard, omitting this field when there's no arguments. ")
                 model_response.tool_calls.append(
                     {
                         "id": output.id,
@@ -1203,7 +1213,7 @@ class OpenAIResponses(Model):
                         "type": "function",
                         "function": {
                             "name": output.name,
-                            "arguments": output.arguments,
+                            "arguments": getattr(output, "arguments", ""),
                         },
                     }
                 )
@@ -1309,7 +1319,7 @@ class OpenAIResponses(Model):
                     "type": "function",
                     "function": {
                         "name": item.name,
-                        "arguments": item.arguments,
+                        "arguments": getattr(item, "arguments", ""),
                     },
                 }
 

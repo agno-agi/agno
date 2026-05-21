@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
 from agno.media import Audio
-from agno.models.base import Model
+from agno.models.base import Model, SupportsInternalToolFieldsMixin
 from agno.models.message import Message
 from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
@@ -31,7 +31,7 @@ except (ImportError, ModuleNotFoundError):
 
 
 @dataclass
-class OpenAIChat(Model):
+class OpenAIChat(Model, SupportsInternalToolFieldsMixin):
     """
     A class for interacting with OpenAI models using the Chat completions API.
 
@@ -190,6 +190,7 @@ class OpenAIChat(Model):
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
+        remove_extension_tool_fields: bool = False,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -248,7 +249,7 @@ class OpenAIChat(Model):
         # Add tools
         if tools is not None and len(tools) > 0:
             # Remove unsupported fields for OpenAILike models
-            if self.provider in ["AIMLAPI", "Fireworks", "Nvidia", "VLLM"]:
+            if not self._supports_internal_tool_fields():
                 for tool in tools:
                     if tool.get("type") == "function":
                         for _internal_key in ("requires_confirmation", "external_execution", "approval_type"):
