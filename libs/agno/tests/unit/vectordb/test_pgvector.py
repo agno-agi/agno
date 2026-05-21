@@ -942,3 +942,189 @@ def test_similarity_threshold_with_search_types(mock_engine, mock_embedder, sear
                 )
                 assert db.similarity_threshold == 0.5
                 assert db.search_type == search_type
+
+
+# ---------------------------------------------------------------------------
+# Prefix-aware text-search query construction
+#
+# `prefix_match=True` previously appended `*` to each query word and fed the
+# result to `websearch_to_tsquery`, which silently drops the `*`. The flag was
+# a no-op. These tests pin the corrected behaviour: prefix-on routes through
+# `to_tsquery` with `:*` per token, prefix-off keeps `websearch_to_tsquery`.
+# ---------------------------------------------------------------------------
+
+
+def _make_db(mock_engine, mock_embedder, *, prefix_match: bool) -> PgVector:
+    with (
+        patch("agno.vectordb.pgvector.pgvector.scoped_session"),
+        patch("agno.vectordb.pgvector.pgvector.Vector"),
+        patch.object(PgVector, "get_table", return_value=MagicMock()),
+    ):
+        return PgVector(
+            table_name=f"test_prefix_{prefix_match}",
+            db_engine=mock_engine,
+            embedder=mock_embedder,
+            prefix_match=prefix_match,
+        )
+
+
+def _ts_query_name(expr) -> str:
+    """Pull the underlying Postgres function name off a SQLAlchemy func expr."""
+    return expr.name  # type: ignore[attr-defined]
+
+
+def _ts_query_bound_value(expr):
+    """Find the named ``query`` bindparam inside a tsquery func expression."""
+    for clause in expr.clauses:
+        if getattr(clause, "key", None) == "query":
+            return clause.value
+    return None
+
+
+def test_build_ts_query_default_uses_websearch(mock_engine, mock_embedder):
+    """With prefix_match=False, queries flow through websearch_to_tsquery untouched."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=False)
+
+    expr = db._build_ts_query("wildlife on the savanna")
+
+    assert expr is not None
+    assert _ts_query_name(expr) == "websearch_to_tsquery"
+    assert _ts_query_bound_value(expr) == "wildlife on the savanna"
+
+
+def test_build_ts_query_prefix_mode_uses_to_tsquery_with_star(mock_engine, mock_embedder):
+    """With prefix_match=True, each token becomes `tok:*` under to_tsquery."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    expr = db._build_ts_query("ani")
+    assert expr is not None
+    assert _ts_query_name(expr) == "to_tsquery"
+    assert _ts_query_bound_value(expr) == "ani:*"
+
+    multi = db._build_ts_query("wildlife san")
+    assert _ts_query_name(multi) == "to_tsquery"
+    assert _ts_query_bound_value(multi) == "wildlife:* & san:*"
+
+
+def test_build_ts_query_prefix_mode_strips_operator_chars(mock_engine, mock_embedder):
+    """Punctuation that `to_tsquery` would reject is tokenized away."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    expr = db._build_ts_query("foo & bar | -baz")
+    assert expr is not None
+    # `&`, `|`, `-` are dropped; the three word tokens are AND-ed with :*.
+    assert _ts_query_bound_value(expr) == "foo:* & bar:* & baz:*"
+
+
+def test_build_ts_query_prefix_mode_empty_query_returns_none(mock_engine, mock_embedder):
+    """Prefix mode with no usable tokens returns None — caller treats as no FTS hit."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    assert db._build_ts_query("") is None
+    assert db._build_ts_query("   ") is None
+    assert db._build_ts_query("!@#$%") is None
+
+
+def test_build_ts_query_default_passes_empty_query_through(mock_engine, mock_embedder):
+    """With prefix_match=False, empty queries still produce a (no-op) websearch tsquery.
+    Same contract as before this fix — callers downstream already tolerate it.
+    """
+    db = _make_db(mock_engine, mock_embedder, prefix_match=False)
+
+    expr = db._build_ts_query("")
+    assert expr is not None
+    assert _ts_query_name(expr) == "websearch_to_tsquery"
+    assert _ts_query_bound_value(expr) == ""
+
+
+def test_build_ts_query_prefix_mode_single_char(mock_engine, mock_embedder):
+    """Single-character prefix is valid input — produces 'a:*'."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    expr = db._build_ts_query("a")
+    assert _ts_query_bound_value(expr) == "a:*"
+
+
+def test_build_ts_query_prefix_mode_unicode_word_chars(mock_engine, mock_embedder):
+    """`\\w` is Unicode-aware — accented characters are preserved, not stripped."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    expr = db._build_ts_query("café")
+    assert _ts_query_bound_value(expr) == "café:*"
+
+    expr = db._build_ts_query("naïve")
+    assert _ts_query_bound_value(expr) == "naïve:*"
+
+
+def test_build_ts_query_prefix_mode_digits_and_underscores(mock_engine, mock_embedder):
+    """Digits and underscores count as word characters."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    expr = db._build_ts_query("abc_123 v2")
+    assert _ts_query_bound_value(expr) == "abc_123:* & v2:*"
+
+
+def test_build_ts_query_prefix_mode_hyphens_split(mock_engine, mock_embedder):
+    """Hyphens are treated as token separators (per `\\w+`) — `cross-country` → two tokens."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    expr = db._build_ts_query("cross-country")
+    assert _ts_query_bound_value(expr) == "cross:* & country:*"
+
+
+def test_build_ts_query_prefix_mode_leading_trailing_whitespace(mock_engine, mock_embedder):
+    """Whitespace around / between tokens is ignored."""
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    expr = db._build_ts_query("   wild   life   ")
+    assert _ts_query_bound_value(expr) == "wild:* & life:*"
+
+
+def test_prefix_match_default_is_false(mock_engine, mock_embedder):
+    """Default behaviour is unchanged — prefix_match defaults to False."""
+    with (
+        patch("agno.vectordb.pgvector.pgvector.scoped_session"),
+        patch("agno.vectordb.pgvector.pgvector.Vector"),
+        patch.object(PgVector, "get_table", return_value=MagicMock()),
+    ):
+        db = PgVector(
+            table_name="test_default",
+            db_engine=mock_engine,
+            embedder=mock_embedder,
+        )
+    assert db.prefix_match is False
+    expr = db._build_ts_query("anything")
+    assert _ts_query_name(expr) == "websearch_to_tsquery"
+
+
+def test_enable_prefix_matching_still_works(mock_engine, mock_embedder):
+    """The legacy public helper still returns the `tok*` string it always has —
+    kept for backwards compatibility even though `_build_ts_query` is the correct path now.
+    """
+    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
+
+    assert db.enable_prefix_matching("ani") == "ani*"
+    assert db.enable_prefix_matching("wildlife san") == "wildlife* san*"
+    assert db.enable_prefix_matching("") == ""
+
+
+def test_keyword_search_returns_empty_on_no_usable_tokens(mock_engine, mock_embedder):
+    """keyword_search short-circuits to [] when prefix_match strips all tokens."""
+    with (
+        patch("agno.vectordb.pgvector.pgvector.inspect"),
+        patch("agno.vectordb.pgvector.pgvector.scoped_session"),
+        patch("agno.vectordb.pgvector.pgvector.Vector"),
+        patch.object(PgVector, "get_table", return_value=MagicMock()),
+    ):
+        db = PgVector(
+            table_name="test_empty",
+            db_engine=mock_engine,
+            embedder=mock_embedder,
+            prefix_match=True,
+        )
+        db.Session = MagicMock()
+
+        results = db.keyword_search("!@#$")
+        assert results == []
+        # Session was never opened — we short-circuited before any DB work.
+        db.Session.assert_not_called()
