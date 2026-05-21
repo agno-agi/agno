@@ -463,7 +463,7 @@
                 await this.refreshCounter();
                 if (this.tab === 'gallery') await this.loadGallery();
                 if (c.indexed != null) {
-                  this.flash(`indexed ${c.indexed}, skipped ${c.skipped}, failed ${c.failed}`);
+                  this.flash(`indexed ${c.indexed}, failed ${c.failed}`);
                 }
               } else {
                 this.reindexLabel = j.status || 'Running...';
