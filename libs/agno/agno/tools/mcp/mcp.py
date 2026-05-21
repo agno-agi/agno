@@ -510,6 +510,7 @@ class MCPTools(Toolkit):
         # Create OAuth provider if configured
         if self._oauth_config is not None:
             from agno.tools.mcp.oauth import create_oauth_provider
+
             server_url = self.url or (
                 self.server_params.url if self.server_params is not None else None  # type: ignore
             )

@@ -1,21 +1,24 @@
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # InMemoryTokenStorage tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_in_memory_token_storage_tokens_start_none():
     from agno.tools.mcp.oauth import InMemoryTokenStorage
+
     storage = InMemoryTokenStorage()
     assert await storage.get_tokens() is None
 
 
 @pytest.mark.asyncio
 async def test_in_memory_token_storage_roundtrip_tokens():
-    from agno.tools.mcp.oauth import InMemoryTokenStorage
     from mcp.shared.auth import OAuthToken
+
+    from agno.tools.mcp.oauth import InMemoryTokenStorage
+
     storage = InMemoryTokenStorage()
     token = OAuthToken(access_token="tok", token_type="bearer")
     await storage.set_tokens(token)
@@ -27,14 +30,17 @@ async def test_in_memory_token_storage_roundtrip_tokens():
 @pytest.mark.asyncio
 async def test_in_memory_token_storage_client_info_starts_none():
     from agno.tools.mcp.oauth import InMemoryTokenStorage
+
     storage = InMemoryTokenStorage()
     assert await storage.get_client_info() is None
 
 
 @pytest.mark.asyncio
 async def test_in_memory_token_storage_roundtrip_client_info():
-    from agno.tools.mcp.oauth import InMemoryTokenStorage
     from mcp.shared.auth import OAuthClientInformationFull
+
+    from agno.tools.mcp.oauth import InMemoryTokenStorage
+
     storage = InMemoryTokenStorage()
     info = OAuthClientInformationFull(client_id="cid", client_secret="sec", redirect_uris=None)
     await storage.set_client_info(info)
@@ -47,8 +53,10 @@ async def test_in_memory_token_storage_roundtrip_client_info():
 # OAuthConfig tests
 # ---------------------------------------------------------------------------
 
+
 def test_oauth_config_defaults():
     from agno.tools.mcp.oauth import OAuthConfig
+
     cfg = OAuthConfig(client_id="id", client_secret="secret")
     assert cfg.client_id == "id"
     assert cfg.client_secret == "secret"
@@ -58,6 +66,7 @@ def test_oauth_config_defaults():
 
 def test_oauth_config_custom_values():
     from agno.tools.mcp.oauth import OAuthConfig
+
     cfg = OAuthConfig(
         client_id="id",
         client_secret="secret",
@@ -72,9 +81,12 @@ def test_oauth_config_custom_values():
 # create_oauth_provider tests
 # ---------------------------------------------------------------------------
 
+
 def test_create_oauth_provider_returns_provider():
     from mcp.client.auth.extensions.client_credentials import ClientCredentialsOAuthProvider
+
     from agno.tools.mcp.oauth import OAuthConfig, create_oauth_provider
+
     cfg = OAuthConfig(client_id="cid", client_secret="secret")
     provider = create_oauth_provider(cfg, "http://localhost:8000/mcp")
     assert isinstance(provider, ClientCredentialsOAuthProvider)
@@ -84,10 +96,13 @@ def test_create_oauth_provider_returns_provider():
 # MCPTools oauth parameter tests
 # ---------------------------------------------------------------------------
 
+
 def test_mcptools_oauth_raises_for_stdio():
+    import pytest
+
     from agno.tools.mcp import MCPTools
     from agno.tools.mcp.oauth import OAuthConfig
-    import pytest
+
     with pytest.raises(ValueError, match="oauth.*stdio"):
         MCPTools(
             command="npx -y @modelcontextprotocol/server-everything",
@@ -99,6 +114,7 @@ def test_mcptools_oauth_raises_for_stdio():
 def test_mcptools_oauth_warns_when_session_provided(caplog):
     import logging
     from unittest.mock import MagicMock
+
     from agno.tools.mcp import MCPTools
     from agno.tools.mcp.oauth import OAuthConfig
 
@@ -138,7 +154,8 @@ def test_mcptools_oauth_warns_when_session_provided(caplog):
 
 @pytest.mark.asyncio
 async def test_mcptools_connect_passes_auth_to_streamable_http():
-    from unittest.mock import AsyncMock, MagicMock, patch
+    from unittest.mock import AsyncMock, patch
+
     from agno.tools.mcp import MCPTools
     from agno.tools.mcp.oauth import OAuthConfig
 
@@ -162,9 +179,11 @@ async def test_mcptools_connect_passes_auth_to_streamable_http():
     mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=mock_transport_ctx) as mock_http, \
-         patch("agno.tools.mcp.mcp.ClientSession", return_value=mock_session_ctx), \
-         patch.object(mcp, "initialize", new_callable=AsyncMock):
+    with (
+        patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=mock_transport_ctx) as mock_http,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=mock_session_ctx),
+        patch.object(mcp, "initialize", new_callable=AsyncMock),
+    ):
         await mcp._connect()
 
     call_kwargs = mock_http.call_args.kwargs
@@ -175,6 +194,7 @@ async def test_mcptools_connect_passes_auth_to_streamable_http():
 @pytest.mark.asyncio
 async def test_mcptools_connect_passes_auth_to_sse():
     from unittest.mock import AsyncMock, patch
+
     from agno.tools.mcp import MCPTools
     from agno.tools.mcp.oauth import OAuthConfig
 
@@ -198,9 +218,11 @@ async def test_mcptools_connect_passes_auth_to_sse():
     mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("agno.tools.mcp.mcp.sse_client", return_value=mock_transport_ctx) as mock_sse, \
-         patch("agno.tools.mcp.mcp.ClientSession", return_value=mock_session_ctx), \
-         patch.object(mcp, "initialize", new_callable=AsyncMock):
+    with (
+        patch("agno.tools.mcp.mcp.sse_client", return_value=mock_transport_ctx) as mock_sse,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=mock_session_ctx),
+        patch.object(mcp, "initialize", new_callable=AsyncMock),
+    ):
         await mcp._connect()
 
     call_kwargs = mock_sse.call_args.kwargs
