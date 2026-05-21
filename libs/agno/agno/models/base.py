@@ -654,6 +654,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        required_tool_calls: Optional[List[str]] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -686,6 +687,8 @@ class Model(ABC):
             model_response = ModelResponse()
 
             function_call_count = 0
+            _tool_choice_retry_count = 0
+            _called_tools: set = set()
 
             _tool_dicts = self._format_tools(tools) if tools is not None else []
             _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
@@ -807,6 +810,7 @@ class Model(ABC):
 
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
+                    _called_tools.update(fc.function.name for fc in function_calls_to_run)
 
                     # Format and add results to messages
                     self.format_function_call_results(
@@ -827,33 +831,53 @@ class Model(ABC):
                     for function_call_result in function_call_results:
                         function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
 
-                    # Check if we should stop after tool calls
-                    if any(m.stop_after_tool_call for m in function_call_results):
+                    _want_exit = (
+                        any(m.stop_after_tool_call for m in function_call_results)
+                        or any(tc.requires_confirmation for tc in model_response.tool_executions or [])
+                        or any(tc.external_execution_required for tc in model_response.tool_executions or [])
+                        or any(tc.requires_user_input for tc in model_response.tool_executions or [])
+                        or (
+                            run_response is not None
+                            and run_response.requirements
+                            and any(not req.is_resolved() for req in run_response.requirements)
+                        )
+                    )
+                    if _want_exit:
+                        if required_tool_calls and not all(t in _called_tools for t in required_tool_calls):
+                            if _tool_choice_retry_count < 2:
+                                _tool_choice_retry_count += 1
+                                tool_names = ", ".join(required_tool_calls)
+                                log_warning(
+                                    f"Required tool(s) [{tool_names}] not called. "
+                                    f"Injecting reminder (attempt {_tool_choice_retry_count}/2)"
+                                )
+                                messages.append(
+                                    Message(
+                                        role="user",
+                                        content=f"You must call the following tool(s) before finishing: {tool_names}",
+                                    )
+                                )
+                                continue
                         break
-
-                    # If we have any tool calls that require confirmation, break the loop
-                    if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
-                        break
-
-                    # If we have any tool calls that require external execution, break the loop
-                    if any(tc.external_execution_required for tc in model_response.tool_executions or []):
-                        break
-
-                    # If we have any tool calls that require user input, break the loop
-                    if any(tc.requires_user_input for tc in model_response.tool_executions or []):
-                        break
-
-                    # Check if run_response has requirements (e.g., from member agent HITL)
-                    # This handles cases where a tool (like delegate_task_to_member) propagates
-                    # HITL requirements from a member agent to the team's run_response
-                    if run_response is not None and run_response.requirements:
-                        if any(not req.is_resolved() for req in run_response.requirements):
-                            break
 
                     # Continue loop to get next response
                     continue
 
-                # No tool calls or finished processing them
+                # Required tools not called — remind model to use them
+                if required_tool_calls and _tool_choice_retry_count < 2:
+                    tool_names = ", ".join(required_tool_calls)
+                    _tool_choice_retry_count += 1
+                    log_warning(
+                        f"Required tool(s) [{tool_names}] not called. "
+                        f"Injecting reminder (attempt {_tool_choice_retry_count}/2)"
+                    )
+                    messages.append(
+                        Message(
+                            role="user",
+                            content=f"You must call the following tool(s) before finishing: {tool_names}",
+                        )
+                    )
+                    continue
                 break
 
             log_debug(f"{self.get_provider()} Response End", center=True, symbol="-")
@@ -885,6 +909,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        required_tool_calls: Optional[List[str]] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -914,6 +939,8 @@ class Model(ABC):
             _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
+            _tool_choice_retry_count = 0
+            _called_tools: set = set()
 
             while True:
                 # Compress existing tool results BEFORE making API call to avoid context overflow
@@ -1028,6 +1055,7 @@ class Model(ABC):
 
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
+                    _called_tools.update(fc.function.name for fc in function_calls_to_run)
 
                     # Format and add results to messages
                     self.format_function_call_results(
@@ -1048,33 +1076,53 @@ class Model(ABC):
                     for function_call_result in function_call_results:
                         function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
 
-                    # Check if we should stop after tool calls
-                    if any(m.stop_after_tool_call for m in function_call_results):
+                    _want_exit = (
+                        any(m.stop_after_tool_call for m in function_call_results)
+                        or any(tc.requires_confirmation for tc in model_response.tool_executions or [])
+                        or any(tc.external_execution_required for tc in model_response.tool_executions or [])
+                        or any(tc.requires_user_input for tc in model_response.tool_executions or [])
+                        or (
+                            run_response is not None
+                            and run_response.requirements
+                            and any(not req.is_resolved() for req in run_response.requirements)
+                        )
+                    )
+                    if _want_exit:
+                        if required_tool_calls and not all(t in _called_tools for t in required_tool_calls):
+                            if _tool_choice_retry_count < 2:
+                                _tool_choice_retry_count += 1
+                                tool_names = ", ".join(required_tool_calls)
+                                log_warning(
+                                    f"Required tool(s) [{tool_names}] not called. "
+                                    f"Injecting reminder (attempt {_tool_choice_retry_count}/2)"
+                                )
+                                messages.append(
+                                    Message(
+                                        role="user",
+                                        content=f"You must call the following tool(s) before finishing: {tool_names}",
+                                    )
+                                )
+                                continue
                         break
-
-                    # If we have any tool calls that require confirmation, break the loop
-                    if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
-                        break
-
-                    # If we have any tool calls that require external execution, break the loop
-                    if any(tc.external_execution_required for tc in model_response.tool_executions or []):
-                        break
-
-                    # If we have any tool calls that require user input, break the loop
-                    if any(tc.requires_user_input for tc in model_response.tool_executions or []):
-                        break
-
-                    # Check if run_response has requirements (e.g., from member agent HITL)
-                    # This handles cases where a tool (like delegate_task_to_member) propagates
-                    # HITL requirements from a member agent to the team's run_response
-                    if run_response is not None and run_response.requirements:
-                        if any(not req.is_resolved() for req in run_response.requirements):
-                            break
 
                     # Continue loop to get next response
                     continue
 
-                # No tool calls or finished processing them
+                # Required tools not called — remind model to use them
+                if required_tool_calls and _tool_choice_retry_count < 2:
+                    tool_names = ", ".join(required_tool_calls)
+                    _tool_choice_retry_count += 1
+                    log_warning(
+                        f"Required tool(s) [{tool_names}] not called. "
+                        f"Injecting reminder (attempt {_tool_choice_retry_count}/2)"
+                    )
+                    messages.append(
+                        Message(
+                            role="user",
+                            content=f"You must call the following tool(s) before finishing: {tool_names}",
+                        )
+                    )
+                    continue
                 break
 
             log_debug(f"{self.get_provider()} Async Response End", center=True, symbol="-")
@@ -1353,6 +1401,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        required_tool_calls: Optional[List[str]] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -1389,6 +1438,8 @@ class Model(ABC):
             _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
+            _tool_choice_retry_count = 0
+            _called_tools: set = set()
 
             while True:
                 # Compress existing tool results BEFORE invoke
@@ -1503,6 +1554,7 @@ class Model(ABC):
 
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
+                    _called_tools.update(fc.function.name for fc in function_calls_to_run)
 
                     # Format and add results to messages
                     if stream_data and stream_data.extra is not None:
@@ -1537,33 +1589,53 @@ class Model(ABC):
                     for function_call_result in function_call_results:
                         function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
 
-                    # Check if we should stop after tool calls
-                    if any(m.stop_after_tool_call for m in function_call_results):
+                    _want_exit = (
+                        any(m.stop_after_tool_call for m in function_call_results)
+                        or any(fc.function.requires_confirmation for fc in function_calls_to_run)
+                        or any(fc.function.external_execution for fc in function_calls_to_run)
+                        or any(fc.function.requires_user_input for fc in function_calls_to_run)
+                        or (
+                            run_response is not None
+                            and run_response.requirements
+                            and any(not req.is_resolved() for req in run_response.requirements)
+                        )
+                    )
+                    if _want_exit:
+                        if required_tool_calls and not all(t in _called_tools for t in required_tool_calls):
+                            if _tool_choice_retry_count < 2:
+                                _tool_choice_retry_count += 1
+                                tool_names = ", ".join(required_tool_calls)
+                                log_warning(
+                                    f"Required tool(s) [{tool_names}] not called. "
+                                    f"Injecting reminder (attempt {_tool_choice_retry_count}/2)"
+                                )
+                                messages.append(
+                                    Message(
+                                        role="user",
+                                        content=f"You must call the following tool(s) before finishing: {tool_names}",
+                                    )
+                                )
+                                continue
                         break
-
-                    # If we have any tool calls that require confirmation, break the loop
-                    if any(fc.function.requires_confirmation for fc in function_calls_to_run):
-                        break
-
-                    # If we have any tool calls that require external execution, break the loop
-                    if any(fc.function.external_execution for fc in function_calls_to_run):
-                        break
-
-                    # If we have any tool calls that require user input, break the loop
-                    if any(fc.function.requires_user_input for fc in function_calls_to_run):
-                        break
-
-                    # Check if run_response has requirements (e.g., from member agent HITL)
-                    # This handles cases where a tool (like delegate_task_to_member) propagates
-                    # HITL requirements from a member agent to the team's run_response
-                    if run_response is not None and run_response.requirements:
-                        if any(not req.is_resolved() for req in run_response.requirements):
-                            break
 
                     # Continue loop to get next response
                     continue
 
-                # No tool calls or finished processing them
+                # Required tools not called — remind model to use them
+                if required_tool_calls and _tool_choice_retry_count < 2:
+                    tool_names = ", ".join(required_tool_calls)
+                    _tool_choice_retry_count += 1
+                    log_warning(
+                        f"Required tool(s) [{tool_names}] not called. "
+                        f"Injecting reminder (attempt {_tool_choice_retry_count}/2)"
+                    )
+                    messages.append(
+                        Message(
+                            role="user",
+                            content=f"You must call the following tool(s) before finishing: {tool_names}",
+                        )
+                    )
+                    continue
                 break
 
             log_debug(f"{self.get_provider()} Response Stream End", center=True, symbol="-")
@@ -1629,6 +1701,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        required_tool_calls: Optional[List[str]] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1665,6 +1738,8 @@ class Model(ABC):
             _compression_manager = compression_manager if _compress_tool_results else None
 
             function_call_count = 0
+            _tool_choice_retry_count = 0
+            _called_tools: set = set()
 
             while True:
                 # Compress existing tool results BEFORE making API call to avoid context overflow
@@ -1779,6 +1854,7 @@ class Model(ABC):
 
                     # Add a function call for each successful execution
                     function_call_count += len(function_call_results)
+                    _called_tools.update(fc.function.name for fc in function_calls_to_run)
 
                     # Format and add results to messages
                     if stream_data and stream_data.extra is not None:
@@ -1813,33 +1889,53 @@ class Model(ABC):
                     for function_call_result in function_call_results:
                         function_call_result.log(metrics=True, use_compressed_content=_compress_tool_results)
 
-                    # Check if we should stop after tool calls
-                    if any(m.stop_after_tool_call for m in function_call_results):
+                    _want_exit = (
+                        any(m.stop_after_tool_call for m in function_call_results)
+                        or any(fc.function.requires_confirmation for fc in function_calls_to_run)
+                        or any(fc.function.external_execution for fc in function_calls_to_run)
+                        or any(fc.function.requires_user_input for fc in function_calls_to_run)
+                        or (
+                            run_response is not None
+                            and run_response.requirements
+                            and any(not req.is_resolved() for req in run_response.requirements)
+                        )
+                    )
+                    if _want_exit:
+                        if required_tool_calls and not all(t in _called_tools for t in required_tool_calls):
+                            if _tool_choice_retry_count < 2:
+                                _tool_choice_retry_count += 1
+                                tool_names = ", ".join(required_tool_calls)
+                                log_warning(
+                                    f"Required tool(s) [{tool_names}] not called. "
+                                    f"Injecting reminder (attempt {_tool_choice_retry_count}/2)"
+                                )
+                                messages.append(
+                                    Message(
+                                        role="user",
+                                        content=f"You must call the following tool(s) before finishing: {tool_names}",
+                                    )
+                                )
+                                continue
                         break
-
-                    # If we have any tool calls that require confirmation, break the loop
-                    if any(fc.function.requires_confirmation for fc in function_calls_to_run):
-                        break
-
-                    # If we have any tool calls that require external execution, break the loop
-                    if any(fc.function.external_execution for fc in function_calls_to_run):
-                        break
-
-                    # If we have any tool calls that require user input, break the loop
-                    if any(fc.function.requires_user_input for fc in function_calls_to_run):
-                        break
-
-                    # Check if run_response has requirements (e.g., from member agent HITL)
-                    # This handles cases where a tool (like delegate_task_to_member) propagates
-                    # HITL requirements from a member agent to the team's run_response
-                    if run_response is not None and run_response.requirements:
-                        if any(not req.is_resolved() for req in run_response.requirements):
-                            break
 
                     # Continue loop to get next response
                     continue
 
-                # No tool calls or finished processing them
+                # Required tools not called — remind model to use them
+                if required_tool_calls and _tool_choice_retry_count < 2:
+                    tool_names = ", ".join(required_tool_calls)
+                    _tool_choice_retry_count += 1
+                    log_warning(
+                        f"Required tool(s) [{tool_names}] not called. "
+                        f"Injecting reminder (attempt {_tool_choice_retry_count}/2)"
+                    )
+                    messages.append(
+                        Message(
+                            role="user",
+                            content=f"You must call the following tool(s) before finishing: {tool_names}",
+                        )
+                    )
+                    continue
                 break
 
             log_debug(f"{self.get_provider()} Async Response Stream End", center=True, symbol="-")

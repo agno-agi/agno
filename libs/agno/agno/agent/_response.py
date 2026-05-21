@@ -1075,6 +1075,7 @@ def handle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        required_tool_calls=agent.required_tool_calls,
     ):
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
@@ -1226,6 +1227,7 @@ async def ahandle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        required_tool_calls=agent.required_tool_calls,
     )  # type: ignore
 
     async for model_response_event in model_response_stream:  # type: ignore

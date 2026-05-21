@@ -175,6 +175,11 @@ class Agent:
     # "none" is the default when no tools are present. "auto" is the default if tools are present.
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
+    # Tool names that must be called before the agent can finish.
+    # If the model tries to end without calling these, a reminder is injected (max 2 retries).
+    # Useful when tool_choice="required" is not reliably enforced by the model provider.
+    required_tool_calls: Optional[List[str]] = None
+
     # A function that acts as middleware and is called around tool calls.
     tool_hooks: Optional[List[Callable]] = None
 
