@@ -34,3 +34,8 @@ async with MCPTools(
 # Terminal 2 — run the agent
 .venvs/demo/bin/python cookbook/91_tools/mcp/oauth/client.py
 ```
+
+> Disclaimer: The current OAuthConfig only supports `client_credentials` flow
+> with in-memory token storage.
+> Future versions may expand to support other flows like `authorization_code`,
+> `private_key_jwt` and persistent storage.
