@@ -37,6 +37,11 @@ except ImportError:
 # Allows alphanumeric, underscores, dots (for qualified names), and quoted identifiers
 _VALID_IDENTIFIER = re.compile(r'^[A-Za-z0-9_.]+$|^"[^"]+"$|^[A-Za-z0-9_.]*"[^"]+"[A-Za-z0-9_.]*$')
 
+# Regex to validate Snowflake column types (e.g. INTEGER, VARCHAR(100), NUMBER(10,2), TIMESTAMP_LTZ)
+_VALID_TYPE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\s*\(\s*\d+\s*(,\s*\d+\s*)?\))?$")
+
+_ALTER_OPS = {"add_column", "drop_column", "rename_column"}
+
 SNOWFLAKE_INSTRUCTIONS = textwrap.dedent("""\
     You have access to Snowflake data warehouse tools for querying data and exploring schemas.
 
@@ -50,6 +55,14 @@ SNOWFLAKE_INSTRUCTIONS = textwrap.dedent("""\
     - Use get_current_context to see the active warehouse, database, schema, and role.
     - Use list_databases, list_schemas, list_tables to explore the warehouse structure.
     - Use describe_table to see column names, types, and nullability before writing queries.
+
+    ## Schema Management (if enabled)
+    - Use create_table to create a new table with typed columns.
+    - Use alter_table to add, drop, or rename a single column (operation: add_column | drop_column | rename_column).
+    - Use drop_table to remove a table.
+    - Use truncate_table to delete all rows but keep the table.
+    - Use rename_table to rename a table.
+    - Use comment_on_table to set or update a table's comment.
 
     ## Write Operations (if enabled)
     - Use insert_record to add a single row to a table.
@@ -85,7 +98,12 @@ class SnowflakeTools(Toolkit):
         enable_describe_table: bool = True,
         enable_get_current_context: bool = True,
         enable_get_query_history: bool = False,
-        enable_execute_ddl: bool = False,
+        enable_create_table: bool = False,
+        enable_alter_table: bool = False,
+        enable_drop_table: bool = False,
+        enable_truncate_table: bool = False,
+        enable_rename_table: bool = False,
+        enable_comment_on_table: bool = False,
         enable_insert_record: bool = False,
         enable_update_records: bool = False,
         enable_delete_records: bool = False,
@@ -135,8 +153,18 @@ class SnowflakeTools(Toolkit):
             tools.append(self.get_current_context)
         if all or enable_get_query_history:
             tools.append(self.get_query_history)
-        if all or enable_execute_ddl:
-            tools.append(self.execute_ddl)
+        if all or enable_create_table:
+            tools.append(self.create_table)
+        if all or enable_alter_table:
+            tools.append(self.alter_table)
+        if all or enable_drop_table:
+            tools.append(self.drop_table)
+        if all or enable_truncate_table:
+            tools.append(self.truncate_table)
+        if all or enable_rename_table:
+            tools.append(self.rename_table)
+        if all or enable_comment_on_table:
+            tools.append(self.comment_on_table)
         if all or enable_insert_record:
             tools.append(self.insert_record)
         if all or enable_update_records:
@@ -248,7 +276,12 @@ class SnowflakeTools(Toolkit):
         """
         stripped = sql.strip().rstrip(";").strip()
         if not stripped.upper().startswith("SELECT") and not stripped.upper().startswith("WITH"):
-            return json.dumps({"error": "Only SELECT and WITH (CTE) queries are allowed. Use execute_ddl for DDL."})
+            return json.dumps(
+                {
+                    "error": "Only SELECT and WITH (CTE) queries are allowed. "
+                    "Use the dedicated DDL/DML methods (create_table, drop_table, insert_record, etc.) for other operations."
+                }
+            )
         try:
             results = self._execute(sql)
             return json.dumps({"rows": len(results), "data": results}, default=str)
@@ -399,18 +432,167 @@ class SnowflakeTools(Toolkit):
             logger.exception("Error getting Snowflake query history")
             return json.dumps({"error": str(e)})
 
-    def execute_ddl(self, sql: str) -> str:
+    def create_table(self, table: str, columns: str, if_not_exists: bool = False) -> str:
         """
-        Execute a DDL statement (CREATE, ALTER, DROP, GRANT, etc.).
+        Create a new table.
 
         Args:
-            sql: The DDL SQL statement to execute.
+            table: Fully qualified table name (e.g. MY_DB.PUBLIC.MY_TABLE) or just the table name.
+            columns: JSON object mapping column names to Snowflake types.
+                Example: '{"id": "INTEGER", "name": "VARCHAR(100)", "created_at": "TIMESTAMP_NTZ"}'
+            if_not_exists: If True, only create the table if it does not already exist.
         """
+        if not self._validate_identifier(table):
+            return json.dumps({"error": f"Invalid table name: {table}"})
+        try:
+            cols = json.loads(columns) if isinstance(columns, str) else columns
+        except json.JSONDecodeError as e:
+            return json.dumps({"error": f"Invalid JSON in columns: {e}"})
+
+        if not isinstance(cols, dict) or not cols:
+            return json.dumps({"error": "columns must be a non-empty JSON object."})
+
+        parts: List[str] = []
+        for col_name, col_type in cols.items():
+            if not self._validate_identifier(col_name):
+                return json.dumps({"error": f"Invalid column name: {col_name}"})
+            if not isinstance(col_type, str) or not _VALID_TYPE.match(col_type.strip()):
+                return json.dumps({"error": f"Invalid column type for {col_name}: {col_type}"})
+            parts.append(f"{col_name} {col_type.strip()}")
+
+        try:
+            prefix = "CREATE TABLE IF NOT EXISTS" if if_not_exists else "CREATE TABLE"
+            sql = f"{prefix} {table} ({', '.join(parts)})"
+            results = self._execute(sql)
+            return json.dumps({"status": "success", "table": table, "result": results}, default=str)
+        except Exception as e:
+            logger.exception(f"Error creating table {table}")
+            return json.dumps({"error": str(e)})
+
+    def alter_table(
+        self,
+        table: str,
+        operation: str,
+        column: str,
+        column_type: str = "",
+        new_name: str = "",
+    ) -> str:
+        """
+        Alter a table by adding, dropping, or renaming a single column.
+
+        Args:
+            table: Fully qualified table name (e.g. MY_DB.PUBLIC.MY_TABLE) or just the table name.
+            operation: One of "add_column", "drop_column", or "rename_column".
+            column: The column name to operate on.
+            column_type: For "add_column", the Snowflake type of the new column (e.g. "VARCHAR(100)").
+            new_name: For "rename_column", the new column name.
+        """
+        if not self._validate_identifier(table):
+            return json.dumps({"error": f"Invalid table name: {table}"})
+        if not self._validate_identifier(column):
+            return json.dumps({"error": f"Invalid column name: {column}"})
+
+        op = operation.lower().strip()
+        if op not in _ALTER_OPS:
+            return json.dumps(
+                {"error": f"Unsupported operation: {operation}. Use one of: {sorted(_ALTER_OPS)}"}
+            )
+
+        if op == "add_column":
+            if not column_type or not _VALID_TYPE.match(column_type.strip()):
+                return json.dumps({"error": f"Invalid column_type for add_column: {column_type}"})
+            sql = f"ALTER TABLE {table} ADD COLUMN {column} {column_type.strip()}"
+        elif op == "drop_column":
+            sql = f"ALTER TABLE {table} DROP COLUMN {column}"
+        else:  # rename_column
+            if not self._validate_identifier(new_name):
+                return json.dumps({"error": f"Invalid new_name: {new_name}"})
+            sql = f"ALTER TABLE {table} RENAME COLUMN {column} TO {new_name}"
+
         try:
             results = self._execute(sql)
-            return json.dumps({"status": "success", "result": results}, default=str)
+            return json.dumps(
+                {"status": "success", "table": table, "operation": op, "result": results}, default=str
+            )
         except Exception as e:
-            logger.exception("Error executing Snowflake DDL")
+            logger.exception(f"Error altering table {table}")
+            return json.dumps({"error": str(e)})
+
+    def drop_table(self, table: str, if_exists: bool = False, cascade: bool = False) -> str:
+        """
+        Drop a table.
+
+        Args:
+            table: Fully qualified table name (e.g. MY_DB.PUBLIC.MY_TABLE) or just the table name.
+            if_exists: If True, do not error if the table does not exist.
+            cascade: If True, also drop dependent views (CASCADE). Default behavior is RESTRICT.
+        """
+        if not self._validate_identifier(table):
+            return json.dumps({"error": f"Invalid table name: {table}"})
+        try:
+            prefix = "DROP TABLE IF EXISTS" if if_exists else "DROP TABLE"
+            suffix = " CASCADE" if cascade else ""
+            sql = f"{prefix} {table}{suffix}"
+            results = self._execute(sql)
+            return json.dumps({"status": "success", "table": table, "result": results}, default=str)
+        except Exception as e:
+            logger.exception(f"Error dropping table {table}")
+            return json.dumps({"error": str(e)})
+
+    def truncate_table(self, table: str) -> str:
+        """
+        Remove all rows from a table while keeping its structure.
+
+        Args:
+            table: Fully qualified table name (e.g. MY_DB.PUBLIC.MY_TABLE) or just the table name.
+        """
+        if not self._validate_identifier(table):
+            return json.dumps({"error": f"Invalid table name: {table}"})
+        try:
+            results = self._execute(f"TRUNCATE TABLE {table}")
+            return json.dumps({"status": "success", "table": table, "result": results}, default=str)
+        except Exception as e:
+            logger.exception(f"Error truncating table {table}")
+            return json.dumps({"error": str(e)})
+
+    def rename_table(self, table: str, new_name: str) -> str:
+        """
+        Rename a table.
+
+        Args:
+            table: Fully qualified table name (e.g. MY_DB.PUBLIC.MY_TABLE) or just the table name.
+            new_name: The new table name.
+        """
+        if not self._validate_identifier(table):
+            return json.dumps({"error": f"Invalid table name: {table}"})
+        if not self._validate_identifier(new_name):
+            return json.dumps({"error": f"Invalid new_name: {new_name}"})
+        try:
+            results = self._execute(f"ALTER TABLE {table} RENAME TO {new_name}")
+            return json.dumps(
+                {"status": "success", "table": table, "new_name": new_name, "result": results},
+                default=str,
+            )
+        except Exception as e:
+            logger.exception(f"Error renaming table {table}")
+            return json.dumps({"error": str(e)})
+
+    def comment_on_table(self, table: str, comment: str) -> str:
+        """
+        Set or update the comment on a table.
+
+        Args:
+            table: Fully qualified table name (e.g. MY_DB.PUBLIC.MY_TABLE) or just the table name.
+            comment: The comment text. Single quotes are escaped automatically.
+        """
+        if not self._validate_identifier(table):
+            return json.dumps({"error": f"Invalid table name: {table}"})
+        try:
+            escaped = comment.replace("'", "''")
+            results = self._execute(f"COMMENT ON TABLE {table} IS '{escaped}'")
+            return json.dumps({"status": "success", "table": table, "result": results}, default=str)
+        except Exception as e:
+            logger.exception(f"Error commenting on table {table}")
             return json.dumps({"error": str(e)})
 
     def insert_record(self, table: str, record_data: str) -> str:

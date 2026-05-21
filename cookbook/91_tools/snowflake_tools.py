@@ -26,7 +26,7 @@ Prerequisites:
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.snowflake import SnowflakeTools
 
 # ---------------------------------------------------------------------------
@@ -36,7 +36,7 @@ from agno.tools.snowflake import SnowflakeTools
 # Example 1: Read-only data analyst agent (default)
 analyst_agent = Agent(
     name="Snowflake Analyst",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=[SnowflakeTools()],
     description="You are a data analyst that can explore and query a Snowflake data warehouse.",
     instructions=[
@@ -51,11 +51,16 @@ analyst_agent = Agent(
 # Example 2: Full access agent with DDL and query history
 admin_agent = Agent(
     name="Snowflake Admin",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=[
         SnowflakeTools(
             enable_get_query_history=True,
-            enable_execute_ddl=True,
+            enable_create_table=True,
+            enable_alter_table=True,
+            enable_drop_table=True,
+            enable_truncate_table=True,
+            enable_rename_table=True,
+            enable_comment_on_table=True,
             enable_insert_record=True,
             enable_update_records=True,
             enable_delete_records=True,
@@ -74,7 +79,7 @@ admin_agent = Agent(
 # Example 3: Minimal agent with only query access
 query_agent = Agent(
     name="Snowflake Query Runner",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=[
         SnowflakeTools(
             enable_query=True,
