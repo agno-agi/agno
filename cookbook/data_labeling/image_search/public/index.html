@@ -59,17 +59,21 @@
 
     <!-- Search view -->
     <section x-show="tab === 'search'">
-      <form @submit.prevent="runSearch()" class="relative mb-4">
-        <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
-          <i data-lucide="search" class="w-5 h-5"></i>
-        </span>
-        <input x-model="query" @input.debounce.250ms="runSearch()" type="search" autofocus
-               autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other"
-               placeholder="Try: a historic city at night, wildlife on the savanna, latte art ..."
-               class="w-full pl-12 pr-12 py-3 text-base rounded-lg border border-slate-300 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 transition-shadow" />
-        <span x-show="searching" class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
-          <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
-        </span>
+      <form @submit.prevent="runSearch()" class="flex gap-2 mb-4">
+        <div class="relative flex-1">
+          <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+            <i data-lucide="search" class="w-5 h-5"></i>
+          </span>
+          <input x-model="query" type="search" autofocus
+                 autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other"
+                 placeholder="Try: a historic city at night, wildlife on the savanna, latte art ..."
+                 class="w-full pl-12 pr-4 py-3 text-base rounded-lg border border-slate-300 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 transition-shadow" />
+        </div>
+        <button type="submit" :disabled="searching"
+                class="inline-flex items-center gap-2 px-5 py-3 text-sm font-medium rounded-lg bg-slate-900 text-white shadow-sm hover:bg-slate-700 disabled:bg-slate-400 disabled:cursor-not-allowed">
+          <i :data-lucide="searching ? 'loader-2' : 'search'" :class="searching && 'animate-spin'" class="w-4 h-4"></i>
+          <span x-text="searching ? 'Searching…' : 'Search'"></span>
+        </button>
       </form>
       <div class="flex items-center justify-between text-xs text-slate-500 mb-4 min-h-[1.25rem]">
         <p x-text="searchMeta"></p>
@@ -114,7 +118,7 @@
             </div>
           </a>
         </template>
-        <div x-show="!searching && searchMeta && searchResults.length === 0"
+        <div x-show="!searching && searchMeta && searchResults.length === 0 && filteredOut.length === 0"
              class="col-span-full text-sm text-slate-500 py-12 text-center">
           No matches. Try a different query.
         </div>
@@ -286,6 +290,7 @@
         init() {
           this.refreshCounter();
           this.$nextTick(() => lucide.createIcons());
+          this.$watch('searching', () => this.$nextTick(() => lucide.createIcons()));
           this.$watch('showFiltered', () => this.$nextTick(() => lucide.createIcons()));
           this.$watch('activeItem', () => this.$nextTick(() => lucide.createIcons()));
         },
@@ -335,14 +340,17 @@
           this.searchMeta = `"${q}" — searching…`;
           const t0 = performance.now();
           try {
-            const r = await fetch('/knowledge/search', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ query: q, max_results: 12, search_type: 'hybrid' }),
-              signal,
-            });
-            const j = await r.json();
+            // Gemini's embedding endpoint flakes with a transient 503 every now
+            // and then; agno's pgvector adapter swallows the failure and returns
+            // []. Retry once with a brief backoff before giving up.
+            let j = await this._search(q, signal);
             if (signal.aborted) return;
+            if ((j.data || []).length === 0) {
+              await new Promise(r => setTimeout(r, 400));
+              if (signal.aborted) return;
+              j = await this._search(q, signal);
+              if (signal.aborted) return;
+            }
             const dt = Math.round(performance.now() - t0);
             const all = (j.data || []).map(d => ({
               url:          d.meta_data?.url,
@@ -368,6 +376,10 @@
             }
             this.searchResults = primary;
             this.filteredOut = secondary;
+            // Auto-reveal the below-threshold tier when there's nothing else
+            // to show — beats a bare "0 results" with a hidden tray.
+            if (primary.length === 0 && secondary.length > 0) this.showFiltered = true;
+            else if (primary.length > 0) this.showFiltered = false;
             const n = this.searchResults.length;
             this.searchMeta = `"${q}" · ${n} result${n === 1 ? '' : 's'} in ${dt}ms`;
           } catch (e) {
@@ -376,6 +388,16 @@
           } finally {
             if (!signal.aborted) this.searching = false;
           }
+        },
+
+        async _search(q, signal) {
+          const r = await fetch('/knowledge/search', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ query: q, max_results: 12, search_type: 'hybrid' }),
+            signal,
+          });
+          return await r.json();
         },
 
         async loadGallery() {
