@@ -112,7 +112,12 @@ class TestSnowflakeInit:
         assert "describe_table" in fn_names
         assert "get_current_context" in fn_names
         assert "get_query_history" in fn_names
-        assert "execute_ddl" in fn_names
+        assert "create_table" in fn_names
+        assert "alter_table" in fn_names
+        assert "drop_table" in fn_names
+        assert "truncate_table" in fn_names
+        assert "rename_table" in fn_names
+        assert "comment_on_table" in fn_names
         assert "insert_record" in fn_names
         assert "update_records" in fn_names
         assert "delete_records" in fn_names
@@ -133,7 +138,12 @@ class TestSnowflakeInit:
         assert "get_current_context" in fn_names
         # Disabled by default
         assert "get_query_history" not in fn_names
-        assert "execute_ddl" not in fn_names
+        assert "create_table" not in fn_names
+        assert "alter_table" not in fn_names
+        assert "drop_table" not in fn_names
+        assert "truncate_table" not in fn_names
+        assert "rename_table" not in fn_names
+        assert "comment_on_table" not in fn_names
         assert "insert_record" not in fn_names
         assert "update_records" not in fn_names
         assert "delete_records" not in fn_names
@@ -356,17 +366,165 @@ class TestMetadata:
 # ---------------------------------------------------------------------------
 
 
-class TestDDLAndHistory:
-    def test_execute_ddl(self, sf_tools, mock_sf_connector):
+class TestDDLMethods:
+    def test_create_table_success(self, sf_tools, mock_sf_connector):
         _mock_cursor(
             mock_sf_connector,
             description=[("status",)],
             rows=[("Table MY_TABLE successfully created.",)],
         )
 
-        result = json.loads(sf_tools.execute_ddl(sql="CREATE TABLE MY_TABLE (id INT)"))
+        result = json.loads(
+            sf_tools.create_table(
+                table="MY_TABLE",
+                columns='{"id": "INTEGER", "name": "VARCHAR(100)"}',
+            )
+        )
         assert result["status"] == "success"
+        assert result["table"] == "MY_TABLE"
+        executed_sql = mock_sf_connector.cursor.return_value.execute.call_args[0][0]
+        assert "CREATE TABLE MY_TABLE" in executed_sql
+        assert "id INTEGER" in executed_sql
+        assert "name VARCHAR(100)" in executed_sql
 
+    def test_create_table_if_not_exists(self, sf_tools, mock_sf_connector):
+        _mock_cursor(mock_sf_connector, description=[("status",)], rows=[("ok",)])
+        sf_tools.create_table(table="T", columns='{"id": "INT"}', if_not_exists=True)
+        executed_sql = mock_sf_connector.cursor.return_value.execute.call_args[0][0]
+        assert "CREATE TABLE IF NOT EXISTS T" in executed_sql
+
+    def test_create_table_invalid_table(self, sf_tools):
+        result = json.loads(sf_tools.create_table(table="DROP; --", columns='{"id": "INT"}'))
+        assert "error" in result
+        assert "Invalid table name" in result["error"]
+
+    def test_create_table_invalid_columns_json(self, sf_tools):
+        result = json.loads(sf_tools.create_table(table="T", columns="not json"))
+        assert "error" in result
+        assert "Invalid JSON" in result["error"]
+
+    def test_create_table_empty_columns(self, sf_tools):
+        result = json.loads(sf_tools.create_table(table="T", columns="{}"))
+        assert "error" in result
+        assert "non-empty" in result["error"]
+
+    def test_create_table_invalid_column_name(self, sf_tools):
+        result = json.loads(sf_tools.create_table(table="T", columns='{"id; DROP": "INT"}'))
+        assert "error" in result
+        assert "Invalid column name" in result["error"]
+
+    def test_create_table_invalid_column_type(self, sf_tools):
+        result = json.loads(sf_tools.create_table(table="T", columns='{"id": "INT; DROP TABLE x"}'))
+        assert "error" in result
+        assert "Invalid column type" in result["error"]
+
+    def test_alter_table_add_column(self, sf_tools, mock_sf_connector):
+        _mock_cursor(mock_sf_connector, description=[("status",)], rows=[("ok",)])
+        result = json.loads(
+            sf_tools.alter_table(
+                table="T", operation="add_column", column="phone", column_type="VARCHAR(20)"
+            )
+        )
+        assert result["status"] == "success"
+        executed_sql = mock_sf_connector.cursor.return_value.execute.call_args[0][0]
+        assert executed_sql == "ALTER TABLE T ADD COLUMN phone VARCHAR(20)"
+
+    def test_alter_table_drop_column(self, sf_tools, mock_sf_connector):
+        _mock_cursor(mock_sf_connector, description=[("status",)], rows=[("ok",)])
+        sf_tools.alter_table(table="T", operation="drop_column", column="phone")
+        executed_sql = mock_sf_connector.cursor.return_value.execute.call_args[0][0]
+        assert executed_sql == "ALTER TABLE T DROP COLUMN phone"
+
+    def test_alter_table_rename_column(self, sf_tools, mock_sf_connector):
+        _mock_cursor(mock_sf_connector, description=[("status",)], rows=[("ok",)])
+        sf_tools.alter_table(
+            table="T", operation="rename_column", column="old", new_name="new"
+        )
+        executed_sql = mock_sf_connector.cursor.return_value.execute.call_args[0][0]
+        assert executed_sql == "ALTER TABLE T RENAME COLUMN old TO new"
+
+    def test_alter_table_invalid_operation(self, sf_tools):
+        result = json.loads(sf_tools.alter_table(table="T", operation="bogus", column="c"))
+        assert "error" in result
+        assert "Unsupported operation" in result["error"]
+
+    def test_alter_table_add_column_missing_type(self, sf_tools):
+        result = json.loads(sf_tools.alter_table(table="T", operation="add_column", column="c"))
+        assert "error" in result
+        assert "Invalid column_type" in result["error"]
+
+    def test_alter_table_rename_column_invalid_new_name(self, sf_tools):
+        result = json.loads(
+            sf_tools.alter_table(
+                table="T", operation="rename_column", column="c", new_name="x; DROP"
+            )
+        )
+        assert "error" in result
+        assert "Invalid new_name" in result["error"]
+
+    def test_drop_table_success(self, sf_tools, mock_sf_connector):
+        _mock_cursor(mock_sf_connector, description=[("status",)], rows=[("ok",)])
+        result = json.loads(sf_tools.drop_table(table="T"))
+        assert result["status"] == "success"
+        executed_sql = mock_sf_connector.cursor.return_value.execute.call_args[0][0]
+        assert executed_sql == "DROP TABLE T"
+
+    def test_drop_table_if_exists_cascade(self, sf_tools, mock_sf_connector):
+        _mock_cursor(mock_sf_connector, description=[("status",)], rows=[("ok",)])
+        sf_tools.drop_table(table="T", if_exists=True, cascade=True)
+        executed_sql = mock_sf_connector.cursor.return_value.execute.call_args[0][0]
+        assert "IF EXISTS" in executed_sql
+        assert "CASCADE" in executed_sql
+
+    def test_drop_table_invalid(self, sf_tools):
+        result = json.loads(sf_tools.drop_table(table="DROP; --"))
+        assert "error" in result
+        assert "Invalid table name" in result["error"]
+
+    def test_truncate_table_success(self, sf_tools, mock_sf_connector):
+        _mock_cursor(mock_sf_connector, description=[("status",)], rows=[("ok",)])
+        result = json.loads(sf_tools.truncate_table(table="T"))
+        assert result["status"] == "success"
+        executed_sql = mock_sf_connector.cursor.return_value.execute.call_args[0][0]
+        assert executed_sql == "TRUNCATE TABLE T"
+
+    def test_truncate_table_invalid(self, sf_tools):
+        result = json.loads(sf_tools.truncate_table(table="DROP; --"))
+        assert "error" in result
+        assert "Invalid table name" in result["error"]
+
+    def test_rename_table_success(self, sf_tools, mock_sf_connector):
+        _mock_cursor(mock_sf_connector, description=[("status",)], rows=[("ok",)])
+        result = json.loads(sf_tools.rename_table(table="OLD", new_name="NEW"))
+        assert result["status"] == "success"
+        executed_sql = mock_sf_connector.cursor.return_value.execute.call_args[0][0]
+        assert executed_sql == "ALTER TABLE OLD RENAME TO NEW"
+
+    def test_rename_table_invalid_new_name(self, sf_tools):
+        result = json.loads(sf_tools.rename_table(table="OLD", new_name="NEW; DROP"))
+        assert "error" in result
+        assert "Invalid new_name" in result["error"]
+
+    def test_comment_on_table_success(self, sf_tools, mock_sf_connector):
+        _mock_cursor(mock_sf_connector, description=[("status",)], rows=[("ok",)])
+        result = json.loads(sf_tools.comment_on_table(table="T", comment="Hello"))
+        assert result["status"] == "success"
+        executed_sql = mock_sf_connector.cursor.return_value.execute.call_args[0][0]
+        assert executed_sql == "COMMENT ON TABLE T IS 'Hello'"
+
+    def test_comment_on_table_escapes_quotes(self, sf_tools, mock_sf_connector):
+        _mock_cursor(mock_sf_connector, description=[("status",)], rows=[("ok",)])
+        sf_tools.comment_on_table(table="T", comment="It's great")
+        executed_sql = mock_sf_connector.cursor.return_value.execute.call_args[0][0]
+        assert executed_sql == "COMMENT ON TABLE T IS 'It''s great'"
+
+    def test_comment_on_table_invalid(self, sf_tools):
+        result = json.loads(sf_tools.comment_on_table(table="DROP; --", comment="x"))
+        assert "error" in result
+        assert "Invalid table name" in result["error"]
+
+
+class TestHistory:
     def test_get_query_history(self, sf_tools, mock_sf_connector):
         _mock_cursor(
             mock_sf_connector,
@@ -455,10 +613,16 @@ class TestErrorHandling:
         result = json.loads(sf_tools.describe_table(table="NONEXISTENT"))
         assert "error" in result
 
-    def test_execute_ddl_error(self, sf_tools, mock_sf_connector):
-        mock_sf_connector.cursor.side_effect = Exception("Syntax error")
+    def test_create_table_error(self, sf_tools, mock_sf_connector):
+        mock_sf_connector.cursor.side_effect = Exception("Permission denied")
 
-        result = json.loads(sf_tools.execute_ddl(sql="DROP TABLE"))
+        result = json.loads(sf_tools.create_table(table="T", columns='{"id": "INT"}'))
+        assert "error" in result
+
+    def test_drop_table_error(self, sf_tools, mock_sf_connector):
+        mock_sf_connector.cursor.side_effect = Exception("Table not found")
+
+        result = json.loads(sf_tools.drop_table(table="T"))
         assert "error" in result
 
     def test_get_current_context_error(self, sf_tools, mock_sf_connector):
