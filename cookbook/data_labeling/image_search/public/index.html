@@ -122,7 +122,7 @@
 
       <!-- Below-threshold reveal -->
       <div x-show="showFiltered && filteredOut.length" x-transition class="mt-8 pt-6 border-t border-slate-200">
-        <p class="text-xs text-slate-500 mb-3" x-text="`Below the ${Math.round(MIN_SCORE_RATIO * 100)}% relative-score cutoff — lower-confidence matches.`"></p>
+        <p class="text-xs text-slate-500 mb-3">Below the relevance cutoff — vector-only candidates without a real FTS match.</p>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 opacity-70">
           <template x-for="hit in filteredOut" :key="hit.url">
             <a :href="hit.url" @click="onCardClick($event, hit)" target="_blank" rel="noreferrer"
@@ -249,25 +249,21 @@
   </div>
 
   <script>
-    // Drop hits whose hybrid score is below this fraction of the best hit's
-    // score. Hybrid RRF gives a bimodal distribution when keyword matches
-    // exist (good hits ~2x the vector-only tail), so a relative cutoff cleanly
-    // separates them. When all scores cluster together (no keyword wins),
-    // nothing is filtered.
+    // PgVector's hybrid score = vector_score_weight * cosine_similarity +
+    // text_rank_weight * ts_rank. Defaults put a perfect vector hit at 0.5;
+    // a real FTS hit pushes scores past 0.5. Anything below ~0.30 is
+    // vector-only on a tangentially related image — noise for a literal
+    // query like "car" that has no FTS match.
+    const SCORE_FLOOR = 0.30;
+    // Within the "real match" tier, also drop hits below this fraction of
+    // the top score so a query with one bullseye doesn't drag in
+    // medium-confidence tail (e.g. "coffee" → coffee beans, drop everything
+    // else that scored mid-range).
     const MIN_SCORE_RATIO = 0.5;
-
-    // ChromaDb stringifies list metadata, so /knowledge/search hits come back
-    // with tags/subjects as JSON strings. /knowledge/content (SQLite) returns
-    // real arrays. Normalize both paths through this.
-    function asArray(v) {
-      if (Array.isArray(v)) return v;
-      if (typeof v !== 'string') return [];
-      try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; }
-      catch { return []; }
-    }
 
     function imageSearch() {
       return {
+        SCORE_FLOOR,
         MIN_SCORE_RATIO,
         tab: 'search',
         query: '',
@@ -351,16 +347,27 @@
             const all = (j.data || []).map(d => ({
               url:          d.meta_data?.url,
               caption:      d.meta_data?.caption,
-              subjects:     asArray(d.meta_data?.subjects),
+              subjects:     d.meta_data?.subjects || [],
               scene:        d.meta_data?.scene,
               visual_style: d.meta_data?.visual_style,
-              tags:         asArray(d.meta_data?.tags),
-              score:        d.meta_data?.rrf_score,
+              tags:         d.meta_data?.tags || [],
+              score:        d.meta_data?.similarity_score,
             }));
             const best = Math.max(0, ...all.map(h => h.score || 0));
-            const cutoff = best * MIN_SCORE_RATIO;
-            this.searchResults = all.filter(h => h.score == null || h.score >= cutoff);
-            this.filteredOut = all.filter(h => h.score != null && h.score < cutoff);
+            // No high-confidence match at all → tuck everything under
+            // "below threshold" instead of showing low-score vector noise.
+            // Otherwise apply the relative ratio against the best hit.
+            let primary, secondary;
+            if (best < SCORE_FLOOR) {
+              primary = [];
+              secondary = all;
+            } else {
+              const cutoff = Math.max(SCORE_FLOOR, best * MIN_SCORE_RATIO);
+              primary = all.filter(h => h.score == null || h.score >= cutoff);
+              secondary = all.filter(h => h.score != null && h.score < cutoff);
+            }
+            this.searchResults = primary;
+            this.filteredOut = secondary;
             const n = this.searchResults.length;
             this.searchMeta = `"${q}" · ${n} result${n === 1 ? '' : 's'} in ${dt}ms`;
           } catch (e) {
@@ -380,10 +387,10 @@
             this.galleryItems = (j.data || []).map(c => ({
               url:          c.metadata?.url,
               caption:      c.metadata?.caption,
-              subjects:     asArray(c.metadata?.subjects),
+              subjects:     c.metadata?.subjects || [],
               scene:        c.metadata?.scene,
               visual_style: c.metadata?.visual_style,
-              tags:         asArray(c.metadata?.tags),
+              tags:         c.metadata?.tags || [],
             }));
             this.galleryMeta = `${j.meta.total_count} image${j.meta.total_count === 1 ? '' : 's'}`;
           } catch (e) {
