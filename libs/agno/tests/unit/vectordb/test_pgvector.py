@@ -1194,7 +1194,7 @@ def test_hybrid_search_empty_token_fallback_uses_tsquery_literal(mock_engine, mo
     assert "to_tsquery(" not in sql, f"fallback should not call to_tsquery, got: {sql}"
 
 
-def test_hybrid_search_falls_back_to_vector_on_no_usable_tokens(mock_engine, mock_embedder):
+def test_hybrid_search_falls_back_to_vector_on_no_usable_tokens(mock_engine):
     """hybrid_search still computes embeddings when prefix_match strips all tokens.
 
     Unlike keyword_search which returns [] immediately, hybrid_search proceeds
@@ -1204,6 +1204,10 @@ def test_hybrid_search_falls_back_to_vector_on_no_usable_tokens(mock_engine, moc
     """
     from pgvector.sqlalchemy import Vector as RealVector
     from sqlalchemy import Column, MetaData, String, Table
+
+    # Create a local embedder mock to avoid mutating the session-scoped fixture
+    local_embedder = MagicMock()
+    local_embedder.get_embedding = MagicMock(return_value=[0.1, 0.2, 0.3])
 
     metadata = MetaData()
     real_table = Table(
@@ -1225,11 +1229,9 @@ def test_hybrid_search_falls_back_to_vector_on_no_usable_tokens(mock_engine, moc
         db = PgVector(
             table_name="test_hybrid_vector_fallback",
             db_engine=mock_engine,
-            embedder=mock_embedder,
+            embedder=local_embedder,
             prefix_match=True,
         )
-
-        mock_embedder.get_embedding = MagicMock(return_value=[0.1, 0.2, 0.3])
 
         class _SessionCtx:
             def __enter__(self_inner):
@@ -1250,5 +1252,5 @@ def test_hybrid_search_falls_back_to_vector_on_no_usable_tokens(mock_engine, moc
         results = db.hybrid_search("!@#$")
 
         # Embedder was called — vector search still runs even with no text tokens
-        mock_embedder.get_embedding.assert_called_once_with("!@#$")
+        local_embedder.get_embedding.assert_called_once_with("!@#$")
         assert results == []
