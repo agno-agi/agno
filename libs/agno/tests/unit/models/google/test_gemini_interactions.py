@@ -263,7 +263,8 @@ class TestGetRequestKwargs:
         assert kwargs["store"] is False
 
     def test_previous_interaction_id_from_provider_data(self):
-        """Previous interaction ID is read from assistant message provider_data."""
+        """Previous interaction ID is read from assistant message provider_data,
+        and only the new turn is sent (server holds history)."""
         model = self._make_model()
         messages = [
             Message(role="user", content="First message"),
@@ -272,6 +273,8 @@ class TestGetRequestKwargs:
         ]
         kwargs = model._get_request_kwargs(messages)
         assert kwargs["previous_interaction_id"] == "interactions/abc123"
+        # Server-side history: don't replay "First message", send only "Follow up".
+        assert kwargs["input"] == [{"type": "user_input", "content": [{"type": "text", "text": "Follow up"}]}]
 
     def test_no_previous_interaction_id_on_first_turn(self):
         model = self._make_model()
@@ -290,6 +293,509 @@ class TestGetRequestKwargs:
         messages = [Message(role="user", content="Hi")]
         kwargs = model._get_request_kwargs(messages)
         assert kwargs["response_modalities"] == ["text", "image"]
+
+    def test_generation_config_passthrough_merges_with_fields(self):
+        """Supported keys from generation_config are merged into the request config."""
+        model = self._make_model(
+            temperature=0.5,
+            generation_config={"top_p": 0.9, "thinking_summaries": "auto", "tool_choice": "auto"},
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
+        cfg = kwargs["generation_config"]
+        assert cfg["temperature"] == 0.5
+        assert cfg["top_p"] == 0.9
+        assert cfg["thinking_summaries"] == "auto"
+        assert cfg["tool_choice"] == "auto"
+
+    def test_generation_config_passthrough_overrides_fields(self):
+        """When the same key is set on both, the passthrough wins."""
+        model = self._make_model(temperature=0.5, generation_config={"temperature": 0.9})
+        kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
+        assert kwargs["generation_config"]["temperature"] == 0.9
+
+    def test_generation_config_accepts_pydantic_object(self):
+        """Pydantic models (e.g. GenerateContentConfig) are dumped with exclude_none."""
+        from typing import Optional as _Opt
+
+        from pydantic import BaseModel as _PydBase
+
+        class FakeConfig(_PydBase):
+            temperature: _Opt[float] = None
+            top_p: _Opt[float] = None
+            max_output_tokens: _Opt[int] = None  # unset, should be excluded
+
+        model = self._make_model(generation_config=FakeConfig(temperature=0.8, top_p=0.95))
+        kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
+        cfg = kwargs["generation_config"]
+        assert cfg["temperature"] == 0.8
+        assert cfg["top_p"] == 0.95
+        assert "max_output_tokens" not in cfg
+
+    def test_store_false_opts_out_of_server_state(self):
+        """store=False disables previous_interaction_id chaining; full history is sent."""
+        model = self._make_model(store=False)
+        messages = [
+            Message(role="user", content="First turn"),
+            Message(role="assistant", content="Reply 1", provider_data={"interaction_id": "interactions/abc"}),
+            Message(role="user", content="Follow up"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert "previous_interaction_id" not in kwargs
+        # Full history is sent: user1 + assistant1 (no tool calls -> skipped) + user2
+        # _build_input emits a user_input step for each user message
+        input_steps = kwargs["input"]
+        user_steps = [s for s in input_steps if s["type"] == "user_input"]
+        assert len(user_steps) == 2
+        assert user_steps[0]["content"][0]["text"] == "First turn"
+        assert user_steps[1]["content"][0]["text"] == "Follow up"
+
+    def test_input_sliced_when_previous_interaction_id_set(self):
+        """When previous_interaction_id is set, only messages after the prior assistant turn are sent."""
+        model = self._make_model()
+        messages = [
+            Message(role="user", content="First turn"),
+            Message(role="assistant", content="Reply 1", provider_data={"interaction_id": "interactions/abc"}),
+            Message(role="user", content="Follow up"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["previous_interaction_id"] == "interactions/abc"
+        # Only the new user message should be in input - server has the prior turns
+        input_steps = kwargs["input"]
+        assert len(input_steps) == 1
+        assert input_steps[0]["type"] == "user_input"
+        assert input_steps[0]["content"][0]["text"] == "Follow up"
+
+    def test_input_includes_all_messages_on_first_turn(self):
+        """Without a previous_interaction_id, full message history is sent."""
+        model = self._make_model()
+        messages = [Message(role="user", content="Hello")]
+        kwargs = model._get_request_kwargs(messages)
+        assert "previous_interaction_id" not in kwargs
+        assert kwargs["input"][0]["content"][0]["text"] == "Hello"
+
+    def test_input_sliced_includes_tool_results_after_assistant(self):
+        """Mid-tool-call: send only tool result steps after the prior assistant turn."""
+        model = self._make_model()
+        messages = [
+            Message(role="user", content="Weather?"),
+            Message(
+                role="assistant",
+                tool_calls=[{"id": "c1", "type": "function", "function": {"name": "weather", "arguments": "{}"}}],
+                provider_data={"interaction_id": "interactions/abc"},
+            ),
+            Message(role="tool", tool_call_id="c1", tool_name="weather", content="Sunny"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["previous_interaction_id"] == "interactions/abc"
+        input_steps = kwargs["input"]
+        assert len(input_steps) == 1
+        assert input_steps[0]["type"] == "function_result"
+        assert input_steps[0]["call_id"] == "c1"
+        assert input_steps[0]["result"] == "Sunny"
+
+
+class TestDeepResearchAgentPath:
+    """Tests for the Deep Research agent path (agent + agent_config).
+
+    The SDK enforces that `model`/`generation_config` and `agent`/`agent_config`
+    are mutually exclusive; these tests assert we never mix them.
+    """
+
+    def _make_model(self, **kwargs):
+        return GeminiInteractions(api_key="test-key", **kwargs)
+
+    def test_default_uses_model_path_not_agent(self):
+        model = self._make_model()
+        kwargs = model._get_request_kwargs([Message(role="user", content="Hi")])
+        assert "model" in kwargs
+        assert "agent" not in kwargs
+        assert "agent_config" not in kwargs
+
+    def test_agent_set_uses_agent_path_and_omits_model(self):
+        model = self._make_model(agent="deep-research-preview-04-2026")
+        kwargs = model._get_request_kwargs([Message(role="user", content="Research jazz")])
+        assert kwargs["agent"] == "deep-research-preview-04-2026"
+        assert "model" not in kwargs
+        assert "generation_config" not in kwargs
+
+    def test_deep_research_forces_background_and_store(self):
+        # Deep Research requires background=true (and store=true) for the
+        # autonomous loop; the model must force both regardless of `store`.
+        model = self._make_model(agent="deep-research-preview-04-2026", store=False)
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert kwargs["background"] is True
+        assert kwargs["store"] is True
+
+    def test_model_path_does_not_force_background(self):
+        model = self._make_model()
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert "background" not in kwargs
+
+    def test_agent_path_drops_system_message(self):
+        # Deep Research rejects system_instruction and treats input as the
+        # research request. Agno's framework boilerplate is neither sent as
+        # system_instruction nor folded into input on the agent path.
+        model = self._make_model(agent="deep-research-preview-04-2026")
+        messages = [
+            Message(role="system", content="Be concise."),
+            Message(role="user", content="What is a TPU?"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert "system_instruction" not in kwargs
+        assert kwargs["input"] == [{"type": "user_input", "content": [{"type": "text", "text": "What is a TPU?"}]}]
+
+    def test_agent_path_only_sends_new_turn_when_continuing(self):
+        # With previous_interaction_id set, the server already has history;
+        # send only the newest user turn, not the replayed conversation.
+        model = self._make_model(agent="deep-research-preview-04-2026")
+        messages = [
+            Message(role="system", content="boilerplate"),
+            Message(role="user", content="Research TPUs"),
+            Message(role="assistant", content="Here is the plan", provider_data={"interaction_id": "int-1"}),
+            Message(role="user", content="Focus on competitors"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["previous_interaction_id"] == "int-1"
+        assert kwargs["input"] == [
+            {"type": "user_input", "content": [{"type": "text", "text": "Focus on competitors"}]}
+        ]
+
+    def test_model_path_still_sends_system_instruction(self):
+        model = self._make_model()
+        messages = [
+            Message(role="system", content="Be concise."),
+            Message(role="user", content="What is a TPU?"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["system_instruction"] == "Be concise."
+
+    def test_deep_research_agent_config_built(self):
+        model = self._make_model(
+            agent="deep-research-pro-preview-12-2025",
+            collaborative_planning=True,
+            thinking_summaries="auto",
+            visualization="auto",
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="Research jazz")])
+        assert kwargs["agent_config"] == {
+            "type": "deep-research",
+            "collaborative_planning": True,
+            "thinking_summaries": "auto",
+            "visualization": "auto",
+        }
+
+    def test_generation_config_never_sent_on_agent_path(self):
+        # Even if generation params are set, the agent path must not send them
+        # (the SDK raises ValueError if agent + generation_config are combined).
+        model = self._make_model(
+            agent="deep-research-pro-preview-12-2025",
+            temperature=0.7,
+            max_output_tokens=500,
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert "generation_config" not in kwargs
+        assert "agent" in kwargs
+
+    def test_non_deep_research_agent_sends_no_agent_config(self):
+        model = self._make_model(agent="some-future-agent")
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert kwargs["agent"] == "some-future-agent"
+        assert "agent_config" not in kwargs
+        assert "model" not in kwargs
+
+    def test_mcp_servers_added_to_tools(self):
+        model = self._make_model(
+            agent="deep-research-preview-04-2026",
+            mcp_servers=[
+                {
+                    "name": "Deploy Tracker",
+                    "url": "https://mcp.example.com/mcp",
+                    "headers": {"Authorization": "Bearer tok"},
+                    "allowed_tools": ["status"],
+                }
+            ],
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="check deploys")])
+        assert {
+            "type": "mcp_server",
+            "name": "Deploy Tracker",
+            "url": "https://mcp.example.com/mcp",
+            "headers": {"Authorization": "Bearer tok"},
+            "allowed_tools": ["status"],
+        } in kwargs["tools"]
+
+    def test_multiple_mcp_servers(self):
+        model = self._make_model(
+            agent="deep-research-preview-04-2026",
+            mcp_servers=[
+                {"url": "https://a.example.com/mcp"},
+                {"url": "https://b.example.com/mcp"},
+            ],
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        mcp = [t for t in kwargs["tools"] if t["type"] == "mcp_server"]
+        assert len(mcp) == 2
+        assert {t["url"] for t in mcp} == {"https://a.example.com/mcp", "https://b.example.com/mcp"}
+
+    def test_mcp_server_type_key_cannot_be_overridden(self):
+        # A user-supplied mcp_servers entry with a stray "type" key must not
+        # be able to clobber the discriminator the SDK uses to route the tool.
+        model = self._make_model(
+            agent="deep-research-preview-04-2026",
+            mcp_servers=[{"url": "https://x.example.com/mcp", "type": "function"}],
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        mcp = [t for t in kwargs["tools"] if t.get("type") == "mcp_server"]
+        assert len(mcp) == 1
+        assert mcp[0]["url"] == "https://x.example.com/mcp"
+        # No tool should have been registered as a function as a side effect.
+        assert not any(t.get("type") == "function" for t in kwargs["tools"])
+
+    def test_file_search_added_to_tools(self):
+        model = self._make_model(
+            agent="deep-research-preview-04-2026",
+            file_search_store_names=["fileSearchStores/my-store"],
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="compare to our docs")])
+        assert {
+            "type": "file_search",
+            "file_search_store_names": ["fileSearchStores/my-store"],
+        } in kwargs["tools"]
+
+    def test_no_extra_tools_when_unset(self):
+        model = self._make_model(agent="deep-research-preview-04-2026")
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        # No mcp/file_search configured -> not present (Deep Research has its
+        # own defaults server-side when tools is omitted).
+        assert "tools" not in kwargs
+
+    def test_deep_research_partial_config(self):
+        # Only the knobs that are set should appear; type is always present.
+        model = self._make_model(
+            agent="deep-research-preview-04-2026",
+            collaborative_planning=True,
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert kwargs["agent_config"] == {"type": "deep-research", "collaborative_planning": True}
+
+    def test_agent_path_keeps_shared_params(self):
+        # service_tier / store still flow on the agent path; the system message
+        # is dropped (not sent as system_instruction, not folded into input).
+        model = self._make_model(
+            agent="deep-research-pro-preview-12-2025",
+            service_tier="priority",
+            store=True,
+        )
+        messages = [
+            Message(role="system", content="Be thorough"),
+            Message(role="user", content="Research the Apollo program"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert "system_instruction" not in kwargs
+        assert kwargs["input"] == [
+            {"type": "user_input", "content": [{"type": "text", "text": "Research the Apollo program"}]}
+        ]
+        assert kwargs["service_tier"] == "priority"
+        # store is forced True on the agent path regardless of the configured value
+        assert kwargs["store"] is True
+
+
+class TestAntigravityAgentPath:
+    """Tests for the Antigravity agent path.
+
+    Antigravity differs from Deep Research:
+      - it does NOT support background=True (foreground autonomous loop)
+      - it takes an `environment` parameter (string id or full dict config)
+      - it carries no agent_config (no deep-research knobs apply)
+    """
+
+    def _make_model(self, **kwargs):
+        return GeminiInteractions(api_key="test-key", **kwargs)
+
+    def test_antigravity_uses_agent_path(self):
+        model = self._make_model(agent="antigravity-preview-05-2026", environment="remote")
+        kwargs = model._get_request_kwargs([Message(role="user", content="Plot solar growth")])
+        assert kwargs["agent"] == "antigravity-preview-05-2026"
+        assert "model" not in kwargs
+        assert "generation_config" not in kwargs
+
+    def test_antigravity_forces_store_but_not_background(self):
+        # Antigravity runs in the foreground; the SDK rejects background=True.
+        # We must force store=True (server-side state is required) but must
+        # not force background.
+        model = self._make_model(
+            agent="antigravity-preview-05-2026",
+            environment="remote",
+            store=False,
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert kwargs["store"] is True
+        assert "background" not in kwargs
+
+    def test_antigravity_forwards_environment_string(self):
+        model = self._make_model(agent="antigravity-preview-05-2026", environment="remote")
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert kwargs["environment"] == "remote"
+
+    def test_antigravity_forwards_environment_id(self):
+        model = self._make_model(agent="antigravity-preview-05-2026", environment="env_abc123")
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert kwargs["environment"] == "env_abc123"
+
+    def test_antigravity_forwards_environment_dict(self):
+        # Full EnvironmentConfig should pass through unchanged.
+        env_dict = {
+            "type": "remote",
+            "sources": [{"type": "git", "url": "https://example.com/repo"}],
+            "network": {"allow_internet_access": True},
+        }
+        model = self._make_model(agent="antigravity-preview-05-2026", environment=env_dict)
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert kwargs["environment"] == env_dict
+
+    def test_antigravity_emits_no_agent_config(self):
+        # agent_config is deep-research-specific; setting deep-research knobs
+        # on Antigravity must not produce an agent_config block.
+        model = self._make_model(
+            agent="antigravity-preview-05-2026",
+            environment="remote",
+            collaborative_planning=True,
+            thinking_summaries="auto",
+            visualization="auto",
+        )
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert "agent_config" not in kwargs
+
+    def test_environment_not_sent_on_model_path(self):
+        # `environment` is meaningful only on the agent path; on the model
+        # path it must be silently dropped (the SDK rejects it).
+        model = self._make_model(environment="remote")
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert "environment" not in kwargs
+
+    def test_environment_not_sent_when_unset_on_agent_path(self):
+        model = self._make_model(agent="antigravity-preview-05-2026")
+        kwargs = model._get_request_kwargs([Message(role="user", content="x")])
+        assert "environment" not in kwargs
+
+    def test_antigravity_drops_system_message(self):
+        # Same agent-path system_instruction rule as Deep Research applies.
+        model = self._make_model(agent="antigravity-preview-05-2026", environment="remote")
+        messages = [
+            Message(role="system", content="Be concise."),
+            Message(role="user", content="Plot solar growth"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert "system_instruction" not in kwargs
+
+    def test_antigravity_multi_turn_only_sends_new_turn(self):
+        # With previous_interaction_id set, the server already has the prior
+        # sandbox state and conversation; only the new user turn goes on the
+        # wire. Same slicing rule as Deep Research.
+        model = self._make_model(agent="antigravity-preview-05-2026", environment="remote")
+        messages = [
+            Message(role="system", content="boilerplate"),
+            Message(role="user", content="Plot solar growth and save as solar.png"),
+            Message(
+                role="assistant",
+                content="Done, saved to solar.png",
+                provider_data={"interaction_id": "int-ag-1"},
+            ),
+            Message(role="user", content="Now turn it into a 3-slide HTML deck"),
+        ]
+        kwargs = model._get_request_kwargs(messages)
+        assert kwargs["previous_interaction_id"] == "int-ag-1"
+        assert kwargs["input"] == [
+            {"type": "user_input", "content": [{"type": "text", "text": "Now turn it into a 3-slide HTML deck"}]}
+        ]
+
+
+class TestAgentBackgroundPolling:
+    """The agent path runs in the background; invoke() must poll to terminal."""
+
+    def _make_model(self, **kwargs):
+        return GeminiInteractions(api_key="test-key", agent="deep-research-preview-04-2026", **kwargs)
+
+    def test_poll_returns_immediately_if_already_terminal(self):
+        model = self._make_model()
+        done = MagicMock()
+        done.status = "completed"
+        # No client calls needed; already terminal.
+        assert model._poll_until_terminal(done) is done
+
+    def test_poll_loops_until_completed(self):
+        model = self._make_model(agent_poll_interval=0.0)
+
+        in_progress = MagicMock()
+        in_progress.status = "in_progress"
+        in_progress.id = "interactions/dr-1"
+
+        completed = MagicMock()
+        completed.status = "completed"
+        completed.id = "interactions/dr-1"
+
+        mock_client = MagicMock()
+        # First get() still in progress, second completed.
+        mock_client.interactions.get.side_effect = [in_progress, completed]
+
+        with patch.object(model, "get_client", return_value=mock_client):
+            result = model._poll_until_terminal(in_progress)
+
+        assert result is completed
+        assert mock_client.interactions.get.call_count == 2
+
+    def test_poll_times_out(self):
+        from agno.exceptions import ModelProviderError
+
+        model = self._make_model(agent_poll_interval=0.0, agent_max_wait=0.0)
+
+        in_progress = MagicMock()
+        in_progress.status = "in_progress"
+        in_progress.id = "interactions/dr-1"
+
+        mock_client = MagicMock()
+        mock_client.interactions.get.return_value = in_progress
+
+        with patch.object(model, "get_client", return_value=mock_client):
+            with pytest.raises(ModelProviderError, match="did not complete"):
+                model._poll_until_terminal(in_progress)
+
+    def test_invoke_polls_on_agent_path(self):
+        from agno.models.google.gemini_interactions import ModelOutputStep, TextContent
+
+        model = self._make_model(agent_poll_interval=0.0)
+
+        in_progress = MagicMock()
+        in_progress.status = "in_progress"
+        in_progress.id = "interactions/dr-1"
+
+        text = MagicMock(spec=TextContent)
+        text.text = "Research complete."
+        text.annotations = None
+        text.__class__ = TextContent
+        step = MagicMock(spec=ModelOutputStep)
+        step.content = [text]
+        step.__class__ = ModelOutputStep
+        completed = MagicMock()
+        completed.status = "completed"
+        completed.id = "interactions/dr-1"
+        completed.steps = [step]
+        completed.usage = None
+
+        mock_client = MagicMock()
+        mock_client.interactions.create.return_value = in_progress
+        mock_client.interactions.get.return_value = completed
+
+        msg = Message(role="user", content="Research X")
+        with patch.object(model, "get_client", return_value=mock_client):
+            resp = model.invoke([msg], assistant_message=Message(role="assistant"))
+
+        # create() called with background+store forced; then polled to completion.
+        _, create_kwargs = mock_client.interactions.create.call_args
+        assert create_kwargs["background"] is True
+        assert create_kwargs["store"] is True
+        mock_client.interactions.get.assert_called_with("interactions/dr-1")
+        assert resp.content == "Research complete."
 
 
 class TestParseInteractionResponse:
@@ -348,6 +854,49 @@ class TestParseInteractionResponse:
         assert response.role == "assistant"
         assert response.content == "Hello, world!"
         assert response.provider_data["interaction_id"] == "interactions/test123"
+
+    def test_parse_deep_research_citation_types(self):
+        """Deep Research emits url_citation, file_citation, and place_citation.
+
+        All go to citations.raw; only url_citation populates citations.urls.
+        """
+        from agno.models.google.gemini_interactions import ModelOutputStep, TextContent
+
+        url_ann = MagicMock()
+        url_ann.type = "url_citation"
+        url_ann.url = "https://example.com/jazz"
+        url_ann.title = "Jazz history"
+
+        file_ann = MagicMock()
+        file_ann.type = "file_citation"
+
+        place_ann = MagicMock()
+        place_ann.type = "place_citation"
+
+        unknown_ann = MagicMock()
+        unknown_ann.type = "something_new"
+
+        mock_text = MagicMock(spec=TextContent)
+        mock_text.text = "Jazz originated in New Orleans."
+        mock_text.annotations = [url_ann, file_ann, place_ann, unknown_ann]
+        mock_text.__class__ = TextContent
+
+        mock_step = MagicMock(spec=ModelOutputStep)
+        mock_step.content = [mock_text]
+        mock_step.__class__ = ModelOutputStep
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/dr1"
+        mock_interaction.steps = [mock_step]
+        mock_interaction.usage = None
+
+        response = self._make_model()._parse_provider_response(mock_interaction)
+        # url + file + place captured in raw; unknown skipped
+        assert response.citations is not None
+        assert len(response.citations.raw) == 3
+        # only the url citation produces a UrlCitation
+        assert len(response.citations.urls) == 1
+        assert response.citations.urls[0].url == "https://example.com/jazz"
 
     def test_parse_function_call_response(self):
         model = self._make_model()
@@ -410,6 +959,62 @@ class TestParseInteractionResponse:
         assert response.role == "assistant"
         assert response.content is None
         assert response.tool_calls == []
+
+    def test_parse_failed_status_raises_with_error(self):
+        from agno.exceptions import ModelProviderError
+
+        model = self._make_model()
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/fail1"
+        mock_interaction.status = "failed"
+        mock_interaction.error = "rate limit exceeded"
+        mock_interaction.steps = None
+
+        with pytest.raises(ModelProviderError, match="rate limit exceeded"):
+            model._parse_provider_response(mock_interaction)
+
+    def test_parse_failed_status_without_error_detail(self):
+        from agno.exceptions import ModelProviderError
+
+        model = self._make_model()
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/fail2"
+        mock_interaction.status = "failed"
+        mock_interaction.error = None
+        mock_interaction.steps = None
+
+        with pytest.raises(ModelProviderError, match="no error detail"):
+            model._parse_provider_response(mock_interaction)
+
+    def test_parse_cancelled_status_raises(self):
+        # A cancelled interaction is terminal but unsuccessful; the parser
+        # must not silently return an empty response.
+        from agno.exceptions import ModelProviderError
+
+        model = self._make_model()
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/cancel1"
+        mock_interaction.status = "cancelled"
+        mock_interaction.error = None
+        mock_interaction.steps = None
+
+        with pytest.raises(ModelProviderError, match="cancelled"):
+            model._parse_provider_response(mock_interaction)
+
+    def test_parse_incomplete_status_raises(self):
+        # An incomplete interaction means the autonomous loop stopped before
+        # finishing; surface this rather than returning a partial response.
+        from agno.exceptions import ModelProviderError
+
+        model = self._make_model()
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/inc1"
+        mock_interaction.status = "incomplete"
+        mock_interaction.error = "max_steps_reached"
+        mock_interaction.steps = None
+
+        with pytest.raises(ModelProviderError, match="incomplete.*max_steps_reached"):
+            model._parse_provider_response(mock_interaction)
 
     def test_interaction_id_in_provider_data(self):
         model = self._make_model()
@@ -642,6 +1247,31 @@ class TestInvokeStream:
         responses = list(model.invoke_stream(messages, assistant_message))
         assert any(r.content == "Hello" for r in responses)
 
+    def test_invoke_stream_handles_image_delta(self):
+        """Streamed visualization charts (DeltaImage) surface incrementally."""
+        import base64
+
+        from agno.models.google.gemini_interactions import DeltaImage, interaction_types
+
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        png = base64.b64encode(b"fake-png-bytes").decode()
+        mock_event = MagicMock(spec=interaction_types.StepDelta)
+        mock_event.__class__ = interaction_types.StepDelta
+        mock_delta = MagicMock(spec=DeltaImage)
+        mock_delta.__class__ = DeltaImage
+        mock_delta.data = png
+        mock_delta.mime_type = "image/png"
+        mock_event.delta = mock_delta
+
+        mock_client.interactions.create.return_value = iter([mock_event])
+
+        responses = list(model.invoke_stream([Message(role="user", content="chart it")], Message(role="assistant")))
+        imgs = [img for r in responses if r.images for img in r.images]
+        assert len(imgs) == 1
+
     def test_invoke_stream_handles_interaction_created(self):
         from agno.models.google.gemini_interactions import interaction_types
 
@@ -728,6 +1358,144 @@ class TestInvokeStream:
 
         with pytest.raises(ModelProviderError, match="Stream error"):
             list(model.invoke_stream(messages, assistant_message))
+
+
+class TestBackgroundStreamReconnect:
+    """Background interactions (Deep Research) end the initial SSE early and
+    continue server-side. invoke_stream must reconnect until terminal."""
+
+    def _make_model(self):
+        # agent path forces background=True (the reconnect trigger). Tiny poll
+        # interval so the test does not actually sleep.
+        return GeminiInteractions(
+            api_key="test-key",
+            agent="deep-research-preview-04-2026",
+            agent_poll_interval=0.0,
+        )
+
+    def _created_event(self, iid="interactions/dr-1"):
+        from agno.models.google.gemini_interactions import interaction_types
+
+        ev = MagicMock(spec=interaction_types.InteractionCreatedEvent)
+        ev.__class__ = interaction_types.InteractionCreatedEvent
+        ev.interaction = MagicMock()
+        ev.interaction.id = iid
+        ev.event_id = "e1"
+        return ev
+
+    def _text_delta(self, text, event_id="e2"):
+        from agno.models.google.gemini_interactions import DeltaText, interaction_types
+
+        ev = MagicMock(spec=interaction_types.StepDelta)
+        ev.__class__ = interaction_types.StepDelta
+        d = MagicMock(spec=DeltaText)
+        d.__class__ = DeltaText
+        d.text = text
+        ev.delta = d
+        ev.event_id = event_id
+        return ev
+
+    def test_reconnects_until_completed(self):
+        from agno.models.google.gemini_interactions import ModelOutputStep, TextContent
+
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        # Initial stream: only created (then ends early, as background does).
+        mock_client.interactions.create.return_value = iter([self._created_event()])
+
+        # First get(): still running. Reconnect get(stream=True): delivers text.
+        running = MagicMock()
+        running.status = "in_progress"
+
+        text = MagicMock(spec=TextContent)
+        text.text = "Final report."
+        text.annotations = None
+        text.__class__ = TextContent
+        step = MagicMock(spec=ModelOutputStep)
+        step.content = [text]
+        step.__class__ = ModelOutputStep
+        completed = MagicMock()
+        completed.status = "completed"
+        completed.id = "interactions/dr-1"
+        completed.steps = [step]
+        completed.usage = None
+
+        resumed_stream = iter([self._text_delta("Final report.")])
+
+        # get() is called: (1) status check -> running, (2) stream resume,
+        # then loop checks completed flag (set by... we have no completed event
+        # in resumed_stream, so add a second status check that is terminal).
+        get_calls = {"n": 0}
+
+        def get_side_effect(*args, **kwargs):
+            get_calls["n"] += 1
+            if kwargs.get("stream"):
+                return resumed_stream
+            # non-stream status checks: first running, then completed
+            return running if get_calls["n"] <= 1 else completed
+
+        mock_client.interactions.get.side_effect = get_side_effect
+
+        messages = [Message(role="user", content="Research X")]
+        responses = list(model.invoke_stream(messages, Message(role="assistant")))
+
+        # The reconnected stream's text + the final completed snapshot parse
+        # should both surface the report.
+        assert any("Final report." in (r.content or "") for r in responses)
+        # create() forced background; reconnect used get(stream=True, last_event_id=...)
+        assert mock_client.interactions.create.call_args[1]["background"] is True
+        stream_get = [c for c in mock_client.interactions.get.call_args_list if c.kwargs.get("stream")]
+        assert stream_get, "expected a get(stream=True) reconnect call"
+        assert stream_get[0].kwargs.get("last_event_id") == "e1"
+
+    def test_reconnect_times_out(self):
+        from agno.exceptions import ModelProviderError
+
+        model = GeminiInteractions(
+            api_key="test-key",
+            agent="deep-research-preview-04-2026",
+            agent_poll_interval=0.0,
+            agent_max_wait=0.0,  # immediate timeout
+        )
+        mock_client = MagicMock()
+        model.client = mock_client
+        mock_client.interactions.create.return_value = iter([self._created_event()])
+        running = MagicMock()
+        running.status = "in_progress"
+        mock_client.interactions.get.return_value = running
+
+        with pytest.raises(ModelProviderError, match="did not complete"):
+            list(model.invoke_stream([Message(role="user", content="x")], Message(role="assistant")))
+
+    def test_error_event_raises(self):
+        from agno.exceptions import ModelProviderError
+        from agno.models.google.gemini_interactions import interaction_types
+
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        err = MagicMock(spec=interaction_types.ErrorEvent)
+        err.__class__ = interaction_types.ErrorEvent
+        err.error = "model overloaded"
+        err.event_id = "e9"
+        mock_client.interactions.create.return_value = iter([self._created_event(), err])
+
+        with pytest.raises(ModelProviderError, match="model overloaded"):
+            list(model.invoke_stream([Message(role="user", content="x")], Message(role="assistant")))
+
+    def test_non_background_path_does_not_reconnect(self):
+        # The model path (no agent) must not enter the reconnect loop.
+        model = GeminiInteractions(api_key="test-key")
+        mock_client = MagicMock()
+        model.client = mock_client
+        mock_client.interactions.create.return_value = iter([self._text_delta("hi")])
+
+        list(model.invoke_stream([Message(role="user", content="x")], Message(role="assistant")))
+        # get() must never be called on the model (non-background) path.
+        mock_client.interactions.get.assert_not_called()
 
 
 class TestToDict:
