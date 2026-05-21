@@ -1,6 +1,6 @@
 # Test Log - _03_text_extraction
 
-Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses), agno 2.6.6.
+Tested 2026-05-19 against `gemini-3.5-flash` (Gemini), agno 2.6.8.
 
 ### basic.py
 
@@ -12,16 +12,6 @@ Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses), agno 2.6.6.
 
 ---
 
-### with_confidence.py
-
-**Status:** PASS
-
-**Description:** Same task with `ConfidentField` wrapping each value.
-
-**Result:** Confidences are sensible: high for explicit fields, medium for inferred ones (e.g. "@mike" as a name).
-
----
-
 ### nested.py
 
 **Status:** PASS
@@ -29,5 +19,15 @@ Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses), agno 2.6.6.
 **Description:** Extract a `Meeting` containing a list of nested `ActionItem`s from a meeting transcript.
 
 **Result:** Three action items extracted with correct owners and due dates.
+
+---
+
+### with_confidence.py
+
+**Status:** PASS
+
+**Description:** Same task with `ConfidentField` wrapping each value.
+
+**Result:** Confidences are sensible: high for explicit fields, medium for inferred ones (e.g. "@mike" as a name).
 
 ---

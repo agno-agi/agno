@@ -27,4 +27,4 @@ python cookbook/data_labeling/_05_text_pairwise_preference/with_rubric.py
 python cookbook/data_labeling/_05_text_pairwise_preference/with_rationale.py
 ```
 
-Requires `OPENAI_API_KEY`.
+Requires `GOOGLE_API_KEY`.

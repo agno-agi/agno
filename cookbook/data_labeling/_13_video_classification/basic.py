@@ -35,7 +35,7 @@ class Classification(BaseModel):
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions="You classify short video clips by dominant scene type.",
     output_schema=Classification,
 )

@@ -1,26 +1,16 @@
 # Test Log - _08_image_bounding_boxes
 
-Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses), agno 2.6.6.
+Tested 2026-05-19 against `gemini-3.5-flash` (Gemini), agno 2.6.8.
 
 ### basic.py
 
 **Status:** PASS
 
-**Description:** Detect the main subject in a cat photo, return one normalized bounding box.
+**Description:** Detect the main subject in a kayaker-in-whitewater photo, return one normalized bounding box.
 
-**Result:** Sensible tight box around the cat (x=0.22, y=0.12, w=0.69, h=0.86).
+**Result:** Sensible tight box around the kayaker.
 
----
-
-### with_confidence.py
-
-**Status:** PASS
-
-**Description:** Same task with a `confidence` field added to the schema.
-
-**Result:** Returns sensible box (x=0.215, y=0.115, w=0.69, h=0.84) with `high` confidence.
-
-**Note:** Initially produced degenerate boxes (all-zero or all-one). Fix: added per-field descriptions on x/y/w/h and expanded coordinate guidance in the instructions to match `basic.py`. Without that grounding, `gpt-5.5` does not consistently produce sensible coordinates.
+**Note:** Test image switched from a Wikimedia cat photo (Gemini can't fetch those URLs) to `www.gstatic.com/webp/gallery/2.jpg`.
 
 ---
 
@@ -28,8 +18,22 @@ Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses), agno 2.6.6.
 
 **Status:** PASS
 
-**Description:** Detect multiple objects in an image, return a list of bounding boxes.
+**Description:** Detect multiple objects in an image, return a list of bounding boxes. Input is a savanna scene with elephants, giraffes, zebras, and a crocodile.
 
-**Result:** Multiple boxes returned with reasonable coordinates and labels.
+**Result:** Multiple boxes returned with reasonable coordinates and per-animal labels.
+
+**Note:** Test image switched from a Wikimedia "Collage of Nine Dogs" (Gemini can't fetch those URLs) to a Google generative-AI sample at `storage.googleapis.com/generativeai-downloads/images/generated_elephants_giraffes_zebras_sunset.jpg`.
+
+---
+
+### with_confidence.py
+
+**Status:** PASS
+
+**Description:** Same task with a `confidence` field added to the schema (kayaker-in-whitewater photo).
+
+**Result:** Sensible bounding box around the kayaker with `high` confidence.
+
+**Note:** Per-field `description` on `x`, `y`, `width`, `height` is load-bearing — without it, and without the `[0, 1]` coordinate convention spelled out in instructions, models tend to return degenerate boxes (all-zero or whole-image).
 
 ---

@@ -48,7 +48,7 @@ customer's tone, not the support agent's.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     output_schema=SupportCall,
 )

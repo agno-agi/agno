@@ -44,7 +44,7 @@ function goodbye() {
 
 def test_code_chunking_basic(sample_python_code):
     """Test basic code chunking with default parameters."""
-    chunker = CodeChunking(language="python")
+    chunker = CodeChunking()
     doc = Document(content=sample_python_code, name="test.py")
 
     chunks = chunker.chunk(doc)
@@ -188,7 +188,7 @@ def test_code_chunking_metadata(sample_python_code):
 
 def test_code_chunking_empty_content():
     """Test handling of empty content."""
-    chunker = CodeChunking(language="python")
+    chunker = CodeChunking()
     doc = Document(content="", name="empty.py")
 
     chunks = chunker.chunk(doc)
