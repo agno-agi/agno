@@ -952,6 +952,29 @@ class TestParseInteractionResponse:
         assert te.result == "main.py\nREADME.md"
         assert te.tool_call_error is None
 
+    def test_agent_path_client_tool_falls_through_to_tool_calls(self):
+        """Regression for PR review: on the agent path, a FunctionCallStep
+        with NO matching FunctionResultStep is a client-declared tool the
+        autonomous loop is asking us to dispatch. Surface it as tool_calls
+        (not silently dropped) so the run loop executes and posts the result."""
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/client-pending"
+        mock_interaction.steps = [
+            self._make_function_call_step("call_client_1", "send_email", {"to": "yash@phidata.com"}),
+            # NOTE: no matching FunctionResultStep - this is a client tool
+            # the server is waiting for us to dispatch.
+        ]
+        mock_interaction.usage = None
+
+        response = model._parse_provider_response(mock_interaction)
+        assert not response.tool_executions
+        assert len(response.tool_calls) == 1
+        assert response.tool_calls[0]["id"] == "call_client_1"
+        assert response.tool_calls[0]["function"]["name"] == "send_email"
+        assert response.tool_calls[0]["function"]["arguments"] == '{"to": "yash@phidata.com"}'
+
     def test_agent_path_records_error_results(self):
         """is_error from FunctionResultStep flows to ToolExecution.tool_call_error."""
         model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
@@ -1633,6 +1656,69 @@ class TestInvokeStream:
         te = tool_executions[0]
         assert te.tool_name == "google_search"
         assert te.tool_args == {"queries": ["openai gpt-5", "anthropic claude"]}
+
+    def test_invoke_stream_agent_path_flushes_client_tool_as_tool_call(self):
+        """Regression: streaming variant of the Codex review. A FunctionCallStep
+        that never gets a matching FunctionResultStep before the stream ends
+        is a client-declared tool the autonomous loop is waiting for us to
+        dispatch. Must be emitted as a tool_call on InteractionCompletedEvent,
+        not silently dropped."""
+        from agno.models.google.gemini_interactions import (
+            DeltaArgumentsDelta,
+            FunctionCallStep,
+            interaction_types,
+        )
+
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        call_step = MagicMock(spec=FunctionCallStep)
+        call_step.__class__ = FunctionCallStep
+        call_step.id = "call_client_stream"
+        call_step.name = "send_email"
+        call_step.arguments = {}
+        call_step.signature = None
+
+        call_start = MagicMock(spec=interaction_types.StepStart)
+        call_start.__class__ = interaction_types.StepStart
+        call_start.step = call_step
+        call_start.index = 0
+
+        arg_delta = MagicMock(spec=DeltaArgumentsDelta)
+        arg_delta.__class__ = DeltaArgumentsDelta
+        arg_delta.arguments = '{"to": "yash@phidata.com"}'
+
+        arg_delta_event = MagicMock(spec=interaction_types.StepDelta)
+        arg_delta_event.__class__ = interaction_types.StepDelta
+        arg_delta_event.delta = arg_delta
+        arg_delta_event.index = 0
+
+        call_stop = MagicMock(spec=interaction_types.StepStop)
+        call_stop.__class__ = interaction_types.StepStop
+        call_stop.index = 0
+
+        # InteractionCompletedEvent arrives WITHOUT a matching result step.
+        completed = MagicMock(spec=interaction_types.InteractionCompletedEvent)
+        completed.__class__ = interaction_types.InteractionCompletedEvent
+        completed.interaction = MagicMock()
+        completed.interaction.id = "interactions/client-stream"
+        completed.interaction.usage = None
+
+        mock_client.interactions.create.return_value = iter([call_start, arg_delta_event, call_stop, completed])
+
+        messages = [Message(role="user", content="Email Yash")]
+        assistant_message = Message(role="assistant")
+
+        responses = list(model.invoke_stream(messages, assistant_message))
+        all_tool_calls = [tc for r in responses for tc in r.tool_calls]
+        assert len(all_tool_calls) == 1
+        assert all_tool_calls[0]["id"] == "call_client_stream"
+        assert all_tool_calls[0]["function"]["name"] == "send_email"
+        assert all_tool_calls[0]["function"]["arguments"] == '{"to": "yash@phidata.com"}'
+        # And no ToolExecution because the loop never got to execute it.
+        all_tool_executions = [te for r in responses for te in (r.tool_executions or [])]
+        assert all_tool_executions == []
 
     def test_invoke_stream_error_raises_model_provider_error(self):
         from agno.exceptions import ModelProviderError

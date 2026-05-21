@@ -31,31 +31,37 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 try:
     from google import genai
     from google.genai import Client as GeminiClient
-    from google.genai._interactions import types as interaction_types
-    from google.genai._interactions.types.code_execution_call_step import CodeExecutionCallStep
-    from google.genai._interactions.types.code_execution_result_step import CodeExecutionResultStep
-    from google.genai._interactions.types.file_search_call_step import FileSearchCallStep
-    from google.genai._interactions.types.file_search_result_step import FileSearchResultStep
-    from google.genai._interactions.types.function_call_step import FunctionCallStep
-    from google.genai._interactions.types.function_result_step import FunctionResultStep
-    from google.genai._interactions.types.google_maps_call_step import GoogleMapsCallStep
-    from google.genai._interactions.types.google_maps_result_step import GoogleMapsResultStep
-    from google.genai._interactions.types.google_search_call_step import GoogleSearchCallStep
-    from google.genai._interactions.types.google_search_result_step import GoogleSearchResultStep
-    from google.genai._interactions.types.mcp_server_tool_call_step import MCPServerToolCallStep
-    from google.genai._interactions.types.mcp_server_tool_result_step import MCPServerToolResultStep
-    from google.genai._interactions.types.model_output_step import ModelOutputStep
-    from google.genai._interactions.types.step_delta import (
-        DeltaArgumentsDelta,
-        DeltaImage,
-        DeltaText,
-        DeltaThoughtSignature,
-        DeltaThoughtSummary,
+    from google.genai import interactions as interaction_types
+    from google.genai.interactions import (
+        AudioContent,
+        CodeExecutionCallStep,
+        CodeExecutionResultStep,
+        FileSearchCallStep,
+        FileSearchResultStep,
+        FunctionCallStep,
+        FunctionResultStep,
+        GoogleMapsCallStep,
+        GoogleMapsResultStep,
+        GoogleSearchCallStep,
+        GoogleSearchResultStep,
+        ImageContent,
+        MCPServerToolCallStep,
+        MCPServerToolResultStep,
+        ModelOutputStep,
+        TextContent,
+        ThoughtStep,
+        URLContextCallStep,
+        URLContextResultStep,
+        step_delta,
     )
-    from google.genai._interactions.types.text_content import TextContent
-    from google.genai._interactions.types.thought_step import ThoughtStep
-    from google.genai._interactions.types.url_context_call_step import URLContextCallStep
-    from google.genai._interactions.types.url_context_result_step import URLContextResultStep
+
+    # step_delta is exposed as a submodule attribute, not a sub-package, so
+    # the Delta* types need attribute access rather than a direct import.
+    DeltaArgumentsDelta = step_delta.DeltaArgumentsDelta
+    DeltaImage = step_delta.DeltaImage
+    DeltaText = step_delta.DeltaText
+    DeltaThoughtSignature = step_delta.DeltaThoughtSignature
+    DeltaThoughtSummary = step_delta.DeltaThoughtSummary
 except ImportError:
     raise ImportError(
         "`google-genai` not installed or not at the latest version. "
@@ -81,14 +87,6 @@ _RESULT_STEP_TYPES = (
     FileSearchResultStep,
     GoogleMapsResultStep,
 )
-
-# Lazy imports for content types used in output parsing
-try:
-    from google.genai._interactions.types.audio_content import AudioContent
-    from google.genai._interactions.types.image_content import ImageContent
-except ImportError:
-    AudioContent = None  # type: ignore[assignment, misc]
-    ImageContent = None  # type: ignore[assignment, misc]
 
 
 @dataclass
@@ -789,26 +787,36 @@ class GeminiInteractions(Model):
                 # each as a ToolExecution so the run_response/AgentOS UI shows
                 # the same tool history we'd see for client-executed tools,
                 # without sending function_result back (the API would 400).
-                tool_name, tool_args = self._call_step_info(step)
+                #
+                # Exception: a FunctionCallStep with no matching FunctionResult
+                # is a client-declared tool the server is asking us to run -
+                # fall through to the client-dispatch branch below so the run
+                # loop can execute it and post the result back. The other six
+                # families are always server-built-in.
                 result_step = results_by_call_id.get(step.id)
-                if result_step is not None:
-                    result_text, is_error = self._extract_step_result(result_step, model_response)
+                if isinstance(step, FunctionCallStep) and result_step is None:
+                    pass  # handled by the next branch
                 else:
-                    result_text, is_error = None, None
-                if model_response.tool_executions is None:
-                    model_response.tool_executions = []
-                model_response.tool_executions.append(
-                    ToolExecution(
-                        tool_call_id=step.id,
-                        tool_name=tool_name,
-                        tool_args=tool_args,
-                        result=result_text,
-                        tool_call_error=bool(is_error) if is_error is not None else None,
+                    tool_name, tool_args = self._call_step_info(step)
+                    if result_step is not None:
+                        result_text, is_error = self._extract_step_result(result_step, model_response)
+                    else:
+                        result_text, is_error = None, None
+                    if model_response.tool_executions is None:
+                        model_response.tool_executions = []
+                    model_response.tool_executions.append(
+                        ToolExecution(
+                            tool_call_id=step.id,
+                            tool_name=tool_name,
+                            tool_args=tool_args,
+                            result=result_text,
+                            tool_call_error=bool(is_error) if is_error is not None else None,
+                        )
                     )
-                )
-                log_info(f"Server-side tool call: {tool_name}({json.dumps(tool_args) if tool_args else ''})")
+                    log_info(f"Server-side tool call: {tool_name}({json.dumps(tool_args) if tool_args else ''})")
+                    continue
 
-            elif isinstance(step, FunctionCallStep):
+            if isinstance(step, FunctionCallStep):
                 args = step.arguments
                 if isinstance(args, dict):
                     args_str = json.dumps(args)
@@ -861,6 +869,8 @@ class GeminiInteractions(Model):
             Tuple of (ModelResponse, updated stream_state).
         """
         model_response = ModelResponse()
+
+        log_info(f"Stream Event: {stream_event}")
 
         # Every event carries an event_id used to resume a dropped/ended stream
         # (background interactions like Deep Research end the initial SSE early
@@ -941,10 +951,15 @@ class GeminiInteractions(Model):
                 # payloads) or streamed via DeltaArgumentsDelta (function calls,
                 # and observed for google_search etc. too). Buffer deltas for
                 # every call type and reconcile on StepStop.
+                # is_function_call lets the InteractionCompletedEvent flusher
+                # tell client-declared tool calls (need dispatch) from server-
+                # built-in calls (silently dropped if no result arrives).
                 pending_agent_calls[step.id] = {
                     "tool_name": tool_name,
                     "tool_args": tool_args,
                     "args_buffer": "",
+                    "is_function_call": isinstance(step, FunctionCallStep),
+                    "signature": getattr(step, "signature", None),
                 }
                 agent_idx_to_call_id[stream_event.index] = step.id
             elif isinstance(step, _RESULT_STEP_TYPES) and self.agent is not None:
@@ -1009,6 +1024,28 @@ class GeminiInteractions(Model):
 
         elif isinstance(stream_event, interaction_types.InteractionCompletedEvent):
             stream_state["completed"] = True
+            # Flush any agent-path FunctionCallSteps that never got a matching
+            # FunctionResultStep - those are client-declared tools the
+            # autonomous loop is asking us to dispatch. Built-in step families
+            # (code_execution, url_context, etc.) have no client equivalent,
+            # so an unmatched one is dropped defensively.
+            pending_agent_calls = stream_state.get("pending_agent_calls", {})
+            for call_id, info in list(pending_agent_calls.items()):
+                if not info.get("is_function_call"):
+                    continue
+                args_str = json.dumps(info["tool_args"]) if info["tool_args"] else "{}"
+                tool_call = {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": info["tool_name"],
+                        "arguments": args_str,
+                    },
+                }
+                if info.get("signature"):
+                    tool_call["thought_signature"] = info["signature"]
+                model_response.tool_calls.append(tool_call)
+            pending_agent_calls.clear()
             if stream_event.interaction:
                 if hasattr(stream_event.interaction, "usage") and stream_event.interaction.usage:
                     usage = stream_event.interaction.usage
