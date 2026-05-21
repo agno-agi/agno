@@ -6,6 +6,7 @@ import pytest
 from agno.agent import _init, _messages, _response, _run, _session, _storage, _tools
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
+from agno.models.message import Message
 from agno.run import RunContext
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.base import RunStatus
@@ -1108,3 +1109,21 @@ def test_continue_run_dispatch_syncs_requirements_with_updated_tools(monkeypatch
     assert rr.requirements[0].tool_execution is new_tool, (
         "Requirement should reference the updated ToolExecution object, not the stale one from the session."
     )
+
+
+def test_get_continue_run_messages_appends_user_continuation_for_assistant_tail():
+    agent = Agent(name="test-agent")
+
+    run_messages = _messages.get_continue_run_messages(
+        agent,
+        input=[Message(role="assistant", content="Partial answer")],
+        session=None,
+        add_history_to_context=False,
+    )
+
+    assert len(run_messages.messages) == 2
+    assert run_messages.messages[-1].role == "user"
+    assert "Your previous response was interrupted and ended with `Partial answer`." in str(
+        run_messages.messages[-1].content
+    )
+

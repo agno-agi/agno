@@ -12,8 +12,8 @@ from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.models.claude import supports_prefill
+from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.models.claude import validate_no_assistant_prefill
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 from agno.utils.tokens import count_schema_tokens
 
@@ -47,8 +47,6 @@ class LiteLLM(Model):
     extra_query: Optional[Dict[str, Any]] = None
     extra_body: Optional[Dict[str, Any]] = None
     request_params: Optional[Dict[str, Any]] = None
-    append_trailing_user_message: Optional[bool] = None
-    trailing_user_message_content: str = "continue"
 
     client: Optional[Any] = None
 
@@ -63,10 +61,6 @@ class LiteLLM(Model):
         # This ensures the client is preserved when the model is copied for background tasks
         if self.client is not None and self._original_client is None:
             self._original_client = self.client
-
-        # Auto-enable trailing user message for Claude 4.6+ via LiteLLM
-        if self.append_trailing_user_message is None:
-            self.append_trailing_user_message = not supports_prefill(self.id)
 
         # Set up API key from environment variable if not already set
         if not self.client and not self.api_key:
@@ -189,11 +183,7 @@ class LiteLLM(Model):
                     log_warning("Video input is currently unsupported.")
             formatted_messages.append(msg)
 
-        # Claude 4.6+ models do not support assistant message prefill.
-        # Append a trailing user turn so the request ends with a user message.
-        if self.append_trailing_user_message and formatted_messages and formatted_messages[-1]["role"] == "assistant":
-            log_info("Appending trailing user message because this model does not support assistant message prefill")
-            formatted_messages.append({"role": "user", "content": self.trailing_user_message_content})
+        validate_no_assistant_prefill(self.id, formatted_messages)
 
         return formatted_messages
 

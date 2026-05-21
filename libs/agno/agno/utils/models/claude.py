@@ -2,16 +2,14 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
+from agno.exceptions import ModelProviderError
 from agno.media import File, Image
 from agno.models.message import Message
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
     from agno.models.anthropic.claude import SystemPromptBlock
 
-# Models that support assistant message prefill. This is a closed set —
-# prefill was deprecated starting with Claude 4.6 and all future models
-# are expected to reject it.
 _PREFILL_SUPPORTED_PREFIXES = (
     "claude-3-",
     "claude-sonnet-4-0",
@@ -28,40 +26,11 @@ _PREFILL_SUPPORTED_PREFIXES = (
     "claude-haiku-4-5",
 )
 
-# Aliases like "claude-sonnet-4" point to the latest version in that family
-# (currently 4-0, which supports prefill). These must be exact matches — a
-# startswith check would incorrectly match "claude-sonnet-4-6".
 _PREFILL_SUPPORTED_ALIASES = {
     "claude-sonnet-4",
     "claude-opus-4",
     "claude-haiku-4",
 }
-
-
-def supports_prefill(model_id: str) -> bool:
-    """Return True if the given model ID supports assistant message prefill.
-
-    Handles provider-specific ID formats:
-      - Anthropic direct:  "claude-sonnet-4-5-20250929"
-      - Bedrock:           "us.anthropic.claude-sonnet-4-6-v1:0"
-      - Vertex AI:         "claude-sonnet-4@20250514"
-      - LiteLLM:           "anthropic/claude-sonnet-4-6"
-    """
-    # Strip LiteLLM provider prefix (e.g. "anthropic/claude-sonnet-4-6")
-    core_id = model_id.split("/")[-1] if "/" in model_id else model_id
-    # Strip Bedrock prefix (e.g. "us.anthropic.claude-sonnet-4-6-v1:0")
-    core_id = core_id.split("anthropic.")[-1] if "anthropic." in core_id else core_id
-    # Strip Vertex AI version suffix (e.g. "claude-sonnet-4@20250514")
-    core_id = core_id.split("@")[0] if "@" in core_id else core_id
-    # Strip Bedrock version suffix (e.g. "claude-sonnet-4-5-20250929-v1:0")
-    if ":0" in core_id:
-        core_id = core_id.split("-v")[0] if "-v" in core_id else core_id.split(":")[0]
-
-    if not core_id.startswith("claude"):
-        return True  # Non-Claude models are unaffected — don't inject trailing messages
-
-    return core_id in _PREFILL_SUPPORTED_ALIASES or core_id.startswith(_PREFILL_SUPPORTED_PREFIXES)
-
 
 @dataclass
 class MCPToolConfiguration:
@@ -85,6 +54,39 @@ ROLE_MAP = {
     "assistant": "assistant",
     "tool": "user",
 }
+
+
+def supports_assistant_prefill(model_id: str) -> bool:
+    """Return True when model still supports terminal assistant prefills."""
+    core_id = model_id.split("/")[-1] if "/" in model_id else model_id
+    core_id = core_id.split("anthropic.")[-1] if "anthropic." in core_id else core_id
+    core_id = core_id.split("@")[0] if "@" in core_id else core_id
+    if ":0" in core_id:
+        core_id = core_id.split("-v")[0] if "-v" in core_id else core_id.split(":")[0]
+
+    if not core_id.startswith("claude"):
+        return True
+
+    return core_id in _PREFILL_SUPPORTED_ALIASES or core_id.startswith(_PREFILL_SUPPORTED_PREFIXES)
+
+
+def validate_no_assistant_prefill(model_id: str, messages: List[Dict[str, Any]]) -> None:
+    """Fail loudly for Claude models that require terminal user message."""
+    if supports_assistant_prefill(model_id):
+        return
+    if messages and messages[-1].get("role") == "assistant":
+        raise ModelProviderError(
+            message=(
+                f"Model '{model_id}' does not support assistant message prefills. "
+                "Conversation must end with user message. "
+                "For continuations, append explicit user message like "
+                "'Your previous response was interrupted and ended with \"...\". "
+                "Continue from where you left off.' "
+                "For handoffs, synthesize fresh user task upstream."
+            ),
+            status_code=400,
+            model_id=model_id,
+        )
 
 
 def _anthropic_block_identity(block: Any) -> Optional[Tuple[str, str]]:
@@ -447,8 +449,6 @@ def _validate_cache_ttl_order(blocks: List[Dict[str, Any]]) -> None:
 def format_messages(
     messages: List[Message],
     compress_tool_results: bool = False,
-    append_trailing_user_message: Optional[bool] = False,
-    trailing_user_message_content: str = "continue",
     enable_citations: bool = True,
 ) -> Tuple[List[Dict[str, Union[str, list]]], str]:
     """
@@ -457,9 +457,6 @@ def format_messages(
     Args:
         messages (List[Message]): The list of messages to process.
         compress_tool_results: Whether to compress tool results.
-        append_trailing_user_message: If True, append a dummy user message when the conversation
-            ends with an assistant turn. Required for models that do not support assistant prefill.
-        trailing_user_message_content: The text content of the injected trailing user message.
         enable_citations: Default for document citation attachment.
 
     Returns:
@@ -626,12 +623,6 @@ def format_messages(
                 ]
         else:
             merged_messages.append(msg)
-
-    # Claude 4.6+ models do not support assistant message prefill.
-    # Append a trailing user turn so the request ends with a user message.
-    if append_trailing_user_message and merged_messages and merged_messages[-1]["role"] == "assistant":
-        log_info("Appending trailing user message because this model does not support assistant message prefill")
-        merged_messages.append({"role": "user", "content": [{"type": "text", "text": trailing_user_message_content}]})
 
     return merged_messages, " ".join(system_messages)
 

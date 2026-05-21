@@ -21,7 +21,7 @@ from agno.utils.models.claude import (
     build_system_blocks,
     format_messages,
     format_tools_for_model,
-    supports_prefill,
+    validate_no_assistant_prefill,
 )
 from agno.utils.tokens import count_schema_tokens
 
@@ -160,12 +160,6 @@ class Claude(Model):
     # because Anthropic rejects citations + output_format together.
     citations: bool = True
 
-    # Claude 4.6+ does not support assistant message prefill.
-    # Set to True to append a trailing user turn when the conversation ends with an assistant message.
-    # Defaults to True for Claude 4.6+ models.
-    append_trailing_user_message: Optional[bool] = None
-    trailing_user_message_content: str = "continue"
-
     # Client parameters
     api_key: Optional[str] = None
     auth_token: Optional[str] = None
@@ -188,10 +182,6 @@ class Claude(Model):
         # Set up skills configuration if skills are enabled
         if self.skills:
             self._setup_skills_configuration()
-        # Auto-enable trailing user message for models that don't support prefill
-        if self.append_trailing_user_message is None:
-            self.append_trailing_user_message = not supports_prefill(self.id)
-
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}
 
@@ -483,10 +473,9 @@ class Claude(Model):
         anthropic_messages, system_prompt = format_messages(
             messages,
             compress_tool_results=True,
-            append_trailing_user_message=self.append_trailing_user_message,
-            trailing_user_message_content=self.trailing_user_message_content,
             enable_citations=self.citations and not self._output_format_enabled(response_format),
         )
+        validate_no_assistant_prefill(self.id, anthropic_messages)
         anthropic_tools = None
         if tools:
             formatted_tools = self._format_tools(tools)
@@ -511,10 +500,9 @@ class Claude(Model):
         anthropic_messages, system_prompt = format_messages(
             messages,
             compress_tool_results=True,
-            append_trailing_user_message=self.append_trailing_user_message,
-            trailing_user_message_content=self.trailing_user_message_content,
             enable_citations=self.citations and not self._output_format_enabled(response_format),
         )
+        validate_no_assistant_prefill(self.id, anthropic_messages)
         anthropic_tools = None
         if tools:
             formatted_tools = self._format_tools(tools)
@@ -739,10 +727,9 @@ class Claude(Model):
             chat_messages, system_message = format_messages(
                 messages,
                 compress_tool_results=compress_tool_results,
-                append_trailing_user_message=self.append_trailing_user_message,
-                trailing_user_message_content=self.trailing_user_message_content,
                 enable_citations=self.citations and not self._output_format_enabled(response_format),
             )
+            validate_no_assistant_prefill(self.id, chat_messages)
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
             )
@@ -799,10 +786,9 @@ class Claude(Model):
         chat_messages, system_message = format_messages(
             messages,
             compress_tool_results=compress_tool_results,
-            append_trailing_user_message=self.append_trailing_user_message,
-            trailing_user_message_content=self.trailing_user_message_content,
             enable_citations=self.citations and not self._output_format_enabled(response_format),
         )
+        validate_no_assistant_prefill(self.id, chat_messages)
         request_kwargs = self._prepare_request_kwargs(
             system_message, tools=tools, response_format=response_format, messages=messages
         )
@@ -850,10 +836,9 @@ class Claude(Model):
             chat_messages, system_message = format_messages(
                 messages,
                 compress_tool_results=compress_tool_results,
-                append_trailing_user_message=self.append_trailing_user_message,
-                trailing_user_message_content=self.trailing_user_message_content,
                 enable_citations=self.citations and not self._output_format_enabled(response_format),
             )
+            validate_no_assistant_prefill(self.id, chat_messages)
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
             )
@@ -909,10 +894,9 @@ class Claude(Model):
             chat_messages, system_message = format_messages(
                 messages,
                 compress_tool_results=compress_tool_results,
-                append_trailing_user_message=self.append_trailing_user_message,
-                trailing_user_message_content=self.trailing_user_message_content,
                 enable_citations=self.citations and not self._output_format_enabled(response_format),
             )
+            validate_no_assistant_prefill(self.id, chat_messages)
             request_kwargs = self._prepare_request_kwargs(
                 system_message, tools=tools, response_format=response_format, messages=messages
             )
