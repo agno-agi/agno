@@ -1552,6 +1552,88 @@ class TestInvokeStream:
         assert te.tool_args == {"path": "."}
         assert te.result == "main.py\nREADME.md"
 
+    def test_invoke_stream_agent_path_buffers_args_for_non_function_steps(self):
+        """Regression: previously only FunctionCallStep buffered args via
+        deltas. For GoogleSearchCallStep (and any other typed-args call) the
+        API can deliver an empty Arguments at StepStart and stream the JSON
+        via DeltaArgumentsDelta - we'd lose the queries and log
+        'google_search()' with no args."""
+        from google.genai._interactions.types.google_search_call_step import Arguments as GSArgs
+
+        from agno.models.google.gemini_interactions import (
+            DeltaArgumentsDelta,
+            FunctionResultStep,
+            GoogleSearchCallStep,
+            GoogleSearchResultStep,
+            interaction_types,
+        )
+
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        # StepStart with empty Arguments (queries=None) - mimics what the
+        # user reported seeing for google_search.
+        call_step = MagicMock(spec=GoogleSearchCallStep)
+        call_step.__class__ = GoogleSearchCallStep
+        call_step.id = "call_gs_1"
+        call_step.arguments = GSArgs()
+        call_step.search_type = None
+        call_step.signature = None
+
+        call_start = MagicMock(spec=interaction_types.StepStart)
+        call_start.__class__ = interaction_types.StepStart
+        call_start.step = call_step
+        call_start.index = 0
+
+        # Streamed args JSON arrives via deltas - we should buffer and merge.
+        arg_delta = MagicMock(spec=DeltaArgumentsDelta)
+        arg_delta.__class__ = DeltaArgumentsDelta
+        arg_delta.arguments = '{"queries": ["openai gpt-5", "anthropic claude"]}'
+
+        arg_delta_event = MagicMock(spec=interaction_types.StepDelta)
+        arg_delta_event.__class__ = interaction_types.StepDelta
+        arg_delta_event.delta = arg_delta
+        arg_delta_event.index = 0
+
+        call_stop = MagicMock(spec=interaction_types.StepStop)
+        call_stop.__class__ = interaction_types.StepStop
+        call_stop.index = 0
+
+        result_step = MagicMock(spec=GoogleSearchResultStep)
+        result_step.__class__ = GoogleSearchResultStep
+        result_step.call_id = "call_gs_1"
+        result_step.result = []
+        result_step.is_error = None
+        result_step.signature = None
+
+        result_start = MagicMock(spec=interaction_types.StepStart)
+        result_start.__class__ = interaction_types.StepStart
+        result_start.step = result_step
+        result_start.index = 1
+
+        result_stop = MagicMock(spec=interaction_types.StepStop)
+        result_stop.__class__ = interaction_types.StepStop
+        result_stop.index = 1
+
+        # Sanity: a Function call/result mixed in to make sure non-function
+        # buffering didn't break function buffering.
+        del FunctionResultStep  # only here to make the import explicit
+
+        mock_client.interactions.create.return_value = iter(
+            [call_start, arg_delta_event, call_stop, result_start, result_stop]
+        )
+
+        messages = [Message(role="user", content="Search the web")]
+        assistant_message = Message(role="assistant")
+
+        responses = list(model.invoke_stream(messages, assistant_message))
+        tool_executions = [te for r in responses for te in (r.tool_executions or [])]
+        assert len(tool_executions) == 1
+        te = tool_executions[0]
+        assert te.tool_name == "google_search"
+        assert te.tool_args == {"queries": ["openai gpt-5", "anthropic claude"]}
+
     def test_invoke_stream_error_raises_model_provider_error(self):
         from agno.exceptions import ModelProviderError
 

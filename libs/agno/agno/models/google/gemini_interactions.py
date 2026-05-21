@@ -937,15 +937,14 @@ class GeminiInteractions(Model):
                 pending_agent_calls = stream_state.setdefault("pending_agent_calls", {})
                 agent_idx_to_call_id = stream_state.setdefault("agent_idx_to_call_id", {})
                 tool_name, tool_args = self._call_step_info(step)
-                # Only FunctionCallStep streams args via DeltaArgumentsDelta;
-                # others arrive fully populated.
-                streams_args = isinstance(step, FunctionCallStep)
-                args_buffer = json.dumps(tool_args) if streams_args and tool_args else ""
+                # Args can either be fully populated on StepStart (small typed
+                # payloads) or streamed via DeltaArgumentsDelta (function calls,
+                # and observed for google_search etc. too). Buffer deltas for
+                # every call type and reconcile on StepStop.
                 pending_agent_calls[step.id] = {
                     "tool_name": tool_name,
                     "tool_args": tool_args,
-                    "args_buffer": args_buffer,
-                    "streams_args": streams_args,
+                    "args_buffer": "",
                 }
                 agent_idx_to_call_id[stream_event.index] = step.id
             elif isinstance(step, _RESULT_STEP_TYPES) and self.agent is not None:
@@ -988,16 +987,23 @@ class GeminiInteractions(Model):
             if pending is not None:
                 pending["tool_call"]["function"]["arguments"] = pending["args_buffer"] or "{}"
                 model_response.tool_calls.append(pending["tool_call"])
-            # Agent path: finalize streamed args buffer on the pending call
-            # (don't emit yet - we wait for the matching *ResultStep).
+            # Agent path: finalize the streamed args buffer on the pending call
+            # (don't emit yet - we wait for the matching *ResultStep). Merge
+            # buffered JSON over the initial tool_args so empty StepStart args
+            # get filled in by streamed deltas without clobbering anything
+            # already known.
             agent_idx_to_call_id = stream_state.setdefault("agent_idx_to_call_id", {})
             call_id = agent_idx_to_call_id.pop(idx, None)
             if call_id is not None:
                 pending_agent_calls = stream_state.setdefault("pending_agent_calls", {})
                 agent_pending = pending_agent_calls.get(call_id)
-                if agent_pending is not None and agent_pending["streams_args"] and agent_pending["args_buffer"]:
+                if agent_pending is not None and agent_pending["args_buffer"]:
                     try:
-                        agent_pending["tool_args"] = json.loads(agent_pending["args_buffer"])
+                        parsed = json.loads(agent_pending["args_buffer"])
+                        if isinstance(parsed, dict):
+                            merged = dict(agent_pending["tool_args"] or {})
+                            merged.update(parsed)
+                            agent_pending["tool_args"] = merged
                     except json.JSONDecodeError:
                         pass
 
