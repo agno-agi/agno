@@ -1128,3 +1128,43 @@ def test_keyword_search_returns_empty_on_no_usable_tokens(mock_engine, mock_embe
         assert results == []
         # Session was never opened — we short-circuited before any DB work.
         db.Session.assert_not_called()
+
+
+def test_hybrid_search_falls_back_to_vector_on_no_usable_tokens(mock_engine, mock_embedder):
+    """hybrid_search uses empty tsquery fallback when prefix_match strips all tokens.
+
+    Unlike keyword_search which returns [], hybrid_search still runs because
+    the vector similarity branch can return results even without text matches.
+    """
+    with (
+        patch("agno.vectordb.pgvector.pgvector.inspect"),
+        patch("agno.vectordb.pgvector.pgvector.scoped_session") as mock_scoped_session,
+        patch("agno.vectordb.pgvector.pgvector.Vector"),
+        patch.object(PgVector, "get_table", return_value=MagicMock()),
+    ):
+        db = PgVector(
+            table_name="test_hybrid_fallback",
+            db_engine=mock_engine,
+            embedder=mock_embedder,
+            prefix_match=True,
+        )
+
+        # Mock the session to return empty results
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.begin.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.begin.return_value.__exit__ = MagicMock(return_value=False)
+        mock_session.execute.return_value.fetchall.return_value = []
+        mock_scoped_session.return_value.return_value = mock_session
+
+        # Mock embedder to return a valid embedding
+        mock_embedder.get_embedding.return_value = [0.1] * 1024
+
+        # Query with no usable tokens — should still call embedder and run query
+        results = db.hybrid_search("!@#$")
+
+        # Embedder was called — vector search still runs
+        mock_embedder.get_embedding.assert_called_once_with("!@#$")
+        # Results returned (empty in this mock, but query executed)
+        assert results == []
