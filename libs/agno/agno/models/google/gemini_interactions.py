@@ -125,6 +125,27 @@ _RESULT_DELTA_TYPES = (
 )
 
 
+def _summarize_thought(text: str, max_chars: int = 120) -> str:
+    """Collapse a multi-line ThoughtSummary into a single short log line.
+
+    Gemini's thought summaries usually start with a markdown heading
+    (`**Title**`) followed by paragraphs. Prefer the heading; fall back to
+    the first non-empty line. Truncate to keep terminal output readable.
+    """
+    text = text.strip()
+    if not text:
+        return ""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Strip a leading "**Title**" marker if present.
+        if line.startswith("**") and line.endswith("**") and len(line) > 4:
+            line = line[2:-2].strip()
+        return line if len(line) <= max_chars else line[: max_chars - 1] + "…"
+    return ""
+
+
 @dataclass
 class GeminiInteractions(Model):
     """
@@ -867,6 +888,10 @@ class GeminiInteractions(Model):
                                     model_response.reasoning_content = text
                                 else:
                                     model_response.reasoning_content += text
+                                # Log a short snippet so the user sees each
+                                # reasoning step in real time the same way
+                                # they see "Server-side tool call:" lines.
+                                log_info(f"Server-side reasoning: {_summarize_thought(text)}")
                 if step.signature:
                     if model_response.provider_data is None:
                         model_response.provider_data = {}
@@ -961,6 +986,8 @@ class GeminiInteractions(Model):
         """
         model_response = ModelResponse()
 
+        log_info(f"Stream Event: {stream_event}")
+
         # Every event carries an event_id used to resume a dropped/ended stream
         # (background interactions like Deep Research end the initial SSE early
         # and continue server-side; we reconnect from last_event_id).
@@ -1008,10 +1035,17 @@ class GeminiInteractions(Model):
             elif isinstance(delta, DeltaThoughtSummary):
                 summary_content = getattr(delta, "content", None)
                 if summary_content and isinstance(summary_content, TextContent):
-                    model_response.reasoning_content = summary_content.text or ""
+                    text = summary_content.text or ""
+                    model_response.reasoning_content = text
+                    if text:
+                        log_info(f"Server-side reasoning: {_summarize_thought(text)}")
             elif isinstance(delta, DeltaThoughtSignature):
                 if delta.signature:
-                    model_response.provider_data = {"thought_signature": delta.signature}
+                    # Merge instead of overwrite so other provider_data keys
+                    # (e.g. interaction_id) on the same chunk survive.
+                    if model_response.provider_data is None:
+                        model_response.provider_data = {}
+                    model_response.provider_data["thought_signature"] = delta.signature
             elif isinstance(delta, DeltaArgumentsDelta):
                 # Function calls stream args as JSON fragments here; the buffer
                 # is parsed on StepStop. Client tool_calls use stream index;
