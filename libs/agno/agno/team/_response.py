@@ -1377,6 +1377,20 @@ def _handle_model_response_chunk(
                 ) + model_response_event.reasoning_content
                 run_response.reasoning_content = full_model_response.reasoning_content
                 should_yield = True
+                # Mirror the agent fix: emit a dedicated team reasoning
+                # delta so AGUI / AgentOS light up the reasoning panel
+                # for models that stream reasoning from the main call
+                # instead of via the explicit ReasoningManager pre-call.
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_team_reasoning_content_delta_event(
+                            from_run_response=run_response,
+                            reasoning_content=model_response_event.reasoning_content,
+                        ),
+                        run_response,
+                        events_to_skip=team.events_to_skip,
+                        store_events=team.store_events,
+                    )
 
             if model_response_event.redacted_reasoning_content is not None:
                 if not full_model_response.reasoning_content:
