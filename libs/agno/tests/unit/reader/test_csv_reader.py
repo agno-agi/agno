@@ -137,10 +137,16 @@ def test_read_with_chunking(csv_reader, csv_file):
 async def test_async_read_path(csv_reader, csv_file):
     documents = await csv_reader.async_read(csv_file)
 
-    assert len(documents) == 1
+    assert len(documents) == 4
     assert documents[0].name == "test"
     assert documents[0].id.endswith("_1")
-    assert documents[0].content == "name, age, city John, 30, New York Jane, 25, San Francisco Bob, 40, Chicago"
+    assert [document.content for document in documents] == [
+        "name, age, city",
+        "John, 30, New York",
+        "Jane, 25, San Francisco",
+        "Bob, 40, Chicago",
+    ]
+    assert [document.meta_data["row_number"] for document in documents] == [1, 2, 3, 4]
 
 
 @pytest.fixture
@@ -167,7 +173,20 @@ row10,39,City10"""
 async def test_async_read_multi_page_csv(csv_reader, multi_page_csv_file):
     documents = await csv_reader.async_read(multi_page_csv_file, page_size=5)
 
-    assert len(documents) == 3
+    assert len(documents) == 11
+    assert [document.content for document in documents] == [
+        "name, age, city",
+        "row1, 30, City1",
+        "row2, 31, City2",
+        "row3, 32, City3",
+        "row4, 33, City4",
+        "row5, 34, City5",
+        "row6, 35, City6",
+        "row7, 36, City7",
+        "row8, 37, City8",
+        "row9, 38, City9",
+        "row10, 39, City10",
+    ]
 
     # Check first page
     assert documents[0].name == "multi_page"
@@ -177,16 +196,16 @@ async def test_async_read_multi_page_csv(csv_reader, multi_page_csv_file):
     assert documents[0].meta_data["rows"] == 5
 
     # Check second page
-    assert documents[1].id is not None and isinstance(documents[1].id, str)
-    assert documents[1].meta_data["page"] == 2
-    assert documents[1].meta_data["start_row"] == 6
-    assert documents[1].meta_data["rows"] == 5
+    assert documents[5].id is not None and isinstance(documents[5].id, str)
+    assert documents[5].meta_data["page"] == 2
+    assert documents[5].meta_data["start_row"] == 6
+    assert documents[5].meta_data["rows"] == 5
 
     # Check third page
-    assert documents[2].id is not None and isinstance(documents[2].id, str)
-    assert documents[2].meta_data["page"] == 3
-    assert documents[2].meta_data["start_row"] == 11
-    assert documents[2].meta_data["rows"] == 1
+    assert documents[10].id is not None and isinstance(documents[10].id, str)
+    assert documents[10].meta_data["page"] == 3
+    assert documents[10].meta_data["start_row"] == 11
+    assert documents[10].meta_data["rows"] == 1
 
 
 @pytest.mark.asyncio
