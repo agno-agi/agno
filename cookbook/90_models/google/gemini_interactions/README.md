@@ -42,7 +42,7 @@ from agno.agent import Agent
 from agno.models.google import GeminiInteractions
 
 agent = Agent(
-    model=GeminiInteractions(id="gemini-3-flash-preview"),
+    model=GeminiInteractions(id="gemini-3.5-flash"),
     markdown=True,
 )
 agent.print_response("Hello!")
@@ -69,7 +69,7 @@ class MovieReview(BaseModel):
     rating: float
 
 agent = Agent(
-    model=GeminiInteractions(id="gemini-3-flash-preview"),
+    model=GeminiInteractions(id="gemini-3.5-flash"),
     output_schema=MovieReview,
 )
 ```
@@ -79,12 +79,12 @@ agent = Agent(
 ```python
 # Lower cost, higher latency
 agent = Agent(
-    model=GeminiInteractions(id="gemini-3-flash-preview", service_tier="flex"),
+    model=GeminiInteractions(id="gemini-3.5-flash", service_tier="flex"),
 )
 
 # Lowest latency
 agent = Agent(
-    model=GeminiInteractions(id="gemini-3-flash-preview", service_tier="priority"),
+    model=GeminiInteractions(id="gemini-3.5-flash", service_tier="priority"),
 )
 ```
 
