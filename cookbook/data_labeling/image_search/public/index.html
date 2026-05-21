@@ -71,16 +71,19 @@
         </div>
         <button type="submit" :disabled="searching"
                 class="inline-flex items-center gap-2 px-5 py-3 text-sm font-medium rounded-lg bg-slate-900 text-white shadow-sm hover:bg-slate-700 disabled:bg-slate-400 disabled:cursor-not-allowed">
-          <i :data-lucide="searching ? 'loader-2' : 'search'" :class="searching && 'animate-spin'" class="w-4 h-4"></i>
+          <i x-show="!searching" data-lucide="search" class="w-4 h-4"></i>
+          <i x-show="searching" data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>
           <span x-text="searching ? 'Searching…' : 'Search'"></span>
         </button>
       </form>
       <div class="flex items-center justify-between text-xs text-slate-500 mb-4 min-h-[1.25rem]">
         <p x-text="searchMeta"></p>
-        <button x-show="filteredOut.length" @click="showFiltered = !showFiltered"
+        <button x-show="filteredOut.length && searchResults.length > 0"
+                @click="showFiltered = !showFiltered"
                 class="inline-flex items-center gap-1 text-slate-500 hover:text-slate-900 underline-offset-4 hover:underline">
-          <span x-text="(showFiltered ? 'Hide' : 'Show') + ' ' + filteredOut.length + ' below threshold'"></span>
-          <i :data-lucide="showFiltered ? 'chevron-up' : 'chevron-down'" class="w-3.5 h-3.5"></i>
+          <span x-text="(showFiltered ? 'Hide' : 'Show') + ' ' + filteredOut.length + ' weaker match' + (filteredOut.length === 1 ? '' : 'es')"></span>
+          <i x-show="!showFiltered" data-lucide="chevron-down" class="w-3.5 h-3.5"></i>
+          <i x-show="showFiltered" data-lucide="chevron-up" class="w-3.5 h-3.5"></i>
         </button>
       </div>
 
@@ -126,7 +129,8 @@
 
       <!-- Below-threshold reveal -->
       <div x-show="showFiltered && filteredOut.length" x-transition class="mt-8 pt-6 border-t border-slate-200">
-        <p class="text-xs text-slate-500 mb-3">Below the relevance cutoff — vector-only candidates without a real FTS match.</p>
+        <p class="text-xs text-slate-500 mb-3"
+           x-text="searchResults.length === 0 ? 'No exact match — showing the closest vector-similarity candidates.' : 'Weaker matches — vector similarity only, no text-search overlap.'"></p>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 opacity-70">
           <template x-for="hit in filteredOut" :key="hit.url">
             <a :href="hit.url" @click="onCardClick($event, hit)" target="_blank" rel="noreferrer"
@@ -380,8 +384,12 @@
             // to show — beats a bare "0 results" with a hidden tray.
             if (primary.length === 0 && secondary.length > 0) this.showFiltered = true;
             else if (primary.length > 0) this.showFiltered = false;
-            const n = this.searchResults.length;
-            this.searchMeta = `"${q}" · ${n} result${n === 1 ? '' : 's'} in ${dt}ms`;
+            const n = primary.length;
+            if (n === 0 && secondary.length > 0) {
+              this.searchMeta = `"${q}" · no exact match · showing ${secondary.length} closest in ${dt}ms`;
+            } else {
+              this.searchMeta = `"${q}" · ${n} result${n === 1 ? '' : 's'} in ${dt}ms`;
+            }
           } catch (e) {
             if (e.name === 'AbortError') return;
             this.searchMeta = `Search failed: ${e.message}`;
