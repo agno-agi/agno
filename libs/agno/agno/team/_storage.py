@@ -56,7 +56,7 @@ from agno.utils.string import generate_id_from_name
 
 
 def get_run_output(
-    team: "Team", run_id: str, session_id: Optional[str] = None
+    team: "Team", run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
 ) -> Optional[Union[TeamRunOutput, RunOutput]]:
     """
     Get a RunOutput or TeamRunOutput from the database.  Handles cached sessions.
@@ -64,16 +64,17 @@ def get_run_output(
     Args:
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     """
     if not session_id and not team.session_id:
         raise Exception("No session_id provided")
 
     session_id_to_load = session_id or team.session_id
-    return get_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load)
+    return get_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load, user_id=user_id)
 
 
 async def aget_run_output(
-    team: "Team", run_id: str, session_id: Optional[str] = None
+    team: "Team", run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
 ) -> Optional[Union[TeamRunOutput, RunOutput]]:
     """
     Get a RunOutput or TeamRunOutput from the database.  Handles cached sessions.
@@ -81,12 +82,13 @@ async def aget_run_output(
     Args:
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     """
     if not session_id and not team.session_id:
         raise Exception("No session_id provided")
 
     session_id_to_load = session_id or team.session_id
-    return await aget_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load)
+    return await aget_run_output_util(cast(Any, team), run_id=run_id, session_id=session_id_to_load, user_id=user_id)
 
 
 def get_last_run_output(team: "Team", session_id: Optional[str] = None) -> Optional[TeamRunOutput]:

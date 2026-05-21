@@ -37,12 +37,12 @@ from agno.context.slack import SlackContextProvider
 from agno.models.google import Gemini
 
 slack = SlackContextProvider(
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     enable_media_tools=True,
 )
 
 agent = Agent(
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     tools=slack.get_tools(),
     instructions=slack.instructions(),
     markdown=True,
