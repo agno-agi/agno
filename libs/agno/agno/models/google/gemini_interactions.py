@@ -62,6 +62,23 @@ try:
     DeltaText = step_delta.DeltaText
     DeltaThoughtSignature = step_delta.DeltaThoughtSignature
     DeltaThoughtSummary = step_delta.DeltaThoughtSummary
+    # Typed call deltas. Non-function call families stream their typed
+    # Arguments object here (DeltaArgumentsDelta only fires for functions).
+    DeltaCodeExecutionCall = step_delta.DeltaCodeExecutionCall
+    DeltaFileSearchCall = step_delta.DeltaFileSearchCall
+    DeltaGoogleMapsCall = step_delta.DeltaGoogleMapsCall
+    DeltaGoogleSearchCall = step_delta.DeltaGoogleSearchCall
+    DeltaMCPServerToolCall = step_delta.DeltaMCPServerToolCall
+    DeltaURLContextCall = step_delta.DeltaURLContextCall
+    # Result deltas. Every *ResultStep arrives empty at StepStart and its
+    # actual payload streams here (one or more deltas, then StepStop).
+    DeltaCodeExecutionResult = step_delta.DeltaCodeExecutionResult
+    DeltaFileSearchResult = step_delta.DeltaFileSearchResult
+    DeltaFunctionResult = step_delta.DeltaFunctionResult
+    DeltaGoogleMapsResult = step_delta.DeltaGoogleMapsResult
+    DeltaGoogleSearchResult = step_delta.DeltaGoogleSearchResult
+    DeltaMCPServerToolResult = step_delta.DeltaMCPServerToolResult
+    DeltaURLContextResult = step_delta.DeltaURLContextResult
 except ImportError:
     raise ImportError(
         "`google-genai` not installed or not at the latest version. "
@@ -86,6 +103,25 @@ _RESULT_STEP_TYPES = (
     GoogleSearchResultStep,
     FileSearchResultStep,
     GoogleMapsResultStep,
+)
+# Typed call deltas (non-function). Function calls use DeltaArgumentsDelta
+# and are handled separately because they buffer args as a JSON string.
+_TYPED_CALL_DELTA_TYPES = (
+    DeltaCodeExecutionCall,
+    DeltaURLContextCall,
+    DeltaMCPServerToolCall,
+    DeltaGoogleSearchCall,
+    DeltaFileSearchCall,
+    DeltaGoogleMapsCall,
+)
+_RESULT_DELTA_TYPES = (
+    DeltaFunctionResult,
+    DeltaCodeExecutionResult,
+    DeltaURLContextResult,
+    DeltaMCPServerToolResult,
+    DeltaGoogleSearchResult,
+    DeltaFileSearchResult,
+    DeltaGoogleMapsResult,
 )
 
 
@@ -685,6 +721,61 @@ class GeminiInteractions(Model):
         except (TypeError, ValueError):
             return str(raw), is_error
 
+    def _delta_args_to_dict(self, delta: Any) -> Optional[Dict[str, Any]]:
+        """Extract the typed `arguments` from a *Call delta as a plain dict.
+
+        Non-function call families stream their complete typed Arguments
+        object on a single delta (e.g. DeltaGoogleSearchCall carries a
+        GoogleSearchCallArguments(queries=[...])); FunctionCallStep uses
+        DeltaArgumentsDelta with JSON fragments and is handled separately.
+        """
+        args = getattr(delta, "arguments", None)
+        if args is None:
+            return None
+        if isinstance(args, dict):
+            return dict(args)
+        if hasattr(args, "model_dump"):
+            return args.model_dump(exclude_none=True)
+        return None
+
+    def _append_result_delta(self, delta: Any, pending_result: Dict[str, Any], model_response: ModelResponse) -> None:
+        """Append one *Result delta's content into a pending_result accumulator.
+
+        Result steps arrive empty at StepStart; their actual payload streams
+        across one or more deltas before StepStop. Text accumulates into
+        text_parts; ImageContent routes to model_response.images; typed
+        result objects (URL/Search/Maps Result, etc.) are JSON-serialized.
+        """
+        is_error = getattr(delta, "is_error", None)
+        if is_error is not None:
+            pending_result["is_error"] = is_error
+        raw = getattr(delta, "result", None)
+        if raw is None:
+            return
+        if isinstance(raw, str):
+            pending_result["text_parts"].append(raw)
+            return
+        if isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, TextContent):
+                    if item.text:
+                        pending_result["text_parts"].append(item.text)
+                elif ImageContent is not None and isinstance(item, ImageContent):
+                    image = self._parse_image_content(item)
+                    if image:
+                        if model_response.images is None:
+                            model_response.images = []
+                        model_response.images.append(image)
+                elif hasattr(item, "model_dump"):
+                    pending_result["text_parts"].append(json.dumps(item.model_dump(exclude_none=True)))
+                else:
+                    pending_result["text_parts"].append(str(item))
+            return
+        if hasattr(raw, "model_dump"):
+            pending_result["text_parts"].append(json.dumps(raw.model_dump(exclude_none=True)))
+        else:
+            pending_result["text_parts"].append(str(raw))
+
     def _parse_provider_response(self, response: Any, **kwargs: Any) -> ModelResponse:
         """Parse an Interaction response into a ModelResponse."""
         model_response = ModelResponse()
@@ -924,6 +1015,9 @@ class GeminiInteractions(Model):
                 if delta.signature:
                     model_response.provider_data = {"thought_signature": delta.signature}
             elif isinstance(delta, DeltaArgumentsDelta):
+                # Function calls stream args as JSON fragments here; the buffer
+                # is parsed on StepStop. Client tool_calls use stream index;
+                # agent-path calls use a separate idx->call_id lookup.
                 idx = stream_event.index
                 if delta.arguments:
                     if idx in stream_state["pending_calls"]:
@@ -935,25 +1029,36 @@ class GeminiInteractions(Model):
                         )
                         if agent_pending is not None:
                             agent_pending["args_buffer"] += delta.arguments
+            elif isinstance(delta, _TYPED_CALL_DELTA_TYPES):
+                # Non-function call families stream their complete typed
+                # Arguments object on a single delta. Replace tool_args so
+                # google_search etc. surface their queries / code / urls.
+                idx = stream_event.index
+                call_id = stream_state.setdefault("agent_idx_to_call_id", {}).get(idx)
+                if call_id is not None:
+                    agent_pending = stream_state.setdefault("pending_agent_calls", {}).get(call_id)
+                    if agent_pending is not None:
+                        args_dict = self._delta_args_to_dict(delta)
+                        if args_dict:
+                            agent_pending["tool_args"] = args_dict
+            elif isinstance(delta, _RESULT_DELTA_TYPES):
+                # Result content streams here after the result step's StepStart.
+                # Accumulate into the pending_result for assembly on StepStop.
+                idx = stream_event.index
+                pending_result = stream_state.setdefault("pending_results", {}).get(idx)
+                if pending_result is not None:
+                    self._append_result_delta(delta, pending_result, model_response)
 
         elif isinstance(stream_event, interaction_types.StepStart):
             step = stream_event.step
-            # Agent path: pair every *CallStep with the matching *ResultStep
-            # (linked by call_id) and emit a ToolExecution. The autonomous
-            # loop already ran them server-side; we record the receipt so
-            # AgentOS / run_response.tools shows the full audit. Sending a
-            # function_result back would 400, so we don't queue tool_calls.
+            # Agent path: register pending entries for both calls and results.
+            # Calls accumulate args via subsequent deltas; results accumulate
+            # content via subsequent deltas. The pair is joined and emitted
+            # as a ToolExecution on the result step's StepStop.
             if isinstance(step, _CALL_STEP_TYPES) and self.agent is not None:
                 pending_agent_calls = stream_state.setdefault("pending_agent_calls", {})
                 agent_idx_to_call_id = stream_state.setdefault("agent_idx_to_call_id", {})
                 tool_name, tool_args = self._call_step_info(step)
-                # Args can either be fully populated on StepStart (small typed
-                # payloads) or streamed via DeltaArgumentsDelta (function calls,
-                # and observed for google_search etc. too). Buffer deltas for
-                # every call type and reconcile on StepStop.
-                # is_function_call lets the InteractionCompletedEvent flusher
-                # tell client-declared tool calls (need dispatch) from server-
-                # built-in calls (silently dropped if no result arrives).
                 pending_agent_calls[step.id] = {
                     "tool_name": tool_name,
                     "tool_args": tool_args,
@@ -963,23 +1068,20 @@ class GeminiInteractions(Model):
                 }
                 agent_idx_to_call_id[stream_event.index] = step.id
             elif isinstance(step, _RESULT_STEP_TYPES) and self.agent is not None:
-                pending_agent_calls = stream_state.setdefault("pending_agent_calls", {})
-                pending = pending_agent_calls.pop(step.call_id, None)
-                if pending is not None:
-                    result_text, is_error = self._extract_step_result(step, model_response)
-                    if model_response.tool_executions is None:
-                        model_response.tool_executions = []
-                    model_response.tool_executions.append(
-                        ToolExecution(
-                            tool_call_id=step.call_id,
-                            tool_name=pending["tool_name"],
-                            tool_args=pending["tool_args"],
-                            result=result_text,
-                            tool_call_error=bool(is_error) if is_error is not None else None,
-                        )
-                    )
-                    args_repr = json.dumps(pending["tool_args"]) if pending["tool_args"] else ""
-                    log_info(f"Server-side tool call: {pending['tool_name']}({args_repr})")
+                # Register a pending_result keyed by stream index. The actual
+                # payload arrives on subsequent _RESULT_DELTA_TYPES deltas;
+                # we emit ToolExecution on this index's StepStop.
+                pending_results = stream_state.setdefault("pending_results", {})
+                pending = {
+                    "call_id": step.call_id,
+                    "text_parts": [],
+                    "is_error": getattr(step, "is_error", None),
+                }
+                # Defensive: if the SDK ever populates step.result at StepStart
+                # (current behavior is None), seed it now.
+                if getattr(step, "result", None) is not None:
+                    self._append_result_delta(step, pending, model_response)
+                pending_results[stream_event.index] = pending
             elif isinstance(step, FunctionCallStep):
                 idx = stream_event.index
                 tool_call = {
@@ -998,20 +1100,20 @@ class GeminiInteractions(Model):
 
         elif isinstance(stream_event, interaction_types.StepStop):
             idx = stream_event.index
+            # Client tool_calls: finalize args buffer and emit.
             pending = stream_state["pending_calls"].pop(idx, None)
             if pending is not None:
                 pending["tool_call"]["function"]["arguments"] = pending["args_buffer"] or "{}"
                 model_response.tool_calls.append(pending["tool_call"])
-            # Agent path: finalize the streamed args buffer on the pending call
-            # (don't emit yet - we wait for the matching *ResultStep). Merge
-            # buffered JSON over the initial tool_args so empty StepStart args
-            # get filled in by streamed deltas without clobbering anything
-            # already known.
+            # Agent path: finalize the streamed args buffer on the pending
+            # call (FunctionCallStep only - the others set tool_args directly
+            # from their typed delta). Merge over initial StepStart args so
+            # streamed keys win without clobbering anything already known.
             agent_idx_to_call_id = stream_state.setdefault("agent_idx_to_call_id", {})
-            call_id = agent_idx_to_call_id.pop(idx, None)
-            if call_id is not None:
+            call_id_for_call = agent_idx_to_call_id.pop(idx, None)
+            if call_id_for_call is not None:
                 pending_agent_calls = stream_state.setdefault("pending_agent_calls", {})
-                agent_pending = pending_agent_calls.get(call_id)
+                agent_pending = pending_agent_calls.get(call_id_for_call)
                 if agent_pending is not None and agent_pending["args_buffer"]:
                     try:
                         parsed = json.loads(agent_pending["args_buffer"])
@@ -1021,6 +1123,30 @@ class GeminiInteractions(Model):
                             agent_pending["tool_args"] = merged
                     except json.JSONDecodeError:
                         pass
+            # Agent path: a pending_result at this index is now complete -
+            # assemble the text, look up its matching pending_agent_call by
+            # call_id, and emit the ToolExecution.
+            pending_results = stream_state.setdefault("pending_results", {})
+            pending_result = pending_results.pop(idx, None)
+            if pending_result is not None:
+                result_text = "\n".join(pending_result["text_parts"]) if pending_result["text_parts"] else None
+                is_error = pending_result["is_error"]
+                pending_agent_calls = stream_state.setdefault("pending_agent_calls", {})
+                pending_call = pending_agent_calls.pop(pending_result["call_id"], None)
+                if pending_call is not None:
+                    if model_response.tool_executions is None:
+                        model_response.tool_executions = []
+                    model_response.tool_executions.append(
+                        ToolExecution(
+                            tool_call_id=pending_result["call_id"],
+                            tool_name=pending_call["tool_name"],
+                            tool_args=pending_call["tool_args"],
+                            result=result_text,
+                            tool_call_error=bool(is_error) if is_error is not None else None,
+                        )
+                    )
+                    args_repr = json.dumps(pending_call["tool_args"]) if pending_call["tool_args"] else ""
+                    log_info(f"Server-side tool call: {pending_call['tool_name']}({args_repr})")
 
         elif isinstance(stream_event, interaction_types.InteractionCompletedEvent):
             stream_state["completed"] = True
