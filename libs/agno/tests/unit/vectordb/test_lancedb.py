@@ -1,6 +1,7 @@
 import os
 import shutil
 from typing import List
+from unittest.mock import patch
 
 import pytest
 
@@ -567,3 +568,158 @@ def test_search_deduplicates_preserves_unique(lance_db):
     contents = [doc.content for doc in results]
     assert len(contents) == len(set(contents))
     assert len(contents) == 3
+
+
+def test_refresh_sync_connect_default_value(mock_embedder):
+    """Test that refresh_sync_connect defaults to False."""
+    db = LanceDb(uri=TEST_PATH, table_name="test_refresh_default", embedder=mock_embedder)
+    assert db.refresh_sync_connect is False
+    db.drop()
+    if os.path.exists(TEST_PATH):
+        shutil.rmtree(TEST_PATH)
+
+
+def test_refresh_sync_connect_true_value(mock_embedder):
+    """Test that refresh_sync_connect can be set to True."""
+    db = LanceDb(
+        uri=TEST_PATH, table_name="test_refresh_true", embedder=mock_embedder, refresh_sync_connect=True
+    )
+    assert db.refresh_sync_connect is True
+    db.drop()
+    if os.path.exists(TEST_PATH):
+        shutil.rmtree(TEST_PATH)
+
+
+def test_refresh_sync_connect_called_in_search(lance_db, sample_documents):
+    """Test that _refresh_sync_connection is called during search when refresh_sync_connect is True."""
+    from unittest.mock import patch
+
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
+    lance_db.refresh_sync_connect = True
+
+    with patch.object(lance_db, "_refresh_sync_connection") as mock_refresh:
+        lance_db.search("coconut", limit=2)
+        # search() calls _refresh_sync_connection() at least once
+        # (may be called multiple times by search() and its sub-methods)
+        mock_refresh.assert_called()
+
+
+def test_refresh_sync_connect_not_called_when_false(lance_db, sample_documents):
+    """Test that _refresh_sync_connection is NOT called during search when refresh_sync_connect is False."""
+    from unittest.mock import patch
+
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
+    lance_db.refresh_sync_connect = False
+
+    with patch.object(lance_db, "_refresh_sync_connection") as mock_refresh:
+        lance_db.search("coconut", limit=2)
+        mock_refresh.assert_not_called()
+
+
+def test_refresh_sync_connect_called_in_vector_search(lance_db, sample_documents):
+    """Test that _refresh_sync_connection is called during vector_search when refresh_sync_connect is True."""
+    from unittest.mock import patch
+
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
+    lance_db.refresh_sync_connect = True
+
+    with patch.object(lance_db, "_refresh_sync_connection") as mock_refresh:
+        lance_db.vector_search("coconut", limit=2)
+        mock_refresh.assert_called_once()
+
+
+def test_refresh_sync_connect_called_in_keyword_search(lance_db, sample_documents):
+    """Test that _refresh_sync_connection is called during keyword_search when refresh_sync_connect is True."""
+    from unittest.mock import patch
+
+    lance_db.search_type = SearchType.keyword
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
+    lance_db.refresh_sync_connect = True
+
+    with patch.object(lance_db, "_refresh_sync_connection") as mock_refresh:
+        lance_db.keyword_search("curry", limit=2)
+        mock_refresh.assert_called_once()
+
+
+def test_refresh_sync_connect_called_in_hybrid_search(lance_db, sample_documents):
+    """Test that _refresh_sync_connection is called during hybrid_search when refresh_sync_connect is True."""
+    from unittest.mock import patch
+
+    lance_db.search_type = SearchType.hybrid
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
+    lance_db.refresh_sync_connect = True
+
+    with patch.object(lance_db, "_refresh_sync_connection") as mock_refresh:
+        lance_db.hybrid_search("soup", limit=2)
+        mock_refresh.assert_called_once()
+
+
+def test_refresh_sync_connect_called_in_get_count(lance_db, sample_documents):
+    """Test that _refresh_sync_connection is called during get_count when refresh_sync_connect is True."""
+    from unittest.mock import patch
+
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
+    lance_db.refresh_sync_connect = True
+
+    with patch.object(lance_db, "_refresh_sync_connection") as mock_refresh:
+        lance_db.get_count()
+        mock_refresh.assert_called_once()
+
+
+def test_refresh_sync_connect_called_in_name_exists(lance_db, sample_documents):
+    """Test that _refresh_sync_connection is called during name_exists when refresh_sync_connect is True."""
+    from unittest.mock import patch
+
+    lance_db.insert(documents=[sample_documents[0]], content_hash="test_hash")
+    lance_db.refresh_sync_connect = True
+
+    with patch.object(lance_db, "_refresh_sync_connection") as mock_refresh:
+        lance_db.name_exists("tom_kha")
+        mock_refresh.assert_called_once()
+
+
+def test_refresh_sync_connect_called_in_id_exists(lance_db, sample_documents):
+    """Test that _refresh_sync_connection is called during id_exists when refresh_sync_connect is True."""
+    from unittest.mock import patch
+
+    lance_db.insert(documents=[sample_documents[0]], content_hash="test_hash")
+    lance_db.refresh_sync_connect = True
+
+    with patch.object(lance_db, "_refresh_sync_connection") as mock_refresh:
+        lance_db.id_exists("test_id")
+        mock_refresh.assert_called_once()
+
+
+def test_refresh_sync_connect_called_in_content_hash_exists(lance_db, sample_documents):
+    """Test that _refresh_sync_connection is called during content_hash_exists when refresh_sync_connect is True."""
+    from unittest.mock import patch
+
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
+    lance_db.refresh_sync_connect = True
+
+    with patch.object(lance_db, "_refresh_sync_connection") as mock_refresh:
+        lance_db.content_hash_exists("test_hash")
+        mock_refresh.assert_called_once()
+
+
+def test_refresh_sync_connect_called_in_update_metadata(lance_db, sample_documents):
+    """Test that _refresh_sync_connection is called during update_metadata when refresh_sync_connect is True."""
+    from unittest.mock import patch
+
+    sample_documents[0].content_id = "doc_1"
+    lance_db.insert(documents=[sample_documents[0]], content_hash="test_hash")
+    lance_db.refresh_sync_connect = True
+
+    with patch.object(lance_db, "_refresh_sync_connection") as mock_refresh:
+        lance_db.update_metadata("doc_1", {"updated": True})
+        mock_refresh.assert_called_once()
+
+
+def test_refresh_sync_connection_reopens_table(lance_db, sample_documents):
+    """Test that _refresh_sync_connection reopens the table to see changes."""
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
+
+    # Mock the open_table method to verify it's called
+    with patch.object(lance_db.connection, "open_table") as mock_open:
+        lance_db._refresh_sync_connection()
+        mock_open.assert_called_once_with(lance_db.table_name)

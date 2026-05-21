@@ -42,6 +42,7 @@ class LanceDb(VectorDb):
         use_tantivy: Whether to use Tantivy for full text search.
         on_bad_vectors: What to do if the vector is bad. One of "error", "drop", "fill", "null".
         fill_value: The value to fill the vector with if on_bad_vectors is "fill".
+        refresh_sync_connect: Whether to refresh sync connection to see async changes (not needed for cloud)
     """
 
     def __init__(
@@ -64,6 +65,7 @@ class LanceDb(VectorDb):
         use_tantivy: bool = True,
         on_bad_vectors: Optional[str] = None,  # One of "error", "drop", "fill", "null".
         fill_value: Optional[float] = None,  # Only used if on_bad_vectors is "fill"
+        refresh_sync_connect: bool = False,
     ):
         # Dynamic ID generation based on unique identifiers
         if id is None:
@@ -162,6 +164,7 @@ class LanceDb(VectorDb):
         self.fill_value: Optional[float] = fill_value
         self.fts_index_exists = False
         self.use_tantivy = use_tantivy
+        self.refresh_sync_connect = refresh_sync_connect
 
         if self.use_tantivy and (self.search_type in [SearchType.keyword, SearchType.hybrid]):
             try:
@@ -294,7 +297,8 @@ class LanceDb(VectorDb):
             log_info("API key found, creating table in remote LanceDB")
             tbl = self.connection.create_table(name=self.table_name, schema=schema, mode="overwrite")  # type: ignore
         else:
-            tbl = self.connection.create_table(name=self.table_name, schema=schema, mode="overwrite", exist_ok=True)  # type: ignore
+            tbl = self.connection.create_table(name=self.table_name, schema=schema, mode="overwrite",
+                                               exist_ok=True)  # type: ignore
         return tbl  # type: ignore
 
     def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
@@ -504,6 +508,10 @@ class LanceDb(VectorDb):
             log_error("Table not initialized")
             return []
 
+        # Refresh sync connection if enabled
+        if self.refresh_sync_connect:
+            self._refresh_sync_connection()
+
         results = None
 
         if isinstance(filters, list):
@@ -583,6 +591,10 @@ class LanceDb(VectorDb):
     def vector_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> Optional[List[Dict[str, Any]]]:
+        # Refresh sync connection if enabled
+        if self.refresh_sync_connect:
+            self._refresh_sync_connection()
+
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
@@ -605,6 +617,10 @@ class LanceDb(VectorDb):
     def hybrid_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Dict[str, Any]]:
+        # Refresh sync connection if enabled
+        if self.refresh_sync_connect:
+            self._refresh_sync_connection()
+
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Error getting embedding for Query: {query}")
@@ -636,6 +652,10 @@ class LanceDb(VectorDb):
     def keyword_search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
     ) -> List[Dict[str, Any]]:
+        # Refresh sync connection if enabled
+        if self.refresh_sync_connect:
+            self._refresh_sync_connection()
+
         if self.table is None:
             log_error("Table not initialized. Please create the table first")
             return []
@@ -718,6 +738,10 @@ class LanceDb(VectorDb):
         return 0
 
     def get_count(self) -> int:
+        # Refresh sync connection if enabled
+        if self.refresh_sync_connect:
+            self._refresh_sync_connection()
+
         # If we have data in the async table but sync table isn't available, try to get count from async table
         if self.async_table is not None:
             try:
@@ -749,6 +773,10 @@ class LanceDb(VectorDb):
 
     def name_exists(self, name: str) -> bool:
         """Check if a document with the given name exists in the database"""
+        # Refresh sync connection if enabled
+        if self.refresh_sync_connect:
+            self._refresh_sync_connection()
+
         if self.table is None:
             return False
 
@@ -768,6 +796,10 @@ class LanceDb(VectorDb):
 
     def id_exists(self, id: str) -> bool:
         """Check if a document with the given ID exists in the database"""
+        # Refresh sync connection if enabled
+        if self.refresh_sync_connect:
+            self._refresh_sync_connection()
+
         if self.table is None:
             log_error("Table not initialized")
             return False
@@ -926,6 +958,10 @@ class LanceDb(VectorDb):
 
     def content_hash_exists(self, content_hash: str) -> bool:
         """Check if documents with the given content hash exist."""
+        # Refresh sync connection if enabled
+        if self.refresh_sync_connect:
+            self._refresh_sync_connection()
+
         if self.table is None:
             log_error("Table not initialized")
             return False
@@ -953,6 +989,10 @@ class LanceDb(VectorDb):
             content_id (str): The content ID to update
             metadata (Dict[str, Any]): The metadata to update
         """
+        # Refresh sync connection if enabled
+        if self.refresh_sync_connect:
+            self._refresh_sync_connection()
+
         import json
 
         try:
