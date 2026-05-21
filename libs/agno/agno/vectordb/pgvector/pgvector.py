@@ -14,7 +14,7 @@ try:
     from sqlalchemy.orm import Session, scoped_session, sessionmaker
     from sqlalchemy.schema import Column, Index, MetaData, Table
     from sqlalchemy.sql.elements import ColumnElement
-    from sqlalchemy.sql.expression import bindparam, desc, func, select, text
+    from sqlalchemy.sql.expression import bindparam, desc, func, literal_column, select, text
     from sqlalchemy.types import DateTime, Integer, String
 
 except ImportError:
@@ -1097,8 +1097,10 @@ class PgVector(VectorDb):
             ts_query = self._build_ts_query(query)
             if ts_query is None:
                 # Prefix mode with no usable tokens (e.g. empty query): fall back
-                # to pure vector search by building a tsquery that never matches.
-                ts_query = func.to_tsquery(self.content_language, bindparam("query", value=""))
+                # to an empty tsquery literal that ranks 0 everywhere, so hybrid
+                # scoring degrades to pure vector ranking. Using the literal cast
+                # avoids depending on to_tsquery's tolerance for empty input.
+                ts_query = literal_column("''::tsquery")
             # Compute the text rank, normalized to [0, 1] range
             # ts_rank_cd returns small values (0.0-0.1), so we normalize using x/(x+k)
             raw_text_rank = func.ts_rank_cd(ts_vector, ts_query)
