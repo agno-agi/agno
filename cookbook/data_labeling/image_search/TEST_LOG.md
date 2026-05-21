@@ -127,3 +127,65 @@ Fetch URLs and field mappings are unchanged, so the curl-equivalence
 verification above still applies. Interactive features (lightbox click,
 reindex polling, tab switching) should be re-smoked against a live server
 before relying on them.
+
+---
+
+### PgVector swap (2026-05-22)
+
+**Status:** PASS
+
+The cookbook was migrated from `ChromaDb` + `SqliteDb` to `PgVector` +
+`PostgresDb` against `agnohq/pgvector:18` (the image
+`cookbook/scripts/run_pgvector.sh` brings up on port 5532). The swap
+deletes two client-side workarounds that were papering over storage-layer
+weirdness in the previous stack:
+
+- `asArray()` in [`public/index.html`](public/index.html): pgvector
+  preserves JSONB arrays as native arrays in both
+  `/knowledge/content.metadata` and `/knowledge/search.meta_data`. No
+  more string ↔ array reconciliation.
+- The frontend "trust real keyword hits, not substring noise" heuristic
+  is no longer needed. PgVector's keyword branch runs
+  `to_tsvector(english, content)` + `websearch_to_tsquery(english,
+  query)`, so `car` no longer false-matches `carnivore` or `streetcar` —
+  the English Snowball stemmer lemmatizes both query and document into
+  lexemes (`car`, `cars` → `car`; `carnivore` → `carnivor`).
+
+**Reindex:** 38/38 indexed in ~10s. No "agent returned str" issues
+recurred (the per-worker Agent construction from Fix 2 still applies).
+
+**Query battery** — `MIN_SCORE_RATIO=0.5`, `SCORE_FLOOR=0.30`. PgVector's
+hybrid score = `0.5 * cosine_similarity + 0.5 * ts_rank`. A pure vector
+match tops out at ~0.5; anything above that is FTS-boosted.
+
+| Query        | Best   | Shown | Below | Verdict                                              |
+|--------------|--------|-------|-------|------------------------------------------------------|
+| `animal`     | 0.525  | 5     | 7     | bulldog, leopard, bear, coyote, highland cow         |
+| `anim`       | 0.488  | 6     | 6     | same set as `animal`, stemmer makes them equivalent  |
+| `anima`      | 0.243  | 0     | 12    | tsquery `anima` ≠ lexeme `anim` — tucked under tray  |
+| `wildlife`   | 0.532  | 5     | 7     | coyote, bear, leopard, tiger cub, pelican            |
+| `mountain`   | 0.696  | 8     | 4     | valleys, peaks, lakes — all mountain scenes          |
+| `coffee`     | 0.710  | 1     | 11    | just the macro beans — laptop-in-cafe correctly demoted to 0.27 |
+| `car`        | 0.240  | 0     | 12    | no FTS hits — leopard `carnivore` is gone (stemmer)  |
+| `night city` | 0.259  | 0     | 12    | vector-only candidates (Milan dusk, NYC) shown via tray |
+| `asdf`       | 0.223  | 0     | 12    | correctly tucked under tray                          |
+
+**Observations:**
+
+- `SCORE_FLOOR = 0.30` cleanly separates "real FTS match" (scores >0.45)
+  from "vector noise" (scores 0.20–0.27). The relative cutoff
+  (`best * MIN_SCORE_RATIO`) only kicks in inside the strong-match tier,
+  so `coffee` correctly returns one bullseye instead of dragging in the
+  laptop-in-cafe image.
+- Search-as-you-type has a quirk: `anim` matches because the lexeme is
+  `anim`, but `anima` doesn't because the stemmer treats it as a
+  different word. The 250ms debounce + AbortController + tray-fallback
+  UX (`Show 12 below threshold`) gives an honest "no high-confidence
+  match" experience instead of pretending.
+- `prefix_match=True` was tried and reverted: it appends `*` to query
+  terms, but agno passes the query through `websearch_to_tsquery`, which
+  doesn't honor `:*` / `*` operators — it's a silent no-op.
+
+**Endpoints:** unchanged surface — `/knowledge/content`,
+`/knowledge/search`, `/workflows/image-ingest/runs` all behave the same
+shape-wise. Just the underlying storage moved.

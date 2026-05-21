@@ -59,24 +59,31 @@
 
     <!-- Search view -->
     <section x-show="tab === 'search'">
-      <form @submit.prevent="runSearch()" class="relative mb-4">
-        <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
-          <i data-lucide="search" class="w-5 h-5"></i>
-        </span>
-        <input x-model="query" @input.debounce.250ms="runSearch()" type="search" autofocus
-               autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other"
-               placeholder="Try: a historic city at night, wildlife on the savanna, latte art ..."
-               class="w-full pl-12 pr-12 py-3 text-base rounded-lg border border-slate-300 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 transition-shadow" />
-        <span x-show="searching" class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
-          <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
-        </span>
+      <form @submit.prevent="runSearch()" class="flex gap-2 mb-4">
+        <div class="relative flex-1">
+          <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+            <i data-lucide="search" class="w-5 h-5"></i>
+          </span>
+          <input x-model="query" type="search" autofocus
+                 autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other"
+                 placeholder="Try: a historic city at night, wildlife on the savanna, latte art ..."
+                 class="w-full pl-12 pr-4 py-3 text-base rounded-lg border border-slate-300 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 transition-shadow" />
+        </div>
+        <button type="submit" :disabled="searching"
+                class="inline-flex items-center gap-2 px-5 py-3 text-sm font-medium rounded-lg bg-slate-900 text-white shadow-sm hover:bg-slate-700 disabled:bg-slate-400 disabled:cursor-not-allowed">
+          <i x-show="!searching" data-lucide="search" class="w-4 h-4"></i>
+          <i x-show="searching" data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>
+          <span x-text="searching ? 'Searching…' : 'Search'"></span>
+        </button>
       </form>
       <div class="flex items-center justify-between text-xs text-slate-500 mb-4 min-h-[1.25rem]">
         <p x-text="searchMeta"></p>
-        <button x-show="filteredOut.length" @click="showFiltered = !showFiltered"
+        <button x-show="filteredOut.length && searchResults.length > 0"
+                @click="showFiltered = !showFiltered"
                 class="inline-flex items-center gap-1 text-slate-500 hover:text-slate-900 underline-offset-4 hover:underline">
-          <span x-text="(showFiltered ? 'Hide' : 'Show') + ' ' + filteredOut.length + ' below threshold'"></span>
-          <i :data-lucide="showFiltered ? 'chevron-up' : 'chevron-down'" class="w-3.5 h-3.5"></i>
+          <span x-text="(showFiltered ? 'Hide' : 'Show') + ' ' + filteredOut.length + ' weaker match' + (filteredOut.length === 1 ? '' : 'es')"></span>
+          <i x-show="!showFiltered" data-lucide="chevron-down" class="w-3.5 h-3.5"></i>
+          <i x-show="showFiltered" data-lucide="chevron-up" class="w-3.5 h-3.5"></i>
         </button>
       </div>
 
@@ -114,7 +121,7 @@
             </div>
           </a>
         </template>
-        <div x-show="!searching && searchMeta && searchResults.length === 0"
+        <div x-show="!searching && searchMeta && searchResults.length === 0 && filteredOut.length === 0"
              class="col-span-full text-sm text-slate-500 py-12 text-center">
           No matches. Try a different query.
         </div>
@@ -122,7 +129,8 @@
 
       <!-- Below-threshold reveal -->
       <div x-show="showFiltered && filteredOut.length" x-transition class="mt-8 pt-6 border-t border-slate-200">
-        <p class="text-xs text-slate-500 mb-3" x-text="`Below the ${Math.round(MIN_SCORE_RATIO * 100)}% relative-score cutoff — lower-confidence matches.`"></p>
+        <p class="text-xs text-slate-500 mb-3"
+           x-text="searchResults.length === 0 ? 'No exact match — showing the closest vector-similarity candidates.' : 'Weaker matches — vector similarity only, no text-search overlap.'"></p>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 opacity-70">
           <template x-for="hit in filteredOut" :key="hit.url">
             <a :href="hit.url" @click="onCardClick($event, hit)" target="_blank" rel="noreferrer"
@@ -249,25 +257,21 @@
   </div>
 
   <script>
-    // Drop hits whose hybrid score is below this fraction of the best hit's
-    // score. Hybrid RRF gives a bimodal distribution when keyword matches
-    // exist (good hits ~2x the vector-only tail), so a relative cutoff cleanly
-    // separates them. When all scores cluster together (no keyword wins),
-    // nothing is filtered.
+    // PgVector's hybrid score = vector_score_weight * cosine_similarity +
+    // text_rank_weight * ts_rank. Defaults put a perfect vector hit at 0.5;
+    // a real FTS hit pushes scores past 0.5. Anything below ~0.30 is
+    // vector-only on a tangentially related image — noise for a literal
+    // query like "car" that has no FTS match.
+    const SCORE_FLOOR = 0.30;
+    // Within the "real match" tier, also drop hits below this fraction of
+    // the top score so a query with one bullseye doesn't drag in
+    // medium-confidence tail (e.g. "coffee" → coffee beans, drop everything
+    // else that scored mid-range).
     const MIN_SCORE_RATIO = 0.5;
-
-    // ChromaDb stringifies list metadata, so /knowledge/search hits come back
-    // with tags/subjects as JSON strings. /knowledge/content (SQLite) returns
-    // real arrays. Normalize both paths through this.
-    function asArray(v) {
-      if (Array.isArray(v)) return v;
-      if (typeof v !== 'string') return [];
-      try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; }
-      catch { return []; }
-    }
 
     function imageSearch() {
       return {
+        SCORE_FLOOR,
         MIN_SCORE_RATIO,
         tab: 'search',
         query: '',
@@ -290,6 +294,7 @@
         init() {
           this.refreshCounter();
           this.$nextTick(() => lucide.createIcons());
+          this.$watch('searching', () => this.$nextTick(() => lucide.createIcons()));
           this.$watch('showFiltered', () => this.$nextTick(() => lucide.createIcons()));
           this.$watch('activeItem', () => this.$nextTick(() => lucide.createIcons()));
         },
@@ -339,36 +344,68 @@
           this.searchMeta = `"${q}" — searching…`;
           const t0 = performance.now();
           try {
-            const r = await fetch('/knowledge/search', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ query: q, max_results: 12, search_type: 'hybrid' }),
-              signal,
-            });
-            const j = await r.json();
+            // Gemini's embedding endpoint flakes with a transient 503 every now
+            // and then; agno's pgvector adapter swallows the failure and returns
+            // []. Retry once with a brief backoff before giving up.
+            let j = await this._search(q, signal);
             if (signal.aborted) return;
+            if ((j.data || []).length === 0) {
+              await new Promise(r => setTimeout(r, 400));
+              if (signal.aborted) return;
+              j = await this._search(q, signal);
+              if (signal.aborted) return;
+            }
             const dt = Math.round(performance.now() - t0);
             const all = (j.data || []).map(d => ({
               url:          d.meta_data?.url,
               caption:      d.meta_data?.caption,
-              subjects:     asArray(d.meta_data?.subjects),
+              subjects:     d.meta_data?.subjects || [],
               scene:        d.meta_data?.scene,
               visual_style: d.meta_data?.visual_style,
-              tags:         asArray(d.meta_data?.tags),
-              score:        d.meta_data?.rrf_score,
+              tags:         d.meta_data?.tags || [],
+              score:        d.meta_data?.similarity_score,
             }));
             const best = Math.max(0, ...all.map(h => h.score || 0));
-            const cutoff = best * MIN_SCORE_RATIO;
-            this.searchResults = all.filter(h => h.score == null || h.score >= cutoff);
-            this.filteredOut = all.filter(h => h.score != null && h.score < cutoff);
-            const n = this.searchResults.length;
-            this.searchMeta = `"${q}" · ${n} result${n === 1 ? '' : 's'} in ${dt}ms`;
+            // No high-confidence match at all → tuck everything under
+            // "below threshold" instead of showing low-score vector noise.
+            // Otherwise apply the relative ratio against the best hit.
+            let primary, secondary;
+            if (best < SCORE_FLOOR) {
+              primary = [];
+              secondary = all;
+            } else {
+              const cutoff = Math.max(SCORE_FLOOR, best * MIN_SCORE_RATIO);
+              primary = all.filter(h => h.score == null || h.score >= cutoff);
+              secondary = all.filter(h => h.score != null && h.score < cutoff);
+            }
+            this.searchResults = primary;
+            this.filteredOut = secondary;
+            // Auto-reveal the below-threshold tier when there's nothing else
+            // to show — beats a bare "0 results" with a hidden tray.
+            if (primary.length === 0 && secondary.length > 0) this.showFiltered = true;
+            else if (primary.length > 0) this.showFiltered = false;
+            const n = primary.length;
+            if (n === 0 && secondary.length > 0) {
+              this.searchMeta = `"${q}" · no exact match · showing ${secondary.length} closest in ${dt}ms`;
+            } else {
+              this.searchMeta = `"${q}" · ${n} result${n === 1 ? '' : 's'} in ${dt}ms`;
+            }
           } catch (e) {
             if (e.name === 'AbortError') return;
             this.searchMeta = `Search failed: ${e.message}`;
           } finally {
             if (!signal.aborted) this.searching = false;
           }
+        },
+
+        async _search(q, signal) {
+          const r = await fetch('/knowledge/search', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ query: q, max_results: 12, search_type: 'hybrid' }),
+            signal,
+          });
+          return await r.json();
         },
 
         async loadGallery() {
@@ -380,10 +417,10 @@
             this.galleryItems = (j.data || []).map(c => ({
               url:          c.metadata?.url,
               caption:      c.metadata?.caption,
-              subjects:     asArray(c.metadata?.subjects),
+              subjects:     c.metadata?.subjects || [],
               scene:        c.metadata?.scene,
               visual_style: c.metadata?.visual_style,
-              tags:         asArray(c.metadata?.tags),
+              tags:         c.metadata?.tags || [],
             }));
             this.galleryMeta = `${j.meta.total_count} image${j.meta.total_count === 1 ? '' : 's'}`;
           } catch (e) {
