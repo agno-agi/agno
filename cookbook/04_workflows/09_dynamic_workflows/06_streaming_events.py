@@ -20,11 +20,11 @@ from agno.models.openai import OpenAIResponses
 from agno.run.agent import RunContentEvent
 from agno.run.workflow import StepSpawnedEvent
 from agno.tools.hackernews import HackerNewsTools
-from agno.workflow import DynamicWorkflowDriver, Workflow
+from agno.workflow import Workflow, WorkflowAgent
 
 
 def main() -> None:
-    driver = DynamicWorkflowDriver(
+    agent = WorkflowAgent(
         model=OpenAIResponses(id="gpt-5.4"),
         instructions="Produce a short HN briefing on the user's topic. 2-3 spawns is plenty.",
         allowed_tools=[HackerNewsTools()],
@@ -33,7 +33,7 @@ def main() -> None:
 
     workflow = Workflow(
         name="DynamicStreamingBriefing",
-        steps=driver,
+        agent=agent,
         stream_events=True,
     )
 
@@ -45,7 +45,9 @@ def main() -> None:
         stream_events=True,
     ):
         if isinstance(event, StepSpawnedEvent):
-            print(f"  [SPAWN {event.iteration}] role={event.role!r} tools={event.tool_names!r}")
+            print(
+                f"  [SPAWN {event.iteration}] role={event.role!r} tools={event.tool_names!r}"
+            )
         if isinstance(event, RunContentEvent):
             continue
         else:

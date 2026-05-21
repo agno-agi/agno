@@ -1,6 +1,6 @@
 """Dynamic Workflow - Python custom driver.
 
-Same `DynamicWorkflowDriver` as the basic example, but the orchestration logic is plain
+Same dynamic-mode `WorkflowAgent` as the basic example, but the orchestration logic is plain
 Python instead of an LLM. The driver still creates ephemeral specialist agents on demand
 (role, instructions, tools picked at spawn time) — the difference is who picks them.
 
@@ -14,7 +14,7 @@ Run:
 """
 
 from agno.models.openai import OpenAIResponses
-from agno.workflow import DynamicWorkflowDriver, Workflow
+from agno.workflow import Workflow, WorkflowAgent
 
 
 def my_python_driver(workflow_input: str, spawn) -> str:
@@ -49,7 +49,7 @@ def my_python_driver(workflow_input: str, spawn) -> str:
 
 
 def main() -> None:
-    driver = DynamicWorkflowDriver(
+    agent = WorkflowAgent(
         model=OpenAIResponses(id="gpt-5.4"),
         custom_driver=my_python_driver,
         max_steps=5,
@@ -58,7 +58,7 @@ def main() -> None:
     workflow = Workflow(
         name="DynamicResearchBriefing-PythonDriven",
         description="Python driver decides which specialist agents to spawn, in what order.",
-        steps=driver,
+        agent=agent,
     )
 
     workflow.print_response(

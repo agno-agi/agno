@@ -1,21 +1,25 @@
 # 04_workflows/09_dynamic_workflows
 
 Dynamic Workflows let a workflow **expand itself at runtime**. Instead of declaring a
-static list of steps, you hand the workflow a `DynamicWorkflowDriver`. The driver invents
+static list of steps, you hand the workflow a dynamic-mode `WorkflowAgent`. It invents
 new specialist agents on demand (role, instructions, tools, optional model tier), runs
 them, sees the result, and decides the next spawn — until the goal is met.
 
 This is the workflow-level mirror of the dynamic-subagents pattern: a `spawn_agent` tool
-that creates and runs an ephemeral agent, then returns a short summary back to the driver
-so its context stays clean across many spawns.
+that creates and runs an ephemeral agent, then returns a short summary back to the
+orchestrator so its context stays clean across many spawns.
+
+A `WorkflowAgent` becomes a dynamic driver (rather than the default "gate" that decides
+run-vs-answer over static steps) as soon as you set any spawn-policy arg — `allowed_tools`,
+`custom_driver`, `model_tiers`, or a non-default `max_steps`.
 
 ## DX
 
 ```python
-from agno.workflow import DynamicWorkflowDriver, Workflow
+from agno.workflow import Workflow, WorkflowAgent
 
-driver = DynamicWorkflowDriver(model=..., instructions=..., allowed_tools=[...])
-workflow = Workflow(name="...", steps=driver)
+agent = WorkflowAgent(model=..., instructions=..., allowed_tools=[...])
+workflow = Workflow(name="...", agent=agent)   # no steps — the agent IS the body
 
 # Pretty CLI output: streams spawn panels live and renders the trail at the end.
 workflow.print_response(input="...", stream=True, stream_events=True)
@@ -27,7 +31,7 @@ for s in result.executed_steps:
     print(s.role, s.output_content[:80])
 ```
 
-The driver populates two artifacts on the run output:
+The agent populates two artifacts on the run output:
 - `executed_steps`: ordered list of `ExecutedStepRecord` (iteration, role, instructions,
   input, output preview, tools, model tier) — the canonical "what the workflow did" trail.
 - `step_results`: same trail re-expressed as `StepOutput` for compatibility with the rest

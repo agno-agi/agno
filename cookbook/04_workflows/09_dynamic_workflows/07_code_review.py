@@ -1,6 +1,6 @@
 """Dynamic Workflow - Claude-Code-style code review.
 
-Demonstrates a real "agentic coding" flow on top of DynamicWorkflowDriver. The driver
+Demonstrates a real "agentic coding" flow on top of a dynamic-mode WorkflowAgent. The driver
 LLM is given two tools its spawned specialists can use:
 
 - `Workspace`: read_file / edit_file / write_file / list_files / search_content over
@@ -26,7 +26,7 @@ from pathlib import Path
 from agno.models.openai import OpenAIResponses
 from agno.tools.exa import ExaTools
 from agno.tools.workspace import Workspace
-from agno.workflow import DynamicWorkflowDriver, Workflow
+from agno.workflow import Workflow, WorkflowAgent
 
 # The project root the workspace tool is scoped to. The agent can't touch anything
 # above this — passing `root=` to Workspace is the sandboxing rail.
@@ -46,7 +46,7 @@ def main() -> None:
         allowed=["read", "edit", "write", "list", "search"],
     )
 
-    driver = DynamicWorkflowDriver(
+    agent = WorkflowAgent(
         model=OpenAIResponses(id="gpt-5.4"),
         instructions=(
             "You are an agentic code-review orchestrator. The user wants you to audit a "
@@ -78,7 +78,7 @@ def main() -> None:
     workflow = Workflow(
         name="DynamicCodeReview",
         description="Driver invents code-reader / analyst / commenter / report-writer specialists.",
-        steps=driver,
+        agent=agent,
     )
 
     user_request = (

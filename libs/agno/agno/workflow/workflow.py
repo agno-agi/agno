@@ -1841,8 +1841,23 @@ class Workflow:
             files=shared_files or [],
         )
 
+    def _dynamic_driver(self):
+        """Return the dynamic spawn driver for this workflow, or None.
+
+        A dynamic workflow has its body driven by a spawn engine rather than a static
+        steps list. Two ways to attach it:
+        - `Workflow(agent=WorkflowAgent(allowed_tools=..., max_steps=...))` (dynamic mode)
+        The returned object exposes __call__ / stream_call / as_async_workflow_function.
+        """
+        agent = getattr(self, "agent", None)
+        if agent is not None and getattr(agent, "is_dynamic", False):
+            return agent
+        return None
+
     def _get_step_count(self) -> int:
         """Get the number of steps in the workflow"""
+        if self._dynamic_driver() is not None:
+            return 1  # Dynamic driver counts as one logical step
         if self.steps is None:
             return 0
         elif callable(self.steps):
@@ -1954,6 +1969,36 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
+
+        dynamic_driver = self._dynamic_driver()
+
+        if dynamic_driver is not None:
+            # Dynamic workflow body: the driver (a dynamic-mode WorkflowAgent) runs its
+            # spawn engine. Its __call__ has the same (workflow, execution_input, **kwargs)
+            # contract as a callable steps function.
+            raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+            workflow_run_response.content = dynamic_driver(
+                self,
+                execution_input,
+                workflow_run_response=workflow_run_response,
+                run_context=run_context,
+                workflow_session=session,
+                background_tasks=background_tasks,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                **kwargs,
+            )
+            workflow_run_response.status = RunStatus.completed
+
+            if workflow_run_response.metrics:
+                workflow_run_response.metrics.stop_timer()
+            self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+            session.upsert_run(run=workflow_run_response)
+            self.save_session(session=session)
+            cleanup_run(workflow_run_response.run_id)  # type: ignore
+            if self.telemetry:
+                self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+            return workflow_run_response
 
         if callable(self.steps):
             if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
@@ -2263,30 +2308,29 @@ class Workflow:
         )
         yield self._handle_event(workflow_started_event, workflow_run_response)
 
-        if callable(self.steps):
-            # DynamicWorkflowDriver: prefer the dedicated streaming generator so per-spawn
-            # events (StepSpawned, StepStarted/Completed, agent RunContent, etc.) flow
-            # through the workflow's stream in real time.
-            from agno.workflow.dynamic import DynamicWorkflowDriver
+        dynamic_driver = self._dynamic_driver()
+        if dynamic_driver is not None:
+            # Dynamic workflow body: stream per-spawn events (StepSpawned,
+            # StepStarted/Completed, agent RunContent, etc.) in real time.
+            for event in dynamic_driver.stream_call(
+                self,
+                execution_input,
+                stream_events=stream_events,
+                stream_executor_events=self.stream_executor_events,
+                workflow_run_response=workflow_run_response,
+                run_context=run_context,
+                workflow_session=session,
+                background_tasks=background_tasks,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                **kwargs,
+            ):
+                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                yield self._handle_event(event, workflow_run_response)
+            workflow_run_response.status = RunStatus.completed
 
-            if isinstance(self.steps, DynamicWorkflowDriver):
-                for event in self.steps.stream_call(
-                    self,
-                    execution_input,
-                    stream_events=stream_events,
-                    stream_executor_events=self.stream_executor_events,
-                    workflow_run_response=workflow_run_response,
-                    run_context=run_context,
-                    workflow_session=session,
-                    background_tasks=background_tasks,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    **kwargs,
-                ):
-                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    yield self._handle_event(event, workflow_run_response)
-                workflow_run_response.status = RunStatus.completed
-            elif iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
+        elif callable(self.steps):
+            if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
                 raise ValueError("Cannot use async function with synchronous execution")
             elif isgeneratorfunction(self.steps):
                 content = ""
@@ -2873,6 +2917,37 @@ class Workflow:
 
         workflow_run_response.status = RunStatus.running
 
+        dynamic_driver = self._dynamic_driver()
+        if dynamic_driver is not None:
+            # Dynamic workflow body, async: route spawns through Step.aexecute.
+            async_fn = dynamic_driver.as_async_workflow_function()
+            workflow_run_response.content = await async_fn(
+                self,
+                execution_input,
+                workflow_run_response=workflow_run_response,
+                run_context=run_context,
+                workflow_session=workflow_session,
+                background_tasks=background_tasks,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                **kwargs,
+            )
+            workflow_run_response.status = RunStatus.completed
+            if workflow_run_response.metrics:
+                workflow_run_response.metrics.stop_timer()
+            self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
+            workflow_session.upsert_run(run=workflow_run_response)
+            if self._has_async_db():
+                await self.asave_session(session=workflow_session)
+            else:
+                self.save_session(session=workflow_session)
+            cleanup_run(workflow_run_response.run_id)  # type: ignore
+            if self.telemetry:
+                self._log_workflow_telemetry(
+                    session_id=workflow_session.session_id, run_id=workflow_run_response.run_id
+                )
+            return workflow_run_response
+
         if callable(self.steps):
             # Execute the workflow with the custom executor
             content = ""
@@ -2918,7 +2993,7 @@ class Workflow:
             # Persist the run for callable-steps workflows too (mirrors the static path's finally block)
             if workflow_run_response.metrics:
                 workflow_run_response.metrics.stop_timer()
-            self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
+            self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
             workflow_session.upsert_run(run=workflow_run_response)
             if self._has_async_db():
                 await self.asave_session(session=workflow_session)
@@ -3212,30 +3287,30 @@ class Workflow:
         )
         yield self._handle_event(workflow_started_event, workflow_run_response, websocket_handler=websocket_handler)
 
-        if callable(self.steps):
-            # DynamicWorkflowDriver: route to stream_call so per-spawn events
-            # (StepSpawned, StepStarted/Completed, agent RunContent, etc.) flow
+        dynamic_driver = self._dynamic_driver()
+        if dynamic_driver is not None:
+            # Dynamic workflow body, async stream: route to stream_call so per-spawn
+            # events (StepSpawned, StepStarted/Completed, agent RunContent, etc.) flow
             # through the workflow's async stream in real time.
-            from agno.workflow.dynamic import DynamicWorkflowDriver
+            for event in dynamic_driver.stream_call(
+                self,
+                execution_input,
+                stream_events=stream_events,
+                stream_executor_events=self.stream_executor_events,
+                workflow_run_response=workflow_run_response,
+                run_context=run_context,
+                workflow_session=workflow_session,
+                background_tasks=background_tasks,
+                add_dependencies_to_context=add_dependencies_to_context,
+                add_session_state_to_context=add_session_state_to_context,
+                **kwargs,
+            ):
+                await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+                yield self._handle_event(event, workflow_run_response)
+            workflow_run_response.status = RunStatus.completed
 
-            if isinstance(self.steps, DynamicWorkflowDriver):
-                for event in self.steps.stream_call(
-                    self,
-                    execution_input,
-                    stream_events=stream_events,
-                    stream_executor_events=self.stream_executor_events,
-                    workflow_run_response=workflow_run_response,
-                    run_context=run_context,
-                    workflow_session=workflow_session,
-                    background_tasks=background_tasks,
-                    add_dependencies_to_context=add_dependencies_to_context,
-                    add_session_state_to_context=add_session_state_to_context,
-                    **kwargs,
-                ):
-                    await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
-                    yield self._handle_event(event, workflow_run_response)
-                workflow_run_response.status = RunStatus.completed
-            elif iscoroutinefunction(self.steps):  # type: ignore
+        elif callable(self.steps):
+            if iscoroutinefunction(self.steps):  # type: ignore
                 workflow_run_response.content = await self._acall_custom_function(self.steps, execution_input, **kwargs)
                 workflow_run_response.status = RunStatus.completed
             elif isgeneratorfunction(self.steps):
@@ -8760,8 +8835,12 @@ class Workflow:
             metadata=resolved["metadata"],
         )
 
-        # Execute workflow agent if configured
-        if self.agent is not None:
+        # Execute workflow agent in GATE mode if configured (agent decides whether to
+        # run the workflow's static steps or answer from history). Dynamic-mode
+        # WorkflowAgents are NOT gates — they ARE the workflow body, so they fall
+        # through to the regular _execute / _execute_stream path below, which detects
+        # the dynamic agent and runs its spawn engine.
+        if self.agent is not None and not getattr(self.agent, "is_dynamic", False):
             return self._execute_workflow_agent(
                 user_input=input,  # type: ignore
                 session=workflow_session,
@@ -9027,7 +9106,9 @@ class Workflow:
 
         self.update_agents_and_teams_session_info()
 
-        if self.agent is not None:
+        # Gate-mode agent only; dynamic-mode WorkflowAgents fall through to the regular
+        # _aexecute / _aexecute_stream path which detects and runs the spawn engine.
+        if self.agent is not None and not getattr(self.agent, "is_dynamic", False):
             return self._aexecute_workflow_agent(  # type: ignore
                 user_input=input,  # type: ignore
                 execution_input=inputs,

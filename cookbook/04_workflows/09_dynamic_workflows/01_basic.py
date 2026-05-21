@@ -1,6 +1,6 @@
 """Dynamic Workflow - Basic (LLM-driven).
 
-The simplest dynamic workflow: hand a `DynamicWorkflowDriver` to `Workflow(steps=...)`. The
+The simplest dynamic workflow: hand a dynamic-mode `WorkflowAgent` to `Workflow(agent=...)`. The
 driver is an LLM agent with one tool, `spawn_agent`, which invents a fresh specialist agent
 (role, instructions, tools) on each call and runs it. The driver keeps spawning until it has
 enough information, then produces the final response.
@@ -17,11 +17,11 @@ Run:
 
 from agno.models.openai import OpenAIResponses
 from agno.tools.hackernews import HackerNewsTools
-from agno.workflow import DynamicWorkflowDriver, Workflow
+from agno.workflow import Workflow, WorkflowAgent
 
 
 def main() -> None:
-    driver = DynamicWorkflowDriver(
+    agent = WorkflowAgent(
         model=OpenAIResponses(id="gpt-5.4"),
         instructions=(
             "Produce a briefing on what HackerNews is currently saying about the user's topic. "
@@ -35,7 +35,7 @@ def main() -> None:
     workflow = Workflow(
         name="DynamicHackerNewsBriefing",
         description="The driver invents its own specialist agents per run.",
-        steps=driver,
+        agent=agent,
     )
 
     workflow.print_response(

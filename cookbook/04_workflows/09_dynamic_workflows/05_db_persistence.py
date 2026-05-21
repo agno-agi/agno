@@ -18,13 +18,13 @@ Run:
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from agno.tools.hackernews import HackerNewsTools
-from agno.workflow import DynamicWorkflowDriver, Workflow
+from agno.workflow import Workflow, WorkflowAgent
 
 DB_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 
 def main() -> None:
-    driver = DynamicWorkflowDriver(
+    agent = WorkflowAgent(
         model=OpenAIResponses(id="gpt-5.4"),
         instructions="Produce a short HN briefing on the user's topic. 1-2 spawns is plenty.",
         allowed_tools=[HackerNewsTools()],
@@ -33,7 +33,7 @@ def main() -> None:
 
     workflow = Workflow(
         name="DynamicPersistedBriefing",
-        steps=driver,
+        agent=agent,
         db=PostgresDb(session_table="workflow_session", db_url=DB_URL),
     )
 

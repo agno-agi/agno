@@ -1,23 +1,26 @@
-"""DynamicWorkflowDriver - workflow-level mirror of dynamic subagents (PR #7387).
+"""_DynamicSpawnEngine - the runtime engine behind a dynamic-mode WorkflowAgent.
 
-A DynamicWorkflowDriver lets a workflow expand itself at runtime: instead of declaring a
-static list of steps, the user hands a driver to `Workflow(steps=driver)`. The driver's
-underlying LLM invents new agents on demand by calling spawn tools (currently:
+A dynamic workflow expands itself at runtime: instead of declaring a static list of
+steps, the user hands a dynamic-mode `WorkflowAgent` to `Workflow(agent=...)`. The
+agent's LLM invents new specialist agents on demand by calling spawn tools (currently:
 `spawn_agent`). Each spawn creates an ephemeral Agent with the role/instructions/tools
 the LLM chose, runs it through Step.execute(_stream), and returns a short summary back
-to the driver so its context stays clean across many spawns.
+so the orchestrator's context stays clean across many spawns.
+
+This module holds the engine (`_DynamicSpawnEngine`); `WorkflowAgent` composes one when
+its spawn-policy fields are set and delegates __call__ / stream_call /
+as_async_workflow_function to it. The engine is NOT public — use WorkflowAgent.
 
 The output of `Workflow.run(...)` carries:
-- `content`: the driver's final response after all spawns
+- `content`: the orchestrator's final response after all spawns
 - `executed_steps`: the canonical leaf trail (one ExecutedStepRecord per agent spawn,
   with parent_id for spawns nested inside composites)
 - `step_results`: the same trail re-expressed as StepOutput objects in the static
-  workflow shape — composite spawns (Condition/Loop/Parallel/Router, v0.1+) nest
-  their children under `StepOutput.steps`
+  workflow shape — composite spawns (Loop/Parallel/Router, v0.1+) nest their children
+  under `StepOutput.steps`
 - `step_executor_runs`: full RunOutput per spawned agent when store_executor_outputs=True
 
-Internals (this file is thin): each spawn type is implemented as a _SpawnHandler in
-agno.workflow.dynamic_handlers. The driver wires the LLM-facing tools and delegates.
+Each spawn type is implemented as a _SpawnHandler in agno.workflow.dynamic_handlers.
 """
 
 from __future__ import annotations
@@ -67,20 +70,12 @@ def _max_steps_msg(max_steps: int) -> str:
     )
 
 
-class DynamicWorkflowDriver:
-    """Agent-driven dynamic workflow expansion.
+class _DynamicSpawnEngine:
+    """Runtime engine behind a dynamic-mode WorkflowAgent. Not public.
 
-    Two ways to drive expansion, same `steps=driver` DX:
-
-    1. **LLM-driven (default).** The driver runs as an LLM agent with one tool,
-       `spawn_agent`. Each spawn invents a fresh specialist agent and runs it.
-       The driver iterates until it produces a final response or `max_steps` is hit.
-
-           driver = DynamicWorkflowDriver(model=..., instructions="...", allowed_tools=[...])
-           wf = Workflow(name="...", steps=driver)
-
-    2. **Python-driven.** Pass a `custom_driver` callable `(workflow_input, spawn) -> str`.
-       Same spawn semantics, called as Python instead of via the LLM.
+    Holds spawn policy + the per-run plumbing and exposes the three workflow entry
+    shapes (__call__, stream_call, as_async_workflow_function). WorkflowAgent composes
+    one and delegates to it.
     """
 
     def __init__(
@@ -97,15 +92,9 @@ class DynamicWorkflowDriver:
         step_summary_max_chars: int = 1200,
         show_step_output: bool = False,
         log_step_runs: bool = True,
-        name: str = "dynamic_workflow_driver",
+        name: str = "workflow_agent",
         custom_driver: Optional[Callable[[str, Callable], str]] = None,
     ):
-        if custom_driver is None and model is None:
-            raise ValueError(
-                "DynamicWorkflowDriver requires either `model=` (LLM-driven mode) "
-                "or `custom_driver=` (Python-driven mode)."
-            )
-
         self.model = model
         self.user_instructions = instructions
         self.allowed_tools = allowed_tools
@@ -196,9 +185,7 @@ class DynamicWorkflowDriver:
             else None
         )
         num_history_runs = (
-            workflow.num_history_runs
-            if workflow is not None and hasattr(workflow, "num_history_runs")
-            else 3
+            workflow.num_history_runs if workflow is not None and hasattr(workflow, "num_history_runs") else 3
         )
 
         ctx = _RunContext(
@@ -239,9 +226,7 @@ class DynamicWorkflowDriver:
 
     # ---- spawn tools (LLM-facing) ------------------------------------------
 
-    def _build_spawn_agent_tool(
-        self, ctx: _RunContext, trail: _TrailBuilder, stream: _StreamBridge
-    ) -> Callable:
+    def _build_spawn_agent_tool(self, ctx: _RunContext, trail: _TrailBuilder, stream: _StreamBridge) -> Callable:
         if self.allow_model_tier_selection and self.model_tiers:
 
             def spawn_agent(
@@ -267,23 +252,29 @@ class DynamicWorkflowDriver:
                 """
                 try:
                     node = self._agent_handler.spawn(
-                        ctx, trail, stream,
-                        role=role, instructions=instructions, input=input,
-                        tools=tools, model_tier=model_tier, expected_output=expected_output,
+                        ctx,
+                        trail,
+                        stream,
+                        role=role,
+                        instructions=instructions,
+                        input=input,
+                        tools=tools,
+                        model_tier=model_tier,
+                        expected_output=expected_output,
                     )
                 except _MaxStepsExceededError as e:
                     msg = _max_steps_msg(e.max_steps)
-                    log_warning(f"DynamicWorkflowDriver: {msg}")
+                    log_warning(f"WorkflowAgent: {msg}")
                     return msg
                 except Exception as e:
-                    log_warning(f"DynamicWorkflowDriver spawn {role!r} failed: {e}")
+                    log_warning(f"WorkflowAgent spawn {role!r} failed: {e}")
                     return f"Error running spawned agent {role!r}: {e}"
 
                 return self._agent_handler.summary_for_tool_result(node.output)
 
             return spawn_agent
 
-        def spawn_agent(
+        def spawn_agent(  # type: ignore[no-redef]
             role: str,
             instructions: str,
             input: str,
@@ -304,25 +295,28 @@ class DynamicWorkflowDriver:
             """
             try:
                 node = self._agent_handler.spawn(
-                    ctx, trail, stream,
-                    role=role, instructions=instructions, input=input,
-                    tools=tools, expected_output=expected_output,
+                    ctx,
+                    trail,
+                    stream,
+                    role=role,
+                    instructions=instructions,
+                    input=input,
+                    tools=tools,
+                    expected_output=expected_output,
                 )
             except _MaxStepsExceededError as e:
                 msg = _max_steps_msg(e.max_steps)
-                log_warning(f"DynamicWorkflowDriver: {msg}")
+                log_warning(f"WorkflowAgent: {msg}")
                 return msg
             except Exception as e:
-                log_warning(f"DynamicWorkflowDriver spawn {role!r} failed: {e}")
+                log_warning(f"WorkflowAgent spawn {role!r} failed: {e}")
                 return f"Error running spawned agent {role!r}: {e}"
 
             return self._agent_handler.summary_for_tool_result(node.output)
 
         return spawn_agent
 
-    def _build_spawn_agent_tool_async(
-        self, ctx: _RunContext, trail: _TrailBuilder, stream: _StreamBridge
-    ) -> Callable:
+    def _build_spawn_agent_tool_async(self, ctx: _RunContext, trail: _TrailBuilder, stream: _StreamBridge) -> Callable:
         if self.allow_model_tier_selection and self.model_tiers:
 
             async def spawn_agent(
@@ -336,23 +330,29 @@ class DynamicWorkflowDriver:
                 """Invent and run a new specialist agent (async)."""
                 try:
                     node = await self._agent_handler.aspawn(
-                        ctx, trail, stream,
-                        role=role, instructions=instructions, input=input,
-                        tools=tools, model_tier=model_tier, expected_output=expected_output,
+                        ctx,
+                        trail,
+                        stream,
+                        role=role,
+                        instructions=instructions,
+                        input=input,
+                        tools=tools,
+                        model_tier=model_tier,
+                        expected_output=expected_output,
                     )
                 except _MaxStepsExceededError as e:
                     msg = _max_steps_msg(e.max_steps)
-                    log_warning(f"DynamicWorkflowDriver: {msg}")
+                    log_warning(f"WorkflowAgent: {msg}")
                     return msg
                 except Exception as e:
-                    log_warning(f"DynamicWorkflowDriver spawn {role!r} failed: {e}")
+                    log_warning(f"WorkflowAgent spawn {role!r} failed: {e}")
                     return f"Error running spawned agent {role!r}: {e}"
 
                 return self._agent_handler.summary_for_tool_result(node.output)
 
             return spawn_agent
 
-        async def spawn_agent(
+        async def spawn_agent(  # type: ignore[no-redef]
             role: str,
             instructions: str,
             input: str,
@@ -362,16 +362,21 @@ class DynamicWorkflowDriver:
             """Invent and run a new specialist agent (async)."""
             try:
                 node = await self._agent_handler.aspawn(
-                    ctx, trail, stream,
-                    role=role, instructions=instructions, input=input,
-                    tools=tools, expected_output=expected_output,
+                    ctx,
+                    trail,
+                    stream,
+                    role=role,
+                    instructions=instructions,
+                    input=input,
+                    tools=tools,
+                    expected_output=expected_output,
                 )
             except _MaxStepsExceededError as e:
                 msg = _max_steps_msg(e.max_steps)
-                log_warning(f"DynamicWorkflowDriver: {msg}")
+                log_warning(f"WorkflowAgent: {msg}")
                 return msg
             except Exception as e:
-                log_warning(f"DynamicWorkflowDriver spawn {role!r} failed: {e}")
+                log_warning(f"WorkflowAgent spawn {role!r} failed: {e}")
                 return f"Error running spawned agent {role!r}: {e}"
 
             return self._agent_handler.summary_for_tool_result(node.output)
@@ -380,9 +385,7 @@ class DynamicWorkflowDriver:
 
     # ---- python-driver mode (the user-callable spawn) ----------------------
 
-    def _build_python_spawn(
-        self, ctx: _RunContext, trail: _TrailBuilder, stream: _StreamBridge
-    ) -> Callable:
+    def _build_python_spawn(self, ctx: _RunContext, trail: _TrailBuilder, stream: _StreamBridge) -> Callable:
         """Build the spawn callable a custom_driver function receives.
 
         Matches the LLM-facing tool's signature but raises on max_steps rather than
@@ -398,9 +401,15 @@ class DynamicWorkflowDriver:
             expected_output: Optional[str] = None,
         ) -> str:
             node = self._agent_handler.spawn(
-                ctx, trail, stream,
-                role=role, instructions=instructions, input=input,
-                tools=tools, model_tier=model_tier, expected_output=expected_output,
+                ctx,
+                trail,
+                stream,
+                role=role,
+                instructions=instructions,
+                input=input,
+                tools=tools,
+                model_tier=model_tier,
+                expected_output=expected_output,
             )
             content = node.output.content if node.output is not None else ""
             return content if isinstance(content, str) else (str(content) if content is not None else "")
@@ -539,6 +548,17 @@ class DynamicWorkflowDriver:
             stream = _StreamBridge()
             initial_input = self._input_string(execution_input)
 
+            if self.custom_driver is not None:
+                # Python custom driver is sync; spawns run via the sync Step.execute path.
+                spawn = self._build_python_spawn(ctx, trail, stream)
+                try:
+                    result_content = self.custom_driver(initial_input, spawn)
+                finally:
+                    self._finalize(ctx, trail)
+                if result_content is None:
+                    return ""
+                return result_content if isinstance(result_content, str) else str(result_content)
+
             spawn_tool = self._build_spawn_agent_tool_async(ctx, trail, stream)
             driver_agent = Agent(
                 name=self.name,
@@ -557,5 +577,5 @@ class DynamicWorkflowDriver:
             content = result.content if result else ""
             return content if isinstance(content, str) else (str(content) if content is not None else "")
 
-        _driver_fn.__name__ = f"dynamic_workflow_driver_async[{self.name}]"
+        _driver_fn.__name__ = f"workflow_agent_async[{self.name}]"
         return _driver_fn

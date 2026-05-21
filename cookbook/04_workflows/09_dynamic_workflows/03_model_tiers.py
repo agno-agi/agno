@@ -16,11 +16,11 @@ Run:
 
 from agno.models.openai import OpenAIResponses
 from agno.tools.hackernews import HackerNewsTools
-from agno.workflow import DynamicWorkflowDriver, Workflow
+from agno.workflow import Workflow, WorkflowAgent
 
 
 def main() -> None:
-    driver = DynamicWorkflowDriver(
+    agent = WorkflowAgent(
         model=OpenAIResponses(id="gpt-5.4"),
         instructions=(
             "Produce a briefing on the user's topic from HackerNews. "
@@ -43,7 +43,7 @@ def main() -> None:
 
     workflow = Workflow(
         name="DynamicTieredBriefing",
-        steps=driver,
+        agent=agent,
     )
 
     workflow.print_response(

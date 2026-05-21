@@ -18,11 +18,11 @@ from agno.models.openai import OpenAIResponses
 from agno.tools.arxiv import ArxivTools
 from agno.tools.calculator import CalculatorTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.workflow import DynamicWorkflowDriver, Workflow
+from agno.workflow import Workflow, WorkflowAgent
 
 
 def main() -> None:
-    driver = DynamicWorkflowDriver(
+    agent = WorkflowAgent(
         model=OpenAIResponses(id="gpt-5.4"),
         instructions=(
             "Brief the user on their topic. Spawn specialists with focused tool access: "
@@ -40,7 +40,7 @@ def main() -> None:
 
     workflow = Workflow(
         name="DynamicMixedSourceBriefing",
-        steps=driver,
+        agent=agent,
     )
 
     workflow.print_response(

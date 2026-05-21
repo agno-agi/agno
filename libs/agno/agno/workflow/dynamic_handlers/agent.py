@@ -129,10 +129,18 @@ class _AgentSpawnHandler(_SpawnHandler):
         the spawned agent's StepOutput.
         """
         return self._spawn_impl(
-            ctx, trail, stream,
-            role=role, instructions=instructions, input=input,
-            tools=tools, model_tier=model_tier, expected_output=expected_output,
-            parent_id=parent_id, as_child=as_child, is_async=False,
+            ctx,
+            trail,
+            stream,
+            role=role,
+            instructions=instructions,
+            input=input,
+            tools=tools,
+            model_tier=model_tier,
+            expected_output=expected_output,
+            parent_id=parent_id,
+            as_child=as_child,
+            is_async=False,
         )
 
     async def aspawn(
@@ -152,10 +160,17 @@ class _AgentSpawnHandler(_SpawnHandler):
     ) -> _TrailNode:
         """Async agent spawn — same as `spawn` but routes through Step.aexecute."""
         return await self._aspawn_impl(
-            ctx, trail, stream,
-            role=role, instructions=instructions, input=input,
-            tools=tools, model_tier=model_tier, expected_output=expected_output,
-            parent_id=parent_id, as_child=as_child,
+            ctx,
+            trail,
+            stream,
+            role=role,
+            instructions=instructions,
+            input=input,
+            tools=tools,
+            model_tier=model_tier,
+            expected_output=expected_output,
+            parent_id=parent_id,
+            as_child=as_child,
         )
 
     # ---- shared internals ---------------------------------------------------
@@ -169,6 +184,7 @@ class _AgentSpawnHandler(_SpawnHandler):
             return self.model
         try:
             from agno.models.utils import get_model
+
             return get_model(model_id)  # type: ignore[return-value]
         except Exception as e:
             log_warning(f"Failed to resolve model_tier {requested_tier!r}: {e}; falling back to driver model")
@@ -231,6 +247,7 @@ class _AgentSpawnHandler(_SpawnHandler):
     ) -> None:
         try:
             from agno.run.workflow import StepSpawnedEvent
+
             wrr = ctx.workflow_run_response
             event = StepSpawnedEvent(
                 iteration=iteration,
@@ -341,14 +358,18 @@ class _AgentSpawnHandler(_SpawnHandler):
 
         if self.log_step_runs:
             log_info(
-                f"DynamicWorkflowDriver spawning [{iteration}] role={role!r} "
-                f"tools={resolved_tool_names} tier={model_tier}"
+                f"WorkflowAgent spawning [{iteration}] role={role!r} tools={resolved_tool_names} tier={model_tier}"
             )
 
         self._emit_spawned_event(
-            ctx, stream,
-            iteration=iteration, role=role, instructions=instructions, input=input,
-            tools=resolved_tool_names, model_tier=model_tier,
+            ctx,
+            stream,
+            iteration=iteration,
+            role=role,
+            instructions=instructions,
+            input=input,
+            tools=resolved_tool_names,
+            model_tier=model_tier,
         )
 
         spawn_input_text = input if not expected_output else f"{input}\n\nExpected output: {expected_output}"
@@ -359,6 +380,7 @@ class _AgentSpawnHandler(_SpawnHandler):
 
         if stream.active:
             from agno.workflow.types import StepOutput as _StepOutput
+
             step_output: Optional["StepOutput"] = None
             for ev in step.execute_stream(
                 step_input,
@@ -404,11 +426,18 @@ class _AgentSpawnHandler(_SpawnHandler):
             print("--- end ---")
 
         return self._make_record_and_attach(
-            ctx, trail,
-            iteration=iteration, role=role, instructions=instructions, input=input,
-            step_output=step_output, step_id=step.step_id,
-            resolved_tool_names=resolved_tool_names, model_tier=model_tier,
-            parent_id=parent_id, as_child=as_child,
+            ctx,
+            trail,
+            iteration=iteration,
+            role=role,
+            instructions=instructions,
+            input=input,
+            step_output=step_output,
+            step_id=step.step_id,
+            resolved_tool_names=resolved_tool_names,
+            model_tier=model_tier,
+            parent_id=parent_id,
+            as_child=as_child,
         )
 
     async def _aspawn_impl(
@@ -436,14 +465,19 @@ class _AgentSpawnHandler(_SpawnHandler):
 
         if self.log_step_runs:
             log_info(
-                f"DynamicWorkflowDriver aspawning [{iteration}] role={role!r} "
+                f"WorkflowAgent spawning (async) [{iteration}] role={role!r} "
                 f"tools={resolved_tool_names} tier={model_tier}"
             )
 
         self._emit_spawned_event(
-            ctx, stream,
-            iteration=iteration, role=role, instructions=instructions, input=input,
-            tools=resolved_tool_names, model_tier=model_tier,
+            ctx,
+            stream,
+            iteration=iteration,
+            role=role,
+            instructions=instructions,
+            input=input,
+            tools=resolved_tool_names,
+            model_tier=model_tier,
         )
 
         spawn_input_text = input if not expected_output else f"{input}\n\nExpected output: {expected_output}"
@@ -473,16 +507,23 @@ class _AgentSpawnHandler(_SpawnHandler):
             print("--- end ---")
 
         return self._make_record_and_attach(
-            ctx, trail,
-            iteration=iteration, role=role, instructions=instructions, input=input,
-            step_output=step_output, step_id=step.step_id,
-            resolved_tool_names=resolved_tool_names, model_tier=model_tier,
-            parent_id=parent_id, as_child=as_child,
+            ctx,
+            trail,
+            iteration=iteration,
+            role=role,
+            instructions=instructions,
+            input=input,
+            step_output=step_output,
+            step_id=step.step_id,
+            resolved_tool_names=resolved_tool_names,
+            model_tier=model_tier,
+            parent_id=parent_id,
+            as_child=as_child,
         )
 
     # ---- summary helper for tool-result returns -----------------------------
 
-    def summary_for_tool_result(self, step_output: "StepOutput") -> str:
+    def summary_for_tool_result(self, step_output: Optional["StepOutput"]) -> str:
         content = step_output.content if step_output is not None else ""
         content_str = content if isinstance(content, str) else (str(content) if content is not None else "")
         return _summarize_output(content_str, self.step_summary_max_chars)
