@@ -438,6 +438,13 @@ def _collect_all_approval_tools(run_response: Any) -> List[Any]:
     return result
 
 
+def _attach_resolved_approval(run_response: Any, approval: Dict[str, Any]) -> None:
+    """Expose the resolved approval record to post-hooks via run_response.metadata["approval"]."""
+    if run_response.metadata is None:
+        run_response.metadata = {}
+    run_response.metadata["approval"] = approval
+
+
 def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any) -> None:
     """Gate: if any tool has approval_type='required', verify the approval is resolved before continuing.
 
@@ -472,6 +479,8 @@ def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any)
     resolution_data = approval.get("resolution_data")
     _apply_approval_to_tools(all_approval_tools, status, resolution_data)
 
+    _attach_resolved_approval(run_response, approval)
+
 
 async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any) -> None:
     """Async variant of check_and_apply_approval_resolution."""
@@ -500,6 +509,8 @@ async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_respons
 
     resolution_data = approval.get("resolution_data")
     _apply_approval_to_tools(all_approval_tools, status, resolution_data)
+
+    _attach_resolved_approval(run_response, approval)
 
 
 async def acreate_audit_approval(
