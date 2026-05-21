@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-import warnings
 from collections import deque
 from typing import (
     TYPE_CHECKING,
@@ -40,7 +39,7 @@ from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.metrics import RunMetrics, merge_background_metrics
-from agno.models.response import ModelResponse, ToolExecution
+from agno.models.response import ModelResponse
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
     RunInput,
@@ -2816,24 +2815,11 @@ def arun_dispatch(  # type: ignore
         )
 
 
-def _sync_requirements_with_tools(run_response: RunOutput, updated_tools: List[Any]) -> None:
-    """Sync requirements to reference the new tool objects so is_resolved()
-    checks operate on the same instances that handle_tool_call_updates modifies.
-    """
-    if run_response.requirements:
-        updated_tools_map = {t.tool_call_id: t for t in updated_tools if t.tool_call_id}
-
-        for req in run_response.requirements:
-            if req.tool_execution and req.tool_execution.tool_call_id in updated_tools_map:
-                req.tool_execution = updated_tools_map[req.tool_execution.tool_call_id]
-
-
 def continue_run_dispatch(
     agent: Agent,
     run_response: Optional[RunOutput] = None,
     *,
     run_id: Optional[str] = None,  # type: ignore
-    updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = False,
@@ -2852,7 +2838,7 @@ def continue_run_dispatch(
     Args:
         run_response: The run response to continue.
         run_id: The run id to continue. Alternative to passing run_response.
-        requirements: The requirements to continue the run. This or updated_tools is required with `run_id`.
+        requirements: The requirements to continue the run. Required with `run_id`.
         stream: Whether to stream the response.
         stream_events: Whether to stream all events.
         user_id: The user id to continue the run for.
@@ -2948,18 +2934,8 @@ def continue_run_dispatch(
 
         input = run_response.messages or []
 
-        # If we have updated_tools, set them in the run_response
-        if updated_tools is not None:
-            warnings.warn(
-                "The 'updated_tools' parameter is deprecated and will be removed in future versions. Use 'requirements' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            run_response.tools = updated_tools
-            _sync_requirements_with_tools(run_response, updated_tools)
-
         # If we have requirements, get the updated tools and set them in the run_response
-        elif requirements is not None:
+        if requirements is not None:
             run_response.requirements = requirements
             updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
             if updated_tools and run_response.tools:
@@ -2968,7 +2944,7 @@ def continue_run_dispatch(
             else:
                 run_response.tools = updated_tools
 
-        # If no tools/requirements provided, check for resolved admin approval
+        # If no requirements provided, check for resolved admin approval
         elif run_response.tools:
             from agno.run.approval import check_and_apply_approval_resolution
 
@@ -3563,7 +3539,6 @@ def acontinue_run_dispatch(  # type: ignore
     run_response: Optional[RunOutput] = None,
     *,
     run_id: Optional[str] = None,  # type: ignore
-    updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = None,
@@ -3584,7 +3559,7 @@ def acontinue_run_dispatch(  # type: ignore
         run_response: The run response to continue.
         run_id: The run id to continue. Alternative to passing run_response.
 
-        requirements: The requirements to continue the run. This or updated_tools is required with `run_id`.
+        requirements: The requirements to continue the run. Required with `run_id`.
         stream: Whether to stream the response.
         stream_events: Whether to stream all events.
         user_id: The user id to continue the run for.
@@ -3595,7 +3570,6 @@ def acontinue_run_dispatch(  # type: ignore
         metadata: The metadata to use for continuing the run.
         debug_mode: Whether to enable debug mode.
         yield_run_output: Whether to yield the run response.
-        (deprecated) updated_tools: Use 'requirements' instead.
     """
     from agno.agent._response import get_response_format
 
@@ -3605,12 +3579,6 @@ def acontinue_run_dispatch(  # type: ignore
     if run_response is None and (run_id is not None and (session_id is None and agent.session_id is None)):
         raise ValueError("Session ID is required to continue a run from a run_id.")
 
-    if updated_tools is not None:
-        warnings.warn(
-            "The 'updated_tools' parameter is deprecated and will be removed in future versions. Use 'requirements' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
         from fastapi import BackgroundTasks
@@ -3685,7 +3653,6 @@ def acontinue_run_dispatch(  # type: ignore
                 agent,
                 run_response=run_response,
                 run_context=run_context,
-                updated_tools=updated_tools,
                 requirements=requirements,
                 run_id=run_id,
                 user_id=user_id,
@@ -3703,7 +3670,6 @@ def acontinue_run_dispatch(  # type: ignore
             agent,
             run_response=run_response,
             run_context=run_context,
-            updated_tools=updated_tools,
             requirements=requirements,
             run_id=run_id,
             user_id=user_id,
@@ -3721,7 +3687,6 @@ def acontinue_run_dispatch(  # type: ignore
             session_id=session_id,
             run_response=run_response,
             run_context=run_context,
-            updated_tools=updated_tools,
             requirements=requirements,
             run_id=run_id,
             user_id=user_id,
@@ -3737,7 +3702,6 @@ async def _acontinue_run_background_stream(
     session_id: str,
     run_context: RunContext,
     run_response: Optional[RunOutput] = None,
-    updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -3791,7 +3755,6 @@ async def _acontinue_run_background_stream(
                 agent,
                 run_response=run_response,
                 run_context=run_context,
-                updated_tools=updated_tools,
                 requirements=requirements,
                 run_id=run_id,
                 user_id=user_id,
@@ -3878,7 +3841,6 @@ async def _acontinue_run(
     session_id: str,
     run_context: RunContext,
     run_response: Optional[RunOutput] = None,
-    updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -3966,13 +3928,8 @@ async def _acontinue_run(
 
                     input = run_response.messages or []
 
-                    # If we have updated_tools, set them in the run_response
-                    if updated_tools is not None:
-                        run_response.tools = updated_tools
-                        _sync_requirements_with_tools(run_response, updated_tools)
-
                     # If we have requirements, get the updated tools and set them in the run_response
-                    elif requirements is not None:
+                    if requirements is not None:
                         run_response.requirements = requirements
                         updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
                         if updated_tools and run_response.tools:
@@ -3983,7 +3940,7 @@ async def _acontinue_run(
                         else:
                             run_response.tools = updated_tools
 
-                    # If no tools/requirements provided, check for resolved admin approval
+                    # If no requirements provided, check for resolved admin approval
                     elif run_response.tools:
                         from agno.run.approval import acheck_and_apply_approval_resolution
 
@@ -3991,7 +3948,7 @@ async def _acontinue_run(
                             # This will apply resolution_data to tools if approval is resolved
                             await acheck_and_apply_approval_resolution(agent.db, run_id, run_response)
                         except RuntimeError:
-                            # No resolved approval found - fall back to requiring tools/requirements
+                            # No resolved approval found - fall back to requiring requirements
                             raise ValueError(
                                 "To continue a run from a given run_id, the requirements parameter must be provided "
                                 "(or resolve an admin approval first)."
@@ -4255,7 +4212,6 @@ async def _acontinue_run_stream(
     session_id: str,
     run_context: RunContext,
     run_response: Optional[RunOutput] = None,
-    updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -4340,13 +4296,8 @@ async def _acontinue_run_stream(
 
                     input = run_response.messages or []
 
-                    # If we have updated_tools, set them in the run_response
-                    if updated_tools is not None:
-                        run_response.tools = updated_tools
-                        _sync_requirements_with_tools(run_response, updated_tools)
-
                     # If we have requirements, get the updated tools and set them in the run_response
-                    elif requirements is not None:
+                    if requirements is not None:
                         run_response.requirements = requirements
                         updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
                         if updated_tools and run_response.tools:
@@ -4357,7 +4308,7 @@ async def _acontinue_run_stream(
                         else:
                             run_response.tools = updated_tools
 
-                    # If no tools/requirements provided, check for resolved admin approval
+                    # If no requirements provided, check for resolved admin approval
                     elif run_response.tools:
                         from agno.run.approval import acheck_and_apply_approval_resolution
 
@@ -4365,7 +4316,7 @@ async def _acontinue_run_stream(
                             # This will apply resolution_data to tools if approval is resolved
                             await acheck_and_apply_approval_resolution(agent.db, run_id, run_response)
                         except RuntimeError:
-                            # No resolved approval found - fall back to requiring tools/requirements
+                            # No resolved approval found - fall back to requiring requirements
                             raise ValueError(
                                 "To continue a run from a given run_id, the requirements parameter must be provided "
                                 "(or resolve an admin approval first)."

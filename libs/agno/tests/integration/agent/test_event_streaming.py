@@ -363,9 +363,8 @@ def test_intermediate_steps_with_user_confirmation(shared_db):
     assert run_response.tools[0].requires_confirmation
 
     # Mark the tool as confirmed
-    updated_tools = run_response.tools
     run_id = run_response.run_id
-    updated_tools[0].confirmed = True
+    run_response.tools[0].confirmed = True
 
     # Check stored events
     stored_session = shared_db.get_sessions(session_type=SessionType.AGENT)[0]
@@ -377,7 +376,9 @@ def test_intermediate_steps_with_user_confirmation(shared_db):
     assert stored_session.runs[0].events[3].event == RunEvent.run_paused
 
     # Then we continue the run
-    response_generator = agent.continue_run(run_id=run_id, updated_tools=updated_tools, stream=True, stream_events=True)
+    response_generator = agent.continue_run(
+        run_id=run_id, requirements=run_response.requirements, stream=True, stream_events=True
+    )
 
     events = {}
     for run_response_delta in response_generator:
@@ -470,7 +471,7 @@ async def test_custom_event_in_acontinue_run_with_async_tool(shared_db):
     events = {}
     async for run_response_delta in agent.acontinue_run(
         run_id=response.run_id,
-        updated_tools=response.tools,
+        requirements=response.requirements,
         session_id=session_id,
         stream=True,
         stream_events=True,
@@ -544,7 +545,7 @@ def test_custom_event_in_continue_run_with_sync_generator_tool(shared_db):
     events = {}
     for run_response_delta in agent.continue_run(
         run_id=response.run_id,
-        updated_tools=response.tools,
+        requirements=response.requirements,
         session_id=session_id,
         stream=True,
         stream_events=True,
