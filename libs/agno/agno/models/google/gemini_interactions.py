@@ -125,27 +125,6 @@ _RESULT_DELTA_TYPES = (
 )
 
 
-def _summarize_thought(text: str, max_chars: int = 120) -> str:
-    """Collapse a multi-line ThoughtSummary into a single short log line.
-
-    Gemini's thought summaries usually start with a markdown heading
-    (`**Title**`) followed by paragraphs. Prefer the heading; fall back to
-    the first non-empty line. Truncate to keep terminal output readable.
-    """
-    text = text.strip()
-    if not text:
-        return ""
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        # Strip a leading "**Title**" marker if present.
-        if line.startswith("**") and line.endswith("**") and len(line) > 4:
-            line = line[2:-2].strip()
-        return line if len(line) <= max_chars else line[: max_chars - 1] + "…"
-    return ""
-
-
 @dataclass
 class GeminiInteractions(Model):
     """

@@ -1082,18 +1082,6 @@ class TestParseInteractionResponse:
         assert response.content == "Here is my answer."
         assert response.provider_data["thought_signature"] == "sig123"
 
-    def test_summarize_thought_truncates_and_strips_heading(self):
-        from agno.models.google.gemini_interactions import _summarize_thought
-
-        assert _summarize_thought("**Locating Initial Data**\n\nbody") == "Locating Initial Data"
-        # No heading: first non-empty line wins.
-        assert _summarize_thought("\n\nLet me think\n\nMore...") == "Let me think"
-        # Long line is truncated with ellipsis.
-        long = "x" * 300
-        out = _summarize_thought(long, max_chars=50)
-        assert len(out) == 50
-        assert out.endswith("…")
-
     def test_parse_usage_metrics(self):
         model = self._make_model()
 
