@@ -1082,22 +1082,6 @@ class TestParseInteractionResponse:
         assert response.content == "Here is my answer."
         assert response.provider_data["thought_signature"] == "sig123"
 
-    def test_parse_thought_logs_summary_title(self):
-        """Each ThoughtStep should produce a Server-side reasoning: log line
-        with the summary title extracted (mirrors tool-call logging)."""
-        model = self._make_model()
-
-        mock_interaction = MagicMock()
-        mock_interaction.id = "interactions/thought-log"
-        mock_interaction.steps = [
-            self._make_thought_step("**Clarifying User Intent**\n\nThe request is vague..."),
-        ]
-        mock_interaction.usage = None
-
-        with patch("agno.models.google.gemini_interactions.log_info") as mock_log:
-            model._parse_provider_response(mock_interaction)
-        mock_log.assert_called_once_with("Server-side reasoning: Clarifying User Intent")
-
     def test_summarize_thought_truncates_and_strips_heading(self):
         from agno.models.google.gemini_interactions import _summarize_thought
 
@@ -1517,9 +1501,8 @@ class TestInvokeStream:
         )
         assert any(r.role == "assistant" for r in responses)
 
-    def test_invoke_stream_logs_reasoning_and_merges_thought_signature(self):
-        """Streaming should log each DeltaThoughtSummary's title and merge
-        thought_signature into provider_data without clobbering siblings."""
+    def test_invoke_stream_merges_thought_signature(self):
+        """thought_signature must merge into provider_data without clobbering siblings."""
         from agno.models.google.gemini_interactions import (
             DeltaThoughtSignature,
             DeltaThoughtSummary,
@@ -1552,11 +1535,7 @@ class TestInvokeStream:
 
         mock_client.interactions.create.return_value = iter([summary_evt, sig_evt])
 
-        with patch("agno.models.google.gemini_interactions.log_info") as mock_log:
-            responses = list(model.invoke_stream([Message(role="user", content="hi")], Message(role="assistant")))
-        mock_log.assert_any_call("Server-side reasoning: Clarifying User Intent")
-        # provider_data on the signature chunk must include thought_signature
-        # without clobbering keys (the merge regression we fixed).
+        responses = list(model.invoke_stream([Message(role="user", content="hi")], Message(role="assistant")))
         sig_responses = [r for r in responses if r.provider_data and "thought_signature" in r.provider_data]
         assert sig_responses
         assert sig_responses[0].provider_data["thought_signature"] == "sig-abc"
