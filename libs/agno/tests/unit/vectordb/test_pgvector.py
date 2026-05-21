@@ -1204,7 +1204,6 @@ def test_hybrid_search_falls_back_to_vector_on_no_usable_tokens(mock_engine, moc
     """
     from pgvector.sqlalchemy import Vector as RealVector
     from sqlalchemy import Column, MetaData, String, Table
-    from sqlalchemy.dialects import postgresql
 
     metadata = MetaData()
     real_table = Table(
