@@ -23,7 +23,7 @@ from agno.models.base import Model
 from agno.models.google.utils import media_to_content_item
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import MessageMetrics
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ToolExecution
 from agno.run.agent import RunOutput
 from agno.utils.gemini import inject_agno_client_header
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -32,7 +32,18 @@ try:
     from google import genai
     from google.genai import Client as GeminiClient
     from google.genai._interactions import types as interaction_types
+    from google.genai._interactions.types.code_execution_call_step import CodeExecutionCallStep
+    from google.genai._interactions.types.code_execution_result_step import CodeExecutionResultStep
+    from google.genai._interactions.types.file_search_call_step import FileSearchCallStep
+    from google.genai._interactions.types.file_search_result_step import FileSearchResultStep
     from google.genai._interactions.types.function_call_step import FunctionCallStep
+    from google.genai._interactions.types.function_result_step import FunctionResultStep
+    from google.genai._interactions.types.google_maps_call_step import GoogleMapsCallStep
+    from google.genai._interactions.types.google_maps_result_step import GoogleMapsResultStep
+    from google.genai._interactions.types.google_search_call_step import GoogleSearchCallStep
+    from google.genai._interactions.types.google_search_result_step import GoogleSearchResultStep
+    from google.genai._interactions.types.mcp_server_tool_call_step import MCPServerToolCallStep
+    from google.genai._interactions.types.mcp_server_tool_result_step import MCPServerToolResultStep
     from google.genai._interactions.types.model_output_step import ModelOutputStep
     from google.genai._interactions.types.step_delta import (
         DeltaArgumentsDelta,
@@ -43,11 +54,33 @@ try:
     )
     from google.genai._interactions.types.text_content import TextContent
     from google.genai._interactions.types.thought_step import ThoughtStep
+    from google.genai._interactions.types.url_context_call_step import URLContextCallStep
+    from google.genai._interactions.types.url_context_result_step import URLContextResultStep
 except ImportError:
     raise ImportError(
         "`google-genai` not installed or not at the latest version. "
         "Please install it using `pip install -U google-genai`"
     )
+
+# Tuples used to detect call/result steps generically across all tool families.
+_CALL_STEP_TYPES = (
+    FunctionCallStep,
+    CodeExecutionCallStep,
+    URLContextCallStep,
+    MCPServerToolCallStep,
+    GoogleSearchCallStep,
+    FileSearchCallStep,
+    GoogleMapsCallStep,
+)
+_RESULT_STEP_TYPES = (
+    FunctionResultStep,
+    CodeExecutionResultStep,
+    URLContextResultStep,
+    MCPServerToolResultStep,
+    GoogleSearchResultStep,
+    FileSearchResultStep,
+    GoogleMapsResultStep,
+)
 
 # Lazy imports for content types used in output parsing
 try:
@@ -586,6 +619,74 @@ class GeminiInteractions(Model):
 
         return None
 
+    def _call_step_info(self, step: Any) -> Tuple[str, Dict[str, Any]]:
+        """Return (tool_name, tool_args) for any call step type.
+
+        Each tool family has its own *CallStep schema; this normalizes them
+        into a single (name, args) tuple suitable for ToolExecution.
+        """
+        if isinstance(step, FunctionCallStep):
+            return step.name or "", dict(step.arguments) if step.arguments else {}
+        if isinstance(step, CodeExecutionCallStep):
+            args = step.arguments.model_dump(exclude_none=True) if step.arguments else {}
+            return "code_execution", args
+        if isinstance(step, URLContextCallStep):
+            args = step.arguments.model_dump(exclude_none=True) if step.arguments else {}
+            return "url_context", args
+        if isinstance(step, MCPServerToolCallStep):
+            args = dict(step.arguments) if step.arguments else {}
+            if step.server_name:
+                args.setdefault("_server_name", step.server_name)
+            return step.name or "mcp_tool", args
+        if isinstance(step, GoogleSearchCallStep):
+            args = step.arguments.model_dump(exclude_none=True) if step.arguments else {}
+            if step.search_type:
+                args["search_type"] = step.search_type
+            return "google_search", args
+        if isinstance(step, FileSearchCallStep):
+            return "file_search", {}
+        if isinstance(step, GoogleMapsCallStep):
+            args = step.arguments.model_dump(exclude_none=True) if step.arguments else {}
+            return "google_maps", args
+        return "unknown", {}
+
+    def _extract_step_result(self, step: Any, model_response: ModelResponse) -> Tuple[Optional[str], Optional[bool]]:
+        """Flatten any *ResultStep's payload to (result_text, is_error).
+
+        Image content embedded in results is routed onto model_response.images
+        so downstream consumers can render it. Typed result objects (e.g.
+        URLContext.Result, GoogleSearch.Result) are JSON-serialized.
+        """
+        is_error = getattr(step, "is_error", None)
+        raw = getattr(step, "result", None)
+        if raw is None:
+            return None, is_error
+        if isinstance(raw, str):
+            return raw, is_error
+        if isinstance(raw, list):
+            text_parts: List[str] = []
+            for item in raw:
+                if isinstance(item, TextContent):
+                    if item.text:
+                        text_parts.append(item.text)
+                elif ImageContent is not None and isinstance(item, ImageContent):
+                    image = self._parse_image_content(item)
+                    if image:
+                        if model_response.images is None:
+                            model_response.images = []
+                        model_response.images.append(image)
+                elif hasattr(item, "model_dump"):
+                    text_parts.append(json.dumps(item.model_dump(exclude_none=True)))
+                else:
+                    text_parts.append(str(item))
+            return ("\n".join(text_parts) if text_parts else None), is_error
+        if hasattr(raw, "model_dump"):
+            return json.dumps(raw.model_dump(exclude_none=True)), is_error
+        try:
+            return json.dumps(raw), is_error
+        except (TypeError, ValueError):
+            return str(raw), is_error
+
     def _parse_provider_response(self, response: Any, **kwargs: Any) -> ModelResponse:
         """Parse an Interaction response into a ModelResponse."""
         model_response = ModelResponse()
@@ -613,6 +714,15 @@ class GeminiInteractions(Model):
                 model_response.provider_data = {}
             model_response.provider_data["interaction_id"] = interaction_id
             return model_response
+
+        # Index every *ResultStep by call_id so each *CallStep can be paired
+        # with its result in a single forward pass. Used on the agent path
+        # where calls + results are returned together as a typed audit log.
+        results_by_call_id: Dict[str, Any] = {}
+        if self.agent is not None:
+            for step in steps:
+                if isinstance(step, _RESULT_STEP_TYPES):
+                    results_by_call_id[step.call_id] = step
 
         for step in steps:
             if isinstance(step, ModelOutputStep):
@@ -673,16 +783,32 @@ class GeminiInteractions(Model):
                         model_response.provider_data = {}
                     model_response.provider_data["thought_signature"] = step.signature
 
-            elif isinstance(step, FunctionCallStep):
-                # On the agent path (Antigravity, Deep Research) tools execute
-                # server-side inside the sandbox; the API rejects client-sent
-                # function_result follow-ups with 400. Surface these steps as
-                # observability only and don't queue them for local dispatch.
-                if self.agent is not None:
-                    args_repr = json.dumps(step.arguments) if isinstance(step.arguments, dict) else step.arguments
-                    log_info(f"Server-side tool call: {step.name}({args_repr or ''})")
-                    continue
+            elif isinstance(step, _CALL_STEP_TYPES) and self.agent is not None:
+                # Agent path: every call/result pair is already executed by the
+                # autonomous loop (Antigravity sandbox, Deep Research). Record
+                # each as a ToolExecution so the run_response/AgentOS UI shows
+                # the same tool history we'd see for client-executed tools,
+                # without sending function_result back (the API would 400).
+                tool_name, tool_args = self._call_step_info(step)
+                result_step = results_by_call_id.get(step.id)
+                if result_step is not None:
+                    result_text, is_error = self._extract_step_result(result_step, model_response)
+                else:
+                    result_text, is_error = None, None
+                if model_response.tool_executions is None:
+                    model_response.tool_executions = []
+                model_response.tool_executions.append(
+                    ToolExecution(
+                        tool_call_id=step.id,
+                        tool_name=tool_name,
+                        tool_args=tool_args,
+                        result=result_text,
+                        tool_call_error=bool(is_error) if is_error is not None else None,
+                    )
+                )
+                log_info(f"Server-side tool call: {tool_name}({json.dumps(tool_args) if tool_args else ''})")
 
+            elif isinstance(step, FunctionCallStep):
                 args = step.arguments
                 if isinstance(args, dict):
                     args_str = json.dumps(args)
@@ -789,25 +915,57 @@ class GeminiInteractions(Model):
                     model_response.provider_data = {"thought_signature": delta.signature}
             elif isinstance(delta, DeltaArgumentsDelta):
                 idx = stream_event.index
-                if delta.arguments and idx in stream_state["pending_calls"]:
-                    stream_state["pending_calls"][idx]["args_buffer"] += delta.arguments
+                if delta.arguments:
+                    if idx in stream_state["pending_calls"]:
+                        stream_state["pending_calls"][idx]["args_buffer"] += delta.arguments
+                    else:
+                        call_id = stream_state.setdefault("agent_idx_to_call_id", {}).get(idx)
+                        agent_pending = (
+                            stream_state.setdefault("pending_agent_calls", {}).get(call_id) if call_id else None
+                        )
+                        if agent_pending is not None:
+                            agent_pending["args_buffer"] += delta.arguments
 
         elif isinstance(stream_event, interaction_types.StepStart):
             step = stream_event.step
-            # On the agent path, FunctionCallSteps describe server-side sandbox
-            # tools (Antigravity file ops, Deep Research lookups). Don't track
-            # them as pending client calls - the autonomous loop runs them and
-            # would 400 if we tried to send function_result back. Track args
-            # via the deltas anyway so we can log the full call on StepStop.
-            if isinstance(step, FunctionCallStep) and self.agent is not None:
-                idx = stream_event.index
-                args = step.arguments
-                args_buffer = json.dumps(args) if isinstance(args, dict) and args else ""
-                stream_state["pending_calls"][idx] = {
-                    "server_side": True,
-                    "name": step.name or "",
+            # Agent path: pair every *CallStep with the matching *ResultStep
+            # (linked by call_id) and emit a ToolExecution. The autonomous
+            # loop already ran them server-side; we record the receipt so
+            # AgentOS / run_response.tools shows the full audit. Sending a
+            # function_result back would 400, so we don't queue tool_calls.
+            if isinstance(step, _CALL_STEP_TYPES) and self.agent is not None:
+                pending_agent_calls = stream_state.setdefault("pending_agent_calls", {})
+                agent_idx_to_call_id = stream_state.setdefault("agent_idx_to_call_id", {})
+                tool_name, tool_args = self._call_step_info(step)
+                # Only FunctionCallStep streams args via DeltaArgumentsDelta;
+                # others arrive fully populated.
+                streams_args = isinstance(step, FunctionCallStep)
+                args_buffer = json.dumps(tool_args) if streams_args and tool_args else ""
+                pending_agent_calls[step.id] = {
+                    "tool_name": tool_name,
+                    "tool_args": tool_args,
                     "args_buffer": args_buffer,
+                    "streams_args": streams_args,
                 }
+                agent_idx_to_call_id[stream_event.index] = step.id
+            elif isinstance(step, _RESULT_STEP_TYPES) and self.agent is not None:
+                pending_agent_calls = stream_state.setdefault("pending_agent_calls", {})
+                pending = pending_agent_calls.pop(step.call_id, None)
+                if pending is not None:
+                    result_text, is_error = self._extract_step_result(step, model_response)
+                    if model_response.tool_executions is None:
+                        model_response.tool_executions = []
+                    model_response.tool_executions.append(
+                        ToolExecution(
+                            tool_call_id=step.call_id,
+                            tool_name=pending["tool_name"],
+                            tool_args=pending["tool_args"],
+                            result=result_text,
+                            tool_call_error=bool(is_error) if is_error is not None else None,
+                        )
+                    )
+                    args_repr = json.dumps(pending["tool_args"]) if pending["tool_args"] else ""
+                    log_info(f"Server-side tool call: {pending['tool_name']}({args_repr})")
             elif isinstance(step, FunctionCallStep):
                 idx = stream_event.index
                 tool_call = {
@@ -828,11 +986,20 @@ class GeminiInteractions(Model):
             idx = stream_event.index
             pending = stream_state["pending_calls"].pop(idx, None)
             if pending is not None:
-                if pending.get("server_side"):
-                    log_info(f"Server-side tool call: {pending['name']}({pending['args_buffer'] or ''})")
-                else:
-                    pending["tool_call"]["function"]["arguments"] = pending["args_buffer"] or "{}"
-                    model_response.tool_calls.append(pending["tool_call"])
+                pending["tool_call"]["function"]["arguments"] = pending["args_buffer"] or "{}"
+                model_response.tool_calls.append(pending["tool_call"])
+            # Agent path: finalize streamed args buffer on the pending call
+            # (don't emit yet - we wait for the matching *ResultStep).
+            agent_idx_to_call_id = stream_state.setdefault("agent_idx_to_call_id", {})
+            call_id = agent_idx_to_call_id.pop(idx, None)
+            if call_id is not None:
+                pending_agent_calls = stream_state.setdefault("pending_agent_calls", {})
+                agent_pending = pending_agent_calls.get(call_id)
+                if agent_pending is not None and agent_pending["streams_args"] and agent_pending["args_buffer"]:
+                    try:
+                        agent_pending["tool_args"] = json.loads(agent_pending["args_buffer"])
+                    except json.JSONDecodeError:
+                        pass
 
         elif isinstance(stream_event, interaction_types.InteractionCompletedEvent):
             stream_state["completed"] = True

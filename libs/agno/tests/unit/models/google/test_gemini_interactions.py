@@ -912,11 +912,23 @@ class TestParseInteractionResponse:
         assert response.tool_calls[0]["function"]["name"] == "get_weather"
         assert response.tool_calls[0]["function"]["arguments"] == '{"city": "Paris"}'
 
-    def test_agent_path_skips_function_call_steps(self):
-        """Antigravity/Deep Research tools run server-side; surfacing them as
-        local tool_calls makes Agno try to dispatch them and then send
-        function_results back, which the API rejects with 400. The skipped
-        step is still logged so the user can see what the sandbox did."""
+    def _make_function_result_step(self, call_id, result, name=None, is_error=None):
+        from agno.models.google.gemini_interactions import FunctionResultStep
+
+        mock_step = MagicMock(spec=FunctionResultStep)
+        mock_step.call_id = call_id
+        mock_step.result = result
+        mock_step.name = name
+        mock_step.is_error = is_error
+        mock_step.__class__ = FunctionResultStep
+        return mock_step
+
+    def test_agent_path_pairs_function_call_with_result(self):
+        """On the agent path, Antigravity returns FunctionCallStep + matching
+        FunctionResultStep. Surfacing them as model.tool_calls would make Agno
+        dispatch locally and 400 on the follow-up turn; instead, pair them
+        into ToolExecution records so AgentOS/run_response.tools shows the
+        full audit (tool name, args, result, is_error)."""
         model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
 
         mock_interaction = MagicMock()
@@ -924,14 +936,112 @@ class TestParseInteractionResponse:
         mock_interaction.steps = [
             self._make_model_output_step("Listing the sandbox..."),
             self._make_function_call_step("call_ag_1", "list_files", {"path": "."}),
+            self._make_function_result_step("call_ag_1", "main.py\nREADME.md"),
         ]
         mock_interaction.usage = None
 
-        with patch("agno.models.google.gemini_interactions.log_info") as mock_log:
-            response = model._parse_provider_response(mock_interaction)
+        response = model._parse_provider_response(mock_interaction)
         assert response.content == "Listing the sandbox..."
         assert response.tool_calls == []
-        mock_log.assert_called_once_with('Server-side tool call: list_files({"path": "."})')
+        assert response.tool_executions is not None
+        assert len(response.tool_executions) == 1
+        te = response.tool_executions[0]
+        assert te.tool_call_id == "call_ag_1"
+        assert te.tool_name == "list_files"
+        assert te.tool_args == {"path": "."}
+        assert te.result == "main.py\nREADME.md"
+        assert te.tool_call_error is None
+
+    def test_agent_path_records_error_results(self):
+        """is_error from FunctionResultStep flows to ToolExecution.tool_call_error."""
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/ag-err"
+        mock_interaction.steps = [
+            self._make_function_call_step("call_err", "read_file", {"path": "/nope"}),
+            self._make_function_result_step("call_err", "No such file", is_error=True),
+        ]
+        mock_interaction.usage = None
+
+        response = model._parse_provider_response(mock_interaction)
+        assert response.tool_executions[0].tool_call_error is True
+        assert response.tool_executions[0].result == "No such file"
+
+    def test_agent_path_records_code_execution(self):
+        """Code execution call + result pair into a ToolExecution named
+        'code_execution' with code/language args and stdout result."""
+        # Build the Arguments via the real type so model_dump works.
+        from google.genai._interactions.types.code_execution_call_step import Arguments as CEArgs
+
+        from agno.models.google.gemini_interactions import (
+            CodeExecutionCallStep,
+            CodeExecutionResultStep,
+        )
+        from agno.models.google.gemini_interactions import (
+            CodeExecutionCallStep as _CECall,
+        )
+
+        call_step = MagicMock(spec=_CECall)
+        call_step.__class__ = CodeExecutionCallStep
+        call_step.id = "call_ce_1"
+        call_step.arguments = CEArgs(code="print(2 + 2)", language="python")
+        call_step.signature = None
+
+        result_step = MagicMock(spec=CodeExecutionResultStep)
+        result_step.__class__ = CodeExecutionResultStep
+        result_step.call_id = "call_ce_1"
+        result_step.result = "4\n"
+        result_step.is_error = False
+        result_step.signature = None
+
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/ce1"
+        mock_interaction.steps = [call_step, result_step]
+        mock_interaction.usage = None
+
+        response = model._parse_provider_response(mock_interaction)
+        te = response.tool_executions[0]
+        assert te.tool_name == "code_execution"
+        assert te.tool_args == {"code": "print(2 + 2)", "language": "python"}
+        assert te.result == "4\n"
+        assert te.tool_call_error is False
+
+    def test_agent_path_records_url_context(self):
+        """URL context call + result pair into a ToolExecution with the
+        per-URL status JSON-serialized into the result string."""
+        from google.genai._interactions.types.url_context_call_step import Arguments as UCArgs
+        from google.genai._interactions.types.url_context_result_step import Result as UCResult
+
+        from agno.models.google.gemini_interactions import URLContextCallStep, URLContextResultStep
+
+        call_step = MagicMock(spec=URLContextCallStep)
+        call_step.__class__ = URLContextCallStep
+        call_step.id = "call_uc_1"
+        call_step.arguments = UCArgs(urls=["https://example.com"])
+        call_step.signature = None
+
+        result_step = MagicMock(spec=URLContextResultStep)
+        result_step.__class__ = URLContextResultStep
+        result_step.call_id = "call_uc_1"
+        result_step.result = [UCResult(status="success", url="https://example.com")]
+        result_step.is_error = None
+        result_step.signature = None
+
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/uc1"
+        mock_interaction.steps = [call_step, result_step]
+        mock_interaction.usage = None
+
+        response = model._parse_provider_response(mock_interaction)
+        te = response.tool_executions[0]
+        assert te.tool_name == "url_context"
+        assert te.tool_args == {"urls": ["https://example.com"]}
+        assert te.result is not None
+        assert "https://example.com" in te.result
+        assert "success" in te.result
 
     def test_parse_thought_response(self):
         model = self._make_model()
@@ -1366,14 +1476,14 @@ class TestInvokeStream:
         assert tool_responses[0].tool_calls[0]["function"]["name"] == "get_weather"
         assert tool_responses[0].tool_calls[0]["function"]["arguments"] == '{"city": "London"}'
 
-    def test_invoke_stream_agent_path_skips_function_call_steps(self):
-        """Streaming variant of the agent-path guard: FunctionCallStep
-        StepStart/StepStop on Antigravity should not yield tool_calls but
-        should still emit a log line (built from the streamed args) so the
-        user can observe the call."""
+    def test_invoke_stream_agent_path_pairs_call_with_result(self):
+        """Streaming variant: FunctionCallStep StepStart -> args via deltas ->
+        StepStop -> FunctionResultStep StepStart should yield a ToolExecution
+        (with finalized args) and no client-side tool_calls."""
         from agno.models.google.gemini_interactions import (
             DeltaArgumentsDelta,
             FunctionCallStep,
+            FunctionResultStep,
             interaction_types,
         )
 
@@ -1381,40 +1491,66 @@ class TestInvokeStream:
         mock_client = MagicMock()
         model.client = mock_client
 
-        mock_step = MagicMock(spec=FunctionCallStep)
-        mock_step.__class__ = FunctionCallStep
-        mock_step.id = "call_ag_stream_1"
-        mock_step.name = "list_files"
-        mock_step.arguments = {}
-        mock_step.signature = None
+        # FunctionCallStep starts with empty args; args stream in via deltas.
+        call_step = MagicMock(spec=FunctionCallStep)
+        call_step.__class__ = FunctionCallStep
+        call_step.id = "call_ag_stream_1"
+        call_step.name = "list_files"
+        call_step.arguments = {}
+        call_step.signature = None
 
-        mock_start = MagicMock(spec=interaction_types.StepStart)
-        mock_start.__class__ = interaction_types.StepStart
-        mock_start.step = mock_step
-        mock_start.index = 0
+        call_start = MagicMock(spec=interaction_types.StepStart)
+        call_start.__class__ = interaction_types.StepStart
+        call_start.step = call_step
+        call_start.index = 0
 
-        mock_delta = MagicMock(spec=DeltaArgumentsDelta)
-        mock_delta.__class__ = DeltaArgumentsDelta
-        mock_delta.arguments = '{"path": "."}'
+        arg_delta = MagicMock(spec=DeltaArgumentsDelta)
+        arg_delta.__class__ = DeltaArgumentsDelta
+        arg_delta.arguments = '{"path": "."}'
 
-        mock_delta_event = MagicMock(spec=interaction_types.StepDelta)
-        mock_delta_event.__class__ = interaction_types.StepDelta
-        mock_delta_event.delta = mock_delta
-        mock_delta_event.index = 0
+        arg_delta_event = MagicMock(spec=interaction_types.StepDelta)
+        arg_delta_event.__class__ = interaction_types.StepDelta
+        arg_delta_event.delta = arg_delta
+        arg_delta_event.index = 0
 
-        mock_stop = MagicMock(spec=interaction_types.StepStop)
-        mock_stop.__class__ = interaction_types.StepStop
-        mock_stop.index = 0
+        call_stop = MagicMock(spec=interaction_types.StepStop)
+        call_stop.__class__ = interaction_types.StepStop
+        call_stop.index = 0
 
-        mock_client.interactions.create.return_value = iter([mock_start, mock_delta_event, mock_stop])
+        # FunctionResultStep arrives next as its own StepStart; result is
+        # fully populated (result steps don't stream their payload).
+        result_step = MagicMock(spec=FunctionResultStep)
+        result_step.__class__ = FunctionResultStep
+        result_step.call_id = "call_ag_stream_1"
+        result_step.result = "main.py\nREADME.md"
+        result_step.name = "list_files"
+        result_step.is_error = None
+
+        result_start = MagicMock(spec=interaction_types.StepStart)
+        result_start.__class__ = interaction_types.StepStart
+        result_start.step = result_step
+        result_start.index = 1
+
+        result_stop = MagicMock(spec=interaction_types.StepStop)
+        result_stop.__class__ = interaction_types.StepStop
+        result_stop.index = 1
+
+        mock_client.interactions.create.return_value = iter(
+            [call_start, arg_delta_event, call_stop, result_start, result_stop]
+        )
 
         messages = [Message(role="user", content="What's in the sandbox?")]
         assistant_message = Message(role="assistant")
 
-        with patch("agno.models.google.gemini_interactions.log_info") as mock_log:
-            responses = list(model.invoke_stream(messages, assistant_message))
+        responses = list(model.invoke_stream(messages, assistant_message))
         assert all(not r.tool_calls for r in responses)
-        mock_log.assert_called_once_with('Server-side tool call: list_files({"path": "."})')
+        tool_executions = [te for r in responses for te in (r.tool_executions or [])]
+        assert len(tool_executions) == 1
+        te = tool_executions[0]
+        assert te.tool_call_id == "call_ag_stream_1"
+        assert te.tool_name == "list_files"
+        assert te.tool_args == {"path": "."}
+        assert te.result == "main.py\nREADME.md"
 
     def test_invoke_stream_error_raises_model_provider_error(self):
         from agno.exceptions import ModelProviderError
