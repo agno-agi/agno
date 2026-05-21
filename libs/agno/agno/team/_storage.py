@@ -598,8 +598,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     #     config["memory_manager"] = team.memory_manager.to_dict()
     if team.enable_agentic_memory:
         config["enable_agentic_memory"] = team.enable_agentic_memory
-    if team.enable_user_memories:
-        config["enable_user_memories"] = team.enable_user_memories
+    if team.update_memory_on_run:
+        config["update_memory_on_run"] = team.update_memory_on_run
     if team.add_memories_to_context is not None:
         config["add_memories_to_context"] = team.add_memories_to_context
     if team.enable_session_summaries:
@@ -862,6 +862,22 @@ def from_dict(
     #     from agno.compression.manager import CompressionManager
     #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
 
+    if "search_session_history" in config:
+        log_debug("'search_session_history' has been deprecated. Use 'search_past_sessions' instead.")
+        config.pop("search_session_history", None)
+
+    if "num_history_sessions" in config:
+        log_debug("'num_history_sessions' has been deprecated. Use 'num_past_sessions_to_search' instead.")
+        config.pop("num_history_sessions", None)
+
+    if "enable_user_memories" in config:
+        log_debug("'enable_user_memories' has been deprecated. Use 'update_memory_on_run' instead.")
+        config.pop("enable_user_memories", None)
+
+    if "num_past_session_runs" in config:
+        log_debug("'num_past_session_runs' has been deprecated. Use 'num_past_session_runs_in_search' instead.")
+        config.pop("num_past_session_runs", None)
+
     team = cast(
         "Team",
         cls(
@@ -893,11 +909,9 @@ def from_dict(
             add_team_history_to_members=config.get("add_team_history_to_members", False),
             num_team_history_runs=config.get("num_team_history_runs", 3),
             share_member_interactions=config.get("share_member_interactions", False),
-            search_past_sessions=config.get("search_past_sessions", config.get("search_session_history", False)),
-            num_past_sessions_to_search=config.get("num_past_sessions_to_search", config.get("num_history_sessions")),
-            num_past_session_runs_in_search=config.get(
-                "num_past_session_runs_in_search", config.get("num_past_session_runs")
-            ),
+            search_past_sessions=config.get("search_past_sessions", False),
+            num_past_sessions_to_search=config.get("num_past_sessions_to_search"),
+            num_past_session_runs_in_search=config.get("num_past_session_runs_in_search"),
             read_chat_history=config.get("read_chat_history", False),
             # --- System message settings ---
             system_message=config.get("system_message"),
@@ -946,7 +960,7 @@ def from_dict(
             # --- Memory settings ---
             # memory_manager=config.get("memory_manager"),  # TODO
             enable_agentic_memory=config.get("enable_agentic_memory", False),
-            enable_user_memories=config.get("enable_user_memories"),
+            update_memory_on_run=config.get("update_memory_on_run", False),
             add_memories_to_context=config.get("add_memories_to_context"),
             enable_session_summaries=config.get("enable_session_summaries", False),
             add_session_summary_to_context=config.get("add_session_summary_to_context"),

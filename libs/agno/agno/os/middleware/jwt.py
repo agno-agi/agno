@@ -389,7 +389,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
         app,
         verification_keys: Optional[List[str]] = None,
         jwks_file: Optional[str] = None,
-        secret_key: Optional[str] = None,  # Deprecated: Use verification_keys instead
         algorithm: str = "RS256",
         validate: bool = True,
         authorization: Optional[bool] = None,
@@ -424,7 +423,6 @@ class JWTMiddleware(BaseHTTPMiddleware):
                       Keys are looked up by the "kid" (key ID) claim in the JWT header.
                       If not provided, will check JWT_JWKS_FILE env var for a file path,
                       or JWT_JWKS env var for inline JWKS JSON content.
-            secret_key: (deprecated) Use verification_keys instead. If provided, will be added to verification_keys.
             algorithm: JWT algorithm (default: RS256). Common options: RS256 (asymmetric), HS256 (symmetric).
             validate: Whether to validate the JWT signature (default: True). If False, tokens are decoded
                      without signature verification and no verification key is required. Useful when
@@ -458,12 +456,7 @@ class JWTMiddleware(BaseHTTPMiddleware):
         """
         super().__init__(app)
 
-        # Handle deprecated secret_key parameter
         all_verification_keys = list(verification_keys) if verification_keys else []
-        if secret_key:
-            log_warning("secret_key is deprecated. Use verification_keys instead.")
-            if secret_key not in all_verification_keys:
-                all_verification_keys.append(secret_key)
 
         # Create the JWT validator (handles key loading and token validation)
         self.validator = JWTValidator(
