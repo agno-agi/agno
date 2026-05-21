@@ -652,9 +652,6 @@ class RunOutput:
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
 
-    # Resolved approval record exposed to post-hooks after a paused run resumes; None otherwise.
-    resolved_approval: Optional[Dict[str, Any]] = None
-
     created_at: int = field(default_factory=lambda: int(time()))
 
     events: Optional[List[RunOutputEvent]] = None
