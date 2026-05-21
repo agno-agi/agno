@@ -228,3 +228,61 @@ async def test_mcptools_connect_passes_auth_to_sse():
     call_kwargs = mock_sse.call_args.kwargs
     assert "auth" in call_kwargs
     assert call_kwargs["auth"] is not None
+
+
+@pytest.mark.asyncio
+async def test_mcptools_get_session_for_run_passes_auth_with_header_provider():
+    """Coexistence: when both oauth and header_provider are configured,
+    the per-run session creation in get_session_for_run() must still pass
+    auth=self._oauth_provider to the transport client."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from agno.tools.mcp import MCPTools
+    from agno.tools.mcp.oauth import OAuthConfig
+
+    def headers():
+        return {"X-Custom": "value"}
+
+    mcp = MCPTools(
+        url="http://localhost:8000/mcp",
+        transport="streamable-http",
+        oauth=OAuthConfig(client_id="id", client_secret="secret"),
+        header_provider=headers,
+    )
+    # Pre-seed the provider as _connect would have done
+    sentinel = MagicMock(name="oauth_provider_sentinel")
+    mcp._oauth_provider = sentinel
+
+    # Build a mocked transport context
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock()
+    mock_session.list_tools = AsyncMock(return_value=MagicMock(tools=[]))
+
+    mock_read = AsyncMock()
+    mock_write = AsyncMock()
+
+    mock_transport_ctx = AsyncMock()
+    mock_transport_ctx.__aenter__ = AsyncMock(return_value=(mock_read, mock_write, None))
+    mock_transport_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_session_ctx = AsyncMock()
+    mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    run_context = MagicMock()
+    run_context.run_id = "test-run-id"
+
+    with (
+        patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=mock_transport_ctx) as mock_http,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=mock_session_ctx),
+    ):
+        try:
+            await mcp.get_session_for_run(run_context=run_context, agent=MagicMock())
+        except Exception:
+            # We only care that the transport was called with auth=
+            pass
+
+    assert mock_http.called, "streamablehttp_client should have been called"
+    call_kwargs = mock_http.call_args.kwargs
+    assert "auth" in call_kwargs
+    assert call_kwargs["auth"] is sentinel
