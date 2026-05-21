@@ -1090,19 +1090,24 @@ class PgVector(VectorDb):
                 self.table.c.usage,
             ]
 
-            # Build the text search vector
+            # === TEXT SEARCH COMPONENT ===
+            # Hybrid search combines: (1) text/keyword matching + (2) vector similarity
+
+            # ts_vector: convert document content into searchable tokens
+            # Example: "The quick fox" -> 'fox':3 'quick':2 (stems words, removes stopwords)
             ts_vector = func.to_tsvector(self.content_language, self.table.c.content)
-            # Build the ts_query — routes through to_tsquery with :* per token
-            # when prefix_match is on, websearch_to_tsquery otherwise.
+
+            # ts_query: convert user's search query into a search pattern
+            # Routes through to_tsquery with :* per token when prefix_match is on,
+            # websearch_to_tsquery otherwise
             ts_query = self._build_ts_query(query)
             if ts_query is None:
-                # Prefix mode with no usable tokens (e.g. empty query): fall back
-                # to an empty tsquery literal that ranks 0 everywhere, so hybrid
-                # scoring degrades to pure vector ranking. Using the literal cast
-                # avoids depending on to_tsquery's tolerance for empty input.
+                # No usable tokens (e.g. query was "!@#$" or empty)
+                # Fall back to empty tsquery so text_rank=0, letting vector search drive results
                 ts_query = literal_column("''::tsquery")
-            # Compute the text rank, normalized to [0, 1] range
-            # ts_rank_cd returns small values (0.0-0.1), so we normalize using x/(x+k)
+
+            # text_rank: score how well document matches the query (0.0 to 1.0)
+            # ts_rank_cd returns small values (0.0-0.1), normalize with x/(x+k) formula
             raw_text_rank = func.ts_rank_cd(ts_vector, ts_query)
             text_rank = raw_text_rank / (raw_text_rank + 0.1)
 
