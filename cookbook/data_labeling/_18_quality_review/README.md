@@ -35,5 +35,5 @@ see `cookbook/04_workflows/04_parallel_execution/parallel_with_condition.py`.
 python cookbook/data_labeling/_18_quality_review/basic.py
 ```
 
-Requires `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` (the two labelers run
+Requires `GOOGLE_API_KEY` and `ANTHROPIC_API_KEY` (the two labelers run
 on different providers for ensemble diversity).

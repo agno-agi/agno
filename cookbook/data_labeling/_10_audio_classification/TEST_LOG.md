@@ -1,6 +1,6 @@
 # Test Log - _10_audio_classification
 
-Tested 2026-05-17 against `gemini-3-flash-preview` (Gemini), agno 2.6.6. Input is `agno-public/demo_data/QA-01.mp3` (English Q&A clip).
+Tested 2026-05-19 against `gemini-3.5-flash` (Gemini), agno 2.6.8.
 
 ### basic.py
 

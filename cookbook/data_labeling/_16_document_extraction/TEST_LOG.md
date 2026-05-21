@@ -1,6 +1,6 @@
 # Test Log - _16_document_extraction
 
-Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses), agno 2.6.6. Input is `agno-public/recipes/ThaiRecipes.pdf`.
+Tested 2026-05-19 against `gemini-3.5-flash` (Gemini), agno 2.6.8.
 
 ### basic.py
 

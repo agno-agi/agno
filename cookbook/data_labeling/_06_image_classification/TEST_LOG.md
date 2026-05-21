@@ -1,14 +1,16 @@
 # Test Log - _06_image_classification
 
-Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses), agno 2.6.6. Inputs are public Wikimedia URLs.
+Tested 2026-05-19 against `gemini-3.5-flash` (Gemini), agno 2.6.8.
 
 ### basic.py
 
 **Status:** PASS
 
-**Description:** Single-label classification over a cat photo and a dog collage.
+**Description:** Single-label scene-type classification (wildlife / landscape / sports / architecture / other) over four photos.
 
-**Result:** Both classified correctly.
+**Result:** All four classified into the expected scene type.
+
+**Note:** Test inputs moved off Wikimedia (Gemini can't fetch those URLs) to agno-public S3, gstatic gallery, and a Google generative-AI sample. Label set switched from animal types to scene types so the available images classify cleanly.
 
 ---
 
@@ -16,8 +18,8 @@ Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses), agno 2.6.6. Inputs are pu
 
 **Status:** PASS
 
-**Description:** Multi-label tagging of scene attributes per image.
+**Description:** Multi-label tagging of scene attributes (outdoor, daytime, people, nature, architecture, etc.) over a Krakow basilica photo and a Google generative-AI wildlife sample.
 
-**Result:** Tag sets are coherent with the photo content.
+**Result:** Tag sets are coherent with each image's content.
 
 ---

@@ -7,10 +7,8 @@ check the model's reasoning and is itself useful as training data for a
 reward model.
 """
 
-from typing import Literal
-
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.openai import OpenAIResponses
+from agno.models.google import Gemini
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -19,7 +17,7 @@ from rich.pretty import pprint  # noqa
 # Schema
 # ---------------------------------------------------------------------------
 class Score(BaseModel):
-    overall: Literal[1, 2, 3, 4, 5] = Field(..., description="Overall quality 1-5")
+    overall: int = Field(..., ge=1, le=5, description="Overall quality 1-5")
     rationale: str = Field(..., description="One sentence explaining the score")
 
 
@@ -37,7 +35,7 @@ phrase from the response when possible.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     output_schema=Score,
 )
