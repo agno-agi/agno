@@ -135,6 +135,7 @@ class ReasoningManager:
             return "deepseek"
         if is_anthropic_reasoning_model(model):
             return "anthropic"
+        # OpenAI check handles: native OpenAI (o1/o3/o4), OpenAILike providers (Together, Fireworks, etc.), VLLM
         if is_openai_reasoning_model(model):
             return "openai"
         if is_groq_reasoning_model(model):

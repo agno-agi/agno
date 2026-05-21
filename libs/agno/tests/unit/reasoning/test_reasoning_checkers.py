@@ -250,6 +250,78 @@ def test_openai_like_without_deepseek_r1():
     assert is_openai_reasoning_model(model) is False
 
 
+def test_openai_like_with_qwq():
+    """Test OpenAILike model with qwq in ID returns True (Together, Fireworks, etc.)."""
+    from agno.models.openai.like import OpenAILike
+
+    model = OpenAILike(
+        id="Qwen/QwQ-32B",
+        name="Together",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_like_with_qwen3():
+    """Test OpenAILike model with qwen3 in ID returns True."""
+    from agno.models.openai.like import OpenAILike
+
+    model = OpenAILike(
+        id="Qwen/Qwen3-8B",
+        name="OpenRouter",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_like_with_openthinker():
+    """Test OpenAILike model with openthinker in ID returns True."""
+    from agno.models.openai.like import OpenAILike
+
+    model = OpenAILike(
+        id="openthinker-7b",
+        name="DeepInfra",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_chat_self_hosted_with_reasoning_model():
+    """Test OpenAIChat with custom base_url and reasoning model returns True."""
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="Qwen/QwQ-32B",
+        base_url="http://localhost:8080/v1",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_chat_self_hosted_without_reasoning_model():
+    """Test OpenAIChat with custom base_url but non-reasoning model returns False."""
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="Llama-3.1-8B",
+        base_url="http://localhost:8080/v1",
+    )
+    assert is_openai_reasoning_model(model) is False
+
+
+def test_vllm_matched_by_openai_checker():
+    """VLLM extends OpenAILike, so it's handled by the OpenAI reasoning checker."""
+    from agno.models.vllm import VLLM
+
+    model = VLLM(id="Qwen/Qwen3-8B", enable_thinking=True)
+    assert is_openai_reasoning_model(model) is True
+
+
+def test_openai_like_with_minimax_m3():
+    """Test OpenAILike model with minimax-m3 in ID returns True."""
+    from agno.models.openai.like import OpenAILike
+
+    model = OpenAILike(
+        id="minimax-m3-01-128k",
+        name="MiniMax",
+    )
+    assert is_openai_reasoning_model(model) is True
+
+
 # ============================================================================
 # Anthropic Reasoning Model Tests
 # ============================================================================
