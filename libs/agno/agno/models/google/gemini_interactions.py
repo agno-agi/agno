@@ -961,8 +961,6 @@ class GeminiInteractions(Model):
         """
         model_response = ModelResponse()
 
-        log_info(f"Stream Event: {stream_event}")
-
         # Every event carries an event_id used to resume a dropped/ended stream
         # (background interactions like Deep Research end the initial SSE early
         # and continue server-side; we reconnect from last_event_id).
