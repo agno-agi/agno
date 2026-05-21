@@ -1130,41 +1130,65 @@ def test_keyword_search_returns_empty_on_no_usable_tokens(mock_engine, mock_embe
         db.Session.assert_not_called()
 
 
-def test_hybrid_search_falls_back_to_vector_on_no_usable_tokens(mock_engine, mock_embedder):
-    """hybrid_search uses empty tsquery fallback when prefix_match strips all tokens.
+def test_hybrid_search_empty_token_fallback_uses_tsquery_literal(mock_engine, mock_embedder):
+    """When prefix_match strips all tokens, hybrid_search falls back to ``''::tsquery``.
 
-    Unlike keyword_search which returns [], hybrid_search still runs because
-    the vector similarity branch can return results even without text matches.
+    Verified by compiling the SELECT statement that hybrid_search hands to the
+    session — the literal cast sidesteps any ``to_tsquery`` parser strictness
+    around empty input.
     """
+    from pgvector.sqlalchemy import Vector as RealVector
+    from sqlalchemy import Column, MetaData, String, Table
+    from sqlalchemy.dialects import postgresql
+
+    # Build a real Table so SQLAlchemy can compile the SELECT hybrid_search produces.
+    metadata = MetaData()
+    real_table = Table(
+        "test_hybrid_empty",
+        metadata,
+        Column("id", String, primary_key=True),
+        Column("name", String),
+        Column("meta_data", String),
+        Column("content", String),
+        Column("embedding", RealVector(3)),
+        Column("usage", String),
+    )
+
     with (
         patch("agno.vectordb.pgvector.pgvector.inspect"),
-        patch("agno.vectordb.pgvector.pgvector.scoped_session") as mock_scoped_session,
-        patch("agno.vectordb.pgvector.pgvector.Vector"),
-        patch.object(PgVector, "get_table", return_value=MagicMock()),
+        patch("agno.vectordb.pgvector.pgvector.scoped_session"),
+        patch.object(PgVector, "get_table", return_value=real_table),
     ):
         db = PgVector(
-            table_name="test_hybrid_fallback",
+            table_name="test_hybrid_empty",
             db_engine=mock_engine,
             embedder=mock_embedder,
             prefix_match=True,
         )
 
-        # Mock the session to return empty results
-        mock_session = MagicMock()
-        mock_session.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.__exit__ = MagicMock(return_value=False)
-        mock_session.begin.return_value.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.begin.return_value.__exit__ = MagicMock(return_value=False)
-        mock_session.execute.return_value.fetchall.return_value = []
-        mock_scoped_session.return_value.return_value = mock_session
+        mock_embedder.get_embedding = MagicMock(return_value=[0.1, 0.2, 0.3])
 
-        # Mock embedder to return a valid embedding
-        mock_embedder.get_embedding.return_value = [0.1] * 1024
+        captured = {}
 
-        # Query with no usable tokens — should still call embedder and run query
-        results = db.hybrid_search("!@#$")
+        class _SessionCtx:
+            def __enter__(self_inner):
+                return self_inner
 
-        # Embedder was called — vector search still runs
-        mock_embedder.get_embedding.assert_called_once_with("!@#$")
-        # Results returned (empty in this mock, but query executed)
-        assert results == []
+            def __exit__(self_inner, *exc):
+                return False
+
+            def begin(self_inner):
+                return self_inner
+
+            def execute(self_inner, stmt):
+                captured["sql"] = str(stmt.compile(dialect=postgresql.dialect()))
+                result = MagicMock()
+                result.fetchall.return_value = []
+                return result
+
+        db.Session = MagicMock(return_value=_SessionCtx())
+        db.hybrid_search("!@#$")
+
+    sql = captured.get("sql", "")
+    assert "''::tsquery" in sql, f"expected empty tsquery literal in SQL, got: {sql}"
+    assert "to_tsquery(" not in sql, f"fallback should not call to_tsquery, got: {sql}"

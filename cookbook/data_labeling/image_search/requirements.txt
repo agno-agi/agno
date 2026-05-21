@@ -109,20 +109,20 @@ openinference-semantic-conventions==0.1.29
     # via
     #   openinference-instrumentation
     #   openinference-instrumentation-agno
-opentelemetry-api==1.42.0
+opentelemetry-api==1.42.1
     # via
     #   openinference-instrumentation
     #   openinference-instrumentation-agno
     #   opentelemetry-instrumentation
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
-opentelemetry-instrumentation==0.63b0
+opentelemetry-instrumentation==0.63b1
     # via openinference-instrumentation-agno
-opentelemetry-sdk==1.42.0
+opentelemetry-sdk==1.42.1
     # via
     #   agno
     #   openinference-instrumentation
-opentelemetry-semantic-conventions==0.63b0
+opentelemetry-semantic-conventions==0.63b1
     # via
     #   openinference-instrumentation-agno
     #   opentelemetry-instrumentation
@@ -191,7 +191,7 @@ rich==15.0.0
     #   agno
     #   rich-toolkit
     #   typer
-rich-toolkit==0.19.9
+rich-toolkit==0.19.10
     # via
     #   fastapi-cli
     #   fastapi-cloud-cli

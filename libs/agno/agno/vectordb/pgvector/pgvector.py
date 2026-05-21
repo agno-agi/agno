@@ -14,7 +14,7 @@ try:
     from sqlalchemy.orm import Session, scoped_session, sessionmaker
     from sqlalchemy.schema import Column, Index, MetaData, Table
     from sqlalchemy.sql.elements import ColumnElement
-    from sqlalchemy.sql.expression import bindparam, desc, func, select, text
+    from sqlalchemy.sql.expression import bindparam, desc, func, literal_column, select, text
     from sqlalchemy.types import DateTime, Integer, String
 
 except ImportError:
@@ -940,28 +940,26 @@ class PgVector(VectorDb):
         """
         Build the tsquery expression for keyword / hybrid search.
 
-        Args:
-            query (str): The search query string.
+        When ``prefix_match`` is False (default) we use
+        ``websearch_to_tsquery``, which accepts free-form natural language
+        and supports AND/OR/quoted-phrases/-negation. When ``prefix_match``
+        is True we tokenize on word boundaries and build a ``to_tsquery``
+        expression with ``:*`` per token — that lets a partial query like
+        ``"ani"`` match the ``anim`` lexeme that ``"animal"`` lemmatizes
+        into.
 
-        Returns:
-            A SQLAlchemy func expression for the tsquery, or None if prefix_match=True
-            and the query yields no usable tokens (caller should treat as "no FTS hit").
+        Returns ``None`` for a query that doesn't yield any usable tokens
+        in prefix mode (caller should treat as "no FTS hit").
         """
-        # Default mode: use websearch_to_tsquery for natural language queries
-        # Supports AND/OR/phrases but does not support prefix matching
         if not self.prefix_match:
             return func.websearch_to_tsquery(self.content_language, bindparam("query", value=query))
 
-        # Prefix mode: use to_tsquery with :* suffix for partial word matching
-        # Example: "ani" becomes "ani:*" which matches "animal", "animation", etc.
-
-        # Extract word tokens only — to_tsquery errors on punctuation like & | -
+        # to_tsquery is stricter than websearch_to_tsquery: it doesn't
+        # tolerate punctuation or operators in the input. Tokenize on
+        # word boundaries, append :* per token, AND them.
         tokens = re.findall(r"\w+", query)
         if not tokens:
             return None
-
-        # Build tsquery string: join tokens with & (AND) and append :* for prefix match
-        # Example: ["wild", "san"] becomes "wild:* & san:*"
         prefix_query = " & ".join(f"{t}:*" for t in tokens)
         return func.to_tsquery(self.content_language, bindparam("query", value=prefix_query))
 
@@ -1092,24 +1090,19 @@ class PgVector(VectorDb):
                 self.table.c.usage,
             ]
 
-            # === TEXT SEARCH COMPONENT ===
-            # Hybrid search combines: (1) text/keyword matching + (2) vector similarity
-            # This section builds the text search part
-
-            # ts_vector: convert document content into searchable tokens
-            # Example: "The quick fox" -> 'fox':3 'quick':2 (stems words, removes stopwords)
+            # Build the text search vector
             ts_vector = func.to_tsvector(self.content_language, self.table.c.content)
-
-            # ts_query: convert user's search query into a search pattern
-            # Uses _build_ts_query which picks the right PostgreSQL function based on prefix_match
+            # Build the ts_query — routes through to_tsquery with :* per token
+            # when prefix_match is on, websearch_to_tsquery otherwise.
             ts_query = self._build_ts_query(query)
             if ts_query is None:
-                # No usable tokens (e.g. query was "!@#$" or empty)
-                # Use empty tsquery so text_rank=0, letting vector search handle results alone
-                ts_query = func.to_tsquery(self.content_language, bindparam("query", value=""))
-
-            # text_rank: score how well document matches the query (0.0 to 1.0)
-            # ts_rank_cd returns small values (0.0-0.1), normalize with x/(x+k) formula
+                # Prefix mode with no usable tokens (e.g. empty query): fall back
+                # to an empty tsquery literal that ranks 0 everywhere, so hybrid
+                # scoring degrades to pure vector ranking. Using the literal cast
+                # avoids depending on to_tsquery's tolerance for empty input.
+                ts_query = literal_column("''::tsquery")
+            # Compute the text rank, normalized to [0, 1] range
+            # ts_rank_cd returns small values (0.0-0.1), so we normalize using x/(x+k)
             raw_text_rank = func.ts_rank_cd(ts_vector, ts_query)
             text_rank = raw_text_rank / (raw_text_rank + 0.1)
 

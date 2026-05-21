@@ -225,6 +225,7 @@ def test_vertexai_prepare_request_kwargs_signature_matches_parent():
     assert "system" in kwargs
     assert "tools" in kwargs
 
+
 # =============================================================================
 # temperature / top_p / top_k: zero values must not be silently dropped
 # =============================================================================

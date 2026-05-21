@@ -184,8 +184,67 @@ match tops out at ~0.5; anything above that is FTS-boosted.
   match" experience instead of pretending.
 - `prefix_match=True` was tried and reverted: it appends `*` to query
   terms, but agno passes the query through `websearch_to_tsquery`, which
-  doesn't honor `:*` / `*` operators — it's a silent no-op.
+  doesn't honor `:*` / `*` operators — it's a silent no-op. (Fixed
+  upstream in #8048 and re-enabled below.)
 
 **Endpoints:** unchanged surface — `/knowledge/content`,
 `/knowledge/search`, `/workflows/image-ingest/runs` all behave the same
 shape-wise. Just the underlying storage moved.
+
+---
+
+### prefix_match=True (2026-05-21)
+
+**Status:** PASS
+
+Now that #8048 routes `prefix_match=True` through `to_tsquery('tok:*')`
+instead of letting `websearch_to_tsquery` strip the `*`, the cookbook
+enables it in [`db.py`](db.py). The win is partial-typed queries: "ani"
+now matches docs containing "animal" (the stemmer reduces "animal" to
+the lexeme `anim`, which `ani:*` covers as a prefix), and "mount"
+matches "mountain". Both flip from the "no exact match · showing
+closest" tray into first-class primary results.
+
+**Query battery** — same `MIN_SCORE_RATIO=0.5`, `SCORE_FLOOR=0.30` as
+the prior run, against the same 38-image index. The two columns show
+the *primary tier* count (results that clear the floor + ratio) before
+vs. after the flip.
+
+| Query        | Before | After | Verdict                                                |
+|--------------|--------|-------|--------------------------------------------------------|
+| `animal`     | 6      | 6     | exact lexeme match, unchanged                          |
+| `anim`       | 6      | 6     | stemmer already collapsed this, unchanged              |
+| `ani`        | **0**  | **6** | `ani:*` now matches `anim` — primary results restored  |
+| `anima`      | 0      | 0     | quirk — lexeme is `anim`, `anima:*` requires lexemes starting with `anima` (none exist) |
+| `wildlife`   | 5      | 5     | exact match, unchanged                                 |
+| `wildlif`    | 5      | 5     | stemmer-equivalent, unchanged                          |
+| `mountain`   | 8      | 8     | exact match, unchanged                                 |
+| `mount`      | **1**  | **8** | `mount:*` now matches `mountain`/`mountains` lexemes   |
+| `coffee`     | 1      | 1     | only one doc has coffee content, unchanged             |
+| `car`        | **0**  | **1** | `car:*` now matches `carnivor` (stemmed "carnivore") — surfaces the leopard |
+| `night city` | 0      | 0     | no doc has lexemes starting with `night`, unchanged    |
+| `asdf`       | 0      | 0     | nonsense token, still tucked under tray                |
+
+**Observations:**
+
+- The two headline wins are `ani` (0.233 → 0.478 top score, 0 → 6 primary
+  results) and `mount` (0.585 → 0.669, 1 → 8). Partial-typed words now
+  behave the way a user would expect: more characters typed = more
+  matches, not a sudden drop to zero.
+- `anima` is an instructive non-win: the document side stores the
+  stemmed lexeme `anim`, and `to_tsquery('anima:*')` only matches
+  lexemes that *start with* `anima` — `anim` doesn't qualify. This is
+  inherent to FTS stemming, not an agno limitation. The tray fallback
+  catches it cleanly.
+- `car` now surfaces the leopard image because the doc's "carnivore"
+  stems to `carnivor`, which `car:*` matches. This is the tradeoff for
+  prefix matching — accepting some false-positive prefix collisions in
+  exchange for partial-word ergonomics. For this 38-image demo it's a
+  good trade; on a larger corpus we'd consider re-ranking the FTS hits
+  by exact-term overlap.
+- `SCORE_FLOOR = 0.30` still cleanly separates the new prefix-matched
+  FTS hits (0.45+) from the vector-only tail (0.20-0.27). No change
+  needed to the threshold.
+- The `index.html` comment that called out "car" as the canonical
+  example of a no-FTS-match query was updated to use "night city" and
+  "asdf" instead, since "car" now has a (prefix-collided) FTS hit.
