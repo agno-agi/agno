@@ -1637,6 +1637,27 @@ def test_extract_agui_user_input_and_media_routes_binary_content_by_mime_type():
     assert media.files[0].filename == "archive.bin"
 
 
+def test_extract_agui_user_input_and_media_skips_malformed_base64():
+    """Test a content part with undecodable base64 data is skipped, not raised."""
+    messages = [
+        UserMessage(
+            id="u1",
+            content=[
+                TextInputContent(text="check this"),
+                ImageInputContent(source=InputContentDataSource(value="!!!not-valid-base64!!!", mime_type="image/png")),
+            ],
+        ),
+    ]
+
+    user_input, media = extract_agui_user_input_and_media(messages)
+
+    assert user_input == "check this"
+    assert len(media.images) == 0
+    assert len(media.audio) == 0
+    assert len(media.videos) == 0
+    assert len(media.files) == 0
+
+
 _AUDIO_BYTES = b"fake-audio-bytes"
 _VIDEO_BYTES = b"fake-video-bytes"
 _DOCUMENT_BYTES = b"fake-document-bytes"

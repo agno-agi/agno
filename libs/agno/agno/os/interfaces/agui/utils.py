@@ -155,11 +155,17 @@ class EventBuffer:
         self.reasoning_step_count = 0
 
 
+# MIME types whose Agno `format` differs from the raw subtype (e.g. OpenAI audio expects "mp3")
+_MIME_TO_FORMAT: Dict[str, str] = {
+    "audio/mpeg": "mp3",
+}
+
+
 def _format_from_mime_type(mime_type: Optional[str]) -> Optional[str]:
-    """Return the subtype of a MIME type (e.g. 'image/png' -> 'png'), or None."""
-    if mime_type and "/" in mime_type:
-        return mime_type.split("/")[-1]
-    return None
+    """Return the Agno media `format` for a MIME type (e.g. 'image/png' -> 'png'), or None."""
+    if not mime_type or "/" not in mime_type:
+        return None
+    return _MIME_TO_FORMAT.get(mime_type, mime_type.split("/")[-1])
 
 
 def _decode_agui_base64_content(value: str) -> Tuple[Optional[bytes], Optional[str]]:
@@ -174,7 +180,7 @@ def _decode_agui_base64_content(value: str) -> Tuple[Optional[bytes], Optional[s
 
     try:
         return base64.b64decode(encoded_value), mime_type
-    except Exception:
+    except ValueError:  # b64decode raises binascii.Error or UnicodeEncodeError, both ValueError subclasses
         log_warning("Failed to decode AG-UI data source. Content part will be ignored.")
         return None, mime_type
 
@@ -194,6 +200,15 @@ class AGUIUserInputMedia:
     audio: List[Audio] = field(default_factory=list)
     videos: List[Video] = field(default_factory=list)
     files: List[File] = field(default_factory=list)
+
+
+# AG-UI typed media content type -> (Agno media class, AGUIUserInputMedia field, sanitize MIME)
+_AGUI_MEDIA_PARTS: Dict[str, Tuple[type, str, bool]] = {
+    "image": (Image, "images", False),
+    "audio": (Audio, "audio", False),
+    "video": (Video, "videos", False),
+    "document": (File, "files", True),
+}
 
 
 _AGUIMedia = TypeVar("_AGUIMedia", Image, Audio, Video, File)
@@ -223,9 +238,18 @@ def _extract_agui_media(part: Any, media_cls: Type[_AGUIMedia], sanitize_mime: b
     else:
         return None
 
+    extra_kwargs: Dict[str, Any] = {}
+    # filename is only carried on File (document) media; Image/Audio/Video have no such field
+    if media_cls is File:
+        metadata = getattr(part, "metadata", None)
+        filename = metadata.get("filename") if isinstance(metadata, dict) else None
+        if filename:
+            extra_kwargs["filename"] = filename
+
     return media_cls(
         format=_format_from_mime_type(mime_type),
         mime_type=_safe_file_mime_type(mime_type) if sanitize_mime else mime_type,
+        **extra_kwargs,
         **content_kwargs,
     )
 
@@ -285,31 +309,21 @@ def extract_agui_user_input_and_media(messages: List[AGUIMessage]) -> Tuple[str,
             # UserMessage.content is Union[str, List[InputContent]]
             if isinstance(msg.content, str):
                 return msg.content, AGUIUserInputMedia()
-            # Multimodal: extract text and image parts
+            # Multimodal: extract text and media parts
             if isinstance(msg.content, list):
                 text_parts = []
                 media = AGUIUserInputMedia()
                 for part in msg.content:
-                    if hasattr(part, "type") and part.type == "text" and hasattr(part, "text"):
+                    part_type = getattr(part, "type", None)
+                    if part_type == "text" and hasattr(part, "text"):
                         text_parts.append(part.text)
-                    elif hasattr(part, "type") and part.type == "image":
-                        image = _extract_agui_media(part, Image)
-                        if image is not None:
-                            media.images.append(image)
-                    elif hasattr(part, "type") and part.type == "audio":
-                        audio = _extract_agui_media(part, Audio)
-                        if audio is not None:
-                            media.audio.append(audio)
-                    elif hasattr(part, "type") and part.type == "video":
-                        video = _extract_agui_media(part, Video)
-                        if video is not None:
-                            media.videos.append(video)
-                    elif hasattr(part, "type") and part.type == "document":
-                        file = _extract_agui_media(part, File, sanitize_mime=True)
-                        if file is not None:
-                            media.files.append(file)
-                    elif hasattr(part, "type") and part.type == "binary":
+                    elif part_type == "binary":
                         _extract_agui_binary(part, media)
+                    elif part_type in _AGUI_MEDIA_PARTS:
+                        media_cls, field_name, sanitize = _AGUI_MEDIA_PARTS[part_type]
+                        extracted = _extract_agui_media(part, media_cls, sanitize_mime=sanitize)
+                        if extracted is not None:
+                            getattr(media, field_name).append(extracted)
                 return "\n".join(text_parts), media
     return "", AGUIUserInputMedia()
 
