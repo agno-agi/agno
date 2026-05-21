@@ -100,7 +100,7 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
             input=user_input,
             session_id=input.thread_id,
             stream=True,
-            stream_steps=True,
+            stream_events=True,
             user_id=user_id,
             audio=media.audio if media.audio else None,
             images=media.images if media.images else None,

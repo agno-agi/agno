@@ -9,26 +9,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
+from agno.exceptions import PathSecurityError
+from agno.utils.path_safety import safe_join_relative_path
+
 
 def is_safe_path(base_dir: Path, requested_path: str) -> bool:
-    """Check if the requested path stays within the base directory.
-
-    This prevents path traversal attacks where a malicious path like
-    '../../../etc/passwd' could be used to access files outside the
-    intended directory.
-
-    Args:
-        base_dir: The base directory that the path must stay within.
-        requested_path: The user-provided path to validate.
-
-    Returns:
-        True if the path is safe (stays within base_dir), False otherwise.
-    """
+    """Return True if ``requested_path`` resolves inside ``base_dir``."""
     try:
-        full_path = (base_dir / requested_path).resolve()
-        base_resolved = base_dir.resolve()
-        return full_path.is_relative_to(base_resolved)
-    except (ValueError, OSError):
+        safe_join_relative_path(base_dir, requested_path)
+        return True
+    except (PathSecurityError, OSError):
         return False
 
 
