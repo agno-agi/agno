@@ -1236,6 +1236,46 @@ class TestInvoke:
     def _make_model(self):
         return GeminiInteractions(api_key="test-key")
 
+    def test_process_model_response_propagates_tool_executions(self):
+        """Regression: _process_model_response in base.py must copy
+        provider_response.tool_executions onto the accumulated
+        model_response so they reach run_response.tools. Mustafa caught
+        this; we kept setting them in the parser and base dropped them."""
+        from agno.models.response import ModelResponse, ToolExecution
+
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        # Build an interaction with one server-side tool call+result pair so
+        # the agent-path parser produces a ToolExecution.
+        model.agent = "antigravity-preview-05-2026"
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/propagate1"
+        mock_interaction.usage = None
+        parser_helper = TestParseInteractionResponse()
+        mock_interaction.steps = [
+            parser_helper._make_function_call_step("call_propagate_1", "list_files", {"path": "/"}),
+            parser_helper._make_function_result_step("call_propagate_1", "main.py"),
+        ]
+        mock_client.interactions.create.return_value = mock_interaction
+
+        messages = [Message(role="user", content="ls")]
+        assistant_message = Message(role="assistant")
+        aggregated = ModelResponse()
+        model._process_model_response(
+            messages=messages,
+            assistant_message=assistant_message,
+            model_response=aggregated,
+        )
+
+        assert aggregated.tool_executions is not None
+        assert len(aggregated.tool_executions) == 1
+        te = aggregated.tool_executions[0]
+        assert isinstance(te, ToolExecution)
+        assert te.tool_name == "list_files"
+        assert te.result == "main.py"
+
     def test_invoke_calls_interactions_create(self):
         model = self._make_model()
         mock_client = MagicMock()
@@ -1912,6 +1952,71 @@ class TestInvokeStream:
         assert te.tool_name == "code_execution"
         assert te.tool_args == {"code": "env"}
         assert te.result == "PYTHONUNBUFFERED=1\nHOME=/root\n"
+
+    def test_invoke_stream_agent_path_tags_tool_call_completed_event(self):
+        """Regression: the streaming consumer in agent/_response.py only
+        routes tool_executions into run_response.tools (and emits the UI
+        tool-call event) when model_response.event ==
+        ModelResponseEvent.tool_call_completed.value. Without the tag, the
+        AgentOS UI shows no tool activity even though the data is there."""
+        from agno.models.google.gemini_interactions import (
+            DeltaArgumentsDelta,
+            FunctionCallStep,
+            FunctionResultStep,
+            interaction_types,
+        )
+        from agno.models.response import ModelResponseEvent
+
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        call_step = MagicMock(spec=FunctionCallStep)
+        call_step.__class__ = FunctionCallStep
+        call_step.id = "call_evt_1"
+        call_step.name = "list_files"
+        call_step.arguments = {}
+        call_step.signature = None
+        call_start = MagicMock(spec=interaction_types.StepStart)
+        call_start.__class__ = interaction_types.StepStart
+        call_start.step = call_step
+        call_start.index = 0
+
+        arg_delta = MagicMock(spec=DeltaArgumentsDelta)
+        arg_delta.__class__ = DeltaArgumentsDelta
+        arg_delta.arguments = '{"path": "/"}'
+        arg_delta_event = MagicMock(spec=interaction_types.StepDelta)
+        arg_delta_event.__class__ = interaction_types.StepDelta
+        arg_delta_event.delta = arg_delta
+        arg_delta_event.index = 0
+
+        call_stop = MagicMock(spec=interaction_types.StepStop)
+        call_stop.__class__ = interaction_types.StepStop
+        call_stop.index = 0
+
+        result_step = MagicMock(spec=FunctionResultStep)
+        result_step.__class__ = FunctionResultStep
+        result_step.call_id = "call_evt_1"
+        result_step.result = "data"
+        result_step.is_error = None
+        result_step.name = "list_files"
+        result_step.signature = None
+        result_start = MagicMock(spec=interaction_types.StepStart)
+        result_start.__class__ = interaction_types.StepStart
+        result_start.step = result_step
+        result_start.index = 1
+        result_stop = MagicMock(spec=interaction_types.StepStop)
+        result_stop.__class__ = interaction_types.StepStop
+        result_stop.index = 1
+
+        mock_client.interactions.create.return_value = iter(
+            [call_start, arg_delta_event, call_stop, result_start, result_stop]
+        )
+
+        responses = list(model.invoke_stream([Message(role="user", content="ls")], Message(role="assistant")))
+        tagged = [r for r in responses if r.event == ModelResponseEvent.tool_call_completed.value]
+        assert len(tagged) >= 1
+        assert any(r.tool_executions for r in tagged)
 
     def test_invoke_stream_agent_path_flushes_client_tool_as_tool_call(self):
         """Regression: streaming variant of the Codex review. A FunctionCallStep
