@@ -40,7 +40,9 @@ async def main():
             markdown=False,
         )
 
-        await agent.aprint_response("Fetch the secret data using the get_secret_data tool.")
+        await agent.aprint_response(
+            "Fetch the secret data using the get_secret_data tool."
+        )
 
 
 if __name__ == "__main__":
