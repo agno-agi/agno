@@ -5222,12 +5222,27 @@ async def _aroute_requirements_to_members_stream(
             req._member_run_response = None
 
 
+_INTERNAL_MEMBER_RESULT_MARKERS = (
+    "member with id",
+    "could not route requirement",
+    "task completed (no final output)",
+    "streaming did not yield a final runoutput",
+    "requires human input before continuing",
+)
+
+
+def _is_internal_member_result(member_result: str) -> bool:
+    normalized_result = member_result.lower()
+    return any(marker in normalized_result for marker in _INTERNAL_MEMBER_RESULT_MARKERS)
+
+
 def _build_continuation_message(member_results: List[str]) -> str:
     """Build a user message from member results to feed back into the team model."""
-    if not member_results:
+    user_facing_results = [result for result in member_results if not _is_internal_member_result(result)]
+    if not user_facing_results:
         return "The delegated task has been completed."
     parts = ["Member results after human-in-the-loop resolution:"]
-    parts.extend(member_results)
+    parts.extend(user_facing_results)
     return "\n".join(parts)
 
 
