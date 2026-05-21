@@ -1,6 +1,6 @@
 # Test Log - _01_text_classification
 
-Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses), agno 2.6.6.
+Tested 2026-05-19 against `gemini-3.5-flash` (Gemini), agno 2.6.8.
 
 ### basic.py
 

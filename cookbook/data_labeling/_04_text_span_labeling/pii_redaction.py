@@ -10,7 +10,7 @@ and its PII type; Python does the find-and-replace.
 from typing import List, Literal
 
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.openai import OpenAIResponses
+from agno.models.google import Gemini
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -45,7 +45,7 @@ person names. Skip generic references like "the customer".
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     output_schema=PIIDetection,
 )

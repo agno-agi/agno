@@ -45,7 +45,7 @@ filler content - only include events with a clear beginning and end.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     output_schema=Events,
 )

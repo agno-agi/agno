@@ -11,7 +11,7 @@ from typing import List, Literal, Optional
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.media import Image
-from agno.models.openai import OpenAIResponses
+from agno.models.google import Gemini
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -58,7 +58,7 @@ confidence low.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     output_schema=Scene,
 )
@@ -68,6 +68,6 @@ agent = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    url = "https://upload.wikimedia.org/wikipedia/commons/a/a8/Tour_Eiffel_Wikimedia_Commons.jpg"
+    url = "https://www.gstatic.com/webp/gallery/1.jpg"
     run: RunOutput = agent.run("Extract the scene attributes.", images=[Image(url=url)])
     pprint({"url": url, "result": run.content})
