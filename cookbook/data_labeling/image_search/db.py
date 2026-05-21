@@ -7,9 +7,10 @@ PostgresDb is used by:
 
 PgVector is used as the vector store. We pick Postgres for both layers
 so:
-  - Keyword search is real lexical FTS (to_tsvector + websearch_to_tsquery)
-    instead of substring matching — "car" matches "cars" via stemming
-    without bringing in "carnivore" or "streetcar".
+  - Keyword search is real lexical FTS (to_tsvector + to_tsquery), with
+    prefix matching on — "ani" matches "animal" (the `anim` lexeme has
+    `ani` as a prefix), and "mount" matches "mountain". Stemming still
+    keeps "car" / "cars" together without lumping in "streetcar".
   - List metadata (tags, subjects) round-trips through JSONB as native
     arrays, not JSON-encoded strings.
 
@@ -52,6 +53,7 @@ def get_knowledge() -> Knowledge:
                 table_name=VECTOR_TABLE,
                 search_type=SearchType.hybrid,
                 embedder=GeminiEmbedder(id=EMBEDDER_MODEL_ID),
+                prefix_match=True,
             ),
         )
     return _knowledge
