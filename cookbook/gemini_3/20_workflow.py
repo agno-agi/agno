@@ -36,7 +36,7 @@ from db import gemini_agents_db
 # ---------------------------------------------------------------------------
 web_researcher = Agent(
     name="Web Researcher",
-    model=Gemini(id="gemini-3-flash-preview", search=True),
+    model=Gemini(id="gemini-3.5-flash", search=True),
     instructions="""\
 You are a web researcher. Search for the latest information on the given topic.
 
@@ -52,7 +52,7 @@ You are a web researcher. Search for the latest information on the given topic.
 
 deep_researcher = Agent(
     name="Deep Researcher",
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     tools=[WebSearchTools()],
     instructions="""\
 You are a deep researcher. Search extensively for background context,
@@ -104,7 +104,7 @@ publication-ready report.
 
 fact_checker = Agent(
     name="Fact Checker",
-    model=Gemini(id="gemini-3-flash-preview", search=True),
+    model=Gemini(id="gemini-3.5-flash", search=True),
     instructions="""\
 You are a fact-checker. Verify the factual claims in the report.
 
