@@ -888,10 +888,6 @@ class GeminiInteractions(Model):
                                     model_response.reasoning_content = text
                                 else:
                                     model_response.reasoning_content += text
-                                # Log a short snippet so the user sees each
-                                # reasoning step in real time the same way
-                                # they see "Server-side tool call:" lines.
-                                log_info(f"Server-side reasoning: {_summarize_thought(text)}")
                 if step.signature:
                     if model_response.provider_data is None:
                         model_response.provider_data = {}
@@ -986,8 +982,6 @@ class GeminiInteractions(Model):
         """
         model_response = ModelResponse()
 
-        log_info(f"Stream Event: {stream_event}")
-
         # Every event carries an event_id used to resume a dropped/ended stream
         # (background interactions like Deep Research end the initial SSE early
         # and continue server-side; we reconnect from last_event_id).
@@ -1037,8 +1031,6 @@ class GeminiInteractions(Model):
                 if summary_content and isinstance(summary_content, TextContent):
                     text = summary_content.text or ""
                     model_response.reasoning_content = text
-                    if text:
-                        log_info(f"Server-side reasoning: {_summarize_thought(text)}")
             elif isinstance(delta, DeltaThoughtSignature):
                 if delta.signature:
                     # Merge instead of overwrite so other provider_data keys
