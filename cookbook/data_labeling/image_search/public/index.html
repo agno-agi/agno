@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Image Search</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="https://unpkg.com/photoswipe@5/dist/photoswipe.css" />
+
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    .skel { background: linear-gradient(90deg,#f1f5f9 0%,#e2e8f0 50%,#f1f5f9 100%); background-size: 200% 100%; animation: sk 1.4s ease-in-out infinite; }
+    @keyframes sk { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }
+    [x-cloak] { display: none !important; }
+  </style>
+</head>
+
+<body class="bg-slate-50 text-slate-900" x-data="imageSearch()" x-cloak>
+  <div class="max-w-6xl mx-auto px-6 py-8">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h1 class="text-2xl font-semibold tracking-tight">Image Search</h1>
+        <p class="text-sm text-slate-500 mt-1">Agentic data labeling demo &middot; describe &rarr; embed &rarr; search</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-slate-500 tabular-nums" x-text="counter">&mdash;</span>
+        <button @click="reindex()" :disabled="reindexing"
+                class="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md bg-slate-900 text-white hover:bg-slate-700 disabled:bg-slate-300 disabled:cursor-not-allowed">
+          <span :class="reindexing && 'animate-spin'" class="inline-flex">
+            <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+          </span>
+          <span x-text="reindexLabel">Reindex</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="flex gap-1 mb-6 border-b border-slate-200">
+      <button @click="switchTab('search')"
+              :class="tab === 'search' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
+              class="px-4 py-2 text-sm font-medium border-b-2">
+        Search
+      </button>
+      <button @click="switchTab('gallery')"
+              :class="tab === 'gallery' ? 'border-slate-900 text-slate-900' : 'border-transparent text-slate-500 hover:text-slate-900'"
+              class="px-4 py-2 text-sm font-medium border-b-2">
+        Gallery
+      </button>
+    </div>
+
+    <!-- Search view -->
+    <section x-show="tab === 'search'">
+      <form @submit.prevent="runSearch()" class="flex gap-2 mb-6">
+        <input x-model="query" type="text" autofocus
+               placeholder="Try: a historic city at night, wildlife on the savanna, latte art ..."
+               class="flex-1 px-4 py-2 text-sm rounded-md border border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-900" />
+        <button class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-slate-900 text-white hover:bg-slate-700">
+          <i data-lucide="search" class="w-4 h-4"></i>
+          <span>Search</span>
+        </button>
+      </form>
+      <p class="text-xs text-slate-500 mb-4" x-text="searchMeta"></p>
+
+      <div x-show="searching" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <template x-for="i in 6" :key="i">
+          <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
+            <div class="aspect-[4/3] skel"></div>
+            <div class="p-3 space-y-2">
+              <div class="h-3 w-3/4 skel rounded"></div>
+              <div class="h-2 w-1/2 skel rounded"></div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <div x-show="!searching" id="search-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <template x-for="hit in searchResults" :key="hit.url">
+          <a :href="hit.url" :data-pswp-width="800" :data-pswp-height="600" target="_blank" rel="noreferrer"
+             class="block bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+            <div class="aspect-[4/3] bg-slate-100 overflow-hidden">
+              <img :src="hit.url" alt="" loading="lazy" class="w-full h-full object-cover" />
+            </div>
+            <div class="p-3 space-y-2">
+              <div class="text-sm font-medium text-slate-900 line-clamp-2" x-text="hit.caption"></div>
+              <div x-show="hit.subjects && hit.subjects.length"
+                   class="text-xs text-slate-500 line-clamp-1"
+                   x-text="(hit.subjects || []).slice(0, 4).join(', ')"></div>
+              <div x-show="hit.scene" class="text-xs text-slate-500 line-clamp-1" x-text="hit.scene"></div>
+              <div x-show="hit.visual_style" class="text-xs text-slate-400 italic line-clamp-1" x-text="hit.visual_style"></div>
+              <div x-show="hit.tags && hit.tags.length" class="flex flex-wrap gap-1 pt-1">
+                <template x-for="(t, idx) in (hit.tags || []).slice(0, 6)" :key="idx">
+                  <span class="inline-block px-2 py-0.5 text-[11px] bg-slate-100 text-slate-700 rounded-full" x-text="t"></span>
+                </template>
+              </div>
+            </div>
+          </a>
+        </template>
+        <div x-show="!searching && searchMeta && searchResults.length === 0"
+             class="col-span-full text-sm text-slate-500 py-12 text-center">
+          No matches. Try a different query.
+        </div>
+      </div>
+    </section>
+
+    <!-- Gallery view -->
+    <section x-show="tab === 'gallery'">
+      <p class="text-xs text-slate-500 mb-4" x-text="galleryMeta"></p>
+
+      <div x-show="galleryLoading" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <template x-for="i in 9" :key="i">
+          <div class="bg-white rounded-lg border border-slate-200 overflow-hidden">
+            <div class="aspect-[4/3] skel"></div>
+            <div class="p-3 space-y-2">
+              <div class="h-3 w-3/4 skel rounded"></div>
+              <div class="h-2 w-1/2 skel rounded"></div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <div x-show="!galleryLoading" id="gallery-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <template x-for="item in galleryItems" :key="item.url">
+          <a :href="item.url" :data-pswp-width="800" :data-pswp-height="600" target="_blank" rel="noreferrer"
+             class="block bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+            <div class="aspect-[4/3] bg-slate-100 overflow-hidden">
+              <img :src="item.url" alt="" loading="lazy" class="w-full h-full object-cover" />
+            </div>
+            <div class="p-3 space-y-2">
+              <div class="text-sm font-medium text-slate-900 line-clamp-2" x-text="item.caption"></div>
+              <div x-show="item.subjects && item.subjects.length"
+                   class="text-xs text-slate-500 line-clamp-1"
+                   x-text="(item.subjects || []).slice(0, 4).join(', ')"></div>
+              <div x-show="item.scene" class="text-xs text-slate-500 line-clamp-1" x-text="item.scene"></div>
+              <div x-show="item.visual_style" class="text-xs text-slate-400 italic line-clamp-1" x-text="item.visual_style"></div>
+              <div x-show="item.tags && item.tags.length" class="flex flex-wrap gap-1 pt-1">
+                <template x-for="(t, idx) in (item.tags || []).slice(0, 6)" :key="idx">
+                  <span class="inline-block px-2 py-0.5 text-[11px] bg-slate-100 text-slate-700 rounded-full" x-text="t"></span>
+                </template>
+              </div>
+            </div>
+          </a>
+        </template>
+        <div x-show="!galleryLoading && galleryItems.length === 0"
+             class="col-span-full text-sm text-slate-500 py-12 text-center">
+          No images indexed yet. Click Reindex.
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Toast -->
+  <div x-show="flashMessage"
+       x-transition.opacity
+       class="fixed bottom-6 right-6 px-4 py-2 bg-slate-900 text-white text-sm rounded-md shadow-lg"
+       x-text="flashMessage"></div>
+
+  <!-- PhotoSwipe lightbox: delegates on each grid container; lazy-loads the core module on first open -->
+  <script type="module">
+    import PhotoSwipeLightbox from 'https://unpkg.com/photoswipe@5/dist/photoswipe-lightbox.esm.js';
+    const pswpModule = () => import('https://unpkg.com/photoswipe@5/dist/photoswipe.esm.js');
+    for (const sel of ['#search-grid', '#gallery-grid']) {
+      new PhotoSwipeLightbox({ gallery: sel, children: 'a', pswpModule }).init();
+    }
+  </script>
+
+  <script>
+    function imageSearch() {
+      return {
+        tab: 'search',
+        query: '',
+        searchResults: [],
+        searchMeta: '',
+        searching: false,
+        galleryItems: [],
+        galleryMeta: '',
+        galleryLoading: false,
+        counter: '—',
+        reindexing: false,
+        reindexLabel: 'Reindex',
+        flashMessage: '',
+        pollInterval: null,
+
+        init() {
+          this.refreshCounter();
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        async refreshCounter() {
+          try {
+            const r = await fetch('/knowledge/content?limit=1');
+            const j = await r.json();
+            this.counter = `${j.meta.total_count} indexed`;
+          } catch {
+            this.counter = '—';
+          }
+        },
+
+        switchTab(t) {
+          this.tab = t;
+          if (t === 'gallery') this.loadGallery();
+          this.$nextTick(() => lucide.createIcons());
+        },
+
+        async runSearch() {
+          const q = this.query.trim();
+          if (!q) { this.searchResults = []; this.searchMeta = ''; return; }
+          this.searching = true;
+          this.searchMeta = 'searching...';
+          const t0 = performance.now();
+          try {
+            const r = await fetch('/knowledge/search', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ query: q, max_results: 12, search_type: 'vector' }),
+            });
+            const j = await r.json();
+            const dt = Math.round(performance.now() - t0);
+            this.searchResults = (j.data || []).map(d => ({
+              url:          d.meta_data?.url,
+              caption:      d.meta_data?.caption,
+              subjects:     d.meta_data?.subjects,
+              scene:        d.meta_data?.scene,
+              visual_style: d.meta_data?.visual_style,
+              tags:         d.meta_data?.tags,
+            }));
+            this.searchMeta = `${this.searchResults.length} result${this.searchResults.length === 1 ? '' : 's'} in ${dt}ms`;
+          } catch (e) {
+            this.searchMeta = `Search failed: ${e.message}`;
+          } finally {
+            this.searching = false;
+          }
+        },
+
+        async loadGallery() {
+          this.galleryLoading = true;
+          this.galleryMeta = 'loading...';
+          try {
+            const r = await fetch('/knowledge/content?limit=100&sort_by=created_at&sort_order=desc');
+            const j = await r.json();
+            this.galleryItems = (j.data || []).map(c => ({
+              url:          c.metadata?.url,
+              caption:      c.metadata?.caption,
+              subjects:     c.metadata?.subjects,
+              scene:        c.metadata?.scene,
+              visual_style: c.metadata?.visual_style,
+              tags:         c.metadata?.tags,
+            }));
+            this.galleryMeta = `${j.meta.total_count} image${j.meta.total_count === 1 ? '' : 's'}`;
+          } catch (e) {
+            this.galleryMeta = `Gallery failed: ${e.message}`;
+          } finally {
+            this.galleryLoading = false;
+          }
+        },
+
+        async reindex() {
+          this.reindexing = true;
+          this.reindexLabel = 'Starting...';
+          try {
+            const form = new FormData();
+            form.append('message', 'ingest');
+            form.append('stream', 'false');
+            form.append('background', 'true');
+            const r = await fetch('/workflows/image-ingest/runs', { method: 'POST', body: form });
+            const j = await r.json();
+            this.pollRun(j.run_id, j.session_id);
+          } catch (e) {
+            this.reindexing = false;
+            this.reindexLabel = 'Reindex';
+            this.flash('Reindex failed: ' + e.message);
+          }
+        },
+
+        pollRun(runId, sessionId) {
+          clearInterval(this.pollInterval);
+          this.pollInterval = setInterval(async () => {
+            try {
+              const r = await fetch(`/workflows/image-ingest/runs/${runId}?session_id=${sessionId}`);
+              const j = await r.json();
+              if (j.status === 'COMPLETED' || j.status === 'FAILED' || j.status === 'CANCELLED') {
+                clearInterval(this.pollInterval);
+                const c = j.content || {};
+                this.reindexing = false;
+                this.reindexLabel = 'Reindex';
+                await this.refreshCounter();
+                if (this.tab === 'gallery') await this.loadGallery();
+                if (c.indexed != null) {
+                  this.flash(`indexed ${c.indexed}, skipped ${c.skipped}, failed ${c.failed}`);
+                }
+              } else {
+                this.reindexLabel = j.status || 'Running...';
+                await this.refreshCounter();
+              }
+            } catch { /* ignore transient */ }
+          }, 1500);
+        },
+
+        flash(msg) {
+          this.flashMessage = msg;
+          setTimeout(() => { this.flashMessage = ''; }, 3500);
+        },
+      };
+    }
+  </script>
+</body>
+</html>
