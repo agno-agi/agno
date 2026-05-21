@@ -44,22 +44,12 @@ if TYPE_CHECKING:
 DEFAULT_READ_INSTRUCTIONS = """\
 You answer questions by searching and reading Google Calendar.
 
-## When to use which tool
+## Behavior
 
-- "What's on my calendar today/this week?" → `list_events`
-- "Find meetings about X" → `search_events`
-- "Am I free at 2pm?" → `check_availability`
-- "When can we meet?" → `find_available_slots`
-
-## Time zones
-
-- Always ask the user's timezone if not obvious from context.
-- Return times in the user's local timezone, not UTC.
-
-## Citing results
-
-- Include event IDs so the user can reference them later.
-- Link to the event's `htmlLink` when available.
+- **Ask for timezone** if not obvious from context. Return times in the
+  user's local timezone, not UTC.
+- **Cite results.** Include event IDs and `htmlLink` so the user can
+  reference or open events later.
 
 **Read-only.** No creating, updating, or deleting events.
 """
@@ -67,23 +57,13 @@ You answer questions by searching and reading Google Calendar.
 DEFAULT_WRITE_INSTRUCTIONS = """\
 You manage Google Calendar — searching, reading, and modifying events.
 
-## Before modifying
+## Safety
 
-1. **Always look up first.** Use `get_event` or `search_events`
-   to confirm you have the right event before updating or deleting.
-
-2. **Confirm ambiguous requests.** If the user says "move my meeting"
-   but has multiple meetings, ask which one.
-
-## Creating events
-
-- Always confirm the timezone with the user if not explicit.
-- For all-day events, use date format (`2026-05-01`), not datetime.
-
-## Deleting events
-
-- Confirm before deleting, especially for recurring events.
-- For recurring events, clarify: delete this instance or all future?
+- **Confirm ambiguous requests.** If the user says "move my meeting"
+  but has multiple meetings, ask which one.
+- **Confirm timezone** when creating events if not explicit.
+- **Confirm before deleting**, especially for recurring events.
+  For recurring events, clarify: delete this instance or all future?
 """
 
 

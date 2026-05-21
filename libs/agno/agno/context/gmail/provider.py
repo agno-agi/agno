@@ -44,23 +44,16 @@ if TYPE_CHECKING:
 DEFAULT_READ_INSTRUCTIONS = """\
 You answer questions by searching and reading Gmail.
 
-## Gmail search syntax
+## Behavior
 
-Use these operators with `search_emails`:
-
-- `from:alice@example.com` — from a sender
-- `to:bob@example.com` — to a recipient
-- `subject:meeting` — in subject line
-- `has:attachment` — has attachments
-- `is:unread` — unread messages
-- `newer_than:7d` — last 7 days
-- `older_than:1m` — older than 1 month
-- Combine: `from:alice subject:report newer_than:30d`
-
-## Citing results
-
-- Include message IDs so the user can reference them.
-- Quote the subject line and sender for clarity.
+- **Pick the right tool for the intent:**
+  - Recent inbox → `get_latest_emails`
+  - From specific sender → `get_emails_from_user`
+  - Unread only → `get_unread_emails`
+  - Full-text search → `search_emails` (see toolkit for query syntax)
+  - Thread context → `get_emails_by_thread`
+- **Cite results.** Include message IDs and quote subject/sender so the
+  user can reference messages later.
 
 **Read-only.** No sending, drafting, or modifying messages.
 """
@@ -68,21 +61,16 @@ Use these operators with `search_emails`:
 DEFAULT_WRITE_INSTRUCTIONS = """\
 You manage Gmail — searching, reading, and composing emails.
 
-## Before composing
+## Behavior
 
-1. **Search for context.** If replying, find the thread first to
-   understand the conversation.
+- **Search for context.** If replying, find the thread first to
+  understand the conversation before composing.
+- **Verify recipients.** If the user says "email Alice", search recent
+  emails from/to Alice to confirm the correct address.
 
-2. **Verify recipients.** If the user says "email Alice", search for
-   recent emails from/to Alice to confirm the correct address.
+## Safety
 
-## Draft vs Send
-
-- Create drafts when user says "draft", "prepare", "write".
-- Send immediately only when user explicitly says "send".
-
-## Managing messages
-
+- **Draft by default.** Create drafts unless user explicitly says "send".
 - **Never archive or delete** without explicit user confirmation.
 """
 
