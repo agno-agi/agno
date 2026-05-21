@@ -915,7 +915,8 @@ class TestParseInteractionResponse:
     def test_agent_path_skips_function_call_steps(self):
         """Antigravity/Deep Research tools run server-side; surfacing them as
         local tool_calls makes Agno try to dispatch them and then send
-        function_results back, which the API rejects with 400."""
+        function_results back, which the API rejects with 400. The skipped
+        step is still logged so the user can see what the sandbox did."""
         model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
 
         mock_interaction = MagicMock()
@@ -926,9 +927,11 @@ class TestParseInteractionResponse:
         ]
         mock_interaction.usage = None
 
-        response = model._parse_provider_response(mock_interaction)
+        with patch("agno.models.google.gemini_interactions.log_info") as mock_log:
+            response = model._parse_provider_response(mock_interaction)
         assert response.content == "Listing the sandbox..."
         assert response.tool_calls == []
+        mock_log.assert_called_once_with('Server-side tool call: list_files({"path": "."})')
 
     def test_parse_thought_response(self):
         model = self._make_model()
@@ -1365,7 +1368,9 @@ class TestInvokeStream:
 
     def test_invoke_stream_agent_path_skips_function_call_steps(self):
         """Streaming variant of the agent-path guard: FunctionCallStep
-        StepStart/StepStop on Antigravity should not yield tool_calls."""
+        StepStart/StepStop on Antigravity should not yield tool_calls but
+        should still emit a log line (built from the streamed args) so the
+        user can observe the call."""
         from agno.models.google.gemini_interactions import (
             DeltaArgumentsDelta,
             FunctionCallStep,
@@ -1406,8 +1411,10 @@ class TestInvokeStream:
         messages = [Message(role="user", content="What's in the sandbox?")]
         assistant_message = Message(role="assistant")
 
-        responses = list(model.invoke_stream(messages, assistant_message))
+        with patch("agno.models.google.gemini_interactions.log_info") as mock_log:
+            responses = list(model.invoke_stream(messages, assistant_message))
         assert all(not r.tool_calls for r in responses)
+        mock_log.assert_called_once_with('Server-side tool call: list_files({"path": "."})')
 
     def test_invoke_stream_error_raises_model_provider_error(self):
         from agno.exceptions import ModelProviderError

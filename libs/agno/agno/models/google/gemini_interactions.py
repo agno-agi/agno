@@ -26,7 +26,7 @@ from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.gemini import inject_agno_client_header
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
     from google import genai
@@ -679,6 +679,8 @@ class GeminiInteractions(Model):
                 # function_result follow-ups with 400. Surface these steps as
                 # observability only and don't queue them for local dispatch.
                 if self.agent is not None:
+                    args_repr = json.dumps(step.arguments) if isinstance(step.arguments, dict) else step.arguments
+                    log_info(f"Server-side tool call: {step.name}({args_repr or ''})")
                     continue
 
                 args = step.arguments
@@ -795,8 +797,18 @@ class GeminiInteractions(Model):
             # On the agent path, FunctionCallSteps describe server-side sandbox
             # tools (Antigravity file ops, Deep Research lookups). Don't track
             # them as pending client calls - the autonomous loop runs them and
-            # would 400 if we tried to send function_result back.
-            if isinstance(step, FunctionCallStep) and self.agent is None:
+            # would 400 if we tried to send function_result back. Track args
+            # via the deltas anyway so we can log the full call on StepStop.
+            if isinstance(step, FunctionCallStep) and self.agent is not None:
+                idx = stream_event.index
+                args = step.arguments
+                args_buffer = json.dumps(args) if isinstance(args, dict) and args else ""
+                stream_state["pending_calls"][idx] = {
+                    "server_side": True,
+                    "name": step.name or "",
+                    "args_buffer": args_buffer,
+                }
+            elif isinstance(step, FunctionCallStep):
                 idx = stream_event.index
                 tool_call = {
                     "id": step.id or str(uuid4()),
@@ -816,8 +828,11 @@ class GeminiInteractions(Model):
             idx = stream_event.index
             pending = stream_state["pending_calls"].pop(idx, None)
             if pending is not None:
-                pending["tool_call"]["function"]["arguments"] = pending["args_buffer"] or "{}"
-                model_response.tool_calls.append(pending["tool_call"])
+                if pending.get("server_side"):
+                    log_info(f"Server-side tool call: {pending['name']}({pending['args_buffer'] or ''})")
+                else:
+                    pending["tool_call"]["function"]["arguments"] = pending["args_buffer"] or "{}"
+                    model_response.tool_calls.append(pending["tool_call"])
 
         elif isinstance(stream_event, interaction_types.InteractionCompletedEvent):
             stream_state["completed"] = True
