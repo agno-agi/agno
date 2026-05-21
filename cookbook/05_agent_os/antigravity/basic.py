@@ -43,4 +43,4 @@ app = agent_os.get_app()
 # Run
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    agent_os.serve(app="app:app", reload=True)
+    agent_os.serve(app="basic:app", reload=True)
