@@ -1,10 +1,9 @@
-import os
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error
 
 
 class LocalFileSystemTools(Toolkit):
@@ -12,6 +11,8 @@ class LocalFileSystemTools(Toolkit):
         self,
         target_directory: Optional[str] = None,
         default_extension: str = "txt",
+        enable_write_file: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """
@@ -21,14 +22,15 @@ class LocalFileSystemTools(Toolkit):
             default_extension (str): Default file extension to use if none specified.
         """
 
-        self.target_directory = target_directory or os.getcwd()
+        self.target_directory = target_directory or str(Path.cwd())
         self.default_extension = default_extension.lstrip(".")
 
         target_path = Path(self.target_directory)
         target_path.mkdir(parents=True, exist_ok=True)
 
         tools = []
-        tools.append(self.write_file)
+        if all or enable_write_file:
+            tools.append(self.write_file)
 
         super().__init__(name="write_to_local", tools=tools, **kwargs)
 
@@ -53,8 +55,9 @@ class LocalFileSystemTools(Toolkit):
             filename = filename or str(uuid4())
             directory = directory or self.target_directory
             if filename and "." in filename:
-                filename, file_ext = os.path.splitext(filename)
-                extension = extension or file_ext.lstrip(".")
+                path_obj = Path(filename)
+                filename = path_obj.stem
+                extension = extension or path_obj.suffix.lstrip(".")
 
             log_debug(f"Writing file to local system: {filename}")
 
@@ -74,7 +77,7 @@ class LocalFileSystemTools(Toolkit):
 
         except Exception as e:
             error_msg = f"Failed to write file: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return f"Error: {error_msg}"
 
     def read_file(self, filename: str, directory: Optional[str] = None) -> str:

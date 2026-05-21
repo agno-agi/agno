@@ -6,7 +6,8 @@ from uuid import UUID
 import pytest
 
 from agno.agent import Agent
-from agno.media import ImageArtifact, VideoArtifact
+from agno.media import Image, Video
+from agno.tools.function import ToolResult
 from agno.tools.models.gemini import GeminiTools
 
 
@@ -14,7 +15,6 @@ from agno.tools.models.gemini import GeminiTools
 @pytest.fixture
 def mock_agent():
     agent = MagicMock(spec=Agent)
-    agent.add_image = MagicMock()
     return agent
 
 
@@ -146,23 +146,22 @@ def test_generate_image_success(mock_gemini_tools, mock_agent, mock_successful_r
         result = mock_gemini_tools.generate_image(mock_agent, prompt)
 
         expected_media_id = "12345678-1234-5678-1234-567812345678"
-        assert result == "Image generated successfully"
+
+        # Check that it returns a ToolResult
+        assert isinstance(result, ToolResult)
+        assert result.content == "Image generated successfully"
+        assert result.images is not None
+        assert len(result.images) == 1
+
+        # Verify the ImageArtifact properties
+        image_artifact = result.images[0]
+        assert isinstance(image_artifact, Image)
+        assert image_artifact.id == expected_media_id
+        assert image_artifact.original_prompt == prompt
+        assert image_artifact.mime_type == "image/png"
+        assert image_artifact.content == b"fake_image_bytes"
+
         mock_gemini_tools.client.models.generate_images.assert_called_once_with(model=image_model, prompt=prompt)
-
-        # Verify agent.add_image was called with the correct ImageArtifact
-        mock_agent.add_image.assert_called_once()
-        call_args, _ = mock_agent.add_image.call_args
-        added_artifact = call_args[0]
-
-        assert isinstance(added_artifact, ImageArtifact)
-        assert added_artifact.id == expected_media_id
-        assert added_artifact.original_prompt == prompt
-        assert added_artifact.mime_type == "image/png"
-        # Check if content is base64 encoded version of "fake_image_bytes"
-        import base64
-
-        expected_base64_bytes = base64.b64encode(b"fake_image_bytes")  # Keep as bytes
-        assert added_artifact.content == expected_base64_bytes  # Compare bytes
 
 
 def test_generate_image_api_error(mock_gemini_tools, mock_agent):
@@ -175,12 +174,16 @@ def test_generate_image_api_error(mock_gemini_tools, mock_agent):
     result = mock_gemini_tools.generate_image(mock_agent, prompt)
 
     expected_error = f"Failed to generate image: Client or method not available ({api_error_message})"
-    assert result == expected_error
+
+    # Check that it returns a ToolResult with error
+    assert isinstance(result, ToolResult)
+    assert result.content == expected_error
+    assert result.images is None
+
     mock_gemini_tools.client.models.generate_images.assert_called_once_with(
         model=mock_gemini_tools.image_model,  # Use default model
         prompt=prompt,
     )
-    mock_agent.add_image.assert_not_called()
 
 
 def test_generate_image_no_image_bytes(mock_gemini_tools, mock_agent, mock_failed_response_no_bytes):
@@ -191,12 +194,15 @@ def test_generate_image_no_image_bytes(mock_gemini_tools, mock_agent, mock_faile
 
     result = mock_gemini_tools.generate_image(mock_agent, prompt)
 
-    assert result == "Failed to generate image: No images were generated."
+    # Check that it returns a ToolResult with error
+    assert isinstance(result, ToolResult)
+    assert result.content == "Failed to generate image: No images were generated."
+    assert result.images is None
+
     mock_gemini_tools.client.models.generate_images.assert_called_once_with(
         model=mock_gemini_tools.image_model,
         prompt=prompt,
     )
-    mock_agent.add_image.assert_not_called()
 
 
 # Tests for generate_video method
@@ -209,8 +215,11 @@ def test_generate_video_requires_vertexai(mock_gemini_tools, mock_agent):
         "Video generation requires Vertex AI mode. "
         "Please set `vertexai=True` or environment variable `GOOGLE_GENAI_USE_VERTEXAI=true`."
     )
-    assert result == expected
-    mock_agent.add_video.assert_not_called()
+
+    # Check that it returns a ToolResult with error
+    assert isinstance(result, ToolResult)
+    assert result.content == expected
+    assert result.videos is None
 
 
 @pytest.fixture
@@ -233,21 +242,30 @@ def test_generate_video_success(mock_gemini_tools, mock_agent, mock_video_operat
     with patch("agno.tools.models.gemini.uuid4", return_value=UUID("87654321-4321-8765-4321-876543214321")):
         result = mock_gemini_tools.generate_video(mock_agent, prompt)
         expected_id = "87654321-4321-8765-4321-876543214321"
-        assert result == "Video generated successfully"
+
+        # Check that it returns a ToolResult
+        assert isinstance(result, ToolResult)
+        assert result.content == "Video generated successfully"
+        assert result.videos is not None
+        assert len(result.videos) == 1
+
+        # Verify the VideoArtifact properties
+        video_artifact = result.videos[0]
+        assert isinstance(video_artifact, Video)
+        assert video_artifact.id == expected_id
+        assert video_artifact.original_prompt == prompt
+        assert video_artifact.mime_type == "video/mp4"
+
+        import base64
+
+        expected_base64_string = base64.b64encode(b"fake_video_bytes").decode("utf-8")
+        expected_content = expected_base64_string.encode("utf-8")  # Convert string to UTF-8 bytes
+        assert video_artifact.content == expected_content
+
         assert mock_gemini_tools.client.models.generate_videos.called
         call_args = mock_gemini_tools.client.models.generate_videos.call_args
         assert call_args.kwargs["model"] == mock_gemini_tools.video_model
         assert call_args.kwargs["prompt"] == prompt
-        mock_agent.add_video.assert_called_once()
-        added = mock_agent.add_video.call_args[0][0]
-        assert isinstance(added, VideoArtifact)
-        assert added.id == expected_id
-        assert added.original_prompt == prompt
-        assert added.mime_type == "video/mp4"
-        import base64
-
-        expected_content = base64.b64encode(b"fake_video_bytes").decode("utf-8")
-        assert added.content == expected_content
 
 
 def test_generate_video_exception(mock_gemini_tools, mock_agent):
@@ -256,8 +274,11 @@ def test_generate_video_exception(mock_gemini_tools, mock_agent):
     mock_gemini_tools.client.models.generate_videos.side_effect = Exception("API error")
     prompt = "A sample video prompt"
     result = mock_gemini_tools.generate_video(mock_agent, prompt)
-    assert result == "Failed to generate video: API error"
-    mock_agent.add_video.assert_not_called()
+
+    # Check that it returns a ToolResult with error
+    assert isinstance(result, ToolResult)
+    assert result.content == "Failed to generate video: API error"
+    assert result.videos is None
 
 
 def test_empty_response_handling(mock_gemini_tools, mock_agent):
@@ -266,4 +287,8 @@ def test_empty_response_handling(mock_gemini_tools, mock_agent):
     mock_response.generated_images = []
     mock_gemini_tools.client.models.generate_images.return_value = mock_response
     response = mock_gemini_tools.generate_image(mock_agent, "Test prompt")
-    assert response == "Failed to generate image: No images were generated."
+
+    # Check that it returns a ToolResult with error
+    assert isinstance(response, ToolResult)
+    assert response.content == "Failed to generate image: No images were generated."
+    assert response.images is None

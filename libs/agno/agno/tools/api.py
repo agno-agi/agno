@@ -2,7 +2,7 @@ import json
 from typing import Any, Dict, List, Literal, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error
 
 try:
     import requests
@@ -21,7 +21,8 @@ class CustomApiTools(Toolkit):
         headers: Optional[Dict[str, str]] = None,
         verify_ssl: bool = True,
         timeout: int = 30,
-        make_request: bool = True,
+        enable_make_request: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.base_url = base_url
@@ -33,7 +34,7 @@ class CustomApiTools(Toolkit):
         self.timeout = timeout
 
         tools: List[Any] = []
-        if make_request:
+        if all or enable_make_request:
             tools.append(self.make_request)
 
         super().__init__(name="api_tools", tools=tools, **kwargs)
@@ -76,7 +77,10 @@ class CustomApiTools(Toolkit):
             str: JSON string containing response data or error message
         """
         try:
-            url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}" if self.base_url else endpoint
+            if self.base_url:
+                url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+            else:
+                url = endpoint
             log_debug(f"Making {method} request to {url}")
 
             response = requests.request(
@@ -103,16 +107,16 @@ class CustomApiTools(Toolkit):
             }
 
             if not response.ok:
-                logger.error(f"Request failed with status {response.status_code}: {response.text}")
+                log_error(f"Request failed with status {response.status_code}: {response.text}")
                 result["error"] = "Request failed"
 
             return json.dumps(result, indent=2)
 
         except requests.exceptions.RequestException as e:
             error_message = f"Request failed: {str(e)}"
-            logger.error(error_message)
+            log_error(error_message)
             return json.dumps({"error": error_message}, indent=2)
         except Exception as e:
             error_message = f"Unexpected error: {str(e)}"
-            logger.error(error_message)
+            log_error(error_message)
             return json.dumps({"error": error_message}, indent=2)

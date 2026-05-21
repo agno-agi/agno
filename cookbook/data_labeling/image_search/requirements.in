@@ -1,0 +1,8 @@
+agno[os]
+chromadb
+fastapi[standard]
+google-genai
+httpx
+pydantic
+rich
+sqlalchemy

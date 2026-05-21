@@ -7,16 +7,33 @@ except ImportError:
 
 from typing import Any, List, Optional
 
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
 
 
 class SpiderTools(Toolkit):
+    """
+    Spider is a toolkit for web searching, scraping, and crawling.
+
+    Args:
+        enable_search (bool): Enable web search functionality. Default is True.
+        enable_scrape (bool): Enable web scraping functionality. Default is True.
+        enable_crawl (bool): Enable web crawling functionality. Default is True.
+        all (bool): Enable all tools. Overrides individual flags when True. Default is False.
+        max_results (Optional[int]): Default maximum number of results.
+        url (Optional[str]): Default URL for operations.
+        optional_params (Optional[dict]): Additional parameters for operations.
+    """
+
     def __init__(
         self,
         max_results: Optional[int] = None,
         url: Optional[str] = None,
         optional_params: Optional[dict] = None,
+        enable_search: bool = True,
+        enable_scrape: bool = True,
+        enable_crawl: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.max_results = max_results
@@ -24,13 +41,16 @@ class SpiderTools(Toolkit):
         self.optional_params = optional_params or {}
 
         tools: List[Any] = []
-        tools.append(self.search)
-        tools.append(self.scrape)
-        tools.append(self.crawl)
+        if enable_search or all:
+            tools.append(self.search_web)
+        if enable_scrape or all:
+            tools.append(self.scrape)
+        if enable_crawl or all:
+            tools.append(self.crawl)
 
         super().__init__(name="spider", tools=tools, **kwargs)
 
-    def search(self, query: str, max_results: int = 5) -> str:
+    def search_web(self, query: str, max_results: int = 5) -> str:
         """Use this function to search the web.
         Args:
             query (str): The query to search the web with.
@@ -68,7 +88,7 @@ class SpiderTools(Toolkit):
             results = app.search(query, options)
             return json.dumps(results)
         except Exception as e:
-            logger.error(f"Error fetching results from spider: {e}")
+            logger.exception("Error fetching results from spider")
             return f"Error fetching results from spider: {e}"
 
     def _scrape(self, url: str) -> str:
@@ -79,7 +99,7 @@ class SpiderTools(Toolkit):
             results = app.scrape_url(url, options)
             return json.dumps(results)
         except Exception as e:
-            logger.error(f"Error fetching content from spider: {e}")
+            logger.exception("Error fetching content from spider")
             return f"Error fetching content from spider: {e}"
 
     def _crawl(self, url: str, limit: Optional[int] = None) -> str:
@@ -92,5 +112,5 @@ class SpiderTools(Toolkit):
             results = app.crawl_url(url, options)
             return json.dumps(results)
         except Exception as e:
-            logger.error(f"Error fetching content from spider: {e}")
+            logger.exception("Error fetching content from spider")
             return f"Error fetching content from spider: {e}"

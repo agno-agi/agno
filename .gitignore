@@ -39,10 +39,14 @@ dist
 # ignore virtualenvs
 .venv*
 .perfenv*
+.demoenv*
+.gemini-agents*
+.getting-started*
 venv*
 agnoenv*
 aienv*
 phienv*
+set-env.ps1
 
 # ignore tmp dirs
 scratch
@@ -56,11 +60,44 @@ audio_generations
 
 *.db
 
-# Google OAuth token
-token.json
+# Google OAuth tokens
+gmail_token.json
+calendar_token.json
+gdrive_token.json
 
 .composio.lock
 
 # Coverage
 coverage_report
 .coverage
+
+# JSON files used as testing DB
+agno_json_data/
+
+# Wiki cookbook artifacts
+cookbook/12_context/demo-wiki/
+cookbook/12_context/demo-wiki-web/
+cookbook/12_context/demo-wiki-dual/
+cookbook/12_context/demo-wiki-git/
+
+# AI
+.claude/
+.cursor/
+.conductor/
+.context/
+.codex/
+
+# Private design documents (symlinked)
+/specs
+/docs
+/projects
+/agno-os
+/apps
+
+# Private Claude coding session preferences
+CLAUDE_PRIVATE.md
+
+# ignore pyrightconfig.json
+pyrightconfig.json
+.python-version
+CLAUDE_PRIVATE.md

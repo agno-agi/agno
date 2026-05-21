@@ -1,26 +1,26 @@
 import json
 from textwrap import dedent
-from typing import Any, List, Optional, Union
+from typing import Any, List, Optional
 
-from agno.agent import Agent
-from agno.document import Document
-from agno.knowledge.agent import AgentKnowledge
-from agno.team.team import Team
+from agno.knowledge.document import Document
+from agno.knowledge.knowledge import Knowledge
+from agno.run import RunContext
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error
 
 
 class KnowledgeTools(Toolkit):
     def __init__(
         self,
-        knowledge: AgentKnowledge,
-        think: bool = True,
-        search: bool = True,
-        analyze: bool = True,
+        knowledge: Knowledge,
+        enable_think: bool = True,
+        enable_search: bool = True,
+        enable_analyze: bool = True,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         add_few_shot: bool = False,
         few_shot_examples: Optional[str] = None,
+        all: bool = False,
         **kwargs,
     ):
         if knowledge is None:
@@ -38,25 +38,25 @@ class KnowledgeTools(Toolkit):
             self.instructions = instructions
 
         # The knowledge to search
-        self.knowledge: AgentKnowledge = knowledge
+        self.knowledge: Knowledge = knowledge
 
         tools: List[Any] = []
-        if think:
+        if enable_think or all:
             tools.append(self.think)
-        if search:
-            tools.append(self.search)
-        if analyze:
+        if enable_search or all:
+            tools.append(self.search_knowledge)
+        if enable_analyze or all:
             tools.append(self.analyze)
 
         super().__init__(
             name="knowledge_tools",
+            tools=tools,
             instructions=self.instructions,
             add_instructions=add_instructions,
-            tools=tools,
             **kwargs,
         )
 
-    def think(self, agent: Union[Agent, Team], thought: str) -> str:
+    def think(self, run_context: RunContext, thought: str) -> str:
         """Use this tool as a scratchpad to reason about the question, refine your approach, brainstorm search terms, or revise your plan.
 
         Call `Think` whenever you need to figure out what to do next, analyze the user's question, or plan your approach.
@@ -72,14 +72,16 @@ class KnowledgeTools(Toolkit):
             log_debug(f"Thought: {thought}")
 
             # Add the thought to the Agent state
-            if agent.session_state is None:
-                agent.session_state = {}
-            if "thoughts" not in agent.session_state:
-                agent.session_state["thoughts"] = []
-            agent.session_state["thoughts"].append(thought)
+            session_state = run_context.session_state
+            if session_state is None:
+                session_state = {}
+                run_context.session_state = session_state
+            if "thoughts" not in session_state:
+                session_state["thoughts"] = []
+            session_state["thoughts"].append(thought)
 
             # Return the full log of thoughts and the new thought
-            thoughts = "\n".join([f"- {t}" for t in agent.session_state["thoughts"]])
+            thoughts = "\n".join([f"- {t}" for t in session_state["thoughts"]])
             formatted_thoughts = dedent(
                 f"""Thoughts:
                 {thoughts}
@@ -87,10 +89,10 @@ class KnowledgeTools(Toolkit):
             ).strip()
             return formatted_thoughts
         except Exception as e:
-            logger.error(f"Error recording thought: {e}")
+            log_error(f"Error recording thought: {str(e)}")
             return f"Error recording thought: {e}"
 
-    def search(self, agent: Union[Agent, Team], query: str) -> str:
+    def search_knowledge(self, run_context: RunContext, query: str) -> str:
         """Use this tool to search the knowledge base for relevant information.
         After thinking through the question, use this tool as many times as needed to search for relevant information.
 
@@ -109,10 +111,10 @@ class KnowledgeTools(Toolkit):
                 return "No documents found"
             return json.dumps([doc.to_dict() for doc in relevant_docs])
         except Exception as e:
-            logger.error(f"Error searching knowledge base: {e}")
+            log_error(f"Error searching knowledge base: {str(e)}")
             return f"Error searching knowledge base: {e}"
 
-    def analyze(self, agent: Union[Agent, Team], analysis: str) -> str:
+    def analyze(self, run_context: RunContext, analysis: str) -> str:
         """Use this tool to evaluate whether the returned documents are correct and sufficient.
         If not, go back to "Think" or "Search" with refined queries.
 
@@ -126,14 +128,16 @@ class KnowledgeTools(Toolkit):
             log_debug(f"Analysis: {analysis}")
 
             # Add the thought to the Agent state
-            if agent.session_state is None:
-                agent.session_state = {}
-            if "analysis" not in agent.session_state:
-                agent.session_state["analysis"] = []
-            agent.session_state["analysis"].append(analysis)
+            session_state = run_context.session_state
+            if session_state is None:
+                session_state = {}
+                run_context.session_state = session_state
+            if "analysis" not in session_state:
+                session_state["analysis"] = []
+            session_state["analysis"].append(analysis)
 
             # Return the full log of thoughts and the new thought
-            analysis = "\n".join([f"- {a}" for a in agent.session_state["analysis"]])
+            analysis = "\n".join([f"- {a}" for a in session_state["analysis"]])
             formatted_analysis = dedent(
                 f"""Analysis:
                 {analysis}
@@ -141,7 +145,7 @@ class KnowledgeTools(Toolkit):
             ).strip()
             return formatted_analysis
         except Exception as e:
-            logger.error(f"Error recording analysis: {e}")
+            log_error(f"Error recording analysis: {str(e)}")
             return f"Error recording analysis: {e}"
 
     DEFAULT_INSTRUCTIONS = dedent("""\

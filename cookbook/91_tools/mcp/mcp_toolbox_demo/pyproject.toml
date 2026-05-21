@@ -1,0 +1,17 @@
+[project]
+name = "mcp-toolbox-demo"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "agno",
+    "fastapi>=0.116.1",
+    "mcp>=1.12.2",
+    "openai>=1.97.1",
+    "sqlalchemy>=2.0.43",
+    "toolbox-core>=0.4.0",
+]
+
+[tool.uv.sources]
+agno = { path = "../../../../libs/agno", editable = true }

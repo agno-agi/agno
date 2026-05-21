@@ -1,18 +1,16 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncIterator, Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Type, Union
 
+import httpx
 from pydantic import BaseModel
 
-from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.anthropic import Claude as AnthropicClaude
-from agno.models.message import Message
-from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.models.aws_claude import format_messages
+from agno.utils.log import log_debug, log_warning
+from agno.utils.models.claude import format_tools_for_model
 
 try:
-    from anthropic import AnthropicBedrock, APIConnectionError, APIStatusError, AsyncAnthropicBedrock, RateLimitError
-    from anthropic.types import Message as AnthropicMessage
+    from anthropic import AnthropicBedrock, AsyncAnthropicBedrock
 except ImportError:
     raise ImportError("`anthropic[bedrock]` not installed. Please install using `pip install anthropic[bedrock]`")
 
@@ -30,44 +28,78 @@ class Claude(AnthropicClaude):
     For more information, see: https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic.html
     """
 
-    id: str = "anthropic.claude-3-5-sonnet-20240620-v1:0"
+    id: str = "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
     name: str = "AwsBedrockAnthropicClaude"
     provider: str = "AwsBedrock"
 
     aws_access_key: Optional[str] = None
     aws_secret_key: Optional[str] = None
+    aws_session_token: Optional[str] = None
     aws_region: Optional[str] = None
+    api_key: Optional[str] = None
     session: Optional[Session] = None
-
-    # -*- Request parameters
-    max_tokens: int = 4096
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
-    top_k: Optional[int] = None
-    stop_sequences: Optional[List[str]] = None
-
-    # -*- Request parameters
-    request_params: Optional[Dict[str, Any]] = None
-    # -*- Client parameters
-    client_params: Optional[Dict[str, Any]] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """
-        Convert the model to a dictionary.
-
-        Returns:
-            Dict[str, Any]: The dictionary representation of the model.
-        """
-        _dict = super().to_dict()
-        _dict["max_tokens"] = self.max_tokens
-        _dict["temperature"] = self.temperature
-        _dict["top_p"] = self.top_p
-        _dict["top_k"] = self.top_k
-        _dict["stop_sequences"] = self.stop_sequences
-        return _dict
 
     client: Optional[AnthropicBedrock] = None  # type: ignore
     async_client: Optional[AsyncAnthropicBedrock] = None  # type: ignore
+
+    def __post_init__(self):
+        """Validate model configuration after initialization"""
+        super().__post_init__()
+        # Overwrite output schema support for AWS Bedrock Claude
+        self.supports_native_structured_outputs = False
+        self.supports_json_schema_outputs = False
+
+    def _get_client_params(self) -> Dict[str, Any]:
+        if self.session:
+            # Use get_frozen_credentials() for an atomic snapshot so that
+            # a credential refresh between property reads cannot produce a
+            # mismatched access-key / secret-key / token tuple.
+            resolved = self.session.get_credentials()
+            if resolved is None:
+                raise ValueError(
+                    "boto3 session has no credentials. Check your AWS configuration "
+                    "(environment variables, config files, IAM role, etc.)."
+                )
+            credentials = resolved.get_frozen_credentials()
+            client_params: Dict[str, Any] = {
+                "aws_access_key": credentials.access_key,
+                "aws_secret_key": credentials.secret_key,
+                "aws_session_token": credentials.token,
+                "aws_region": self.aws_region or self.session.region_name,
+            }
+        else:
+            self.api_key = self.api_key or getenv("AWS_BEDROCK_API_KEY")
+            if self.api_key:
+                raise ValueError(
+                    "AWS_BEDROCK_API_KEY authentication is not currently supported by AnthropicBedrock. "
+                    "Use IAM credentials (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY[/AWS_SESSION_TOKEN]) "
+                    "or provide a boto3 session instead."
+                )
+
+            self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY_ID") or getenv("AWS_ACCESS_KEY")
+            self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_ACCESS_KEY") or getenv("AWS_SECRET_KEY")
+            self.aws_session_token = self.aws_session_token or getenv("AWS_SESSION_TOKEN")
+            self.aws_region = self.aws_region or getenv("AWS_REGION")
+
+            client_params = {
+                "aws_secret_key": self.aws_secret_key,
+                "aws_access_key": self.aws_access_key,
+                "aws_session_token": self.aws_session_token,
+                "aws_region": self.aws_region,
+            }
+
+            if not (self.aws_access_key and self.aws_secret_key):
+                log_warning(
+                    "AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session."
+                )
+
+        if self.timeout is not None:
+            client_params["timeout"] = self.timeout
+
+        if self.client_params:
+            client_params.update(self.client_params)
+
+        return client_params
 
     def get_client(self):
         """
@@ -76,35 +108,36 @@ class Claude(AnthropicClaude):
         Returns:
             AnthropicBedrock: The Bedrock client.
         """
-        if self.client is not None and not self.client.is_closed():
+        # When using a boto3 session, always recreate the client so
+        # session.get_credentials() can return rotated credentials
+        # (IAM roles, EKS pod identity, instance profiles, STS).
+        if not self.session and self.client is not None and not self.client.is_closed():
             return self.client
 
-        if self.session:
-            credentials = self.session.get_credentials()
-            client_params = {
-                "aws_access_key": credentials.access_key,
-                "aws_secret_key": credentials.secret_key,
-                "aws_session_token": credentials.token,
-                "aws_region": self.session.region_name,
-            }
-        else:
-            self.aws_access_key = self.aws_access_key or getenv("AWS_ACCESS_KEY")
-            self.aws_secret_key = self.aws_secret_key or getenv("AWS_SECRET_KEY")
-            self.aws_region = self.aws_region or getenv("AWS_REGION")
+        client_params = self._get_client_params()
 
-            client_params = {
-                "aws_secret_key": self.aws_secret_key,
-                "aws_access_key": self.aws_access_key,
-                "aws_region": self.aws_region,
-            }
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client. Ignoring and using SDK default.")
+        # When no custom http_client is provided, let the SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
 
-        if self.client_params:
-            client_params.update(self.client_params)
+        # Close the previous client before creating a new one to avoid leaking
+        # connection pools when session-based credential refresh forces recreation.
+        if self.session and self.client is not None and not self.client.is_closed():
+            self.client.close()
 
-        self.client = AnthropicBedrock(
+        # Use a local variable so concurrent callers on the same model
+        # instance cannot overwrite each other's client via self.client.
+        client = AnthropicBedrock(
             **client_params,  # type: ignore
         )
-        return self.client
+        if not self.session:
+            self.client = client
+        return client
 
     def get_async_client(self):
         """
@@ -113,42 +146,58 @@ class Claude(AnthropicClaude):
         Returns:
             AsyncAnthropicBedrock: The Bedrock async client.
         """
-        if self.async_client is not None:
+        # When using a boto3 session, always recreate the client so
+        # session.get_credentials() can return rotated credentials.
+        if not self.session and self.async_client is not None and not self.async_client.is_closed():
             return self.async_client
 
-        if self.session:
-            credentials = self.session.get_credentials()
-            client_params = {
-                "aws_access_key": credentials.access_key,
-                "aws_secret_key": credentials.secret_key,
-                "aws_session_token": credentials.token,
-                "aws_region": self.session.region_name,
-            }
-        else:
-            client_params = {
-                "aws_secret_key": self.aws_secret_key,
-                "aws_access_key": self.aws_access_key,
-                "aws_region": self.aws_region,
-            }
+        client_params = self._get_client_params()
 
-        if self.client_params:
-            client_params.update(self.client_params)
+        if self.http_client:
+            if isinstance(self.http_client, httpx.AsyncClient):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.AsyncClient. Ignoring and using SDK default.")
+        # When no custom http_client is provided, let the SDK use its own default client.
+        # Each model instance gets its own connection, preventing HTTP/2 stream saturation
+        # when multiple models (main agent, MemoryManager, etc.) run concurrently.
 
-        self.async_client = AsyncAnthropicBedrock(
+        # Close the previous client before creating a new one to avoid leaking
+        # connection pools when session-based credential refresh forces recreation.
+        if self.session and self.async_client is not None and not self.async_client.is_closed():
+            self.async_client.close()
+
+        # Use a local variable so concurrent callers on the same model
+        # instance cannot overwrite each other's client via self.async_client.
+        async_client = AsyncAnthropicBedrock(
             **client_params,  # type: ignore
         )
-        return self.async_client
+        if not self.session:
+            self.async_client = async_client
+        return async_client
 
-    def get_request_params(self) -> Dict[str, Any]:
+    def get_request_params(
+        self,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         Generate keyword arguments for API requests.
 
         Returns:
             Dict[str, Any]: The keyword arguments for API requests.
         """
+        # Validate thinking support if thinking is enabled
+        if self.thinking:
+            self._validate_thinking_support()
+
         _request_params: Dict[str, Any] = {}
         if self.max_tokens:
             _request_params["max_tokens"] = self.max_tokens
+        if self.thinking:
+            _request_params["thinking"] = self.thinking
+        if self.output_config:
+            _request_params["output_config"] = self.output_config
         if self.temperature:
             _request_params["temperature"] = self.temperature
         if self.stop_sequences:
@@ -157,6 +206,16 @@ class Claude(AnthropicClaude):
             _request_params["top_p"] = self.top_p
         if self.top_k:
             _request_params["top_k"] = self.top_k
+        if self.timeout:
+            _request_params["timeout"] = self.timeout
+
+        # Build betas list - include existing betas and add new one if needed
+        betas_list = list(self.betas) if self.betas else []
+
+        # Include betas if any are present
+        if betas_list:
+            _request_params["betas"] = betas_list
+
         if self.request_params:
             _request_params.update(self.request_params)
 
@@ -164,169 +223,37 @@ class Claude(AnthropicClaude):
             log_debug(f"Calling {self.provider} with request parameters: {_request_params}", log_level=2)
         return _request_params
 
-    def invoke(
+    def _prepare_request_kwargs(
         self,
-        messages: List[Message],
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        system_message: str,
         tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> AnthropicMessage:
-        """
-        Send a request to the Anthropic API to generate a response.
-        """
-
-        try:
-            chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools)
-
-            return self.get_client().messages.create(
-                model=self.id,
-                messages=chat_messages,  # type: ignore
-                **request_kwargs,
-            )
-        except APIConnectionError as e:
-            log_error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except RateLimitError as e:
-            log_warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except APIStatusError as e:
-            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
-            raise ModelProviderError(
-                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
-            ) from e
-        except Exception as e:
-            log_error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
-
-    def invoke_stream(
-        self,
-        messages: List[Message],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Any:
+        messages: Optional[List[Any]] = None,
+    ) -> Dict[str, Any]:
         """
-        Stream a response from the Anthropic API.
+        Prepare the request keyword arguments for the API call.
 
         Args:
-            messages (List[Message]): A list of messages to send to the model.
+            system_message (str): The concatenated system messages.
+            tools: Optional list of tools
+            response_format: Optional response format (Pydantic model or dict)
+            messages: Optional list of Message objects for the conversation.
 
         Returns:
-            Any: The streamed response from the model.
-
-        Raises:
-            APIConnectionError: If there are network connectivity issues
-            RateLimitError: If the API rate limit is exceeded
-            APIStatusError: For other API-related errors
+            Dict[str, Any]: The request keyword arguments.
         """
+        # Pass response_format and tools to get_request_params for beta header handling
+        request_kwargs = self.get_request_params(response_format=response_format, tools=tools).copy()
+        system = self._build_system(system_message)
+        if system:
+            request_kwargs["system"] = system
 
-        chat_messages, system_message = format_messages(messages)
-        request_kwargs = self._prepare_request_kwargs(system_message, tools)
+        # Format tools (this will handle strict mode)
+        if tools:
+            request_kwargs["tools"] = format_tools_for_model(tools)
 
-        try:
-            return (
-                self.get_client()
-                .messages.stream(
-                    model=self.id,
-                    messages=chat_messages,  # type: ignore
-                    **request_kwargs,
-                )
-                .__enter__()
-            )
-        except APIConnectionError as e:
-            log_error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except RateLimitError as e:
-            log_warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except APIStatusError as e:
-            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
-            raise ModelProviderError(
-                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
-            ) from e
-        except Exception as e:
-            log_error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+        self._apply_cache_tools(request_kwargs)
 
-    async def ainvoke(
-        self,
-        messages: List[Message],
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> AnthropicMessage:
-        """
-        Send an asynchronous request to the Anthropic API to generate a response.
-        """
-
-        try:
-            chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools)
-
-            return await self.get_async_client().messages.create(
-                model=self.id,
-                messages=chat_messages,  # type: ignore
-                **request_kwargs,
-            )
-        except APIConnectionError as e:
-            log_error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except RateLimitError as e:
-            log_warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except APIStatusError as e:
-            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
-            raise ModelProviderError(
-                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
-            ) from e
-        except Exception as e:
-            log_error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
-
-    async def ainvoke_stream(
-        self,
-        messages: List[Message],
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> AsyncIterator[Any]:
-        """
-        Stream an asynchronous response from the Anthropic API.
-
-        Args:
-            messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            Any: The streamed response from the model.
-
-        Raises:
-            APIConnectionError: If there are network connectivity issues
-            RateLimitError: If the API rate limit is exceeded
-            APIStatusError: For other API-related errors
-        """
-
-        try:
-            chat_messages, system_message = format_messages(messages)
-            request_kwargs = self._prepare_request_kwargs(system_message, tools)
-            async with self.get_async_client().messages.stream(
-                model=self.id,
-                messages=chat_messages,  # type: ignore
-                **request_kwargs,
-            ) as stream:
-                async for chunk in stream:
-                    yield chunk
-        except APIConnectionError as e:
-            log_error(f"Connection error while calling Claude API: {str(e)}")
-            raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except RateLimitError as e:
-            log_warning(f"Rate limit exceeded: {str(e)}")
-            raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
-        except APIStatusError as e:
-            log_error(f"Claude API error (status {e.status_code}): {str(e)}")
-            raise ModelProviderError(
-                message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
-            ) from e
-        except Exception as e:
-            log_error(f"Unexpected error calling Claude API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+        if request_kwargs:
+            log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
+        return request_kwargs

@@ -7,11 +7,12 @@ from agno.tools import Toolkit
 class WebBrowserTools(Toolkit):
     """Tools for opening a page on the web browser"""
 
-    def __init__(self):
+    def __init__(self, enable_open_page: bool = True, all: bool = False, **kwargs):
         tools: List[Any] = []
-        tools.append(self.open_page)
+        if all or enable_open_page:
+            tools.append(self.open_page)
 
-        super().__init__(name="webbrowser_tools", tools=tools)
+        super().__init__(name="webbrowser_tools", tools=tools, **kwargs)
 
     def open_page(self, url: str, new_window: bool = False):
         """Open a URL in a browser window

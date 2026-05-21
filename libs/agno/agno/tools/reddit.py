@@ -1,9 +1,9 @@
 import json
 from os import getenv
-from typing import Any, Dict, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info, logger
 
 try:
     import praw  # type: ignore
@@ -20,14 +20,6 @@ class RedditTools(Toolkit):
         user_agent: Optional[str] = None,
         username: Optional[str] = None,
         password: Optional[str] = None,
-        get_user_info: bool = True,
-        get_top_posts: bool = True,
-        get_subreddit_info: bool = True,
-        get_trending_subreddits: bool = True,
-        get_subreddit_stats: bool = True,
-        create_post: bool = True,
-        reply_to_post: bool = True,
-        reply_to_comment: bool = True,
         **kwargs,
     ):
         if reddit_instance is not None:
@@ -65,23 +57,16 @@ class RedditTools(Toolkit):
             else:
                 logger.warning("Missing Reddit API credentials")
 
-        tools: List[Any] = []
-        if get_user_info:
-            tools.append(self.get_user_info)
-        if get_top_posts:
-            tools.append(self.get_top_posts)
-        if get_subreddit_info:
-            tools.append(self.get_subreddit_info)
-        if get_trending_subreddits:
-            tools.append(self.get_trending_subreddits)
-        if get_subreddit_stats:
-            tools.append(self.get_subreddit_stats)
-        if create_post:
-            tools.append(self.create_post)
-        if reply_to_post:
-            tools.append(self.reply_to_post)
-        if reply_to_comment:
-            tools.append(self.reply_to_comment)
+        tools: List[Callable] = [
+            self.get_user_info,
+            self.get_top_posts,
+            self.get_subreddit_info,
+            self.get_trending_subreddits,
+            self.get_subreddit_stats,
+            self.create_post,
+            self.reply_to_post,
+            self.reply_to_comment,
+        ]
 
         super().__init__(name="reddit", tools=tools, **kwargs)
 
@@ -92,19 +77,19 @@ class RedditTools(Toolkit):
             bool: True if user is authenticated, False otherwise
         """
         if not self.reddit:
-            logger.error("Reddit client not initialized")
+            log_error("Reddit client not initialized")
             return False
 
         if not all([self.username, self.password]):
-            logger.error("User authentication required. Please provide username and password.")
+            log_error("User authentication required. Please provide username and password.")
             return False
 
         try:
             # Verify authentication by checking if we can get the authenticated user
             self.reddit.user.me()
             return True
-        except Exception as e:
-            logger.error(f"Authentication error: {e}")
+        except Exception:
+            logger.exception("Authentication error")
             return False
 
     def get_user_info(self, username: str) -> str:
@@ -319,11 +304,11 @@ class RedditTools(Toolkit):
             str: JSON string containing information about the created reply.
         """
         if not self.reddit:
-            logger.error("Reddit instance not initialized")
+            log_error("Reddit instance not initialized")
             return "Please provide Reddit API credentials"
 
         if not self._check_user_auth():
-            logger.error("User authentication failed")
+            log_error("User authentication failed")
             return "User authentication required for posting replies. Please provide username and password."
 
         try:
@@ -339,7 +324,7 @@ class RedditTools(Toolkit):
             # Verify post exists
             if not self._check_post_exists(post_id):
                 error_msg = f"Post with ID {post_id} does not exist or is not accessible"
-                logger.error(error_msg)
+                log_error(error_msg)
                 return error_msg
 
             # Get the submission object
@@ -352,7 +337,7 @@ class RedditTools(Toolkit):
             # If subreddit was provided, verify we're in the right place
             if subreddit and submission.subreddit.display_name.lower() != subreddit.lower():
                 error_msg = f"Error: Post ID belongs to r/{submission.subreddit.display_name}, not r/{subreddit}"
-                logger.error(error_msg)
+                log_error(error_msg)
                 return error_msg
 
             # Create the reply
@@ -379,12 +364,12 @@ class RedditTools(Toolkit):
             # Handle specific Reddit API errors
             error_messages = [f"{error.error_type}: {error.message}" for error in api_error.items]
             error_msg = f"Reddit API Error: {'; '.join(error_messages)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
         except Exception as e:
             error_msg = f"Error creating reply: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def reply_to_comment(self, comment_id: str, content: str, subreddit: Optional[str] = None) -> str:
@@ -402,11 +387,11 @@ class RedditTools(Toolkit):
             str: JSON string containing information about the created reply.
         """
         if not self.reddit:
-            logger.error("Reddit instance not initialized")
+            log_error("Reddit instance not initialized")
             return "Please provide Reddit API credentials"
 
         if not self._check_user_auth():
-            logger.error("User authentication failed")
+            log_error("User authentication failed")
             return "User authentication required for posting replies. Please provide username and password."
 
         try:
@@ -426,7 +411,7 @@ class RedditTools(Toolkit):
             # If subreddit was provided, verify we're in the right place
             if subreddit and comment.subreddit.display_name.lower() != subreddit.lower():
                 error_msg = f"Error: Comment ID belongs to r/{comment.subreddit.display_name}, not r/{subreddit}"
-                logger.error(error_msg)
+                log_error(error_msg)
                 return error_msg
 
             # Create the reply
@@ -453,12 +438,12 @@ class RedditTools(Toolkit):
             # Handle specific Reddit API errors
             error_messages = [f"{error.error_type}: {error.message}" for error in api_error.items]
             error_msg = f"Reddit API Error: {'; '.join(error_messages)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
         except Exception as e:
             error_msg = f"Error creating reply: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return error_msg
 
     def _check_post_exists(self, post_id: str) -> bool:
@@ -477,6 +462,6 @@ class RedditTools(Toolkit):
             _ = submission.title
             _ = submission.author
             return True
-        except Exception as e:
-            logger.error(f"Error checking post existence: {str(e)}")
+        except Exception:
+            logger.exception("Error checking post existence")
             return False

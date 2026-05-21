@@ -1,0 +1,45 @@
+services:
+  toolbox:
+    # Pin to specific version for production use
+    image: us-central1-docker.pkg.dev/database-toolbox/toolbox/toolbox:latest
+    hostname: toolbox
+    platform: linux/amd64
+    ports:
+      - "5001:5000"
+    volumes:
+      - ./config:/config
+    command: ["toolbox", "--tools-file", "/config/tools.yaml", "--address", "0.0.0.0"]
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - tool-network
+
+  db:
+    # Pin to specific version for production use
+    image: postgres:16
+    hostname: db
+    environment:
+      POSTGRES_USER: toolbox_user
+      POSTGRES_PASSWORD: my-password
+      POSTGRES_DB: toolbox_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # This file will bootstrap the schema and data
+      - ./config/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U toolbox_user -d toolbox_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tool-network
+
+networks:
+  tool-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

@@ -2,17 +2,24 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_info, log_warning
 
 
 class ShellTools(Toolkit):
-    def __init__(self, base_dir: Optional[Union[Path, str]] = None, **kwargs):
+    def __init__(
+        self,
+        base_dir: Optional[Union[Path, str]] = None,
+        enable_run_shell_command: bool = True,
+        all: bool = False,
+        **kwargs,
+    ):
         self.base_dir: Optional[Path] = None
         if base_dir is not None:
             self.base_dir = Path(base_dir) if isinstance(base_dir, str) else base_dir
 
         tools = []
-        tools.append(self.run_shell_command)
+        if all or enable_run_shell_command:
+            tools.append(self.run_shell_command)
 
         super().__init__(name="shell_tools", tools=tools, **kwargs)
 
@@ -42,5 +49,5 @@ class ShellTools(Toolkit):
                 return f"Error: {result.stderr}"
             return "\n".join(result.stdout.split("\n")[-tail:])
         except Exception as e:
-            logger.warning(f"Failed to run shell command: {e}")
+            log_warning(f"Failed to run shell command: {str(e)}")
             return f"Error: {e}"

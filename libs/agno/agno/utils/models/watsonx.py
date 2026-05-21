@@ -19,7 +19,7 @@ def format_images_for_message(message: Message, images: Sequence[Image]) -> Mess
             if image.content is not None:
                 image_content = image.content
             elif image.url is not None:
-                image_content = image.image_url_content
+                image_content = image.get_content_bytes()  # type: ignore
             else:
                 log_warning(f"Unsupported image format: {image}")
                 continue

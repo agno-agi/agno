@@ -1,4 +1,5 @@
 import logging
+from functools import lru_cache
 from os import getenv
 from typing import Any, Literal, Optional
 
@@ -52,18 +53,23 @@ class AgnoLogger(logging.Logger):
     def __init__(self, name: str, level: int = logging.NOTSET):
         super().__init__(name, level)
 
-    def debug(self, msg: str, center: bool = False, symbol: str = "*", *args, **kwargs):
+    def debug(self, msg: str, center: bool = False, symbol: str = "*", *args, **kwargs):  # type: ignore
         if center:
             msg = center_header(str(msg), symbol)
         super().debug(msg, *args, **kwargs)
 
-    def info(self, msg: str, center: bool = False, symbol: str = "*", *args, **kwargs):
+    def info(self, msg: str, center: bool = False, symbol: str = "*", *args, **kwargs):  # type: ignore
         if center:
             msg = center_header(str(msg), symbol)
         super().info(msg, *args, **kwargs)
 
 
 def build_logger(logger_name: str, source_type: Optional[str] = None) -> Any:
+    # If a logger with the name "agno.{source_type}" is already set, we want to use that one
+    _logger = logging.getLogger(f"agno.{logger_name}")
+    if _logger.handlers or _logger.level != logging.NOTSET:
+        return _logger
+
     # Set the custom logger class as the default for this logger
     logging.setLoggerClass(AgnoLogger)
 
@@ -102,8 +108,13 @@ workflow_logger: AgnoLogger = build_logger(WORKFLOW_LOGGER_NAME, source_type="wo
 # Set the default logger to the agent logger
 logger: AgnoLogger = agent_logger
 
+
 debug_on: bool = False
 debug_level: Literal[1, 2] = 1
+
+# Controls whether exc_info tracebacks are rendered in warning log output.
+# Opt-in only: set AGNO_LOG_TRACEBACKS=true or call set_log_tracebacks(True).
+log_tracebacks: bool = getenv("AGNO_LOG_TRACEBACKS", "false").lower() in ("true", "1", "yes")
 
 
 def set_log_level_to_debug(source_type: Optional[str] = None, level: Literal[1, 2] = 1):
@@ -123,6 +134,22 @@ def set_log_level_to_debug(source_type: Optional[str] = None, level: Literal[1, 
 def set_log_level_to_info(source_type: Optional[str] = None):
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
     _logger.setLevel(logging.INFO)
+
+    global debug_on
+    debug_on = False
+
+
+def set_log_level_to_warning(source_type: Optional[str] = None):
+    _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
+    _logger.setLevel(logging.WARNING)
+
+    global debug_on
+    debug_on = False
+
+
+def set_log_level_to_error(source_type: Optional[str] = None):
+    _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
+    _logger.setLevel(logging.ERROR)
 
     global debug_on
     debug_on = False
@@ -158,6 +185,12 @@ def use_workflow_logger():
     logger = workflow_logger
 
 
+@lru_cache(maxsize=128)
+def _using_default_logger(logger_instance: Any) -> bool:
+    """Return True if the currently active logger is our default AgnoLogger"""
+    return isinstance(logger_instance, AgnoLogger)
+
+
 def log_debug(msg, center: bool = False, symbol: str = "*", log_level: Literal[1, 2] = 1, *args, **kwargs):
     global logger
     global debug_on
@@ -165,24 +198,100 @@ def log_debug(msg, center: bool = False, symbol: str = "*", log_level: Literal[1
 
     if debug_on:
         if debug_level >= log_level:
-            logger.debug(msg, center, symbol, *args, **kwargs)
+            if _using_default_logger(logger):
+                logger.debug(msg, center, symbol, *args, **kwargs)
+            else:
+                logger.debug(msg, *args, **kwargs)
 
 
 def log_info(msg, center: bool = False, symbol: str = "*", *args, **kwargs):
     global logger
-    logger.info(msg, center, symbol, *args, **kwargs)
+    if _using_default_logger(logger):
+        logger.info(msg, center, symbol, *args, **kwargs)
+    else:
+        logger.info(msg, *args, **kwargs)
 
 
 def log_warning(msg, *args, **kwargs):
+    """Log a warning. When called inside an except block and AGNO_LOG_TRACEBACKS
+    is enabled, the traceback is automatically included — no need to pass
+    exc_info=True at the call site.
+    """
+    import sys
+
     global logger
+    if "exc_info" not in kwargs and log_tracebacks and sys.exc_info()[0] is not None:
+        kwargs["exc_info"] = True
     logger.warning(msg, *args, **kwargs)
 
 
 def log_error(msg, *args, **kwargs):
+    """Log an error. When called inside an except block and AGNO_LOG_TRACEBACKS
+    is enabled, the traceback is automatically included.
+    """
+    import sys
+
     global logger
+    if "exc_info" not in kwargs and log_tracebacks and sys.exc_info()[0] is not None:
+        kwargs["exc_info"] = True
     logger.error(msg, *args, **kwargs)
 
 
 def log_exception(msg, *args, **kwargs):
+    """Log an error with full traceback. Always includes the traceback
+    regardless of AGNO_LOG_TRACEBACKS setting.
+    """
     global logger
     logger.exception(msg, *args, **kwargs)
+
+
+def set_log_tracebacks(enabled: bool = True) -> None:
+    """Enable or disable full tracebacks in log output.
+
+    When enabled, ``log_error`` and ``log_warning`` calls inside except
+    blocks include the full traceback.  When disabled (the default),
+    only the message is logged.
+
+    ``log_exception`` always includes tracebacks regardless of this setting.
+
+    Can also be controlled via the ``AGNO_LOG_TRACEBACKS`` env var.
+    """
+    global log_tracebacks
+    log_tracebacks = enabled
+
+
+def configure_agno_logging(
+    custom_default_logger: Optional[Any] = None,
+    custom_agent_logger: Optional[Any] = None,
+    custom_team_logger: Optional[Any] = None,
+    custom_workflow_logger: Optional[Any] = None,
+    enable_log_tracebacks: Optional[bool] = None,
+) -> None:
+    """
+    Util to set custom loggers. These will be used everywhere across the Agno library.
+
+    Args:
+        custom_default_logger: Default logger to use (overrides agent_logger for default)
+        custom_agent_logger: Custom logger for agent operations
+        custom_team_logger: Custom logger for team operations
+        custom_workflow_logger: Custom logger for workflow operations
+        enable_log_tracebacks: If True, show full tracebacks on warning logs.
+            Also controllable via ``AGNO_LOG_TRACEBACKS`` env var.
+    """
+    if enable_log_tracebacks is not None:
+        set_log_tracebacks(enable_log_tracebacks)
+    if custom_default_logger is not None:
+        global logger
+        logger = custom_default_logger
+
+    if custom_agent_logger is not None:
+        global agent_logger
+        agent_logger = custom_agent_logger
+
+    if custom_team_logger is not None:
+        global team_logger
+        team_logger = custom_team_logger
+
+    if custom_workflow_logger is not None:
+        global workflow_logger
+        workflow_logger = custom_workflow_logger

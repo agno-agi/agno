@@ -41,7 +41,7 @@ def test_searxng_search(searxng_instance):
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
 
-        result = searxng_instance.search("test query", max_results=2)
+        result = searxng_instance.search_web("test query", max_results=2)
 
         # Parse the JSON result since the method returns JSON string
         result_data = json.loads(result)
@@ -63,7 +63,7 @@ def test_searxng_search_with_engines(searxng_with_engines):
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
 
-        searxng_with_engines.search("test query")
+        searxng_with_engines.search_web("test query")
 
         expected_url = "http://localhost:53153/search?format=json&q=test%20query&engines=google,bing"
         mock_get.assert_called_once_with(expected_url)
@@ -80,7 +80,7 @@ def test_searxng_search_with_fixed_max_results(searxng_with_fixed_results):
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
 
-        result = searxng_with_fixed_results.search("test query", max_results=10)
+        result = searxng_with_fixed_results.search_web("test query", max_results=10)
         result_data = json.loads(result)
 
         # Should respect fixed_max_results (3) instead of max_results (10)
@@ -97,7 +97,7 @@ def test_searxng_image_search(searxng_instance):
         mock_get.return_value = mock_response
 
         # Need to create instance with images=True to register the tool
-        searxng_images = Searxng(host="http://localhost:53153", images=True)
+        searxng_images = Searxng(host="http://localhost:53153")
         result = searxng_images.image_search("test image")
 
         expected_url = "http://localhost:53153/search?format=json&q=test%20image&categories=images"
@@ -116,7 +116,7 @@ def test_searxng_news_search():
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
 
-        searxng_news = Searxng(host="http://localhost:53153", news=True)
+        searxng_news = Searxng(host="http://localhost:53153")
         searxng_news.news_search("breaking news")
 
         expected_url = "http://localhost:53153/search?format=json&q=breaking%20news&categories=news"
@@ -128,7 +128,7 @@ def test_searxng_search_error_handling(searxng_instance):
     with patch("httpx.get") as mock_get:
         mock_get.side_effect = Exception("Network error")
 
-        result = searxng_instance.search("test query")
+        result = searxng_instance.search_web("test query")
 
         assert "Error fetching results from searxng: Network error" in result
 
@@ -142,7 +142,7 @@ def test_searxng_query_encoding(searxng_instance):
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
 
-        searxng_instance.search("test query with spaces & symbols")
+        searxng_instance.search_web("test query with spaces & symbols")
 
         expected_url = "http://localhost:53153/search?format=json&q=test%20query%20with%20spaces%20%26%20symbols"
         mock_get.assert_called_once_with(expected_url)
@@ -150,12 +150,14 @@ def test_searxng_query_encoding(searxng_instance):
 
 def test_searxng_initialization():
     """Test Searxng initialization with various parameters."""
-    searxng = Searxng(host="http://test.com", engines=["google"], fixed_max_results=10, images=True, news=True)
+    searxng = Searxng(host="http://test.com", engines=["google"], fixed_max_results=10)
 
     assert searxng.host == "http://test.com"
     assert searxng.engines == ["google"]
     assert searxng.fixed_max_results == 10
-    assert len(searxng.tools) == 3  # image_search and news_search tools
+    assert (
+        len(searxng.tools) == 8
+    )  # All 8 tools: search, image_search, it_search, map_search, music_search, news_search, science_search, video_search
 
 
 @pytest.mark.parametrize(
@@ -177,9 +179,8 @@ def test_category_searches(category, method_name):
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
 
-        # Create instance with the specific category enabled
-        kwargs = {category: True}
-        searxng = Searxng(host="http://localhost:53153", **kwargs)
+        # Create instance with only the specific method included
+        searxng = Searxng(host="http://localhost:53153", include_tools=[method_name])
 
         # Call the method
         method = getattr(searxng, method_name)
