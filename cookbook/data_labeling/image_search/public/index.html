@@ -8,13 +8,17 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="https://unpkg.com/photoswipe@5/dist/photoswipe.css" />
 
   <style>
     body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
     .skel { background: linear-gradient(90deg,#f1f5f9 0%,#e2e8f0 50%,#f1f5f9 100%); background-size: 200% 100%; animation: sk 1.4s ease-in-out infinite; }
     @keyframes sk { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }
     [x-cloak] { display: none !important; }
+    .card { transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
+    .card:hover { transform: translateY(-2px); box-shadow: 0 10px 20px -10px rgba(15,23,42,.18); border-color: rgb(203 213 225); }
+    .card img { transition: transform .3s ease; }
+    .card:hover img { transform: scale(1.03); }
+    .chip { transition: background-color .15s ease, color .15s ease; }
   </style>
 </head>
 
@@ -55,16 +59,26 @@
 
     <!-- Search view -->
     <section x-show="tab === 'search'">
-      <form @submit.prevent="runSearch()" class="flex gap-2 mb-6">
-        <input x-model="query" type="text" autofocus
+      <form @submit.prevent="runSearch()" class="relative mb-4">
+        <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400">
+          <i data-lucide="search" class="w-5 h-5"></i>
+        </span>
+        <input x-model="query" @input.debounce.250ms="runSearch()" type="search" autofocus
+               autocomplete="off" data-1p-ignore data-lpignore="true" data-form-type="other"
                placeholder="Try: a historic city at night, wildlife on the savanna, latte art ..."
-               class="flex-1 px-4 py-2 text-sm rounded-md border border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-900" />
-        <button class="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-slate-900 text-white hover:bg-slate-700">
-          <i data-lucide="search" class="w-4 h-4"></i>
-          <span>Search</span>
-        </button>
+               class="w-full pl-12 pr-12 py-3 text-base rounded-lg border border-slate-300 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900 transition-shadow" />
+        <span x-show="searching" class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400">
+          <i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i>
+        </span>
       </form>
-      <p class="text-xs text-slate-500 mb-4" x-text="searchMeta"></p>
+      <div class="flex items-center justify-between text-xs text-slate-500 mb-4 min-h-[1.25rem]">
+        <p x-text="searchMeta"></p>
+        <button x-show="filteredOut.length" @click="showFiltered = !showFiltered"
+                class="inline-flex items-center gap-1 text-slate-500 hover:text-slate-900 underline-offset-4 hover:underline">
+          <span x-text="(showFiltered ? 'Hide' : 'Show') + ' ' + filteredOut.length + ' below threshold'"></span>
+          <i :data-lucide="showFiltered ? 'chevron-up' : 'chevron-down'" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
 
       <div x-show="searching" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <template x-for="i in 6" :key="i">
@@ -80,21 +94,21 @@
 
       <div x-show="!searching" id="search-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <template x-for="hit in searchResults" :key="hit.url">
-          <a :href="hit.url" :data-pswp-width="800" :data-pswp-height="600" target="_blank" rel="noreferrer"
-             class="block bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+          <a :href="hit.url" @click="onCardClick($event, hit)" target="_blank" rel="noreferrer"
+             class="card block bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm">
             <div class="aspect-[4/3] bg-slate-100 overflow-hidden">
               <img :src="hit.url" alt="" loading="lazy" class="w-full h-full object-cover" />
             </div>
             <div class="p-3 space-y-2">
               <div class="text-sm font-medium text-slate-900 line-clamp-2" x-text="hit.caption"></div>
-              <div x-show="hit.subjects && hit.subjects.length"
+              <div x-show="hit.subjects.length"
                    class="text-xs text-slate-500 line-clamp-1"
-                   x-text="(hit.subjects || []).slice(0, 4).join(', ')"></div>
+                   x-text="hit.subjects.slice(0, 4).join(', ')"></div>
               <div x-show="hit.scene" class="text-xs text-slate-500 line-clamp-1" x-text="hit.scene"></div>
               <div x-show="hit.visual_style" class="text-xs text-slate-400 italic line-clamp-1" x-text="hit.visual_style"></div>
-              <div x-show="hit.tags && hit.tags.length" class="flex flex-wrap gap-1 pt-1">
-                <template x-for="(t, idx) in (hit.tags || []).slice(0, 6)" :key="idx">
-                  <span class="inline-block px-2 py-0.5 text-[11px] bg-slate-100 text-slate-700 rounded-full" x-text="t"></span>
+              <div x-show="hit.tags.length" class="flex flex-wrap gap-1 pt-1">
+                <template x-for="(t, idx) in hit.tags.slice(0, 6)" :key="idx">
+                  <span class="chip inline-block px-2 py-0.5 text-[11px] bg-slate-100 text-slate-700 rounded-full" x-text="t"></span>
                 </template>
               </div>
             </div>
@@ -103,6 +117,29 @@
         <div x-show="!searching && searchMeta && searchResults.length === 0"
              class="col-span-full text-sm text-slate-500 py-12 text-center">
           No matches. Try a different query.
+        </div>
+      </div>
+
+      <!-- Below-threshold reveal -->
+      <div x-show="showFiltered && filteredOut.length" x-transition class="mt-8 pt-6 border-t border-slate-200">
+        <p class="text-xs text-slate-500 mb-3" x-text="`Below the ${Math.round(MIN_SCORE_RATIO * 100)}% relative-score cutoff — lower-confidence matches.`"></p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 opacity-70">
+          <template x-for="hit in filteredOut" :key="hit.url">
+            <a :href="hit.url" @click="onCardClick($event, hit)" target="_blank" rel="noreferrer"
+               class="card block bg-white rounded-lg border border-dashed border-slate-300 overflow-hidden shadow-sm">
+              <div class="aspect-[4/3] bg-slate-100 overflow-hidden">
+                <img :src="hit.url" alt="" loading="lazy" class="w-full h-full object-cover" />
+              </div>
+              <div class="p-3 space-y-2">
+                <div class="text-sm font-medium text-slate-900 line-clamp-2" x-text="hit.caption"></div>
+                <div x-show="hit.tags.length" class="flex flex-wrap gap-1 pt-1">
+                  <template x-for="(t, idx) in hit.tags.slice(0, 6)" :key="idx">
+                    <span class="chip inline-block px-2 py-0.5 text-[11px] bg-slate-100 text-slate-700 rounded-full" x-text="t"></span>
+                  </template>
+                </div>
+              </div>
+            </a>
+          </template>
         </div>
       </div>
     </section>
@@ -125,21 +162,16 @@
 
       <div x-show="!galleryLoading" id="gallery-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <template x-for="item in galleryItems" :key="item.url">
-          <a :href="item.url" :data-pswp-width="800" :data-pswp-height="600" target="_blank" rel="noreferrer"
-             class="block bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-            <div class="aspect-[4/3] bg-slate-100 overflow-hidden">
+          <a :href="item.url" @click="onCardClick($event, item)" target="_blank" rel="noreferrer"
+             class="card block bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm">
+            <div class="aspect-square bg-slate-100 overflow-hidden">
               <img :src="item.url" alt="" loading="lazy" class="w-full h-full object-cover" />
             </div>
             <div class="p-3 space-y-2">
-              <div class="text-sm font-medium text-slate-900 line-clamp-2" x-text="item.caption"></div>
-              <div x-show="item.subjects && item.subjects.length"
-                   class="text-xs text-slate-500 line-clamp-1"
-                   x-text="(item.subjects || []).slice(0, 4).join(', ')"></div>
-              <div x-show="item.scene" class="text-xs text-slate-500 line-clamp-1" x-text="item.scene"></div>
-              <div x-show="item.visual_style" class="text-xs text-slate-400 italic line-clamp-1" x-text="item.visual_style"></div>
-              <div x-show="item.tags && item.tags.length" class="flex flex-wrap gap-1 pt-1">
-                <template x-for="(t, idx) in (item.tags || []).slice(0, 6)" :key="idx">
-                  <span class="inline-block px-2 py-0.5 text-[11px] bg-slate-100 text-slate-700 rounded-full" x-text="t"></span>
+              <div class="text-sm font-medium text-slate-900 line-clamp-1" x-text="item.caption"></div>
+              <div x-show="item.tags.length" class="flex flex-wrap gap-1">
+                <template x-for="(t, idx) in item.tags.slice(0, 8)" :key="idx">
+                  <span class="chip inline-block px-2 py-0.5 text-[11px] bg-slate-100 text-slate-700 rounded-full" x-text="t"></span>
                 </template>
               </div>
             </div>
@@ -160,23 +192,91 @@
        class="fixed bottom-6 right-6 px-4 py-2 bg-slate-900 text-white text-sm rounded-md shadow-lg"
        x-text="flashMessage"></div>
 
-  <!-- PhotoSwipe lightbox: delegates on each grid container; lazy-loads the core module on first open -->
-  <script type="module">
-    import PhotoSwipeLightbox from 'https://unpkg.com/photoswipe@5/dist/photoswipe-lightbox.esm.js';
-    const pswpModule = () => import('https://unpkg.com/photoswipe@5/dist/photoswipe.esm.js');
-    for (const sel of ['#search-grid', '#gallery-grid']) {
-      new PhotoSwipeLightbox({ gallery: sel, children: 'a', pswpModule }).init();
-    }
-  </script>
+  <!-- Details modal -->
+  <div x-show="activeItem"
+       x-transition.opacity
+       @keydown.escape.window="closeItem()"
+       class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-start sm:items-center justify-center p-4 overflow-y-auto">
+    <div @click.away="closeItem()" x-show="activeItem" x-transition
+         class="bg-white rounded-xl shadow-2xl max-w-5xl w-full my-auto overflow-hidden">
+      <div class="relative flex flex-col md:flex-row">
+        <button @click="closeItem()" type="button" aria-label="Close"
+                class="absolute top-3 right-3 z-10 p-2 rounded-full bg-white/90 text-slate-700 hover:bg-white hover:text-slate-900 shadow-md">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+        <a :href="activeItem?.url" target="_blank" rel="noreferrer"
+           class="block md:w-3/5 bg-slate-100">
+          <img :src="activeItem?.url" alt="" class="w-full h-full max-h-[70vh] object-contain" />
+        </a>
+        <div class="md:w-2/5 p-6 space-y-4 overflow-y-auto max-h-[70vh]">
+          <div>
+            <p class="text-[11px] uppercase tracking-wide text-slate-400 mb-1">Caption</p>
+            <p class="text-base font-medium text-slate-900 leading-snug" x-text="activeItem?.caption"></p>
+          </div>
+          <div x-show="activeItem?.subjects?.length">
+            <p class="text-[11px] uppercase tracking-wide text-slate-400 mb-1">Subjects</p>
+            <div class="flex flex-wrap gap-1.5">
+              <template x-for="(s, idx) in activeItem?.subjects || []" :key="idx">
+                <span class="chip inline-block px-2 py-0.5 text-xs bg-slate-100 text-slate-700 rounded-full" x-text="s"></span>
+              </template>
+            </div>
+          </div>
+          <div x-show="activeItem?.scene">
+            <p class="text-[11px] uppercase tracking-wide text-slate-400 mb-1">Scene</p>
+            <p class="text-sm text-slate-700" x-text="activeItem?.scene"></p>
+          </div>
+          <div x-show="activeItem?.visual_style">
+            <p class="text-[11px] uppercase tracking-wide text-slate-400 mb-1">Visual style</p>
+            <p class="text-sm text-slate-700 italic" x-text="activeItem?.visual_style"></p>
+          </div>
+          <div x-show="activeItem?.tags?.length">
+            <p class="text-[11px] uppercase tracking-wide text-slate-400 mb-1">Tags</p>
+            <div class="flex flex-wrap gap-1.5">
+              <template x-for="(t, idx) in activeItem?.tags || []" :key="idx">
+                <span class="chip inline-block px-2 py-0.5 text-xs bg-slate-900 text-white rounded-full" x-text="t"></span>
+              </template>
+            </div>
+          </div>
+          <div class="pt-2 border-t border-slate-100">
+            <p class="text-[11px] uppercase tracking-wide text-slate-400 mb-1">Source</p>
+            <a :href="activeItem?.url" target="_blank" rel="noreferrer"
+               class="text-xs text-slate-500 hover:text-slate-900 break-all underline-offset-2 hover:underline"
+               x-text="activeItem?.url"></a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script>
+    // Drop hits whose hybrid score is below this fraction of the best hit's
+    // score. Hybrid RRF gives a bimodal distribution when keyword matches
+    // exist (good hits ~2x the vector-only tail), so a relative cutoff cleanly
+    // separates them. When all scores cluster together (no keyword wins),
+    // nothing is filtered.
+    const MIN_SCORE_RATIO = 0.5;
+
+    // ChromaDb stringifies list metadata, so /knowledge/search hits come back
+    // with tags/subjects as JSON strings. /knowledge/content (SQLite) returns
+    // real arrays. Normalize both paths through this.
+    function asArray(v) {
+      if (Array.isArray(v)) return v;
+      if (typeof v !== 'string') return [];
+      try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; }
+      catch { return []; }
+    }
+
     function imageSearch() {
       return {
+        MIN_SCORE_RATIO,
         tab: 'search',
         query: '',
         searchResults: [],
+        filteredOut: [],
+        showFiltered: false,
         searchMeta: '',
         searching: false,
+        searchAbort: null,
         galleryItems: [],
         galleryMeta: '',
         galleryLoading: false,
@@ -185,10 +285,27 @@
         reindexLabel: 'Reindex',
         flashMessage: '',
         pollInterval: null,
+        activeItem: null,
 
         init() {
           this.refreshCounter();
           this.$nextTick(() => lucide.createIcons());
+          this.$watch('showFiltered', () => this.$nextTick(() => lucide.createIcons()));
+          this.$watch('activeItem', () => this.$nextTick(() => lucide.createIcons()));
+        },
+
+        onCardClick(e, item) {
+          if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+          e.preventDefault();
+          this.openItem(item);
+        },
+        openItem(item) {
+          this.activeItem = item;
+          document.body.style.overflow = 'hidden';
+        },
+        closeItem() {
+          this.activeItem = null;
+          document.body.style.overflow = '';
         },
 
         async refreshCounter() {
@@ -209,31 +326,48 @@
 
         async runSearch() {
           const q = this.query.trim();
-          if (!q) { this.searchResults = []; this.searchMeta = ''; return; }
+          if (!q) {
+            if (this.searchAbort) this.searchAbort.abort();
+            this.searchResults = []; this.filteredOut = []; this.searchMeta = ''; this.searching = false;
+            return;
+          }
+          // Cancel any in-flight request so stale responses can't overwrite newer ones
+          if (this.searchAbort) this.searchAbort.abort();
+          this.searchAbort = new AbortController();
+          const signal = this.searchAbort.signal;
           this.searching = true;
-          this.searchMeta = 'searching...';
+          this.searchMeta = `"${q}" — searching…`;
           const t0 = performance.now();
           try {
             const r = await fetch('/knowledge/search', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ query: q, max_results: 12, search_type: 'vector' }),
+              body: JSON.stringify({ query: q, max_results: 12, search_type: 'hybrid' }),
+              signal,
             });
             const j = await r.json();
+            if (signal.aborted) return;
             const dt = Math.round(performance.now() - t0);
-            this.searchResults = (j.data || []).map(d => ({
+            const all = (j.data || []).map(d => ({
               url:          d.meta_data?.url,
               caption:      d.meta_data?.caption,
-              subjects:     d.meta_data?.subjects,
+              subjects:     asArray(d.meta_data?.subjects),
               scene:        d.meta_data?.scene,
               visual_style: d.meta_data?.visual_style,
-              tags:         d.meta_data?.tags,
+              tags:         asArray(d.meta_data?.tags),
+              score:        d.meta_data?.rrf_score,
             }));
-            this.searchMeta = `${this.searchResults.length} result${this.searchResults.length === 1 ? '' : 's'} in ${dt}ms`;
+            const best = Math.max(0, ...all.map(h => h.score || 0));
+            const cutoff = best * MIN_SCORE_RATIO;
+            this.searchResults = all.filter(h => h.score == null || h.score >= cutoff);
+            this.filteredOut = all.filter(h => h.score != null && h.score < cutoff);
+            const n = this.searchResults.length;
+            this.searchMeta = `"${q}" · ${n} result${n === 1 ? '' : 's'} in ${dt}ms`;
           } catch (e) {
+            if (e.name === 'AbortError') return;
             this.searchMeta = `Search failed: ${e.message}`;
           } finally {
-            this.searching = false;
+            if (!signal.aborted) this.searching = false;
           }
         },
 
@@ -246,10 +380,10 @@
             this.galleryItems = (j.data || []).map(c => ({
               url:          c.metadata?.url,
               caption:      c.metadata?.caption,
-              subjects:     c.metadata?.subjects,
+              subjects:     asArray(c.metadata?.subjects),
               scene:        c.metadata?.scene,
               visual_style: c.metadata?.visual_style,
-              tags:         c.metadata?.tags,
+              tags:         asArray(c.metadata?.tags),
             }));
             this.galleryMeta = `${j.meta.total_count} image${j.meta.total_count === 1 ? '' : 's'}`;
           } catch (e) {
