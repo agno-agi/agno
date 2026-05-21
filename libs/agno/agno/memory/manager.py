@@ -1377,9 +1377,11 @@ class MemoryManager:
                 db.upsert_user_memory(
                     UserMemory(
                         memory_id=memory_id,
+                        user_id=user_id,
+                        agent_id=agent_id,
+                        team_id=team_id,
                         memory=memory,
                         topics=topics,
-                        user_id=user_id,
                         input=input_string,
                     )
                 )
@@ -1500,6 +1502,9 @@ class MemoryManager:
                     await db.upsert_user_memory(
                         UserMemory(
                             memory_id=memory_id,
+                            user_id=user_id,
+                            agent_id=agent_id,
+                            team_id=team_id,
                             memory=memory,
                             topics=topics,
                             input=input_string,
@@ -1509,6 +1514,9 @@ class MemoryManager:
                     db.upsert_user_memory(
                         UserMemory(
                             memory_id=memory_id,
+                            user_id=user_id,
+                            agent_id=agent_id,
+                            team_id=team_id,
                             memory=memory,
                             topics=topics,
                             input=input_string,
@@ -1529,9 +1537,9 @@ class MemoryManager:
             """
             try:
                 if isinstance(db, AsyncBaseDb):
-                    await db.delete_user_memory(memory_id=memory_id)
+                    await db.delete_user_memory(memory_id=memory_id, user_id=user_id)
                 else:
-                    db.delete_user_memory(memory_id=memory_id)
+                    db.delete_user_memory(memory_id=memory_id, user_id=user_id)
                 log_debug("Memory deleted")
                 return "Memory deleted successfully"
             except Exception as e:
