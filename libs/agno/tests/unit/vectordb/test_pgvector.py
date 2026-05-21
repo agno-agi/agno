@@ -1130,7 +1130,7 @@ def test_keyword_search_returns_empty_on_no_usable_tokens(mock_engine, mock_embe
         db.Session.assert_not_called()
 
 
-def test_hybrid_search_empty_token_fallback_uses_tsquery_literal(mock_engine, mock_embedder):
+def test_hybrid_search_empty_token_fallback_uses_tsquery_literal(mock_engine):
     """When prefix_match strips all tokens, hybrid_search falls back to ``''::tsquery``.
 
     Verified by compiling the SELECT statement that hybrid_search hands to the
@@ -1140,6 +1140,10 @@ def test_hybrid_search_empty_token_fallback_uses_tsquery_literal(mock_engine, mo
     from pgvector.sqlalchemy import Vector as RealVector
     from sqlalchemy import Column, MetaData, String, Table
     from sqlalchemy.dialects import postgresql
+
+    # Create a local embedder mock to avoid mutating the session-scoped fixture
+    local_embedder = MagicMock()
+    local_embedder.get_embedding = MagicMock(return_value=[0.1, 0.2, 0.3])
 
     # Build a real Table so SQLAlchemy can compile the SELECT hybrid_search produces.
     metadata = MetaData()
@@ -1162,11 +1166,9 @@ def test_hybrid_search_empty_token_fallback_uses_tsquery_literal(mock_engine, mo
         db = PgVector(
             table_name="test_hybrid_empty",
             db_engine=mock_engine,
-            embedder=mock_embedder,
+            embedder=local_embedder,
             prefix_match=True,
         )
-
-        mock_embedder.get_embedding = MagicMock(return_value=[0.1, 0.2, 0.3])
 
         captured = {}
 
