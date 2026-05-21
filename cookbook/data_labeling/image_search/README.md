@@ -37,10 +37,12 @@ call. The only custom Python is the labeling agent and the ingest loop.
    cards with the image, caption, subjects, scene, visual style, and tag
    chips.
 
-3. **Search** — the UI hits `POST /knowledge/search`. The query is
-   embedded with `GeminiEmbedder`, matched against the stored description
-   vectors, and the top hits come back with their full metadata for
-   rendering.
+3. **Search** — the UI hits `POST /knowledge/search` with
+   `search_type=hybrid`. PgVector combines vector similarity (cosine
+   over `GeminiEmbedder` vectors) with PostgreSQL full-text search
+   (`to_tsvector` + `websearch_to_tsquery`) into one fused score, so
+   `car` matches `cars` via stemming without dragging in `carnivore`.
+   The top hits come back with their full metadata for rendering.
 
 4. **Reindex** — the UI's Reindex button hits the workflow endpoint with
    `background=true`, polls the run for status, and refreshes the gallery
@@ -62,8 +64,8 @@ cookbook/data_labeling/image_search/
 ├── workflows/
 │   └── ingest.py             extractor agent + Step + Workflow
 ├── public/
-│   └── index.html            single-file UI (Tailwind + Alpine + Lucide + PhotoSwipe — all CDN)
-└── data/                     gitignored: chroma + sqlite live here
+│   └── index.html            single-file UI (Tailwind + Alpine + Lucide — all CDN)
+└── data/                     gitignored, kept for future local artifacts
 ```
 
 ## Get started
@@ -81,7 +83,17 @@ source .venvs/image_search/bin/activate
 uv pip install -r cookbook/data_labeling/image_search/requirements.txt
 ```
 
-### 3. Set your API key
+### 3. Start pgvector
+
+```bash
+./cookbook/scripts/run_pgvector.sh
+```
+
+That brings up `agnohq/pgvector:18` on port 5532 with database `ai` and
+credentials `ai/ai` — which is what [`settings.py`](settings.py) expects
+out of the box. Point `DB_URL` at your own instance if you'd rather.
+
+### 4. Set your API key
 
 ```bash
 export GOOGLE_API_KEY="..."
@@ -90,7 +102,7 @@ export GOOGLE_API_KEY="..."
 The demo uses `gemini-3.5-flash` for vision + structured output and
 `gemini-embedding-001` for embeddings.
 
-### 4. Serve
+### 5. Serve
 
 ```bash
 fastapi dev cookbook/data_labeling/image_search/run.py --port 7777
@@ -131,5 +143,5 @@ This is demo-grade. For production:
 - CloudFront in front of the bucket for cold-load latency.
 - Background worker pool for ingest at real scale; the in-process Workflow
   is fine up to maybe a few thousand items.
-- Migrate ChromaDb to managed Chroma or pgvector once you outgrow local
-  persistence.
+- Move from the local Docker pgvector to a managed Postgres (RDS,
+  Supabase, etc.) once you outgrow a laptop.
