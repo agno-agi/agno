@@ -5,7 +5,7 @@ config persistence path is exercised, not mocked.
 """
 
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import pytest
 
@@ -58,6 +58,7 @@ class TestInitialization:
             # Discovery (always)
             "list_models",
             "list_tools",
+            "list_functions",
             "list_dbs",
             "list_agents",
             "list_teams",
@@ -84,12 +85,14 @@ class TestInitialization:
 
     def test_registers_async_run_agent_by_default(self, studio):
         assert "run_agent" in studio.async_functions
+        assert set(studio.async_functions.keys()) == set(studio.functions.keys())
         assert "run_team" not in studio.async_functions
         assert "run_workflow" not in studio.async_functions
 
     def test_registers_all_async_run_tools_when_enabled(self, registry, db):
         tool = StudioTool(registry=registry, db=db, teams=True, workflows=True)
         assert {"run_agent", "run_team", "run_workflow"}.issubset(set(tool.async_functions.keys()))
+        assert set(tool.async_functions.keys()) == set(tool.functions.keys())
 
     def test_db_defaults_to_first_registry_db(self, registry):
         tool = StudioTool(registry=registry)
@@ -120,6 +123,20 @@ class TestDiscovery:
         for t in result["tools"]:
             if t["name"] == "calculator":
                 assert "add" in t["functions"]
+
+    def test_list_functions(self, registry, db):
+        def transform_content(value: str) -> str:
+            """Transform content for a workflow step."""
+            return value.upper()
+
+        registry.functions.append(transform_content)
+        studio = StudioTool(registry=registry, db=db)
+
+        result = _loads(studio.list_functions())
+        assert result["count"] == 1
+        assert result["functions"][0]["name"] == "transform_content"
+        assert result["functions"][0]["description"] == "Transform content for a workflow step."
+        assert result["functions"][0]["signature"] == "(value: str) -> str"
 
     def test_list_dbs(self, studio, db):
         result = _loads(studio.list_dbs())
@@ -207,6 +224,33 @@ class TestCreateAgent:
         out = _loads(studio.create_agent(name="plain", instructions="i", model_id="gpt-4o-mini"))
         assert out["status"] == "created"
         assert out["tools"] == []
+
+    def test_slug_collisions_get_unique_ids(self, studio, db):
+        first = _loads(studio.create_agent(name="My Agent", instructions="i", model_id="gpt-4o-mini"))
+        second = _loads(studio.create_agent(name="my-agent", instructions="i", model_id="gpt-4o-mini"))
+        third = _loads(studio.create_agent(name="My--Agent", instructions="i", model_id="gpt-4o-mini"))
+
+        assert first["id"] == "my-agent"
+        assert second["id"] == "my-agent-2"
+        assert third["id"] == "my-agent-3"
+        assert db.get_component("my-agent")["name"] == "My Agent"
+        assert db.get_component("my-agent-2")["name"] == "my-agent"
+        assert db.get_component("my-agent-3")["name"] == "My--Agent"
+
+    def test_persist_failure_returns_error(self, studio, db, monkeypatch):
+        def fail_upsert_config(*args, **kwargs):
+            raise RuntimeError("persist failed")
+
+        monkeypatch.setattr(db, "upsert_config", fail_upsert_config)
+
+        out = _loads(studio.create_agent(name="broken", instructions="i", model_id="gpt-4o-mini"))
+        assert "error" in out
+        assert "persist failed" in out["error"]
+
+    async def test_async_create_agent_persists_component(self, studio, db):
+        out = _loads(await studio.acreate_agent(name="async-agent", instructions="i", model_id="gpt-4o-mini"))
+        assert out["status"] == "created"
+        assert db.get_component("async-agent") is not None
 
 
 class TestCreateTeam:
@@ -444,6 +488,23 @@ class TestDelete:
         out = _loads(studio.delete_agent("ghost"))
         assert "error" in out
 
+    def test_delete_agent_only_deletes_db_component_when_live_agent_shadows_id(self, registry, db):
+        studio = StudioTool(registry=registry, db=db)
+        studio.create_agent(name="temp", instructions="i", model_id="gpt-4o-mini")
+
+        class ShadowAgent:
+            id = "temp"
+            name = "temp"
+
+            def delete(self, **kwargs):
+                raise AssertionError("delete_agent should not call delete() on live agents")
+
+        tool = StudioTool(registry=registry, db=db, agents_list=[ShadowAgent()])
+
+        out = _loads(tool.delete_agent("temp"))
+        assert out["status"] == "deleted"
+        assert db.get_component("temp") is None
+
 
 # ----------------------------------------------------------------------
 # Lookup priority
@@ -469,6 +530,20 @@ class TestLookup:
         found = fresh._find_agent("persisted")
         assert found is not None
         assert found.id == "persisted"
+
+    def test_edit_agent_uses_same_lookup_order_as_get_agent(self, studio, registry, db):
+        studio.create_agent(name="shared", instructions="db", model_id="gpt-4o-mini")
+        live = Agent(id="shared", name="Shared", model=OpenAIChat(id="gpt-4o-mini"), instructions="live")
+        tool = StudioTool(registry=registry, db=db, agents_list=[live])
+
+        before = _loads(tool.get_agent("shared"))
+        out = _loads(tool.edit_agent(agent_id="shared", instructions="updated-live"))
+        after = _loads(tool.get_agent("shared"))
+
+        assert before["instructions"] == "live"
+        assert out["status"] == "edited"
+        assert live.instructions == "updated-live"
+        assert after["instructions"] == "updated-live"
 
 
 # ----------------------------------------------------------------------
@@ -534,6 +609,7 @@ class TestEnableFlags:
         assert {
             "list_models",
             "list_tools",
+            "list_functions",
             "list_dbs",
             "list_agents",
             "list_teams",
@@ -596,7 +672,7 @@ class TestLifecycle:
         studio.edit_agent(agent_id="lc", instructions="edit1")
         studio.edit_agent(agent_id="lc", instructions="edit2")
 
-        versions: List[Dict[str, Any]] = _loads(studio.list_versions("lc"))["versions"]
+        versions: list[Dict[str, Any]] = _loads(studio.list_versions("lc"))["versions"]
         assert len(versions) == 2
 
         # Publish draft

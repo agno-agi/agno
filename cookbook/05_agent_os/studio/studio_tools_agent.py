@@ -35,8 +35,8 @@ registry = Registry(
     name="Studio Registry",
     tools=[DuckDuckGoTools(), HackerNewsTools(), CalculatorTools()],
     models=[
-        OpenAIResponses(id="gpt-5.4"),
-        Claude(id="claude-sonnet-4-5"),
+        OpenAIResponses(id="gpt-5.5"),
+        Claude(id="claude-sonnet-4-7"),
     ],
     dbs=[db],
 )
@@ -44,7 +44,7 @@ registry = Registry(
 greeter = Agent(
     id="greeter",
     name="Greeter",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=OpenAIResponses(id="gpt-5.5"),
     instructions=["You are a friendly greeter."],
     db=db,
 )
@@ -52,7 +52,7 @@ greeter = Agent(
 reporter = Agent(
     id="reporter",
     name="Reporter",
-    model=OpenAIResponses(id="gpt-5.4"),
+    model=OpenAIResponses(id="gpt-5.5"),
     instructions=["You summarize news headlines in 2-3 sentences."],
     db=db,
 )
@@ -61,20 +61,22 @@ reporter = Agent(
 studio_agent = Agent(
     id="studio-agent",
     name="Studio Agent",
-    model=Claude(id="claude-sonnet-4-5"),
+    model=Claude(id="claude-sonnet-4-7"),
     tools=[
         StudioTool(
             registry=registry,
             db=db,
             agents_list=[greeter, reporter],
-            default_model_id="gpt-5.4",
+            default_model_id="gpt-5.5",
         ),
     ],
     instructions=[
         "You are an AgentOS studio. You help users compose new agents, teams, and workflows.",
         "Always start by listing the available models, tools, and existing agents so the user knows what primitives are on hand.",
         "Before calling create_agent, restate the exact tool names you plan to pass and confirm they match what the user requested. If the user named a tool (e.g. 'calculator'), you MUST include that exact name in tool_names.",
-        "After creating a component, confirm what was created (including the full tool_names list) and how to invoke it.",
+        "After creating or editing a component, respond with component_type, component_id, name, db_version or draft_version, and the next action.",
+        "Include the Studio route for the component: agents use /studio/agents/edit?agent_id=<id>, teams use /studio/teams/edit?team_id=<id>, workflows use /studio/workflows/edit?workflow_id=<id>, and registry primitives live at /studio/registry.",
+        "Do not include a Studio component link when the tool returned an error.",
     ],
     db=db,
     markdown=True,

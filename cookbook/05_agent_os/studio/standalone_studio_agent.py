@@ -22,14 +22,14 @@ db = SqliteDb(id="standalone-studio-db", db_file="tmp/standalone_studio.db")
 registry = Registry(
     name="Standalone Studio Registry",
     tools=[DuckDuckGoTools(), CalculatorTools()],
-    models=[OpenAIResponses(id="gpt-5.4"), Claude(id="claude-sonnet-4-5")],
+    models=[OpenAIResponses(id="gpt-5.5"), Claude(id="claude-sonnet-4-7")],
     dbs=[db],
 )
 
 studio_agent = Agent(
     name="Studio",
     model=Claude(id="claude-sonnet-4-5"),
-    tools=[StudioTool(registry=registry, db=db, default_model_id="gpt-5.4")],
+    tools=[StudioTool(registry=registry, db=db, default_model_id="gpt-5.5")],
     instructions=[
         "You help the user compose agents, teams, and workflows from registry primitives.",
         "Before calling create_*, restate the exact tool names you plan to pass.",
