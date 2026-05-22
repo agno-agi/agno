@@ -2877,12 +2877,14 @@ class SqliteDb(BaseDb):
         self,
         trace_id: Optional[str] = None,
         parent_span_id: Optional[str] = None,
+        limit: Optional[int] = 1000,
     ) -> List:
         """Get spans matching the provided filters.
 
         Args:
             trace_id: Filter by trace ID.
             parent_span_id: Filter by parent span ID.
+            limit: Maximum number of spans to return.
 
         Returns:
             List[Span]: List of matching spans.
@@ -2902,6 +2904,9 @@ class SqliteDb(BaseDb):
                     stmt = stmt.where(table.c.trace_id == trace_id)
                 if parent_span_id:
                     stmt = stmt.where(table.c.parent_span_id == parent_span_id)
+
+                if limit:
+                    stmt = stmt.limit(limit)
 
                 results = sess.execute(stmt).fetchall()
                 return [Span.from_dict(dict(row._mapping)) for row in results]
@@ -4136,12 +4141,14 @@ class SqliteDb(BaseDb):
         self,
         component_id: str,
         version: Optional[int] = None,
+        label: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Load a component with its full resolved graph.
 
         Args:
             component_id: The component ID.
             version: Specific version or None for current.
+            label: Optional label (not yet implemented in SQLite).
 
         Returns:
             Dictionary with component, config, links, and resolved children.

@@ -270,11 +270,11 @@ class RedisDb(BaseDb):
             log_error(f"Error getting all records for {table_type}: {str(e)}")
             return []
 
-    def get_latest_schema_version(self):
+    def get_latest_schema_version(self, table_name: str):
         """Get the latest version of the database schema."""
         pass
 
-    def upsert_schema_version(self, version: str) -> None:
+    def upsert_schema_version(self, table_name: str, version: str) -> None:
         """Upsert the schema version into the database."""
         pass
 

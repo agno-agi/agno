@@ -3272,6 +3272,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         component_type: Optional[ComponentType] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        current_version: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         raise NotImplementedError("Component methods not yet supported for async databases")
