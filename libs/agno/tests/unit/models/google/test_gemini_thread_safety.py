@@ -1,31 +1,14 @@
-"""
-Regression tests for GitHub Issue #7427:
-Gemini client thread-safety fix.
-
-The fix removes per-response cleanup blocks in base.py that were
-closing and nulling self.client, causing race conditions under
-concurrent load.
-
-Tests verify:
-1. Shared client is reused (not recreated per request)
-2. User-injected clients are preserved unchanged
-3. No cleanup/close after each response
-"""
-
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agno.models.google import Gemini
+
 
 class TestGeminiSharedClient:
-    """Test that Gemini uses a shared client across requests."""
 
     def test_same_client_reused_across_calls(self):
-        """Same Gemini instance returns the same client on repeated calls."""
-        from agno.models.google import Gemini
-
         model = Gemini(api_key="test-key")
 
         with patch("agno.models.google.gemini.genai.Client") as mock_cls:
@@ -40,9 +23,6 @@ class TestGeminiSharedClient:
             mock_cls.assert_called_once()
 
     def test_client_shared_across_threads(self):
-        """All threads get the same client instance (SDK is thread-safe)."""
-        from agno.models.google import Gemini
-
         model = Gemini(api_key="test-key")
 
         with patch("agno.models.google.gemini.genai.Client") as mock_cls:
@@ -55,18 +35,13 @@ class TestGeminiSharedClient:
             with ThreadPoolExecutor(max_workers=4) as pool:
                 client_ids = set(pool.map(get_client_id, range(8)))
 
-            # All threads should get the same client
             assert len(client_ids) == 1
             mock_cls.assert_called_once()
 
 
 class TestGeminiUserInjectedClient:
-    """Test that user-injected clients are preserved."""
 
     def test_user_injected_client_is_preserved(self):
-        """User-provided client= is returned unchanged."""
-        from agno.models.google import Gemini
-
         injected = MagicMock()
         model = Gemini(client=injected)
 
@@ -77,9 +52,6 @@ class TestGeminiUserInjectedClient:
             mock_cls.assert_not_called()
 
     def test_user_injected_client_shared_across_threads(self):
-        """User-injected client is shared (user's responsibility)."""
-        from agno.models.google import Gemini
-
         injected = MagicMock()
         model = Gemini(client=injected)
 
@@ -94,17 +66,8 @@ class TestGeminiUserInjectedClient:
 
 
 class TestGeminiNoCleanupAfterResponse:
-    """Test that clients are not closed after responses.
-
-    The bug was that base.py had `finally` blocks that called
-    self.client.close() and set self.client = None after each
-    Gemini response, causing race conditions.
-    """
 
     def test_client_persists_after_get_client(self):
-        """Client should persist on self.client after creation."""
-        from agno.models.google import Gemini
-
         model = Gemini(api_key="test-key")
 
         with patch("agno.models.google.gemini.genai.Client") as mock_cls:
@@ -113,5 +76,4 @@ class TestGeminiNoCleanupAfterResponse:
 
             model.get_client()
 
-            # Client should be cached on self.client
             assert model.client is mock_client
