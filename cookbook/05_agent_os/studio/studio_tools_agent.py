@@ -61,7 +61,7 @@ reporter = Agent(
 studio_agent = Agent(
     id="studio-agent",
     name="Studio Agent",
-    model=Claude(id="claude-sonnet-4-7"),
+    model=OpenAIResponses(id="gpt-5.5"),
     tools=[
         StudioTool(
             registry=registry,

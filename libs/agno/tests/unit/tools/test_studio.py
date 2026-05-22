@@ -17,7 +17,6 @@ from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.studio import StudioTool
 
-
 # ----------------------------------------------------------------------
 # Fixtures
 # ----------------------------------------------------------------------
