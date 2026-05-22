@@ -10,7 +10,7 @@ from typing import Literal
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.media import Image
-from agno.models.openai import OpenAIResponses
+from agno.models.google import Gemini
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -19,8 +19,8 @@ from rich.pretty import pprint  # noqa
 # Schema
 # ---------------------------------------------------------------------------
 class Classification(BaseModel):
-    label: Literal["dog", "cat", "bird", "fish", "other"] = Field(
-        ..., description="What kind of animal is in the image"
+    label: Literal["wildlife", "landscape", "sports", "architecture", "other"] = Field(
+        ..., description="The primary scene type of the image"
     )
 
 
@@ -28,8 +28,8 @@ class Classification(BaseModel):
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
-    instructions="You classify images by animal type.",
+    model=Gemini(id="gemini-3.5-flash"),
+    instructions="You classify images by scene type.",
     output_schema=Classification,
 )
 
@@ -39,8 +39,10 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     samples = [
-        "https://upload.wikimedia.org/wikipedia/commons/4/4d/Cat_November_2010-1a.jpg",
-        "https://upload.wikimedia.org/wikipedia/commons/d/d9/Collage_of_Nine_Dogs.jpg",
+        "https://storage.googleapis.com/generativeai-downloads/images/generated_elephants_giraffes_zebras_sunset.jpg",
+        "https://www.gstatic.com/webp/gallery/1.jpg",
+        "https://www.gstatic.com/webp/gallery/2.jpg",
+        "https://agno-public.s3.amazonaws.com/images/krakow_mariacki.jpg",
     ]
     for url in samples:
         run: RunOutput = agent.run("Classify this image.", images=[Image(url=url)])

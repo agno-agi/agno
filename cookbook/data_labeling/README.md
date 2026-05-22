@@ -76,8 +76,7 @@ Each subfolder's `README.md` documents its inputs, the model it expects, and any
 
 | Variable | Used by |
 |---|---|
-| `OPENAI_API_KEY` | Default for text and most extraction cookbooks |
-| `ANTHROPIC_API_KEY` | Image and document cookbooks where Claude is the picked model |
-| `GOOGLE_API_KEY` | Audio and video cookbooks (Gemini) |
+| `GOOGLE_API_KEY` | Default for every cookbook (Gemini 3.5 Flash, natively multimodal) |
+| `ANTHROPIC_API_KEY` | `_18_quality_review/` only — Claude Opus 4.7 is the second labeler |
 
 The per-cookbook README calls out which model it uses and why.

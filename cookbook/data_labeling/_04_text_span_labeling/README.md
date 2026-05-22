@@ -27,4 +27,4 @@ python cookbook/data_labeling/_04_text_span_labeling/basic.py
 python cookbook/data_labeling/_04_text_span_labeling/pii_redaction.py
 ```
 
-Requires `OPENAI_API_KEY`.
+Requires `GOOGLE_API_KEY`.

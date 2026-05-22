@@ -20,11 +20,10 @@ Setup:
 
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.google.drive import GoogleDriveTools
+from pydantic import BaseModel, Field
 
 
 class DocumentResult(BaseModel):

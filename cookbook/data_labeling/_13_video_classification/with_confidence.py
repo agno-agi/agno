@@ -50,7 +50,7 @@ Classify the clip and report a confidence:
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     output_schema=Classification,
 )

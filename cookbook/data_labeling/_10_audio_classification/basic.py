@@ -30,7 +30,7 @@ class Classification(BaseModel):
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions="You classify audio clips by spoken language.",
     output_schema=Classification,
 )

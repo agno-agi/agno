@@ -1,6 +1,6 @@
 # Test Log - _12_audio_extraction
 
-Tested 2026-05-17 against `gemini-3-flash-preview` (Gemini), agno 2.6.6.
+Tested 2026-05-19 against `gemini-3.5-flash` (Gemini), agno 2.6.8.
 
 ### basic.py
 

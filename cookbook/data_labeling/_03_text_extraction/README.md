@@ -31,4 +31,4 @@ python cookbook/data_labeling/_03_text_extraction/with_confidence.py
 python cookbook/data_labeling/_03_text_extraction/nested.py
 ```
 
-Requires `OPENAI_API_KEY`.
+Requires `GOOGLE_API_KEY`.

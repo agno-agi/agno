@@ -912,6 +912,160 @@ class TestParseInteractionResponse:
         assert response.tool_calls[0]["function"]["name"] == "get_weather"
         assert response.tool_calls[0]["function"]["arguments"] == '{"city": "Paris"}'
 
+    def _make_function_result_step(self, call_id, result, name=None, is_error=None):
+        from agno.models.google.gemini_interactions import FunctionResultStep
+
+        mock_step = MagicMock(spec=FunctionResultStep)
+        mock_step.call_id = call_id
+        mock_step.result = result
+        mock_step.name = name
+        mock_step.is_error = is_error
+        mock_step.__class__ = FunctionResultStep
+        return mock_step
+
+    def test_agent_path_pairs_function_call_with_result(self):
+        """On the agent path, Antigravity returns FunctionCallStep + matching
+        FunctionResultStep. Surfacing them as model.tool_calls would make Agno
+        dispatch locally and 400 on the follow-up turn; instead, pair them
+        into ToolExecution records so AgentOS/run_response.tools shows the
+        full audit (tool name, args, result, is_error)."""
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/ag1"
+        mock_interaction.steps = [
+            self._make_model_output_step("Listing the sandbox..."),
+            self._make_function_call_step("call_ag_1", "list_files", {"path": "."}),
+            self._make_function_result_step("call_ag_1", "main.py\nREADME.md"),
+        ]
+        mock_interaction.usage = None
+
+        response = model._parse_provider_response(mock_interaction)
+        assert response.content == "Listing the sandbox..."
+        assert response.tool_calls == []
+        assert response.tool_executions is not None
+        assert len(response.tool_executions) == 1
+        te = response.tool_executions[0]
+        assert te.tool_call_id == "call_ag_1"
+        assert te.tool_name == "list_files"
+        assert te.tool_args == {"path": "."}
+        assert te.result == "main.py\nREADME.md"
+        assert te.tool_call_error is None
+
+    def test_agent_path_client_tool_falls_through_to_tool_calls(self):
+        """Regression for PR review: on the agent path, a FunctionCallStep
+        with NO matching FunctionResultStep is a client-declared tool the
+        autonomous loop is asking us to dispatch. Surface it as tool_calls
+        (not silently dropped) so the run loop executes and posts the result."""
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/client-pending"
+        mock_interaction.steps = [
+            self._make_function_call_step("call_client_1", "send_email", {"to": "yash@phidata.com"}),
+            # NOTE: no matching FunctionResultStep - this is a client tool
+            # the server is waiting for us to dispatch.
+        ]
+        mock_interaction.usage = None
+
+        response = model._parse_provider_response(mock_interaction)
+        assert not response.tool_executions
+        assert len(response.tool_calls) == 1
+        assert response.tool_calls[0]["id"] == "call_client_1"
+        assert response.tool_calls[0]["function"]["name"] == "send_email"
+        assert response.tool_calls[0]["function"]["arguments"] == '{"to": "yash@phidata.com"}'
+
+    def test_agent_path_records_error_results(self):
+        """is_error from FunctionResultStep flows to ToolExecution.tool_call_error."""
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/ag-err"
+        mock_interaction.steps = [
+            self._make_function_call_step("call_err", "read_file", {"path": "/nope"}),
+            self._make_function_result_step("call_err", "No such file", is_error=True),
+        ]
+        mock_interaction.usage = None
+
+        response = model._parse_provider_response(mock_interaction)
+        assert response.tool_executions[0].tool_call_error is True
+        assert response.tool_executions[0].result == "No such file"
+
+    def test_agent_path_records_code_execution(self):
+        """Code execution call + result pair into a ToolExecution named
+        'code_execution' with code/language args and stdout result."""
+        # Build the Arguments via the real type so model_dump works.
+        from google.genai._interactions.types.code_execution_call_step import Arguments as CEArgs
+
+        from agno.models.google.gemini_interactions import (
+            CodeExecutionCallStep,
+            CodeExecutionResultStep,
+        )
+        from agno.models.google.gemini_interactions import (
+            CodeExecutionCallStep as _CECall,
+        )
+
+        call_step = MagicMock(spec=_CECall)
+        call_step.__class__ = CodeExecutionCallStep
+        call_step.id = "call_ce_1"
+        call_step.arguments = CEArgs(code="print(2 + 2)", language="python")
+        call_step.signature = None
+
+        result_step = MagicMock(spec=CodeExecutionResultStep)
+        result_step.__class__ = CodeExecutionResultStep
+        result_step.call_id = "call_ce_1"
+        result_step.result = "4\n"
+        result_step.is_error = False
+        result_step.signature = None
+
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/ce1"
+        mock_interaction.steps = [call_step, result_step]
+        mock_interaction.usage = None
+
+        response = model._parse_provider_response(mock_interaction)
+        te = response.tool_executions[0]
+        assert te.tool_name == "code_execution"
+        assert te.tool_args == {"code": "print(2 + 2)", "language": "python"}
+        assert te.result == "4\n"
+        assert te.tool_call_error is False
+
+    def test_agent_path_records_url_context(self):
+        """URL context call + result pair into a ToolExecution with the
+        per-URL status JSON-serialized into the result string."""
+        from google.genai._interactions.types.url_context_call_step import Arguments as UCArgs
+        from google.genai._interactions.types.url_context_result_step import Result as UCResult
+
+        from agno.models.google.gemini_interactions import URLContextCallStep, URLContextResultStep
+
+        call_step = MagicMock(spec=URLContextCallStep)
+        call_step.__class__ = URLContextCallStep
+        call_step.id = "call_uc_1"
+        call_step.arguments = UCArgs(urls=["https://example.com"])
+        call_step.signature = None
+
+        result_step = MagicMock(spec=URLContextResultStep)
+        result_step.__class__ = URLContextResultStep
+        result_step.call_id = "call_uc_1"
+        result_step.result = [UCResult(status="success", url="https://example.com")]
+        result_step.is_error = None
+        result_step.signature = None
+
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/uc1"
+        mock_interaction.steps = [call_step, result_step]
+        mock_interaction.usage = None
+
+        response = model._parse_provider_response(mock_interaction)
+        te = response.tool_executions[0]
+        assert te.tool_name == "url_context"
+        assert te.tool_args == {"urls": ["https://example.com"]}
+        assert te.result is not None
+        assert "https://example.com" in te.result
+        assert "success" in te.result
+
     def test_parse_thought_response(self):
         model = self._make_model()
 
@@ -1081,6 +1235,46 @@ class TestInvoke:
 
     def _make_model(self):
         return GeminiInteractions(api_key="test-key")
+
+    def test_process_model_response_propagates_tool_executions(self):
+        """Regression: _process_model_response in base.py must copy
+        provider_response.tool_executions onto the accumulated
+        model_response so they reach run_response.tools. Mustafa caught
+        this; we kept setting them in the parser and base dropped them."""
+        from agno.models.response import ModelResponse, ToolExecution
+
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        # Build an interaction with one server-side tool call+result pair so
+        # the agent-path parser produces a ToolExecution.
+        model.agent = "antigravity-preview-05-2026"
+        mock_interaction = MagicMock()
+        mock_interaction.id = "interactions/propagate1"
+        mock_interaction.usage = None
+        parser_helper = TestParseInteractionResponse()
+        mock_interaction.steps = [
+            parser_helper._make_function_call_step("call_propagate_1", "list_files", {"path": "/"}),
+            parser_helper._make_function_result_step("call_propagate_1", "main.py"),
+        ]
+        mock_client.interactions.create.return_value = mock_interaction
+
+        messages = [Message(role="user", content="ls")]
+        assistant_message = Message(role="assistant")
+        aggregated = ModelResponse()
+        model._process_model_response(
+            messages=messages,
+            assistant_message=assistant_message,
+            model_response=aggregated,
+        )
+
+        assert aggregated.tool_executions is not None
+        assert len(aggregated.tool_executions) == 1
+        te = aggregated.tool_executions[0]
+        assert isinstance(te, ToolExecution)
+        assert te.tool_name == "list_files"
+        assert te.result == "main.py"
 
     def test_invoke_calls_interactions_create(self):
         model = self._make_model()
@@ -1295,6 +1489,45 @@ class TestInvokeStream:
         )
         assert any(r.role == "assistant" for r in responses)
 
+    def test_invoke_stream_merges_thought_signature(self):
+        """thought_signature must merge into provider_data without clobbering siblings."""
+        from agno.models.google.gemini_interactions import (
+            DeltaThoughtSignature,
+            DeltaThoughtSummary,
+            TextContent,
+            interaction_types,
+        )
+
+        model = self._make_model()
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        text = MagicMock(spec=TextContent)
+        text.text = "**Clarifying User Intent**\n\nThe request is vague..."
+        text.__class__ = TextContent
+        summary_delta = MagicMock(spec=DeltaThoughtSummary)
+        summary_delta.__class__ = DeltaThoughtSummary
+        summary_delta.content = text
+        summary_evt = MagicMock(spec=interaction_types.StepDelta)
+        summary_evt.__class__ = interaction_types.StepDelta
+        summary_evt.delta = summary_delta
+        summary_evt.index = 0
+
+        sig_delta = MagicMock(spec=DeltaThoughtSignature)
+        sig_delta.__class__ = DeltaThoughtSignature
+        sig_delta.signature = "sig-abc"
+        sig_evt = MagicMock(spec=interaction_types.StepDelta)
+        sig_evt.__class__ = interaction_types.StepDelta
+        sig_evt.delta = sig_delta
+        sig_evt.index = 0
+
+        mock_client.interactions.create.return_value = iter([summary_evt, sig_evt])
+
+        responses = list(model.invoke_stream([Message(role="user", content="hi")], Message(role="assistant")))
+        sig_responses = [r for r in responses if r.provider_data and "thought_signature" in r.provider_data]
+        assert sig_responses
+        assert sig_responses[0].provider_data["thought_signature"] == "sig-abc"
+
     def test_invoke_stream_handles_function_call_with_argument_deltas(self):
         from agno.models.google.gemini_interactions import (
             DeltaArgumentsDelta,
@@ -1344,6 +1577,548 @@ class TestInvokeStream:
         assert len(tool_responses) == 1
         assert tool_responses[0].tool_calls[0]["function"]["name"] == "get_weather"
         assert tool_responses[0].tool_calls[0]["function"]["arguments"] == '{"city": "London"}'
+
+    def test_invoke_stream_agent_path_pairs_call_with_result(self):
+        """Streaming variant: FunctionCallStep StepStart -> args via deltas ->
+        StepStop -> FunctionResultStep StepStart should yield a ToolExecution
+        (with finalized args) and no client-side tool_calls."""
+        from agno.models.google.gemini_interactions import (
+            DeltaArgumentsDelta,
+            FunctionCallStep,
+            FunctionResultStep,
+            interaction_types,
+        )
+
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        # FunctionCallStep starts with empty args; args stream in via deltas.
+        call_step = MagicMock(spec=FunctionCallStep)
+        call_step.__class__ = FunctionCallStep
+        call_step.id = "call_ag_stream_1"
+        call_step.name = "list_files"
+        call_step.arguments = {}
+        call_step.signature = None
+
+        call_start = MagicMock(spec=interaction_types.StepStart)
+        call_start.__class__ = interaction_types.StepStart
+        call_start.step = call_step
+        call_start.index = 0
+
+        arg_delta = MagicMock(spec=DeltaArgumentsDelta)
+        arg_delta.__class__ = DeltaArgumentsDelta
+        arg_delta.arguments = '{"path": "."}'
+
+        arg_delta_event = MagicMock(spec=interaction_types.StepDelta)
+        arg_delta_event.__class__ = interaction_types.StepDelta
+        arg_delta_event.delta = arg_delta
+        arg_delta_event.index = 0
+
+        call_stop = MagicMock(spec=interaction_types.StepStop)
+        call_stop.__class__ = interaction_types.StepStop
+        call_stop.index = 0
+
+        # FunctionResultStep arrives next as its own StepStart; result is
+        # fully populated (result steps don't stream their payload).
+        result_step = MagicMock(spec=FunctionResultStep)
+        result_step.__class__ = FunctionResultStep
+        result_step.call_id = "call_ag_stream_1"
+        result_step.result = "main.py\nREADME.md"
+        result_step.name = "list_files"
+        result_step.is_error = None
+
+        result_start = MagicMock(spec=interaction_types.StepStart)
+        result_start.__class__ = interaction_types.StepStart
+        result_start.step = result_step
+        result_start.index = 1
+
+        result_stop = MagicMock(spec=interaction_types.StepStop)
+        result_stop.__class__ = interaction_types.StepStop
+        result_stop.index = 1
+
+        mock_client.interactions.create.return_value = iter(
+            [call_start, arg_delta_event, call_stop, result_start, result_stop]
+        )
+
+        messages = [Message(role="user", content="What's in the sandbox?")]
+        assistant_message = Message(role="assistant")
+
+        responses = list(model.invoke_stream(messages, assistant_message))
+        assert all(not r.tool_calls for r in responses)
+        tool_executions = [te for r in responses for te in (r.tool_executions or [])]
+        assert len(tool_executions) == 1
+        te = tool_executions[0]
+        assert te.tool_call_id == "call_ag_stream_1"
+        assert te.tool_name == "list_files"
+        assert te.tool_args == {"path": "."}
+        assert te.result == "main.py\nREADME.md"
+
+    def test_invoke_stream_agent_path_buffers_args_for_non_function_steps(self):
+        """Regression: previously only FunctionCallStep buffered args via
+        deltas. For GoogleSearchCallStep (and any other typed-args call) the
+        API can deliver an empty Arguments at StepStart and stream the JSON
+        via DeltaArgumentsDelta - we'd lose the queries and log
+        'google_search()' with no args."""
+        from google.genai._interactions.types.google_search_call_step import Arguments as GSArgs
+
+        from agno.models.google.gemini_interactions import (
+            DeltaArgumentsDelta,
+            FunctionResultStep,
+            GoogleSearchCallStep,
+            GoogleSearchResultStep,
+            interaction_types,
+        )
+
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        # StepStart with empty Arguments (queries=None) - mimics what the
+        # user reported seeing for google_search.
+        call_step = MagicMock(spec=GoogleSearchCallStep)
+        call_step.__class__ = GoogleSearchCallStep
+        call_step.id = "call_gs_1"
+        call_step.arguments = GSArgs()
+        call_step.search_type = None
+        call_step.signature = None
+
+        call_start = MagicMock(spec=interaction_types.StepStart)
+        call_start.__class__ = interaction_types.StepStart
+        call_start.step = call_step
+        call_start.index = 0
+
+        # Streamed args JSON arrives via deltas - we should buffer and merge.
+        arg_delta = MagicMock(spec=DeltaArgumentsDelta)
+        arg_delta.__class__ = DeltaArgumentsDelta
+        arg_delta.arguments = '{"queries": ["openai gpt-5", "anthropic claude"]}'
+
+        arg_delta_event = MagicMock(spec=interaction_types.StepDelta)
+        arg_delta_event.__class__ = interaction_types.StepDelta
+        arg_delta_event.delta = arg_delta
+        arg_delta_event.index = 0
+
+        call_stop = MagicMock(spec=interaction_types.StepStop)
+        call_stop.__class__ = interaction_types.StepStop
+        call_stop.index = 0
+
+        result_step = MagicMock(spec=GoogleSearchResultStep)
+        result_step.__class__ = GoogleSearchResultStep
+        result_step.call_id = "call_gs_1"
+        result_step.result = []
+        result_step.is_error = None
+        result_step.signature = None
+
+        result_start = MagicMock(spec=interaction_types.StepStart)
+        result_start.__class__ = interaction_types.StepStart
+        result_start.step = result_step
+        result_start.index = 1
+
+        result_stop = MagicMock(spec=interaction_types.StepStop)
+        result_stop.__class__ = interaction_types.StepStop
+        result_stop.index = 1
+
+        # Sanity: a Function call/result mixed in to make sure non-function
+        # buffering didn't break function buffering.
+        del FunctionResultStep  # only here to make the import explicit
+
+        mock_client.interactions.create.return_value = iter(
+            [call_start, arg_delta_event, call_stop, result_start, result_stop]
+        )
+
+        messages = [Message(role="user", content="Search the web")]
+        assistant_message = Message(role="assistant")
+
+        responses = list(model.invoke_stream(messages, assistant_message))
+        tool_executions = [te for r in responses for te in (r.tool_executions or [])]
+        assert len(tool_executions) == 1
+        te = tool_executions[0]
+        assert te.tool_name == "google_search"
+        assert te.tool_args == {"queries": ["openai gpt-5", "anthropic claude"]}
+
+    def test_invoke_stream_google_search_typed_call_delta_populates_args(self):
+        """Real-protocol regression: GoogleSearchCallStep arrives with
+        arguments=None at StepStart and the actual queries come on a
+        DeltaGoogleSearchCall (NOT DeltaArgumentsDelta). Result content
+        likewise arrives on DeltaGoogleSearchResult after the result step's
+        StepStart, not on the step itself."""
+        from google.genai.interactions import step_delta
+
+        from agno.models.google.gemini_interactions import (
+            GoogleSearchCallStep,
+            GoogleSearchResultStep,
+            interaction_types,
+        )
+
+        GoogleSearchCallArguments = step_delta.GoogleSearchCallArguments
+        GoogleSearchResult = step_delta.GoogleSearchResult
+
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        # Call step: empty at StepStart (arguments=None on the real API).
+        call_step = MagicMock(spec=GoogleSearchCallStep)
+        call_step.__class__ = GoogleSearchCallStep
+        call_step.id = "call_gs_1"
+        call_step.arguments = None
+        call_step.search_type = None
+        call_step.signature = None
+
+        call_start = MagicMock(spec=interaction_types.StepStart)
+        call_start.__class__ = interaction_types.StepStart
+        call_start.step = call_step
+        call_start.index = 0
+
+        # Typed call delta with the actual queries.
+        typed_call_delta = MagicMock(spec=step_delta.DeltaGoogleSearchCall)
+        typed_call_delta.__class__ = step_delta.DeltaGoogleSearchCall
+        typed_call_delta.arguments = GoogleSearchCallArguments(queries=["Agno", "Agno library"])
+        typed_call_delta.signature = None
+
+        call_delta_event = MagicMock(spec=interaction_types.StepDelta)
+        call_delta_event.__class__ = interaction_types.StepDelta
+        call_delta_event.delta = typed_call_delta
+        call_delta_event.index = 0
+
+        call_stop = MagicMock(spec=interaction_types.StepStop)
+        call_stop.__class__ = interaction_types.StepStop
+        call_stop.index = 0
+
+        # Result step: empty at StepStart; content arrives on delta.
+        result_step = MagicMock(spec=GoogleSearchResultStep)
+        result_step.__class__ = GoogleSearchResultStep
+        result_step.call_id = "call_gs_1"
+        result_step.result = None
+        result_step.is_error = None
+        result_step.signature = None
+
+        result_start = MagicMock(spec=interaction_types.StepStart)
+        result_start.__class__ = interaction_types.StepStart
+        result_start.step = result_step
+        result_start.index = 1
+
+        result_delta = MagicMock(spec=step_delta.DeltaGoogleSearchResult)
+        result_delta.__class__ = step_delta.DeltaGoogleSearchResult
+        result_delta.result = [GoogleSearchResult(search_suggestions="suggestion-html-blob")]
+        result_delta.is_error = None
+        result_delta.signature = None
+
+        result_delta_event = MagicMock(spec=interaction_types.StepDelta)
+        result_delta_event.__class__ = interaction_types.StepDelta
+        result_delta_event.delta = result_delta
+        result_delta_event.index = 1
+
+        result_stop = MagicMock(spec=interaction_types.StepStop)
+        result_stop.__class__ = interaction_types.StepStop
+        result_stop.index = 1
+
+        mock_client.interactions.create.return_value = iter(
+            [call_start, call_delta_event, call_stop, result_start, result_delta_event, result_stop]
+        )
+
+        responses = list(model.invoke_stream([Message(role="user", content="search agno")], Message(role="assistant")))
+        tool_executions = [te for r in responses for te in (r.tool_executions or [])]
+        assert len(tool_executions) == 1
+        te = tool_executions[0]
+        assert te.tool_name == "google_search"
+        assert te.tool_args == {"queries": ["Agno", "Agno library"]}
+        # Result content (the typed Result objects) should be JSON-serialized
+        # into the ToolExecution.result string.
+        assert te.result is not None
+        assert "suggestion-html-blob" in te.result
+
+    def test_invoke_stream_function_result_content_via_delta(self):
+        """Real-protocol regression: FunctionResultStep arrives with
+        result=None at StepStart; the actual TextContent payload arrives on
+        a DeltaFunctionResult before StepStop. The result text must end up
+        on ToolExecution.result, not silently dropped."""
+        from google.genai.interactions import step_delta
+
+        from agno.models.google.gemini_interactions import (
+            DeltaArgumentsDelta,
+            FunctionCallStep,
+            FunctionResultStep,
+            TextContent,
+            interaction_types,
+        )
+
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        call_step = MagicMock(spec=FunctionCallStep)
+        call_step.__class__ = FunctionCallStep
+        call_step.id = "call_lf_1"
+        call_step.name = "list_files"
+        call_step.arguments = {}
+        call_step.signature = None
+        call_start = MagicMock(spec=interaction_types.StepStart)
+        call_start.__class__ = interaction_types.StepStart
+        call_start.step = call_step
+        call_start.index = 0
+
+        arg_delta = MagicMock(spec=DeltaArgumentsDelta)
+        arg_delta.__class__ = DeltaArgumentsDelta
+        arg_delta.arguments = '{"path": "/app"}'
+        arg_delta_event = MagicMock(spec=interaction_types.StepDelta)
+        arg_delta_event.__class__ = interaction_types.StepDelta
+        arg_delta_event.delta = arg_delta
+        arg_delta_event.index = 0
+
+        call_stop = MagicMock(spec=interaction_types.StepStop)
+        call_stop.__class__ = interaction_types.StepStop
+        call_stop.index = 0
+
+        result_step = MagicMock(spec=FunctionResultStep)
+        result_step.__class__ = FunctionResultStep
+        result_step.call_id = "call_lf_1"
+        result_step.result = None
+        result_step.is_error = None
+        result_step.name = None
+        result_step.signature = None
+        result_start = MagicMock(spec=interaction_types.StepStart)
+        result_start.__class__ = interaction_types.StepStart
+        result_start.step = result_step
+        result_start.index = 1
+
+        # Actual result content arrives as a delta with TextContent items.
+        text_item = MagicMock(spec=TextContent)
+        text_item.text = '{"files":["main.py","README.md"]}'
+        text_item.__class__ = TextContent
+        result_delta = MagicMock(spec=step_delta.DeltaFunctionResult)
+        result_delta.__class__ = step_delta.DeltaFunctionResult
+        result_delta.result = [text_item]
+        result_delta.is_error = None
+        result_delta.name = "list_files"
+        result_delta.call_id = None
+        result_delta_event = MagicMock(spec=interaction_types.StepDelta)
+        result_delta_event.__class__ = interaction_types.StepDelta
+        result_delta_event.delta = result_delta
+        result_delta_event.index = 1
+
+        result_stop = MagicMock(spec=interaction_types.StepStop)
+        result_stop.__class__ = interaction_types.StepStop
+        result_stop.index = 1
+
+        mock_client.interactions.create.return_value = iter(
+            [call_start, arg_delta_event, call_stop, result_start, result_delta_event, result_stop]
+        )
+
+        responses = list(model.invoke_stream([Message(role="user", content="ls /app")], Message(role="assistant")))
+        tool_executions = [te for r in responses for te in (r.tool_executions or [])]
+        assert len(tool_executions) == 1
+        te = tool_executions[0]
+        assert te.tool_name == "list_files"
+        assert te.tool_args == {"path": "/app"}
+        assert te.result == '{"files":["main.py","README.md"]}'
+
+    def test_invoke_stream_code_execution_typed_deltas(self):
+        """Real-protocol regression: CodeExecutionCallStep streams its code
+        on DeltaCodeExecutionCall, and the stdout streams on
+        DeltaCodeExecutionResult. Both surfaces must end up on the
+        ToolExecution."""
+        from google.genai.interactions import step_delta
+
+        from agno.models.google.gemini_interactions import (
+            CodeExecutionCallStep,
+            CodeExecutionResultStep,
+            interaction_types,
+        )
+
+        CodeExecutionCallArguments = step_delta.CodeExecutionCallArguments
+
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        call_step = MagicMock(spec=CodeExecutionCallStep)
+        call_step.__class__ = CodeExecutionCallStep
+        call_step.id = "call_ce_1"
+        call_step.arguments = None
+        call_step.signature = None
+        call_start = MagicMock(spec=interaction_types.StepStart)
+        call_start.__class__ = interaction_types.StepStart
+        call_start.step = call_step
+        call_start.index = 0
+
+        typed_call_delta = MagicMock(spec=step_delta.DeltaCodeExecutionCall)
+        typed_call_delta.__class__ = step_delta.DeltaCodeExecutionCall
+        typed_call_delta.arguments = CodeExecutionCallArguments(code="env", language=None)
+        typed_call_delta.signature = None
+        call_delta_event = MagicMock(spec=interaction_types.StepDelta)
+        call_delta_event.__class__ = interaction_types.StepDelta
+        call_delta_event.delta = typed_call_delta
+        call_delta_event.index = 0
+
+        call_stop = MagicMock(spec=interaction_types.StepStop)
+        call_stop.__class__ = interaction_types.StepStop
+        call_stop.index = 0
+
+        result_step = MagicMock(spec=CodeExecutionResultStep)
+        result_step.__class__ = CodeExecutionResultStep
+        result_step.call_id = "call_ce_1"
+        result_step.result = None
+        result_step.is_error = None
+        result_step.signature = None
+        result_start = MagicMock(spec=interaction_types.StepStart)
+        result_start.__class__ = interaction_types.StepStart
+        result_start.step = result_step
+        result_start.index = 1
+
+        result_delta = MagicMock(spec=step_delta.DeltaCodeExecutionResult)
+        result_delta.__class__ = step_delta.DeltaCodeExecutionResult
+        result_delta.result = "PYTHONUNBUFFERED=1\nHOME=/root\n"
+        result_delta.is_error = None
+        result_delta.signature = None
+        result_delta_event = MagicMock(spec=interaction_types.StepDelta)
+        result_delta_event.__class__ = interaction_types.StepDelta
+        result_delta_event.delta = result_delta
+        result_delta_event.index = 1
+
+        result_stop = MagicMock(spec=interaction_types.StepStop)
+        result_stop.__class__ = interaction_types.StepStop
+        result_stop.index = 1
+
+        mock_client.interactions.create.return_value = iter(
+            [call_start, call_delta_event, call_stop, result_start, result_delta_event, result_stop]
+        )
+
+        responses = list(model.invoke_stream([Message(role="user", content="env")], Message(role="assistant")))
+        tool_executions = [te for r in responses for te in (r.tool_executions or [])]
+        assert len(tool_executions) == 1
+        te = tool_executions[0]
+        assert te.tool_name == "code_execution"
+        assert te.tool_args == {"code": "env"}
+        assert te.result == "PYTHONUNBUFFERED=1\nHOME=/root\n"
+
+    def test_invoke_stream_agent_path_tags_tool_call_completed_event(self):
+        """Regression: the streaming consumer in agent/_response.py only
+        routes tool_executions into run_response.tools (and emits the UI
+        tool-call event) when model_response.event ==
+        ModelResponseEvent.tool_call_completed.value. Without the tag, the
+        AgentOS UI shows no tool activity even though the data is there."""
+        from agno.models.google.gemini_interactions import (
+            DeltaArgumentsDelta,
+            FunctionCallStep,
+            FunctionResultStep,
+            interaction_types,
+        )
+        from agno.models.response import ModelResponseEvent
+
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        call_step = MagicMock(spec=FunctionCallStep)
+        call_step.__class__ = FunctionCallStep
+        call_step.id = "call_evt_1"
+        call_step.name = "list_files"
+        call_step.arguments = {}
+        call_step.signature = None
+        call_start = MagicMock(spec=interaction_types.StepStart)
+        call_start.__class__ = interaction_types.StepStart
+        call_start.step = call_step
+        call_start.index = 0
+
+        arg_delta = MagicMock(spec=DeltaArgumentsDelta)
+        arg_delta.__class__ = DeltaArgumentsDelta
+        arg_delta.arguments = '{"path": "/"}'
+        arg_delta_event = MagicMock(spec=interaction_types.StepDelta)
+        arg_delta_event.__class__ = interaction_types.StepDelta
+        arg_delta_event.delta = arg_delta
+        arg_delta_event.index = 0
+
+        call_stop = MagicMock(spec=interaction_types.StepStop)
+        call_stop.__class__ = interaction_types.StepStop
+        call_stop.index = 0
+
+        result_step = MagicMock(spec=FunctionResultStep)
+        result_step.__class__ = FunctionResultStep
+        result_step.call_id = "call_evt_1"
+        result_step.result = "data"
+        result_step.is_error = None
+        result_step.name = "list_files"
+        result_step.signature = None
+        result_start = MagicMock(spec=interaction_types.StepStart)
+        result_start.__class__ = interaction_types.StepStart
+        result_start.step = result_step
+        result_start.index = 1
+        result_stop = MagicMock(spec=interaction_types.StepStop)
+        result_stop.__class__ = interaction_types.StepStop
+        result_stop.index = 1
+
+        mock_client.interactions.create.return_value = iter(
+            [call_start, arg_delta_event, call_stop, result_start, result_stop]
+        )
+
+        responses = list(model.invoke_stream([Message(role="user", content="ls")], Message(role="assistant")))
+        tagged = [r for r in responses if r.event == ModelResponseEvent.tool_call_completed.value]
+        assert len(tagged) >= 1
+        assert any(r.tool_executions for r in tagged)
+
+    def test_invoke_stream_agent_path_flushes_client_tool_as_tool_call(self):
+        """Regression: streaming variant of the Codex review. A FunctionCallStep
+        that never gets a matching FunctionResultStep before the stream ends
+        is a client-declared tool the autonomous loop is waiting for us to
+        dispatch. Must be emitted as a tool_call on InteractionCompletedEvent,
+        not silently dropped."""
+        from agno.models.google.gemini_interactions import (
+            DeltaArgumentsDelta,
+            FunctionCallStep,
+            interaction_types,
+        )
+
+        model = GeminiInteractions(api_key="test-key", agent="antigravity-preview-05-2026")
+        mock_client = MagicMock()
+        model.client = mock_client
+
+        call_step = MagicMock(spec=FunctionCallStep)
+        call_step.__class__ = FunctionCallStep
+        call_step.id = "call_client_stream"
+        call_step.name = "send_email"
+        call_step.arguments = {}
+        call_step.signature = None
+
+        call_start = MagicMock(spec=interaction_types.StepStart)
+        call_start.__class__ = interaction_types.StepStart
+        call_start.step = call_step
+        call_start.index = 0
+
+        arg_delta = MagicMock(spec=DeltaArgumentsDelta)
+        arg_delta.__class__ = DeltaArgumentsDelta
+        arg_delta.arguments = '{"to": "yash@phidata.com"}'
+
+        arg_delta_event = MagicMock(spec=interaction_types.StepDelta)
+        arg_delta_event.__class__ = interaction_types.StepDelta
+        arg_delta_event.delta = arg_delta
+        arg_delta_event.index = 0
+
+        call_stop = MagicMock(spec=interaction_types.StepStop)
+        call_stop.__class__ = interaction_types.StepStop
+        call_stop.index = 0
+
+        # InteractionCompletedEvent arrives WITHOUT a matching result step.
+        completed = MagicMock(spec=interaction_types.InteractionCompletedEvent)
+        completed.__class__ = interaction_types.InteractionCompletedEvent
+        completed.interaction = MagicMock()
+        completed.interaction.id = "interactions/client-stream"
+        completed.interaction.usage = None
+
+        mock_client.interactions.create.return_value = iter([call_start, arg_delta_event, call_stop, completed])
+
+        messages = [Message(role="user", content="Email Yash")]
+        assistant_message = Message(role="assistant")
+
+        responses = list(model.invoke_stream(messages, assistant_message))
+        all_tool_calls = [tc for r in responses for tc in r.tool_calls]
+        assert len(all_tool_calls) == 1
+        assert all_tool_calls[0]["id"] == "call_client_stream"
+        assert all_tool_calls[0]["function"]["name"] == "send_email"
+        assert all_tool_calls[0]["function"]["arguments"] == '{"to": "yash@phidata.com"}'
+        # And no ToolExecution because the loop never got to execute it.
+        all_tool_executions = [te for r in responses for te in (r.tool_executions or [])]
+        assert all_tool_executions == []
 
     def test_invoke_stream_error_raises_model_provider_error(self):
         from agno.exceptions import ModelProviderError

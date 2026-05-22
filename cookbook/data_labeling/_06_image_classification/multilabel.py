@@ -10,7 +10,7 @@ from typing import List, Literal
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.media import Image
-from agno.models.openai import OpenAIResponses
+from agno.models.google import Gemini
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -49,7 +49,7 @@ inferred or implied.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     output_schema=Tagging,
 )
@@ -60,8 +60,8 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     samples = [
-        "https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg",
-        "https://upload.wikimedia.org/wikipedia/commons/a/a8/Tour_Eiffel_Wikimedia_Commons.jpg",
+        "https://agno-public.s3.amazonaws.com/images/krakow_mariacki.jpg",
+        "https://storage.googleapis.com/generativeai-downloads/images/generated_elephants_giraffes_zebras_sunset.jpg",
     ]
     for url in samples:
         run: RunOutput = agent.run("Tag this image.", images=[Image(url=url)])

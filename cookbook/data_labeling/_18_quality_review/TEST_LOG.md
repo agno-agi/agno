@@ -1,6 +1,6 @@
 # Test Log - _18_quality_review
 
-Tested 2026-05-17 against `gpt-5.5` (OpenAIResponses) for labeler A / reviewer / adjudicator and `claude-sonnet-4-5` (Claude) for labeler B, agno 2.6.6.
+Tested 2026-05-19 against `gemini-3.5-flash` (Gemini) for labeler A and `claude-opus-4-7` (Claude) for labeler B / reviewer / adjudicator, agno 2.6.8.
 
 ### basic.py
 

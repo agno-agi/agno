@@ -1,6 +1,6 @@
 # Test Log - _13_video_classification
 
-Tested 2026-05-17 against `gemini-3-flash-preview` (Gemini), agno 2.6.6. Input is `agno-public/demo/sample_seaview.mp4` (note: actual clip is a lab/microscope scene, not a seaview — sample asset name is misleading).
+Tested 2026-05-19 against `gemini-3.5-flash` (Gemini), agno 2.6.8.
 
 ### basic.py
 
