@@ -28,7 +28,8 @@ class ImageDescription(BaseModel):
         default_factory=list,
         description=(
             "Main subjects in the image: people, animals, objects, vehicles, "
-            "named places. 1-5 short noun phrases."
+            "named places. 1-5 short noun phrases. Pair each specific name "
+            "with its common generic — e.g. 'English Bulldog' and 'dog'."
         ),
     )
 
@@ -53,10 +54,15 @@ class ImageDescription(BaseModel):
     tags: List[str] = Field(
         default_factory=list,
         description=(
-            "5-10 short search keywords. Include both literal contents and "
-            "conceptual associations (e.g. for a coffee cup also include "
-            "'morning', 'cafe', 'breakfast'). Lowercase, single words or "
-            "short phrases."
+            "12-20 short search keywords covering everything a user might "
+            "plausibly type. For every salient subject climb the full "
+            "ladder — specific name, category, broadest everyday bucket — "
+            "so one-word queries like 'car', 'animal', or 'drink' all "
+            "surface the right images. A yellow NYC taxi: 'yellow cab, "
+            "taxi, car, vehicle, automobile, transportation, manhattan, "
+            "new york city, nyc, street, traffic, urban, skyscraper'. "
+            "Include atmosphere / mood words (cozy, vibrant, moody) when "
+            "they apply. Lowercase, single words or short phrases."
         ),
     )
 
