@@ -1587,6 +1587,7 @@ class AgentOSClient:
 
     async def get_user_memory_stats(
         self,
+        user_id: Optional[str] = None,
         limit: int = 20,
         page: int = 1,
         db_id: Optional[str] = None,
@@ -1596,6 +1597,7 @@ class AgentOSClient:
         """Get user memory statistics.
 
         Args:
+            user_id: Optional user ID to filter statistics for
             limit: Number of stats per page
             page: Page number
             db_id: Optional database ID to use
@@ -1608,7 +1610,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params: Dict[str, Any] = {"limit": limit, "page": page, "db_id": db_id, "table": table}
+        params: Dict[str, Any] = {"user_id": user_id, "limit": limit, "page": page, "db_id": db_id, "table": table}
         params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget("/user_memory_stats", params=params, headers=headers)
