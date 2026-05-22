@@ -1561,18 +1561,19 @@ class AgentOSClient:
 
     async def get_memory_topics(
         self,
-        user_id: Optional[str] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        *,
+        user_id: Optional[str] = None,
     ) -> List[str]:
         """Get all unique memory topics.
 
         Args:
-            user_id: Optional user ID to filter topics for
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
+            user_id: Optional user ID to filter topics for (keyword-only)
 
         Returns:
             List[str]: List of unique topic names
@@ -1587,22 +1588,23 @@ class AgentOSClient:
 
     async def get_user_memory_stats(
         self,
-        user_id: Optional[str] = None,
         limit: int = 20,
         page: int = 1,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        *,
+        user_id: Optional[str] = None,
     ) -> PaginatedResponse[UserStatsSchema]:
         """Get user memory statistics.
 
         Args:
-            user_id: Optional user ID to filter statistics for
             limit: Number of stats per page
             page: Page number
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
+            user_id: Optional user ID to filter statistics for (keyword-only)
 
         Returns:
             PaginatedResponse[UserStatsSchema]: Paginated user statistics

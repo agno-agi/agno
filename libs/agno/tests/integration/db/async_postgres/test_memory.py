@@ -386,8 +386,12 @@ async def test_get_all_memory_topics_unknown_user_returns_empty(async_postgres_d
 async def test_get_all_memory_topics_tenant_isolation(async_postgres_db_real: AsyncPostgresDb):
     """Test that user_id filtering provides proper tenant isolation"""
     memories = [
-        UserMemory(memory_id="iso_async_a", memory="Alice secret", user_id="alice_iso", topics=["confidential", "alice_only"]),
-        UserMemory(memory_id="iso_async_b", memory="Bob secret", user_id="bob_iso", topics=["confidential", "bob_only"]),
+        UserMemory(
+            memory_id="iso_async_a", memory="Alice secret", user_id="alice_iso", topics=["confidential", "alice_only"]
+        ),
+        UserMemory(
+            memory_id="iso_async_b", memory="Bob secret", user_id="bob_iso", topics=["confidential", "bob_only"]
+        ),
     ]
 
     for memory in memories:

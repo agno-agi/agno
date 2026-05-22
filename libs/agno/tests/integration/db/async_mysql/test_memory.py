@@ -130,7 +130,6 @@ async def test_get_all_memory_topics_with_user_id_filter(async_mysql_db_real):
     assert set(bob_topics) == {"gaming", "rust"}
 
     all_topics = await async_mysql_db_real.get_all_memory_topics()
-    expected = {"work", "python", "travel", "gaming", "rust", "ai", "ml", "data"}
     for topic in ["work", "python", "travel", "gaming", "rust"]:
         assert topic in all_topics
 
@@ -149,7 +148,9 @@ async def test_get_all_memory_topics_unknown_user_returns_empty(async_mysql_db_r
 async def test_get_all_memory_topics_tenant_isolation(async_mysql_db_real):
     """Test that user_id filtering provides proper tenant isolation"""
     memories = [
-        UserMemory(memory_id="iso_a", memory="Alice secret", user_id="alice_iso", topics=["confidential", "alice_only"]),
+        UserMemory(
+            memory_id="iso_a", memory="Alice secret", user_id="alice_iso", topics=["confidential", "alice_only"]
+        ),
         UserMemory(memory_id="iso_b", memory="Bob secret", user_id="bob_iso", topics=["confidential", "bob_only"]),
     ]
 

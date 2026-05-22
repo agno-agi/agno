@@ -9,7 +9,6 @@ import pytest
 
 try:
     import mongomock
-    from pymongo import MongoClient
 
     MONGOMOCK_AVAILABLE = True
 except ImportError:
