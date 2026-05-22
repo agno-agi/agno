@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
+from typing import Any, AsyncIterator, ClassVar, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel
 
@@ -85,12 +85,15 @@ class AwsBedrock(Model):
     async_client: Optional[Any] = None
     async_session: Optional[Any] = None
 
-    # Claude models that do NOT support native structured outputs.
-    # Blocklist approach: new models automatically get support (fail open).
-    _NON_STRUCTURED_OUTPUT_PATTERNS: Tuple[str, ...] = (
-        "claude-3-",  # All Claude 3.x models
-        "claude-sonnet-4-20250514",  # Claude 4.0 Sonnet
-        "claude-opus-4-20250514",  # Claude 4.0 Opus
+    # Claude models that support native structured outputs via outputConfig.
+    # Allowlist approach: only explicitly supported models get native structured outputs.
+    # Per AWS docs: Claude Sonnet 4.5, Haiku 4.5, Opus 4.5, Sonnet 4.6, Opus 4.6
+    _STRUCTURED_OUTPUT_PATTERNS: ClassVar[Tuple[str, ...]] = (
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+        "claude-opus-4-5",
+        "claude-sonnet-4-6",
+        "claude-opus-4-6",
     )
 
     def __post_init__(self):
@@ -309,13 +312,7 @@ class AwsBedrock(Model):
     def _supports_native_structured_outputs(self) -> bool:
         """Check if the model supports native structured outputs via outputConfig."""
         model_id_lower = self.id.lower()
-        # Only Claude models support native structured outputs on Bedrock
-        if "claude" not in model_id_lower:
-            return False
-        # Blocklist: older Claude models that don't support structured outputs
-        if any(pattern in model_id_lower for pattern in self._NON_STRUCTURED_OUTPUT_PATTERNS):
-            return False
-        return True
+        return any(pattern in model_id_lower for pattern in self._STRUCTURED_OUTPUT_PATTERNS)
 
     def _build_output_config(self, response_format: Optional[Union[Dict, Type[BaseModel]]]) -> Optional[Dict[str, Any]]:
         """Build outputConfig for native structured outputs (boto3 1.42+)."""
