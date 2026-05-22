@@ -549,13 +549,13 @@ class Claude(Model):
             _request_params["thinking"] = self.thinking
         if self.output_config:
             _request_params["output_config"] = self.output_config
-        if self.temperature:
+        if self.temperature is not None:
             _request_params["temperature"] = self.temperature
         if self.stop_sequences:
             _request_params["stop_sequences"] = self.stop_sequences
-        if self.top_p:
+        if self.top_p is not None:
             _request_params["top_p"] = self.top_p
-        if self.top_k:
+        if self.top_k is not None:
             _request_params["top_k"] = self.top_k
 
         # Build betas list - include existing betas and add new one if needed

@@ -2,7 +2,7 @@
 Image Ingest Workflow
 =====================
 
-For each image URL not already in the index:
+Wipes the existing index, then for each image URL in the configured list:
 
   1. Fetch the bytes (httpx, follow redirects).
   2. Ask the labeling agent for a search-tuned ImageDescription.
@@ -15,7 +15,9 @@ primitives (Step / Parallel / Loop) cover ordered pipelines and fixed
 parallel branches but don't map dynamically over a list, so the per-URL
 parallelism lives inside this Step's executor.
 
-Re-running is safe: items already present in contents_db are skipped by URL.
+Reindex is a full rebuild — this is a demo where you iterate on the
+labeling prompt, and incremental "skip if exists" would hide the effect
+of prompt changes.
 """
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,7 +25,6 @@ from typing import Any, Dict
 
 import httpx
 from agno.agent import Agent
-from agno.knowledge.content import ContentStatus
 from agno.media import Image
 from agno.models.google import Gemini
 from agno.workflow import Step, StepInput, StepOutput, Workflow
@@ -48,15 +49,30 @@ EXTRACTOR_INSTRUCTIONS = (
     "You describe images for a natural-language image search index. "
     "Optimize every field for the queries users actually type:\n"
     "- Caption: read it back as a search query. Concrete nouns, common "
-    "adjectives, no flowery prose.\n"
-    "- Subjects: list the things in the image (people, animals, objects, "
-    "named places). Short noun phrases, 1-5 entries.\n"
+    "adjectives, no flowery prose. Mention setting and mood if they're "
+    "salient — a user might search by either.\n"
+    "- Subjects: things in the image (people, animals, objects, named "
+    "places). 1-5 short noun phrases. Pair each specific name with its "
+    "common generic — e.g. 'English Bulldog' and 'dog'.\n"
     "- Scene: where this is, as one short noun phrase.\n"
     "- Visual style: one phrase covering aesthetic / lighting / "
     "composition.\n"
-    "- Tags: 5-10 lowercase keywords. Include synonyms and conceptual "
-    "associations users might search by, not just literal contents.\n"
-    "Be specific. Vague labels lose recall."
+    "- Tags: 12-20 lowercase keywords covering everything a user might "
+    "plausibly type for this image. For every salient subject climb "
+    "the full ladder: specific name → category → broadest everyday "
+    "bucket. Never stop at the most specific name — the broad buckets "
+    "are what turn one-word queries like 'car', 'animal', or 'drink' "
+    "into hits.\n"
+    "    Tiger cub photo → tiger, cub, big cat, predator, wildlife, "
+    "mammal, animal.\n"
+    "    Yellow NYC taxi → yellow cab, taxi, car, vehicle, "
+    "automobile, transportation, manhattan, new york city, nyc, "
+    "street, traffic, urban, skyscraper, downtown.\n"
+    "    Latte art → latte, coffee, espresso drink, beverage, drink, "
+    "morning, cafe, breakfast.\n"
+    "Also include atmosphere / mood words (cozy, vibrant, moody, "
+    "minimal) when they apply. Err on the side of more labels — "
+    "recall costs nothing, missing labels cost queries."
 )
 
 
@@ -94,24 +110,19 @@ def _ingest_one(url: str, client: httpx.Client) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Step executor — concurrent ingest with skip-if-already-indexed.
+# Step executor — wipe existing content, then concurrent ingest.
 # ---------------------------------------------------------------------------
 def ingest(step_input: StepInput) -> StepOutput:
     knowledge = get_knowledge()
-    existing_contents, _ = knowledge.get_content(limit=10_000)
-    existing = {
-        c.name for c in existing_contents if c.status == ContentStatus.COMPLETED
-    }
+    knowledge.remove_all_content()
 
-    to_process = [u for u in IMAGE_URLS if u not in existing]
-    skipped = len(IMAGE_URLS) - len(to_process)
     indexed = 0
     failed = 0
     errors: list[dict[str, str]] = []
 
     with httpx.Client(follow_redirects=True, timeout=FETCH_TIMEOUT_SECONDS) as client:
         with ThreadPoolExecutor(max_workers=INGEST_CONCURRENCY) as pool:
-            futures = {pool.submit(_ingest_one, url, client): url for url in to_process}
+            futures = {pool.submit(_ingest_one, url, client): url for url in IMAGE_URLS}
             for future in as_completed(futures):
                 url = futures[future]
                 try:
@@ -123,7 +134,6 @@ def ingest(step_input: StepInput) -> StepOutput:
 
     summary: Dict[str, Any] = {
         "indexed": indexed,
-        "skipped": skipped,
         "failed": failed,
         "total": len(IMAGE_URLS),
     }
