@@ -2478,6 +2478,7 @@ class Workflow:
                 current_step_name = ""
                 current_step = None
                 partial_step_content = ""
+                cancelled_step_output: Optional[StepOutput] = None
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
@@ -2489,6 +2490,7 @@ class Workflow:
                     current_step = step
                     # Reset partial data for this step
                     partial_step_content = ""
+                    cancelled_step_output = None
 
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
@@ -2548,6 +2550,8 @@ class Workflow:
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                         ):
+                            if isinstance(event, StepOutput):
+                                cancelled_step_output = event
                             if not isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
                                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -2827,7 +2831,11 @@ class Workflow:
                 workflow_run_response.content = str(e)
 
                 # Capture partial progress from the step that was cancelled mid-stream
-                if partial_step_content:
+                if cancelled_step_output is not None:
+                    cancelled_step_output.success = False
+                    cancelled_step_output.error = "Cancelled during execution"
+                    collected_step_outputs.append(cancelled_step_output)
+                elif partial_step_content:
                     logger.info(
                         f"Step with name '{current_step_name}' was cancelled. Setting its partial progress as step output."
                     )
@@ -3389,6 +3397,7 @@ class Workflow:
                 current_step_name = ""
                 current_step = None
                 partial_step_content = ""
+                cancelled_step_output: Optional[StepOutput] = None
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     if workflow_run_response.run_id:
@@ -3400,6 +3409,7 @@ class Workflow:
                     current_step = step
                     # Reset partial data for this step
                     partial_step_content = ""
+                    cancelled_step_output = None
 
                     # Create enhanced StepInput
                     step_input = self._create_step_input(
@@ -3471,8 +3481,12 @@ class Workflow:
                                     # terminal events (which are in the bypass tuple) can still surface
                                     # on the wire. Cancellation is re-raised after the loop exits.
                                     draining_after_cancel = True
+                                    if isinstance(event, StepOutput):
+                                        cancelled_step_output = event
                                     continue
                             if draining_after_cancel and not is_bypass:
+                                if isinstance(event, StepOutput):
+                                    cancelled_step_output = event
                                 continue
 
                             # Accumulate partial data from streaming events
@@ -3767,7 +3781,11 @@ class Workflow:
                 workflow_run_response.content = str(e)
 
                 # Capture partial progress from the step that was cancelled mid-stream
-                if partial_step_content:
+                if cancelled_step_output is not None:
+                    cancelled_step_output.success = False
+                    cancelled_step_output.error = "Cancelled during execution"
+                    collected_step_outputs.append(cancelled_step_output)
+                elif partial_step_content:
                     logger.info(
                         f"Step with name '{current_step_name}' was cancelled. Setting its partial progress as step output."
                     )
@@ -5207,10 +5225,7 @@ class Workflow:
     def cancel_run(self, run_id: str) -> bool:
         """Cancel a running workflow execution.
 
-        Also cascades the cancel to any in-flight executor (agent/team) runs
-        registered against this workflow run. Already-completed executor runs
-        are skipped so we don't leave stale cancellation intent for ids whose
-        own cleanup already ran.
+        Also stops any agent or team currently running as part of this workflow.
 
         Args:
             run_id (str): The run_id to cancel.
@@ -5218,23 +5233,17 @@ class Workflow:
         Returns:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
-        from agno.run.cancel import get_active_runs
         from agno.team._run import cancel_run as team_cancel_run
 
         result = cancel_run_global(run_id)
-        active_run_ids = set(get_active_runs().keys())
         for executor_run_id in get_member_run_ids(run_id):
-            if executor_run_id in active_run_ids:
-                team_cancel_run(executor_run_id)
+            team_cancel_run(executor_run_id)
         return result
 
     async def acancel_run(self, run_id: str) -> bool:
         """Cancel a running workflow execution (async version).
 
-        Also cascades the cancel to any in-flight executor (agent/team) runs
-        registered against this workflow run. Already-completed executor runs
-        are skipped so we don't leave stale cancellation intent for ids whose
-        own cleanup already ran.
+        Also stops any agent or team currently running as part of this workflow.
 
         Args:
             run_id (str): The run_id to cancel.
@@ -5242,14 +5251,11 @@ class Workflow:
         Returns:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """
-        from agno.run.cancel import aget_active_runs
         from agno.team._run import acancel_run as team_acancel_run
 
         result = await acancel_run_global(run_id)
-        active_run_ids = set((await aget_active_runs()).keys())
         for executor_run_id in await aget_member_run_ids(run_id):
-            if executor_run_id in active_run_ids:
-                await team_acancel_run(executor_run_id)
+            await team_acancel_run(executor_run_id)
         return result
 
     @overload
