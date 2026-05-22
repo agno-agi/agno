@@ -156,8 +156,8 @@ def test_read_file_max_read_size_rejected(drive_tools):
     drive_tools.max_read_size = 100
     drive_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "big1",
-        "name": "huge.bin",
-        "mimeType": "application/octet-stream",
+        "name": "huge.txt",
+        "mimeType": "text/plain",
         "size": "50000",
     }
     result = json.loads(drive_tools.read_file("big1"))
@@ -637,26 +637,29 @@ def test_service_account_no_delegated_user():
 
 
 # ---------------------------------------------------------------------------
-# AllDrivesGoogleDriveTools (from agno.context.gdrive.tools)
+# GoogleDriveTools with Shared Drive params (corpora="allDrives")
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 def all_drives_tools(mock_creds, mock_service):
-    from agno.context.gdrive.tools import AllDrivesGoogleDriveTools
-
     with (
         patch("agno.tools.google.drive.build") as mock_build,
-        patch.object(AllDrivesGoogleDriveTools, "_auth", return_value=None),
+        patch.object(GoogleDriveTools, "_auth", return_value=None),
     ):
         mock_build.return_value = mock_service
-        tools = AllDrivesGoogleDriveTools(creds=mock_creds)
+        tools = GoogleDriveTools(
+            creds=mock_creds,
+            corpora="allDrives",
+            supports_all_drives=True,
+            include_items_from_all_drives=True,
+        )
         tools.service = mock_service
         return tools
 
 
 def test_all_drives_search_files_passes_all_drives_flags(all_drives_tools):
-    """AllDrivesGoogleDriveTools.search_files passes corpora=allDrives and related flags."""
+    """GoogleDriveTools.search_files passes corpora=allDrives and related flags when configured."""
     all_drives_tools.search_files(query="name contains 'test'")
 
     call_kwargs = all_drives_tools.service.files.return_value.list.call_args[1]
@@ -665,14 +668,73 @@ def test_all_drives_search_files_passes_all_drives_flags(all_drives_tools):
     assert call_kwargs["supportsAllDrives"] is True
 
 
+def test_all_drives_search_files_returns_incomplete_search(all_drives_tools):
+    """GoogleDriveTools.search_files returns incompleteSearch for allDrives queries."""
+    all_drives_tools.service.files.return_value.list.return_value.execute.return_value = {
+        "files": [],
+        "incompleteSearch": True,
+    }
+
+    result = json.loads(all_drives_tools.search_files(query="name contains 'test'"))
+
+    call_kwargs = all_drives_tools.service.files.return_value.list.call_args[1]
+    assert "incompleteSearch" in call_kwargs["fields"]
+    assert result["incompleteSearch"] is True
+
+
+def test_all_drives_incomplete_search_defaults_false(all_drives_tools):
+    """GoogleDriveTools.search_files defaults incompleteSearch to False when field is absent."""
+    all_drives_tools.service.files.return_value.list.return_value.execute.return_value = {
+        "files": [],
+    }
+    result = json.loads(all_drives_tools.search_files(query="x"))
+    assert result["incompleteSearch"] is False
+
+
+def test_all_drives_error_excludes_incomplete_search(all_drives_tools):
+    """GoogleDriveTools.search_files error response excludes incompleteSearch field."""
+    all_drives_tools.service.files.return_value.list.side_effect = Exception("API error")
+    result = json.loads(all_drives_tools.search_files(query="x"))
+    assert "error" in result
+    assert "incompleteSearch" not in result
+
+
+def test_all_drives_log_debug_on_incomplete_search(all_drives_tools):
+    """GoogleDriveTools.search_files emits log_debug when incompleteSearch is True."""
+    all_drives_tools.service.files.return_value.list.return_value.execute.return_value = {
+        "files": [],
+        "incompleteSearch": True,
+    }
+    with patch("agno.tools.google.drive.log_debug") as mock_debug:
+        all_drives_tools.search_files(query="x")
+    mock_debug.assert_called_once()
+    assert "incomplete" in mock_debug.call_args[0][0].lower()
+
+
+@pytest.mark.parametrize(
+    "api_response",
+    [
+        {"files": []},
+        {"files": [], "incompleteSearch": False},
+    ],
+)
+def test_all_drives_no_log_debug_when_incomplete_search_false(all_drives_tools, api_response):
+    """GoogleDriveTools.search_files does not log when incompleteSearch is False or absent."""
+    all_drives_tools.service.files.return_value.list.return_value.execute.return_value = api_response
+    with patch("agno.tools.google.drive.log_debug") as mock_debug:
+        result = json.loads(all_drives_tools.search_files(query="x"))
+    assert result["incompleteSearch"] is False
+    mock_debug.assert_not_called()
+
+
 def test_all_drives_search_files_still_filters_trashed(all_drives_tools):
-    """AllDrivesGoogleDriveTools.search_files still adds trashed=false by default."""
+    """GoogleDriveTools.search_files still adds trashed=false by default."""
     result = json.loads(all_drives_tools.search_files(query="name contains 'x'"))
     assert "trashed=false" in result["query"]
 
 
 def test_all_drives_get_file_metadata_passes_supports_all_drives(all_drives_tools):
-    """AllDrivesGoogleDriveTools._get_file_metadata passes supportsAllDrives=True."""
+    """GoogleDriveTools._get_file_metadata passes supportsAllDrives when configured."""
     all_drives_tools._get_file_metadata("file123", "id,name")
 
     call_kwargs = all_drives_tools.service.files.return_value.get.call_args[1]
@@ -681,7 +743,7 @@ def test_all_drives_get_file_metadata_passes_supports_all_drives(all_drives_tool
 
 
 def test_all_drives_read_file_passes_supports_all_drives(all_drives_tools):
-    """AllDrivesGoogleDriveTools.read_file passes supportsAllDrives on get_media."""
+    """GoogleDriveTools.read_file passes supportsAllDrives on get_media when configured."""
     all_drives_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "f1",
         "name": "readme.txt",
@@ -691,7 +753,7 @@ def test_all_drives_read_file_passes_supports_all_drives(all_drives_tools):
     mock_downloader = MagicMock()
     mock_downloader.next_chunk.return_value = (MagicMock(), True)
 
-    with patch("agno.context.gdrive.tools.MediaIoBaseDownload", return_value=mock_downloader) as mock_dl:
+    with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader) as mock_dl:
 
         def capture_buffer(buf, req):
             buf.write(b"content")
@@ -705,13 +767,19 @@ def test_all_drives_read_file_passes_supports_all_drives(all_drives_tools):
 
 
 # ---------------------------------------------------------------------------
-# _download_bytes helper
+# _download_bytes method
 # ---------------------------------------------------------------------------
 
 
-def test_download_bytes_helper():
-    """_download_bytes correctly downloads bytes from MediaIoBaseDownload."""
-    from agno.context.gdrive.tools import _download_bytes
+def test_download_bytes_method(mock_creds, mock_service):
+    """GoogleDriveTools._download_bytes correctly downloads bytes from MediaIoBaseDownload."""
+    with (
+        patch("agno.tools.google.drive.build") as mock_build,
+        patch.object(GoogleDriveTools, "_auth", return_value=None),
+    ):
+        mock_build.return_value = mock_service
+        tools = GoogleDriveTools(creds=mock_creds)
+        tools.service = mock_service
 
     mock_request = MagicMock()
     mock_downloader = MagicMock()
@@ -720,13 +788,13 @@ def test_download_bytes_helper():
         (MagicMock(), True),
     ]
 
-    with patch("agno.context.gdrive.tools.MediaIoBaseDownload") as mock_dl:
+    with patch("agno.tools.google.drive.MediaIoBaseDownload") as mock_dl:
 
         def capture_buffer(buf, req):
             buf.write(b"chunk1chunk2")
             return mock_downloader
 
         mock_dl.side_effect = capture_buffer
-        result = _download_bytes(mock_request)
+        result = tools._download_bytes(mock_request)
 
     assert result == b"chunk1chunk2"

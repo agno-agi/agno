@@ -3,9 +3,8 @@ Google Drive Context Provider
 =============================
 
 GoogleDriveContextProvider wraps a read-only slice of `GoogleDriveTools`
-(via an `AllDrivesGoogleDriveTools` subclass that injects
-`corpora=allDrives` so a service account can see folders shared with
-it and files in Shared Drives). The calling agent gets a single
+with `corpora="allDrives"` so a service account can see folders shared
+with it and files in Shared Drives. The calling agent gets a single
 `query_<id>` tool that routes through a sub-agent trained to
 escalate searches when the naive query comes back empty.
 
