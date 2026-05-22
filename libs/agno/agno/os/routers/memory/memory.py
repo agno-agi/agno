@@ -437,6 +437,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.get_memory_topics(
+                user_id=user_id,
                 db_id=db_id,
                 table=table,
                 headers=headers,
@@ -583,6 +584,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await db.get_user_memory_stats(
+                user_id=user_id,
                 limit=limit,
                 page=page,
                 db_id=db_id,

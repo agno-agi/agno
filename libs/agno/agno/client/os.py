@@ -1561,6 +1561,7 @@ class AgentOSClient:
 
     async def get_memory_topics(
         self,
+        user_id: Optional[str] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
@@ -1568,6 +1569,7 @@ class AgentOSClient:
         """Get all unique memory topics.
 
         Args:
+            user_id: Optional user ID to filter topics for
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
@@ -1578,7 +1580,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params = {"db_id": db_id, "table": table}
+        params = {"user_id": user_id, "db_id": db_id, "table": table}
         params = {k: v for k, v in params.items() if v is not None}
 
         return await self._aget("/memory_topics", params=params, headers=headers)

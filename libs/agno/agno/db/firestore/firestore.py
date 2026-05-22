@@ -810,11 +810,11 @@ class FirestoreDb(BaseDb):
             )
             docs = query.stream()
 
-            all_topics = set()
+            all_topics: set[str] = set()
             for doc in docs:
                 data = doc.to_dict()
                 topics = data.get("topics", [])
-                if topics:
+                if topics and isinstance(topics, list):
                     all_topics.update(topics)
 
             return [topic for topic in all_topics if topic]

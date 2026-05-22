@@ -1649,7 +1649,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = await self._get_table(table_type="memories")
+            table = await self._get_table(table_type="memories", create_table_if_not_found=True)
 
             async with self.async_session_factory() as sess, sess.begin():
                 if memory.memory_id is None:
@@ -1723,7 +1723,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return []
 
         try:
-            table = await self._get_table(table_type="memories")
+            table = await self._get_table(table_type="memories", create_table_if_not_found=True)
 
             # Prepare bulk data
             bulk_data = []
@@ -1882,7 +1882,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         try:
-            table = await self._get_table(table_type="metrics")
+            table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
 
             starting_date = await self._get_metrics_calculation_starting_date(table)
 
@@ -1958,7 +1958,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = await self._get_table(table_type="metrics")
+            table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)

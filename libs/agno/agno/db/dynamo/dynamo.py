@@ -800,11 +800,12 @@ class DynamoDb(BaseDb):
                 items.extend(response.get("Items", []))
 
             # Extract topics from all memories
-            all_topics = set()
+            all_topics: set[str] = set()
             for item in items:
                 memory_data = deserialize_from_dynamodb_item(item)
-                topics = memory_data.get("memory", {}).get("topics", [])
-                all_topics.update(topics)
+                topics = memory_data.get("topics") or []
+                if isinstance(topics, list):
+                    all_topics.update(topics)
 
             return list(all_topics)
 
