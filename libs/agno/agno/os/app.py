@@ -54,6 +54,7 @@ from agno.os.routers.schedules import get_schedule_router
 from agno.os.routers.session import get_session_router
 from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
+from agno.os.routers.webhooks import get_webhook_router
 from agno.os.routers.workflows import get_workflow_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
@@ -210,6 +211,7 @@ class AgentOS:
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
         enable_mcp_server: bool = False,
+        enable_webhooks: bool = False,
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         tracing: bool = False,
@@ -240,6 +242,7 @@ class AgentOS:
             settings: API settings for the OS
             lifespan: Optional lifespan context manager for the FastAPI app
             enable_mcp_server: Whether to enable MCP (Model Context Protocol)
+            enable_webhooks: Whether to enable webhook endpoints for external service callbacks
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             auto_provision_dbs: Whether to automatically provision databases
@@ -295,6 +298,7 @@ class AgentOS:
         self.tracing = tracing
 
         self.enable_mcp_server = enable_mcp_server
+        self.enable_webhooks = enable_webhooks
         self.lifespan = lifespan
 
         self.registry = registry
@@ -460,6 +464,9 @@ class AgentOS:
         self._add_router(app, get_team_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
+
+        if self.enable_webhooks:
+            self._add_router(app, get_webhook_router(self, settings=self.settings, registry=self.registry))
 
         # Add A2A interface if relevant
         has_a2a_interface = False
