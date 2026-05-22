@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, ClassVar, Dict, List, Optional, Tuple, Type, Union
 
 import httpx
 from pydantic import BaseModel
@@ -35,23 +35,27 @@ class Claude(AnthropicClaude):
     client: Optional[AnthropicVertex] = None  # type: ignore
     async_client: Optional[AsyncAnthropicVertex] = None  # type: ignore
 
+    # Claude models that support native structured outputs on VertexAI.
+    # Allowlist approach: only explicitly supported models get native structured outputs.
+    # VertexAI uses @ separator (e.g., claude-sonnet-4-5@20250929)
+    _STRUCTURED_OUTPUT_PATTERNS: ClassVar[Tuple[str, ...]] = (
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+        "claude-opus-4-5",
+        "claude-sonnet-4-6",
+        "claude-opus-4-6",
+    )
+
     def __post_init__(self):
         """Validate model configuration after initialization."""
         super().__post_init__()
-        # Parent's alias list uses - separator; VertexAI uses @ (model@date)
         self.supports_native_structured_outputs = self._supports_structured_outputs()
         self.supports_json_schema_outputs = False
 
     def _supports_structured_outputs(self) -> bool:
         """Check if the model supports native structured outputs."""
-        # Claude 3.x models don't support structured outputs
-        if "claude-3" in self.id:
-            return False
-        # Claude 4.0 models (before 4.5) don't support structured outputs
-        # Check for patterns like claude-sonnet-4@20250514 or claude-opus-4@20250514
-        if "claude-sonnet-4@2025" in self.id or "claude-opus-4@2025" in self.id:
-            return False
-        return True
+        model_id_lower = self.id.lower()
+        return any(pattern in model_id_lower for pattern in self._STRUCTURED_OUTPUT_PATTERNS)
 
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}
