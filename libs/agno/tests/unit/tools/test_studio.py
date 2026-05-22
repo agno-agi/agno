@@ -11,7 +11,7 @@ import pytest
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.registry import Registry
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -32,7 +32,7 @@ def registry(db):
     return Registry(
         name="Test Registry",
         tools=[DuckDuckGoTools(), CalculatorTools()],
-        models=[OpenAIChat(id="gpt-4o-mini"), OpenAIChat(id="gpt-4o")],
+        models=[OpenAIResponses(id="gpt-5.4"), OpenAIResponses(id="gpt-5.5")],
         dbs=[db],
     )
 
@@ -112,7 +112,7 @@ class TestDiscovery:
     def test_list_models(self, studio):
         result = _loads(studio.list_models())
         ids = {m["id"] for m in result["models"]}
-        assert ids == {"gpt-4o-mini", "gpt-4o"}
+        assert ids == {"gpt-5.4", "gpt-5.5"}
 
     def test_list_tools(self, studio):
         result = _loads(studio.list_tools())
@@ -143,9 +143,9 @@ class TestDiscovery:
         assert result["dbs"][0]["id"] == db.id
 
     def test_list_agents_includes_studio_created_db_components(self, registry, db):
-        code_agent = Agent(id="code-only", name="Code Only", model=OpenAIChat(id="gpt-4o-mini"))
+        code_agent = Agent(id="code-only", name="Code Only", model=OpenAIResponses(id="gpt-5.4"))
         tool = StudioTool(registry=registry, db=db, agents_list=[code_agent])
-        tool.create_agent(name="math-king", instructions="i", model_id="gpt-4o-mini")
+        tool.create_agent(name="math-king", instructions="i", model_id="gpt-5.4")
 
         result = _loads(tool.list_agents())
         ids = {a["id"]: a.get("source") for a in result["agents"]}
@@ -154,9 +154,9 @@ class TestDiscovery:
 
     def test_list_agents_dedupes_when_code_shadows_db(self, registry, db):
         tool = StudioTool(registry=registry, db=db)
-        tool.create_agent(name="shared", instructions="i", model_id="gpt-4o-mini")
+        tool.create_agent(name="shared", instructions="i", model_id="gpt-5.4")
 
-        code_agent = Agent(id="shared", name="Shared Code", model=OpenAIChat(id="gpt-4o-mini"))
+        code_agent = Agent(id="shared", name="Shared Code", model=OpenAIResponses(id="gpt-5.4"))
         tool2 = StudioTool(registry=registry, db=db, agents_list=[code_agent])
 
         result = _loads(tool2.list_agents())
@@ -164,10 +164,22 @@ class TestDiscovery:
         assert len(shared_entries) == 1
         assert shared_entries[0]["source"] == "code"
 
+    def test_list_agents_dedupes_code_without_id_by_name(self, registry, db):
+        tool = StudioTool(registry=registry, db=db)
+        tool.create_agent(name="Shared Name", instructions="i", model_id="gpt-5.4")
+
+        code_agent = Agent(name="Shared Name", model=OpenAIResponses(id="gpt-5.4"))
+        tool2 = StudioTool(registry=registry, db=db, agents_list=[code_agent])
+
+        result = _loads(tool2.list_agents())
+        shared_entries = [a for a in result["agents"] if a["name"] == "Shared Name"]
+        assert len(shared_entries) == 1
+        assert shared_entries[0]["source"] == "code"
+
     def test_list_teams_includes_db_components(self, registry, db):
         tool = StudioTool(registry=registry, db=db, teams=True)
-        tool.create_agent(name="a1", instructions="i", model_id="gpt-4o-mini")
-        tool.create_team(name="squad", instructions="i", member_ids=["a1"], model_id="gpt-4o-mini")
+        tool.create_agent(name="a1", instructions="i", model_id="gpt-5.4")
+        tool.create_team(name="squad", instructions="i", member_ids=["a1"], model_id="gpt-5.4")
 
         result = _loads(tool.list_teams())
         ids = {t["id"]: t.get("source") for t in result["teams"]}
@@ -175,7 +187,7 @@ class TestDiscovery:
 
     def test_list_workflows_includes_db_components(self, registry, db):
         tool = StudioTool(registry=registry, db=db, workflows=True)
-        tool.create_agent(name="a1", instructions="i", model_id="gpt-4o-mini")
+        tool.create_agent(name="a1", instructions="i", model_id="gpt-5.4")
         tool.create_workflow(name="pipeline", description="d", step_specs=[{"name": "s1", "agent_id": "a1"}])
 
         result = _loads(tool.list_workflows())
@@ -194,7 +206,7 @@ class TestCreateAgent:
             studio.create_agent(
                 name="news-scout",
                 instructions="Summarize tech news.",
-                model_id="gpt-4o-mini",
+                model_id="gpt-5.4",
                 tool_names=["calculator"],
             )
         )
@@ -213,21 +225,19 @@ class TestCreateAgent:
         assert "Model not found" in out["error"]
 
     def test_unknown_tool_returns_error(self, studio):
-        out = _loads(
-            studio.create_agent(name="x", instructions="i", model_id="gpt-4o-mini", tool_names=["nonexistent"])
-        )
+        out = _loads(studio.create_agent(name="x", instructions="i", model_id="gpt-5.4", tool_names=["nonexistent"]))
         assert "error" in out
         assert "Tools not found" in out["error"]
 
     def test_create_without_tools(self, studio):
-        out = _loads(studio.create_agent(name="plain", instructions="i", model_id="gpt-4o-mini"))
+        out = _loads(studio.create_agent(name="plain", instructions="i", model_id="gpt-5.4"))
         assert out["status"] == "created"
         assert out["tools"] == []
 
     def test_slug_collisions_get_unique_ids(self, studio, db):
-        first = _loads(studio.create_agent(name="My Agent", instructions="i", model_id="gpt-4o-mini"))
-        second = _loads(studio.create_agent(name="my-agent", instructions="i", model_id="gpt-4o-mini"))
-        third = _loads(studio.create_agent(name="My--Agent", instructions="i", model_id="gpt-4o-mini"))
+        first = _loads(studio.create_agent(name="My Agent", instructions="i", model_id="gpt-5.4"))
+        second = _loads(studio.create_agent(name="my-agent", instructions="i", model_id="gpt-5.4"))
+        third = _loads(studio.create_agent(name="My--Agent", instructions="i", model_id="gpt-5.4"))
 
         assert first["id"] == "my-agent"
         assert second["id"] == "my-agent-2"
@@ -236,26 +246,35 @@ class TestCreateAgent:
         assert db.get_component("my-agent-2")["name"] == "my-agent"
         assert db.get_component("my-agent-3")["name"] == "My--Agent"
 
+    def test_component_ids_share_global_namespace(self, studio):
+        studio.create_agent(name="member", instructions="i", model_id="gpt-5.4")
+        team = _loads(studio.create_team(name="Reporter", instructions="i", member_ids=["member"], model_id="gpt-5.4"))
+        agent = _loads(studio.create_agent(name="reporter", instructions="i", model_id="gpt-5.4"))
+
+        assert team["id"] == "reporter"
+        assert agent["id"] == "reporter-2"
+
     def test_persist_failure_returns_error(self, studio, db, monkeypatch):
         def fail_upsert_config(*args, **kwargs):
             raise RuntimeError("persist failed")
 
         monkeypatch.setattr(db, "upsert_config", fail_upsert_config)
 
-        out = _loads(studio.create_agent(name="broken", instructions="i", model_id="gpt-4o-mini"))
+        out = _loads(studio.create_agent(name="broken", instructions="i", model_id="gpt-5.4"))
         assert "error" in out
         assert "persist failed" in out["error"]
 
+    @pytest.mark.asyncio
     async def test_async_create_agent_persists_component(self, studio, db):
-        out = _loads(await studio.acreate_agent(name="async-agent", instructions="i", model_id="gpt-4o-mini"))
+        out = _loads(await studio.acreate_agent(name="async-agent", instructions="i", model_id="gpt-5.4"))
         assert out["status"] == "created"
         assert db.get_component("async-agent") is not None
 
 
 class TestCreateTeam:
     def _make_members(self, studio):
-        studio.create_agent(name="a1", instructions="i", model_id="gpt-4o-mini")
-        studio.create_agent(name="a2", instructions="i", model_id="gpt-4o-mini")
+        studio.create_agent(name="a1", instructions="i", model_id="gpt-5.4")
+        studio.create_agent(name="a2", instructions="i", model_id="gpt-5.4")
 
     def test_happy_path(self, studio, db):
         self._make_members(studio)
@@ -264,7 +283,7 @@ class TestCreateTeam:
                 name="squad",
                 instructions="coordinate",
                 member_ids=["a1", "a2"],
-                model_id="gpt-4o-mini",
+                model_id="gpt-5.4",
             )
         )
         assert out["status"] == "created"
@@ -278,21 +297,21 @@ class TestCreateTeam:
                 name="squad",
                 instructions="i",
                 member_ids=["a1", "ghost"],
-                model_id="gpt-4o-mini",
+                model_id="gpt-5.4",
             )
         )
         assert "error" in out
         assert "Members not found" in out["error"]
 
     def test_empty_members_returns_error(self, studio):
-        out = _loads(studio.create_team(name="squad", instructions="i", member_ids=[], model_id="gpt-4o-mini"))
+        out = _loads(studio.create_team(name="squad", instructions="i", member_ids=[], model_id="gpt-5.4"))
         assert "error" in out
 
 
 class TestCreateWorkflow:
     def _make_agents(self, studio):
-        studio.create_agent(name="a1", instructions="i", model_id="gpt-4o-mini")
-        studio.create_agent(name="a2", instructions="i", model_id="gpt-4o-mini")
+        studio.create_agent(name="a1", instructions="i", model_id="gpt-5.4")
+        studio.create_agent(name="a2", instructions="i", model_id="gpt-5.4")
 
     def test_happy_path(self, studio, db):
         self._make_agents(studio)
@@ -334,7 +353,7 @@ class TestCreateWorkflow:
 class TestEditAgent:
     def _create(self, studio):
         return _loads(
-            studio.create_agent(name="tutor", instructions="orig", model_id="gpt-4o-mini", tool_names=["calculator"])
+            studio.create_agent(name="tutor", instructions="orig", model_id="gpt-5.4", tool_names=["calculator"])
         )
 
     def test_edit_produces_draft_v2(self, studio):
@@ -372,9 +391,9 @@ class TestEditAgent:
 
 class TestEditTeam:
     def _setup(self, studio):
-        studio.create_agent(name="a1", instructions="i", model_id="gpt-4o-mini")
-        studio.create_agent(name="a2", instructions="i", model_id="gpt-4o-mini")
-        studio.create_team(name="squad", instructions="orig", member_ids=["a1"], model_id="gpt-4o-mini")
+        studio.create_agent(name="a1", instructions="i", model_id="gpt-5.4")
+        studio.create_agent(name="a2", instructions="i", model_id="gpt-5.4")
+        studio.create_team(name="squad", instructions="orig", member_ids=["a1"], model_id="gpt-5.4")
 
     def test_edit_team_members(self, studio):
         self._setup(studio)
@@ -390,7 +409,7 @@ class TestEditTeam:
 
 class TestEditWorkflow:
     def _setup(self, studio):
-        studio.create_agent(name="a1", instructions="i", model_id="gpt-4o-mini")
+        studio.create_agent(name="a1", instructions="i", model_id="gpt-5.4")
         studio.create_workflow(name="pipeline", description="orig", step_specs=[{"name": "s1", "agent_id": "a1"}])
 
     def test_edit_workflow_description(self, studio):
@@ -411,7 +430,7 @@ class TestEditWorkflow:
 
 class TestVersioning:
     def _create_and_edit(self, studio):
-        studio.create_agent(name="tutor", instructions="orig", model_id="gpt-4o-mini", tool_names=["calculator"])
+        studio.create_agent(name="tutor", instructions="orig", model_id="gpt-5.4", tool_names=["calculator"])
         studio.edit_agent(agent_id="tutor", instructions="updated")
 
     def test_list_versions_returns_both(self, studio):
@@ -444,7 +463,7 @@ class TestVersioning:
         assert stages.count("draft") == 0
 
     def test_publish_without_draft_returns_error(self, studio):
-        studio.create_agent(name="tutor", instructions="i", model_id="gpt-4o-mini")
+        studio.create_agent(name="tutor", instructions="i", model_id="gpt-5.4")
         out = _loads(studio.publish_component("tutor"))
         assert "error" in out
 
@@ -478,7 +497,7 @@ class TestVersioning:
 
 class TestDelete:
     def test_delete_agent_removes_from_db(self, studio, db):
-        studio.create_agent(name="temp", instructions="i", model_id="gpt-4o-mini")
+        studio.create_agent(name="temp", instructions="i", model_id="gpt-5.4")
         out = _loads(studio.delete_agent("temp"))
         assert out["status"] == "deleted"
         assert db.get_component("temp") is None
@@ -489,7 +508,7 @@ class TestDelete:
 
     def test_delete_agent_only_deletes_db_component_when_live_agent_shadows_id(self, registry, db):
         studio = StudioTool(registry=registry, db=db)
-        studio.create_agent(name="temp", instructions="i", model_id="gpt-4o-mini")
+        studio.create_agent(name="temp", instructions="i", model_id="gpt-5.4")
 
         class ShadowAgent:
             id = "temp"
@@ -512,37 +531,39 @@ class TestDelete:
 
 class TestLookup:
     def test_find_agent_finds_just_created_via_db(self, studio):
-        studio.create_agent(name="cached", instructions="i", model_id="gpt-4o-mini")
+        studio.create_agent(name="cached", instructions="i", model_id="gpt-5.4")
         agent = studio._find_agent("cached")
         assert agent is not None
         assert agent.id == "cached"
 
     def test_find_agent_falls_back_to_live_list(self, registry, db):
-        live = Agent(id="live-one", name="Live", model=OpenAIChat(id="gpt-4o-mini"), db=db)
+        live = Agent(id="live-one", name="Live", model=OpenAIResponses(id="gpt-5.4"), db=db)
         tool = StudioTool(registry=registry, db=db, agents_list=[live])
         found = tool._find_agent("live-one")
         assert found is live
 
     def test_find_agent_falls_back_to_db(self, studio, registry, db):
-        studio.create_agent(name="persisted", instructions="i", model_id="gpt-4o-mini")
+        studio.create_agent(name="persisted", instructions="i", model_id="gpt-5.4")
         fresh = StudioTool(registry=registry, db=db)
         found = fresh._find_agent("persisted")
         assert found is not None
         assert found.id == "persisted"
 
-    def test_edit_agent_uses_same_lookup_order_as_get_agent(self, studio, registry, db):
-        studio.create_agent(name="shared", instructions="db", model_id="gpt-4o-mini")
-        live = Agent(id="shared", name="Shared", model=OpenAIChat(id="gpt-4o-mini"), instructions="live")
+    def test_edit_agent_copies_live_agent_without_mutating_it(self, studio, registry, db):
+        studio.create_agent(name="shared", instructions="db", model_id="gpt-5.4")
+        live = Agent(id="shared", name="Shared", model=OpenAIResponses(id="gpt-5.4"), instructions="live")
         tool = StudioTool(registry=registry, db=db, agents_list=[live])
 
         before = _loads(tool.get_agent("shared"))
         out = _loads(tool.edit_agent(agent_id="shared", instructions="updated-live"))
         after = _loads(tool.get_agent("shared"))
+        draft = _loads(tool.get_version("shared", version=out["draft_version"]))
 
         assert before["instructions"] == "live"
         assert out["status"] == "edited"
-        assert live.instructions == "updated-live"
-        assert after["instructions"] == "updated-live"
+        assert live.instructions == "live"
+        assert after["instructions"] == "live"
+        assert draft["config"]["instructions"] == "updated-live"
 
 
 # ----------------------------------------------------------------------
@@ -623,15 +644,15 @@ class TestEnableFlags:
 
 class TestNoCascadePersistence:
     def test_create_team_does_not_persist_code_defined_member(self, registry, db):
-        greeter = Agent(id="greeter-code", name="Greeter", model=OpenAIChat(id="gpt-4o-mini"))
+        greeter = Agent(id="greeter-code", name="Greeter", model=OpenAIResponses(id="gpt-5.4"))
         tool = StudioTool(registry=registry, db=db, agents_list=[greeter])
 
-        tool.create_agent(name="studio-agent", instructions="i", model_id="gpt-4o-mini")
+        tool.create_agent(name="studio-agent", instructions="i", model_id="gpt-5.4")
         tool.create_team(
             name="mixed-team",
             instructions="i",
             member_ids=["greeter-code", "studio-agent"],
-            model_id="gpt-4o-mini",
+            model_id="gpt-5.4",
         )
 
         # Team row exists
@@ -642,7 +663,7 @@ class TestNoCascadePersistence:
         assert db.get_component("greeter-code") is None
 
     def test_create_workflow_does_not_persist_code_defined_agent(self, registry, db):
-        greeter = Agent(id="greeter-code", name="Greeter", model=OpenAIChat(id="gpt-4o-mini"))
+        greeter = Agent(id="greeter-code", name="Greeter", model=OpenAIResponses(id="gpt-5.4"))
         tool = StudioTool(registry=registry, db=db, agents_list=[greeter])
 
         tool.create_workflow(
@@ -662,9 +683,7 @@ class TestNoCascadePersistence:
 class TestLifecycle:
     def test_full_lifecycle(self, studio, db):
         # Create
-        out = _loads(
-            studio.create_agent(name="lc", instructions="orig", model_id="gpt-4o-mini", tool_names=["calculator"])
-        )
+        out = _loads(studio.create_agent(name="lc", instructions="orig", model_id="gpt-5.4", tool_names=["calculator"]))
         assert out["db_version"] == 1
 
         # Edit twice — should collapse into one draft

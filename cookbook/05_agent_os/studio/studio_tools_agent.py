@@ -18,6 +18,8 @@ Usage:
     .venvs/demo/bin/python cookbook/05_agent_os/studio/studio_tools_agent.py
 """
 
+from pathlib import Path
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
@@ -29,7 +31,10 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.studio import StudioTool
 
-db = SqliteDb(id="studio-demo2-db", db_file="tmp/studio_demo2.db")
+DB_DIR = Path(__file__).parent / "tmp"
+DB_DIR.mkdir(exist_ok=True)
+
+db = SqliteDb(id="studio-demo2-db", db_file=str(DB_DIR / "studio_demo2.db"))
 
 registry = Registry(
     name="Studio Registry",

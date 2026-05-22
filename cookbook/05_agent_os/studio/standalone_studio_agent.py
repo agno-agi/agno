@@ -8,6 +8,8 @@ Usage:
     .venv/bin/python cookbook/05_agent_os/studio/standalone_studio_agent.py
 """
 
+from pathlib import Path
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
@@ -17,7 +19,10 @@ from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.studio import StudioTool
 
-db = SqliteDb(id="standalone-studio-db", db_file="tmp/standalone_studio.db")
+DB_DIR = Path(__file__).parent / "tmp"
+DB_DIR.mkdir(exist_ok=True)
+
+db = SqliteDb(id="standalone-studio-db", db_file=str(DB_DIR / "standalone_studio.db"))
 
 registry = Registry(
     name="Standalone Studio Registry",

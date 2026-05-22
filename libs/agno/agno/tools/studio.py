@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from agno.workflow.workflow import Workflow
 
 Component = Union["Agent", "Team", "Workflow"]
+TeamMember = Union["Agent", "Team"]
 
 
 class StudioTool(Toolkit):
@@ -371,7 +372,7 @@ class StudioTool(Toolkit):
         try:
             row = self.db.get_config(component_id=component_id)
         except Exception:
-            logger.debug("StudioTool: db.get_config failed", exc_info=True)
+            logger.warning("StudioTool: db.get_config failed for %s", component_id, exc_info=True)
             return None
         if row is None:
             return None
@@ -467,22 +468,25 @@ class StudioTool(Toolkit):
         """
         try:
             result: List[Dict[str, Any]] = []
-            seen: set = set()
+            seen: set[str] = set()
             for a in self._iter_agents():
                 aid = getattr(a, "id", None)
+                name = getattr(a, "name", None)
                 if aid is not None:
                     seen.add(aid)
+                if name is not None:
+                    seen.add(name)
                 result.append(
                     {
                         "id": aid,
-                        "name": getattr(a, "name", None),
+                        "name": name,
                         "model_id": getattr(getattr(a, "model", None), "id", None),
                         "tools": _summarize_tools(getattr(a, "tools", None)),
                         "source": "code",
                     }
                 )
             for row in self._list_db_components("agent"):
-                if row["id"] in seen:
+                if row["id"] in seen or row["name"] in seen:
                     continue
                 result.append({**row, "source": "db"})
             return json.dumps({"agents": result, "count": len(result)})
@@ -498,24 +502,27 @@ class StudioTool(Toolkit):
         """
         try:
             result: List[Dict[str, Any]] = []
-            seen: set = set()
+            seen: set[str] = set()
             for team in self._iter_teams():
                 tid = getattr(team, "id", None)
+                name = getattr(team, "name", None)
                 if tid is not None:
                     seen.add(tid)
+                if name is not None:
+                    seen.add(name)
                 members = getattr(team, "members", None) or []
                 member_ids = [getattr(m, "id", None) for m in members] if not callable(members) else []
                 result.append(
                     {
                         "id": tid,
-                        "name": getattr(team, "name", None),
+                        "name": name,
                         "model_id": getattr(getattr(team, "model", None), "id", None),
                         "member_ids": member_ids,
                         "source": "code",
                     }
                 )
             for row in self._list_db_components("team"):
-                if row["id"] in seen:
+                if row["id"] in seen or row["name"] in seen:
                     continue
                 result.append({**row, "source": "db"})
             return json.dumps({"teams": result, "count": len(result)})
@@ -531,23 +538,26 @@ class StudioTool(Toolkit):
         """
         try:
             result: List[Dict[str, Any]] = []
-            seen: set = set()
+            seen: set[str] = set()
             for wf in self._iter_workflows():
                 wid = getattr(wf, "id", None)
+                name = getattr(wf, "name", None)
                 if wid is not None:
                     seen.add(wid)
+                if name is not None:
+                    seen.add(name)
                 steps = getattr(wf, "steps", None) or []
                 result.append(
                     {
                         "id": wid,
-                        "name": getattr(wf, "name", None),
+                        "name": name,
                         "description": getattr(wf, "description", None),
                         "steps": [getattr(s, "name", None) for s in steps] if isinstance(steps, list) else [],
                         "source": "code",
                     }
                 )
             for row in self._list_db_components("workflow"):
-                if row["id"] in seen:
+                if row["id"] in seen or row["name"] in seen:
                     continue
                 result.append({**row, "source": "db"})
             return json.dumps({"workflows": result, "count": len(result)})
@@ -873,6 +883,10 @@ class StudioTool(Toolkit):
             return json.dumps({"error": f"Agent not found: {agent_id}"})
 
         try:
+            agent = agent.deep_copy()
+            if getattr(agent, "id", None) is None:
+                agent.id = agent_id
+            agent.db = self.db
             if instructions is not None:
                 agent.instructions = instructions
             if description is not None:
@@ -918,6 +932,10 @@ class StudioTool(Toolkit):
             return json.dumps({"error": f"Team not found: {team_id}"})
 
         try:
+            team = team.deep_copy()
+            if getattr(team, "id", None) is None:
+                team.id = team_id
+            team.db = self.db
             if instructions is not None:
                 team.instructions = instructions
             if description is not None:
@@ -965,6 +983,10 @@ class StudioTool(Toolkit):
             return json.dumps({"error": f"Workflow not found: {workflow_id}"})
 
         try:
+            wf = wf.deep_copy()
+            if getattr(wf, "id", None) is None:
+                wf.id = workflow_id
+            wf.db = self.db
             if description is not None:
                 wf.description = description
             if step_specs is not None:
@@ -1462,6 +1484,11 @@ class StudioTool(Toolkit):
         return await asyncio.to_thread(function, *args, **kwargs)
 
     def _unique_component_id(self, name: str, db: "BaseDb") -> str:
+        """Return a unique id in the DB component namespace.
+
+        Components use ``component_id`` as the primary key, so agents, teams,
+        and workflows intentionally share one id namespace.
+        """
         base = _slugify(name)
         candidate = base
         suffix = 2
@@ -1472,12 +1499,17 @@ class StudioTool(Toolkit):
 
     def _component_id_exists(self, component_id: str, db: "BaseDb") -> bool:
         for component in [*self._iter_agents(), *self._iter_teams(), *self._iter_workflows()]:
-            if getattr(component, "id", None) == component_id or getattr(component, "name", None) == component_id:
+            component_name = getattr(component, "name", None)
+            if (
+                getattr(component, "id", None) == component_id
+                or component_name == component_id
+                or (component_name is not None and _slugify(component_name) == component_id)
+            ):
                 return True
         return db.get_component(component_id) is not None
 
-    def _resolve_members(self, member_ids: List[str]) -> tuple[List[Component], List[str]]:
-        members: List[Component] = []
+    def _resolve_members(self, member_ids: List[str]) -> tuple[List[TeamMember], List[str]]:
+        members: List[TeamMember] = []
         missing: List[str] = []
         for mid in member_ids:
             member = self._find_agent(mid) or self._find_team(mid)
@@ -1519,7 +1551,7 @@ class StudioTool(Toolkit):
     def _upsert_draft(self, component: Component) -> Optional[int]:
         """Save a component as a draft. Updates the latest draft in place, else creates one."""
         if self.db is None:
-            return None
+            raise ValueError("db is required for draft persistence")
 
         component_id = getattr(component, "id", None)
         if component_id is None:
@@ -1592,7 +1624,7 @@ def _persist_only(component: Component, db: Optional["BaseDb"], stage: str = "pu
     trade-off for keeping them out of DB.
     """
     if db is None:
-        return None
+        raise ValueError("db is required for persistence")
     component_id = getattr(component, "id", None)
     if component_id is None:
         raise ValueError("Component has no id")
