@@ -48,7 +48,7 @@ shown, not what the clip is "about" thematically.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     output_schema=VideoSummary,
 )

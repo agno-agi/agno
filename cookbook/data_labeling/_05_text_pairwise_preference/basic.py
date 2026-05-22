@@ -9,7 +9,7 @@ data shape used to train reward models (RLHF) or do DPO fine-tuning.
 from typing import Literal
 
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.openai import OpenAIResponses
+from agno.models.google import Gemini
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -37,7 +37,7 @@ only when the two are genuinely indistinguishable in quality.
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=Gemini(id="gemini-3.5-flash"),
     instructions=instructions,
     output_schema=Preference,
 )
