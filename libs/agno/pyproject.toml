@@ -136,6 +136,7 @@ mem0 = ["mem0ai"]
 memori = ["memori>=3.0.5"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 notion = ["notion-client"]
+notte = ["notte-sdk>=1.8,<2"]
 opencv = ["opencv-python"]
 parallel = ["parallel-web"]
 psycopg = ["psycopg-binary", "psycopg"]
@@ -269,6 +270,7 @@ tools = [
   "agno[webex]",
   "agno[mcp]",
   "agno[browserbase]",
+  "agno[notte]",
   "agno[agentql]",
   "agno[opencv]",
   "agno[parallel]",
@@ -526,6 +528,7 @@ module = [
   "neo4j.*",
   "nest_asyncio.*",
   "newspaper.*",
+  "notte_sdk.*",
   "numpy.*",
   "ollama.*",
   "openpyxl.*",
