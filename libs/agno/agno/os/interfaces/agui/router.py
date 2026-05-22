@@ -96,7 +96,7 @@ async def run_team(team: Union[Team, RemoteTeam], input: RunAgentInput) -> Async
             input=user_input,
             session_id=input.thread_id,
             stream=True,
-            stream_steps=True,
+            stream_events=True,
             user_id=user_id,
             session_state=session_state,
             run_id=run_id,

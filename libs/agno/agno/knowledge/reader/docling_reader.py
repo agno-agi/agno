@@ -9,6 +9,7 @@ from agno.knowledge.chunking.document import DocumentChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.reader.utils.url_validation import is_host_allowed, validate_allowed_hosts
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error
 
@@ -52,6 +53,7 @@ class DoclingReader(Reader):
         output_format: str = "markdown",
         converter: Optional[DocumentConverter] = None,
         format_options: Optional[Dict[Any, Any]] = None,
+        allowed_hosts: Optional[List[str]] = None,
         **kwargs,
     ):
         """Initialize the DoclingReader.
@@ -69,6 +71,9 @@ class DoclingReader(Reader):
                 - "html_split_page": HTML with page splitting
             converter: Optional pre-configured DocumentConverter instance.
             format_options: Optional format options dictionary for DocumentConverter.
+            allowed_hosts: Optional hostname allowlist for URL inputs. When set, only URLs
+                whose hostname is in the list are converted; others are refused. When None
+                (default), all hosts are allowed (backwards compatible).
             **kwargs: Additional arguments passed to the Reader class
         """
         if chunking_strategy is None:
@@ -88,6 +93,8 @@ class DoclingReader(Reader):
             self.converter = DocumentConverter(format_options=format_options)
         else:
             self.converter = DocumentConverter()
+
+        self.allowed_hosts: Optional[List[str]] = validate_allowed_hosts(allowed_hosts)
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
@@ -191,6 +198,9 @@ class DoclingReader(Reader):
                 source = file
             elif isinstance(file, str) and file.startswith(("http://", "https://")):
                 # Handle URLs - Docling can process them directly
+                if not is_host_allowed(file, self.allowed_hosts):
+                    log_debug(f"Host not in allowed_hosts, refusing to read: {file}")
+                    return []
                 url_path = file.split("?")[0]
                 doc_name = name or Path(url_path).stem
                 log_debug(f"Reading from URL: {file}")
