@@ -45,11 +45,15 @@ def get_entrypoint_for_tool(
 
     async def call_tool(
         tool_name: str,
-        run_context: Optional["RunContext"] = None,
-        agent: Optional["Agent"] = None,
-        team: Optional["Team"] = None,
+        _run_context: Optional["RunContext"] = None,
+        _agent: Optional["Agent"] = None,
+        _team: Optional["Team"] = None,
         **kwargs,
     ) -> ToolResult:
+        # Framework-injected params use leading underscores (_run_context,
+        # _agent, _team) so they do not collide with MCP tool arguments
+        # named "run_context", "agent", "team".
+
         # Execute the MCP tool call
         try:
             # Get the appropriate session for this run
@@ -62,11 +66,11 @@ def get_entrypoint_for_tool(
                 # For MultiMCPTools, pass server_idx; for MCPTools, only pass run_context
                 if isinstance(mcp_tools_instance, MultiMCPTools):
                     active_session = await mcp_tools_instance.get_session_for_run(
-                        run_context=run_context, server_idx=server_idx, agent=agent, team=team
+                        run_context=_run_context, server_idx=server_idx, agent=_agent, team=_team
                     )
                 else:
                     active_session = await mcp_tools_instance.get_session_for_run(
-                        run_context=run_context, agent=agent, team=team
+                        run_context=_run_context, agent=_agent, team=_team
                     )
             else:
                 active_session = session

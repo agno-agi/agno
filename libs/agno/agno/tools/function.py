@@ -907,6 +907,17 @@ class FunctionCall(BaseModel):
         if "fc" in sig.parameters:
             entrypoint_args["fc"] = self
 
+        # Underscore-prefixed variants are used by internal wrappers (e.g. the
+        # MCP `call_tool` entrypoint) so framework objects can be injected
+        # without colliding with user-facing tool arguments that happen to be
+        # named "agent", "team", "run_context".
+        if "_agent" in sig.parameters:
+            entrypoint_args["_agent"] = self.function._agent
+        if "_team" in sig.parameters:
+            entrypoint_args["_team"] = self.function._team
+        if "_run_context" in sig.parameters:
+            entrypoint_args["_run_context"] = self.function._run_context
+
         # Check if the entrypoint has media arguments
         if "images" in sig.parameters:
             entrypoint_args["images"] = self.function._images
