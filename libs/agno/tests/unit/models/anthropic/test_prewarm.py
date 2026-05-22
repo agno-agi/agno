@@ -166,6 +166,17 @@ def test_prewarm_retries_with_max_tokens_one_on_400(monkeypatch):
     assert create.call_args_list[1].kwargs["max_tokens"] == 1
 
 
+def test_prewarm_wraps_retry_failure_in_model_provider_error(monkeypatch):
+    model = Claude(id="claude-sonnet-4-5", cache_system_prompt=True)
+    create = Mock(side_effect=[_status_error_400("max_tokens must be >= 1"), _status_error_400("retry failed")])
+    client = Mock()
+    client.messages.create = create
+    monkeypatch.setattr(model, "get_client", lambda: client)
+    with pytest.raises(ModelProviderError):
+        model.prewarm(_messages())
+    assert create.call_count == 2
+
+
 # --- aprewarm --------------------------------------------------------------
 
 
@@ -187,3 +198,27 @@ async def test_aprewarm_sends_max_tokens_zero_and_returns_metrics(monkeypatch):
     assert client.messages.create.call_args.kwargs["max_tokens"] == 0
     assert metrics is not None
     assert metrics.cache_write_tokens == 5120
+
+
+@pytest.mark.asyncio
+async def test_aprewarm_wraps_retry_failure_in_model_provider_error(monkeypatch):
+    model = Claude(id="claude-sonnet-4-5", cache_system_prompt=True)
+    create = AsyncMock(side_effect=[_status_error_400("max_tokens must be >= 1"), _status_error_400("retry failed")])
+    client = Mock()
+    client.messages.create = create
+    monkeypatch.setattr(model, "get_async_client", lambda: client)
+    with pytest.raises(ModelProviderError):
+        await model.aprewarm(_messages())
+    assert create.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_aprewarm_retries_with_max_tokens_one_on_400(monkeypatch):
+    model = Claude(id="claude-sonnet-4-5", cache_system_prompt=True)
+    create = AsyncMock(side_effect=[_status_error_400("max_tokens must be >= 1"), SimpleNamespace(usage=_usage())])
+    client = Mock()
+    client.messages.create = create
+    monkeypatch.setattr(model, "get_async_client", lambda: client)
+    await model.aprewarm(_messages())
+    assert create.await_count == 2
+    assert create.await_args_list[1].kwargs["max_tokens"] == 1
