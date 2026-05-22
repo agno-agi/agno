@@ -33,6 +33,7 @@ class NotteTools(Toolkit):
         enable_fill: bool = True,
         enable_scrape: bool = True,
         enable_run_agent: bool = True,
+        enable_run_function: bool = True,
         enable_close_session: bool = True,
         all: bool = False,
         max_content_length: Optional[int] = 100000,
@@ -62,6 +63,7 @@ class NotteTools(Toolkit):
             enable_fill (bool): Enable the fill tool. Defaults to True.
             enable_scrape (bool): Enable the scrape tool. Defaults to True.
             enable_run_agent (bool): Enable the run_agent tool. Defaults to True.
+            enable_run_function (bool): Enable the run_function tool. Defaults to True.
             enable_close_session (bool): Enable the close_session tool. Defaults to True.
             all (bool): Enable all tools regardless of individual flags. Defaults to False.
             max_content_length (int, optional): Truncate page content above this many characters.
@@ -126,6 +128,9 @@ class NotteTools(Toolkit):
         if all or enable_run_agent:
             tools.append(self.run_agent)
             async_tools.append((self.arun_agent, "run_agent"))
+        if all or enable_run_function:
+            tools.append(self.run_function)
+            async_tools.append((self.arun_function, "run_function"))
         if all or enable_close_session:
             tools.append(self.close_session)
             async_tools.append((self.aclose_session, "close_session"))
@@ -357,6 +362,41 @@ class NotteTools(Toolkit):
             logger.exception("run_agent failed")
             return json.dumps({"status": "error", "task": task, "message": str(e)})
 
+    def run_function(
+        self,
+        function_id: str,
+        variables: Optional[Dict[str, Any]] = None,
+        version: Optional[str] = None,
+        timeout: Optional[int] = None,
+    ) -> str:
+        """Invokes a Notte Function (a deployable browser automation) by ID.
+
+        Notte Functions let developers pre-build a multi-step browser workflow once in
+        the Notte console (or via the SDK), then invoke it by ID with input variables.
+        Use this for repeatable automations the agent should not have to reason through
+        on every run (e.g. login flows, checkout, scheduled scrapes).
+
+        Args:
+            function_id (str): The Notte function ID.
+            variables (dict, optional): Input variables forwarded to the function.
+            version (str, optional): Pinned function version. Defaults to latest.
+            timeout (int, optional): Override the function's default timeout.
+
+        Returns:
+            JSON string with the function's run output and metadata.
+        """
+        try:
+            function = self.client.Function(function_id=function_id)
+            result = function.run(version=version, timeout=timeout, **(variables or {}))
+            if hasattr(result, "model_dump_json"):
+                payload = result.model_dump_json()
+            else:
+                payload = json.dumps(result, default=str)
+            return self._truncate(payload)
+        except Exception as e:
+            logger.exception("run_function failed")
+            return json.dumps({"status": "error", "function_id": function_id, "message": str(e)})
+
     def close_session(self) -> str:
         """Stops the current Notte session and releases remote browser resources.
 
@@ -411,6 +451,16 @@ class NotteTools(Toolkit):
     ) -> str:
         """Hands a multi-step task to a Notte browser agent asynchronously."""
         return await asyncio.to_thread(self.run_agent, task, url, max_steps)
+
+    async def arun_function(
+        self,
+        function_id: str,
+        variables: Optional[Dict[str, Any]] = None,
+        version: Optional[str] = None,
+        timeout: Optional[int] = None,
+    ) -> str:
+        """Invokes a Notte Function by ID asynchronously."""
+        return await asyncio.to_thread(self.run_function, function_id, variables, version, timeout)
 
     async def aclose_session(self) -> str:
         """Stops the current Notte session asynchronously."""

@@ -76,6 +76,7 @@ class TestInit:
             "fill",
             "scrape",
             "run_agent",
+            "run_function",
             "close_session",
         }
 
@@ -90,6 +91,7 @@ class TestInit:
             enable_fill=False,
             enable_scrape=False,
             enable_run_agent=False,
+            enable_run_function=False,
             enable_close_session=False,
         )
         assert {fn.__name__ for fn in t.tools} == {"navigate_to"}
@@ -106,9 +108,10 @@ class TestInit:
             enable_fill=False,
             enable_scrape=False,
             enable_run_agent=False,
+            enable_run_function=False,
             enable_close_session=False,
         )
-        assert len(t.tools) == 9
+        assert len(t.tools) == 10
 
     def test_custom_server_url_passed_through(self, mock_notte_client):
         with patch("agno.tools.notte.NotteClient") as cls:
@@ -217,6 +220,31 @@ class TestRunAgent:
         t.run_agent(task="x")
         kwargs = mock_notte_client.Agent.call_args.kwargs
         assert kwargs["reasoning_model"] == "gemini/gemini-2.5-flash"
+
+
+class TestRunFunction:
+    def test_run_function_invokes_client_function(self, tools, mock_notte_client):
+        run_result = MagicMock()
+        run_result.model_dump_json.return_value = '{"output": "ok", "status": "complete"}'
+        function = Mock()
+        function.run = Mock(return_value=run_result)
+        mock_notte_client.Function = Mock(return_value=function)
+
+        out = tools.run_function(function_id="fn_abc", variables={"store": "xyz"})
+        mock_notte_client.Function.assert_called_once_with(function_id="fn_abc")
+        function.run.assert_called_once_with(version=None, timeout=None, store="xyz")
+        assert json.loads(out) == {"output": "ok", "status": "complete"}
+
+    def test_run_function_handles_error(self, tools, mock_notte_client):
+        function = Mock()
+        function.run = Mock(side_effect=RuntimeError("function not found"))
+        mock_notte_client.Function = Mock(return_value=function)
+
+        out = tools.run_function(function_id="fn_missing")
+        payload = json.loads(out)
+        assert payload["status"] == "error"
+        assert payload["function_id"] == "fn_missing"
+        assert "function not found" in payload["message"]
 
 
 class TestCloseSession:
