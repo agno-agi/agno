@@ -46,6 +46,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def _arun_non_streaming(runnable: Any, message: str) -> Any:
+    return await runnable.arun(message, stream=False)
+
+
 def _resolve_user_id(caller_user_id: Optional[str]) -> Optional[str]:
     """Bind user_id to the JWT subject when an authenticated request is in flight."""
     from fastmcp.server.dependencies import get_http_request
@@ -104,21 +108,21 @@ def get_mcp_server(
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise Exception(f"Agent {agent_id} not found")
-        return await agent.arun(message)  # type: ignore[misc]
+        return await _arun_non_streaming(agent, message)
 
     @mcp.tool(name="run_team", description="Run a team with a message", tags={"core"})  # type: ignore
     async def run_team(team_id: str, message: str) -> TeamRunOutput:
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise Exception(f"Team {team_id} not found")
-        return await team.arun(message)  # type: ignore[misc]
+        return await _arun_non_streaming(team, message)
 
     @mcp.tool(name="run_workflow", description="Run a workflow with a message", tags={"core"})  # type: ignore
     async def run_workflow(workflow_id: str, message: str) -> WorkflowRunOutput:
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise Exception(f"Workflow {workflow_id} not found")
-        return await workflow.arun(message)
+        return await _arun_non_streaming(workflow, message)
 
     # ==================== Session Management Tools ====================
 
