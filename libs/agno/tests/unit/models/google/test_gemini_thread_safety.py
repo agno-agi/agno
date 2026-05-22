@@ -1,14 +1,14 @@
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from agno.models.google import Gemini
 
 
 class TestGeminiSharedClient:
+    """Tests verifying Gemini client is shared and reused across calls."""
 
     def test_same_client_reused_across_calls(self):
+        """Verify the same client instance is returned on repeated get_client() calls."""
         model = Gemini(api_key="test-key")
 
         with patch("agno.models.google.gemini.genai.Client") as mock_cls:
@@ -23,6 +23,7 @@ class TestGeminiSharedClient:
             mock_cls.assert_called_once()
 
     def test_client_shared_across_threads(self):
+        """Verify concurrent threads receive the same client instance."""
         model = Gemini(api_key="test-key")
 
         with patch("agno.models.google.gemini.genai.Client") as mock_cls:
@@ -40,8 +41,10 @@ class TestGeminiSharedClient:
 
 
 class TestGeminiUserInjectedClient:
+    """Tests verifying user-injected clients are preserved and not overwritten."""
 
     def test_user_injected_client_is_preserved(self):
+        """Verify a user-provided client is used instead of creating a new one."""
         injected = MagicMock()
         model = Gemini(client=injected)
 
@@ -52,6 +55,7 @@ class TestGeminiUserInjectedClient:
             mock_cls.assert_not_called()
 
     def test_user_injected_client_shared_across_threads(self):
+        """Verify user-injected client is shared across concurrent threads."""
         injected = MagicMock()
         model = Gemini(client=injected)
 
@@ -66,8 +70,10 @@ class TestGeminiUserInjectedClient:
 
 
 class TestGeminiNoCleanupAfterResponse:
+    """Tests verifying client is not closed/cleared after responses."""
 
     def test_client_persists_after_get_client(self):
+        """Verify client remains set on model after get_client() call."""
         model = Gemini(api_key="test-key")
 
         with patch("agno.models.google.gemini.genai.Client") as mock_cls:

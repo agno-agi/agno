@@ -1,7 +1,6 @@
 import asyncio
 import os
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
@@ -19,8 +18,10 @@ NUM_REQUESTS = 16
 
 
 class TestGeminiConcurrentSync:
+    """Integration tests for concurrent synchronous Gemini usage."""
 
     def test_concurrent_agent_run_no_ssl_errors(self):
+        """Verify concurrent agent.run() calls do not cause SSL/TLS errors."""
         agent = Agent(model=Gemini(id="gemini-2.0-flash"))
 
         results = {"success": 0, "ssl_errors": 0, "other_errors": 0}
@@ -53,6 +54,7 @@ class TestGeminiConcurrentSync:
         assert results["success"] >= NUM_REQUESTS // 2, f"Too many failures: {errors}"
 
     def test_concurrent_model_response_no_ssl_errors(self):
+        """Verify concurrent model.response() calls do not cause SSL/TLS errors."""
         model = Gemini(id="gemini-2.0-flash")
         messages = [Message(role="user", content=PROMPT)]
 
@@ -77,6 +79,7 @@ class TestGeminiConcurrentSync:
         assert results["ssl_errors"] == 0, "SSL/TLS errors in model.response()"
 
     def test_client_reused_across_concurrent_calls(self):
+        """Verify the same client is reused across concurrent get_client() calls."""
         model = Gemini(id="gemini-2.0-flash")
         client_ids = set()
         lock = threading.Lock()
@@ -93,9 +96,11 @@ class TestGeminiConcurrentSync:
 
 
 class TestGeminiConcurrentAsync:
+    """Integration tests for concurrent asynchronous Gemini usage."""
 
     @pytest.mark.asyncio
     async def test_concurrent_agent_arun_no_ssl_errors(self):
+        """Verify concurrent agent.arun() calls do not cause SSL/TLS errors."""
         agent = Agent(model=Gemini(id="gemini-2.0-flash"))
 
         results = {"success": 0, "ssl_errors": 0, "other_errors": 0}
@@ -124,6 +129,7 @@ class TestGeminiConcurrentAsync:
 
     @pytest.mark.asyncio
     async def test_concurrent_model_aresponse_no_ssl_errors(self):
+        """Verify concurrent model.aresponse() calls do not cause SSL/TLS errors."""
         model = Gemini(id="gemini-2.0-flash")
         messages = [Message(role="user", content=PROMPT)]
 
@@ -146,8 +152,10 @@ class TestGeminiConcurrentAsync:
 
 
 class TestGeminiConcurrentStreaming:
+    """Integration tests for concurrent streaming Gemini usage."""
 
     def test_concurrent_streaming_no_ssl_errors(self):
+        """Verify concurrent streaming requests do not cause SSL/TLS errors."""
         agent = Agent(model=Gemini(id="gemini-2.0-flash"))
 
         results = {"success": 0, "ssl_errors": 0}
@@ -173,6 +181,7 @@ class TestGeminiConcurrentStreaming:
 
     @pytest.mark.asyncio
     async def test_concurrent_async_streaming_no_ssl_errors(self):
+        """Verify concurrent async streaming requests do not cause SSL/TLS errors."""
         agent = Agent(model=Gemini(id="gemini-2.0-flash"))
 
         results = {"success": 0, "ssl_errors": 0}
@@ -195,8 +204,10 @@ class TestGeminiConcurrentStreaming:
 
 
 class TestGeminiMixedUsage:
+    """Integration tests for mixed sync/async Gemini usage patterns."""
 
     def test_sequential_sync_then_async_same_model(self):
+        """Verify client persists when switching between sync and async calls."""
         model = Gemini(id="gemini-2.0-flash")
         messages = [Message(role="user", content=PROMPT)]
 
@@ -219,8 +230,10 @@ class TestGeminiMixedUsage:
 
 
 class TestGeminiStressTest:
+    """Stress tests for high-concurrency Gemini usage."""
 
     def test_high_concurrency_stress(self):
+        """Verify no SSL/TLS errors under high concurrent load (50 requests, 16 workers)."""
         agent = Agent(model=Gemini(id="gemini-2.0-flash"))
 
         stress_requests = 50
@@ -231,7 +244,7 @@ class TestGeminiStressTest:
 
         def run_agent(_):
             try:
-                response = agent.run(PROMPT)
+                agent.run(PROMPT)
                 with lock:
                     results["success"] += 1
             except Exception as e:
