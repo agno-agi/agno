@@ -320,23 +320,40 @@ class AwsBedrock(Model):
             return None
         if not self._supports_native_structured_outputs():
             return None
-        if not isinstance(response_format, type) or not issubclass(response_format, BaseModel):
-            return None
 
-        schema = response_format.model_json_schema()
-        self._ensure_additional_properties_false(schema)
-
-        return {
-            "textFormat": {
-                "type": "json_schema",
-                "structure": {
-                    "jsonSchema": {
-                        "schema": json.dumps(schema),
-                        "name": response_format.__name__,
-                    }
-                },
+        # Handle Pydantic models
+        if isinstance(response_format, type) and issubclass(response_format, BaseModel):
+            schema = response_format.model_json_schema()
+            self._ensure_additional_properties_false(schema)
+            return {
+                "textFormat": {
+                    "type": "json_schema",
+                    "structure": {
+                        "jsonSchema": {
+                            "schema": json.dumps(schema),
+                            "name": response_format.__name__,
+                        }
+                    },
+                }
             }
-        }
+
+        # Handle dict schemas (skip {"type": "json_object"} which is just a mode flag)
+        if isinstance(response_format, dict) and response_format.get("type") != "json_object":
+            schema = response_format.copy()
+            self._ensure_additional_properties_false(schema)
+            return {
+                "textFormat": {
+                    "type": "json_schema",
+                    "structure": {
+                        "jsonSchema": {
+                            "schema": json.dumps(schema),
+                            "name": "output_schema",
+                        }
+                    },
+                }
+            }
+
+        return None
 
     def _get_inference_config(self) -> Dict[str, Any]:
         """

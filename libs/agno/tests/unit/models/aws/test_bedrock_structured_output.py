@@ -87,8 +87,27 @@ class TestBuildOutputConfig:
     def test_returns_none_for_none_input(self):
         assert self.model_native._build_output_config(None) is None
 
-    def test_returns_none_for_non_pydantic(self):
-        assert self.model_native._build_output_config({"type": "json"}) is None
+    def test_returns_none_for_json_object_mode(self):
+        # {"type": "json_object"} is a mode flag, not a schema
+        assert self.model_native._build_output_config({"type": "json_object"}) is None
+
+    def test_returns_config_for_dict_schema(self):
+        dict_schema = {"type": "object", "properties": {"name": {"type": "string"}}}
+        result = self.model_native._build_output_config(dict_schema)
+        assert result is not None
+        assert "textFormat" in result
+        assert result["textFormat"]["type"] == "json_schema"
+        assert result["textFormat"]["structure"]["jsonSchema"]["name"] == "output_schema"
+
+    def test_dict_schema_is_json_string(self):
+        dict_schema = {"type": "object", "properties": {"city": {"type": "string"}}}
+        result = self.model_native._build_output_config(dict_schema)
+        import json
+        schema_str = result["textFormat"]["structure"]["jsonSchema"]["schema"]
+        assert isinstance(schema_str, str)
+        parsed = json.loads(schema_str)
+        assert parsed["type"] == "object"
+        assert "city" in parsed["properties"]
 
     def test_returns_none_for_unsupported_model(self):
         assert self.model_unsupported._build_output_config(MovieScript) is None
