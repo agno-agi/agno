@@ -426,6 +426,7 @@ class File(BaseModel):
             "application/json",
             "application/x-javascript",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
             "text/javascript",
             "application/x-python",
             "text/x-python",
