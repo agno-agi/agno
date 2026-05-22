@@ -5,13 +5,13 @@ TopK Context Provider
 Wraps TopK Context Engine as an Agno context provider.
 Exposes four tools for the calling agent:
 
-- ``list_datasets_<id>``        — discover available datasets and their descriptions.
-- ``ask_<id>(question, datasets, ...)``   — AI-synthesized answer (auto mode).
-- ``search_<id>(query, datasets, ...)``   — ranked document retrieval.
+- ``list_datasets_<id>`` — discover available datasets and their descriptions.
+- ``ask_<id>(question, datasets, ...)`` — AI-synthesized answer (auto mode).
+- ``search_<id>(query, datasets, ...)`` — ranked document retrieval.
 - ``research_<id>(question, datasets, ...)`` — deep research pass (mode="research").
 
 Typical agent workflow:
-  1. Call ``list_datasets_<id>`` to see what datasets are available, along with their descriptions.
+  1. Call ``list_datasets_<id>`` to see what datasets are available.
   2. Pick the relevant dataset(s) to query against.
   3. Call ``search``, ``ask``, or ``research`` with the chosen dataset(s).
 """
@@ -123,7 +123,7 @@ class TopKContextProvider(ContextProvider):
         try:
             self._sync().datasets().get(f"probe_{uuid.uuid4().hex}")
         except topk_sdk.error.DatasetNotFoundError:
-            pass
+            return Status(ok=True)
         except Exception as exc:
             return Status(ok=False, detail=str(exc))
         return Status(ok=True)
@@ -132,7 +132,7 @@ class TopKContextProvider(ContextProvider):
         try:
             await self._async().datasets().get(f"probe_{uuid.uuid4().hex}")
         except topk_sdk.error.DatasetNotFoundError:
-            pass
+            return Status(ok=True)
         except Exception as exc:
             return Status(ok=False, detail=str(exc))
         return Status(ok=True)

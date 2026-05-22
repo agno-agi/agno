@@ -13,7 +13,7 @@ Requires:
     TOPK_REGION    — TopK region
     OPENAI_API_KEY — OpenAI API key
 
-Get your API: https://console.topk.io
+Get your API key: https://console.topk.io
 See available regions: https://docs.topk.io/regions
 """
 
@@ -35,22 +35,19 @@ PDF_URL = "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 
 
 def setup_dataset(client: topk_sdk.Client) -> None:
-    # Create the dataset (skip if it already exists)
+    # Create the dataset and provide a description (skip if it already exists)
     try:
-        client.datasets().create(DATASET_NAME)
+        client.datasets().create(
+            DATASET_NAME,
+            description=(
+                "Traditional Thai recipes: ingredients, preparation steps, and cooking "
+                "techniques for dishes like Pad Thai, Tom Yum, Green Curry, and more."
+            ),
+        )
+
         print(f"Created dataset '{DATASET_NAME}'")
     except topk_sdk.error.DatasetAlreadyExistsError:
         print(f"Dataset '{DATASET_NAME}' already exists, skipping create")
-
-    # Set a description — the agent reads this from list_datasets to decide
-    # which datasets are relevant to a question before querying them.
-    client.datasets().update(
-        DATASET_NAME,
-        description=(
-            "Traditional Thai recipes: ingredients, preparation steps, and cooking "
-            "techniques for dishes like Pad Thai, Tom Yum, Green Curry, and more."
-        ),
-    )
 
     # Download and upload the PDF
     print(f"Uploading {PDF_URL} ...")
@@ -65,7 +62,7 @@ def setup_dataset(client: topk_sdk.Client) -> None:
 
     print("Waiting for document to be processed...")
     client.dataset(DATASET_NAME).wait_for_handle(handle)
-    print("Dataset ready.\n")
+    print("Document has been successfully processed.\n")
 
 
 async def main() -> None:

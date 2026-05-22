@@ -14,22 +14,23 @@ Setup:
     export TOPK_API_KEY=your_api_key
     export TOPK_REGION=your_region
 
-Get your API: https://console.topk.io
+Get your API key: https://console.topk.io
 See available regions: https://docs.topk.io/regions
 """
 
 from agno.agent import Agent
-from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.search import SearchType
-from agno.vectordb.topk import TopK
+from agno.vectordb.topk import TopK, TopKEmbedder
 
 # ---------------------------------------------------------------------------
 # Setup
 # ---------------------------------------------------------------------------
 
-embedder = OpenAIEmbedder(id="text-embedding-3-small")
+embedder = TopKEmbedder()
+# Alternatively, you can use custom embedder:
+# embedder = OpenAIEmbedder(id="text-embedding-3-small")
 
 # --- Basic vector search ---
 knowledge_vector = Knowledge(

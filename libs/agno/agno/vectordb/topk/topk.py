@@ -1,14 +1,13 @@
-import json
 import os
 from hashlib import md5
 from typing import Any, Dict, Final, FrozenSet, List, Optional
 
 try:
     import topk_sdk.error
-    from topk_sdk import AsyncClient, Client
+    from topk_sdk import AsyncClient, Client, ConsistencyLevel
     from topk_sdk import schema as topk_schema
-    from topk_sdk.data import f32_vector
-    from topk_sdk.query import Query, field, filter, fn, match_tokens, select
+    from topk_sdk.data import f32_vector, struct
+    from topk_sdk.query import Query, field, filter, fn, match, select
     from topk_sdk.query import all as topk_all
     from topk_sdk.schema import FieldSpec
 except ImportError:
@@ -22,8 +21,12 @@ from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
 
+class TopKEmbedder(Embedder):
+    dimensions: None = None  # type: ignore[assignment]
+
+
 class TopK(VectorDb):
-    AGNO_DOCUMENT_FIELDS: Final[tuple] = ("name", "content", "content_id", "content_hash", "usage")
+    AGNO_DOCUMENT_FIELDS: Final[tuple] = ("name", "content", "content_id", "content_hash", "usage", "meta_data")
     TOPK_DOCUMENT_ID_FIELD: Final[str] = "_id"
     TOPK_DOCUMENT_EMBEDDING_FIELD: Final[str] = "embedding"
     TOPK_DOCUMENT_SCORE_FIELD: Final[str] = "score"
@@ -38,7 +41,7 @@ class TopK(VectorDb):
         region: Optional[str] = None,
         host: str = "topk.io",
         https: bool = True,
-        embedder: Optional[Embedder] = None,
+        embedder: Embedder = TopKEmbedder(),
         distance: Distance = Distance.cosine,
         search_type: SearchType = SearchType.vector,
         id: Optional[str] = None,
@@ -105,13 +108,27 @@ class TopK(VectorDb):
             Distance.max_inner_product: "dot_product",
         }.get(self.distance, "cosine")
 
+    def _use_semantic_index(self) -> bool:
+        return isinstance(self.embedder, TopKEmbedder)
+
     def _build_schema(self) -> Dict[str, FieldSpec]:
-        dims = self.embedder.dimensions or 1536
-        schema: Dict[str, FieldSpec] = {
-            "embedding": topk_schema.f32_vector(dims).index(topk_schema.vector_index(metric=self._distance_metric())),
-        }
-        if self.search_type in (SearchType.keyword, SearchType.hybrid):
-            schema["content"] = topk_schema.text().index(topk_schema.keyword_index())
+        schema: Dict[str, FieldSpec] = {}
+
+        if not self._use_semantic_index():
+            schema["embedding"] = topk_schema.f32_vector(self.embedder.dimensions).index(
+                topk_schema.vector_index(metric=self._distance_metric())
+            )
+
+        content_index = (
+            topk_schema.semantic_index()
+            if self._use_semantic_index() and self.search_type in (SearchType.vector, SearchType.hybrid)
+            else topk_schema.keyword_index()
+            if self.search_type in (SearchType.keyword, SearchType.hybrid)
+            else None
+        )
+        if content_index:
+            schema["content"] = topk_schema.text().index(content_index)
+
         return schema
 
     def _document_to_topk_doc(
@@ -122,16 +139,15 @@ class TopK(VectorDb):
     ) -> Dict[str, Any]:
         record: Dict[str, Any] = {
             self.TOPK_DOCUMENT_ID_FIELD: self._record_id(document),
-            self.TOPK_DOCUMENT_EMBEDDING_FIELD: f32_vector(document.embedding),
             "name": document.name,
             "content": document.content,
             "content_id": document.content_id,
             "content_hash": content_hash,
-            "usage": json.dumps(document.usage) if document.usage is not None else None,
+            "usage": struct(document.usage) if document.usage is not None else None,
+            "meta_data": struct({**(document.meta_data or {}), **(filters or {})}) or None,
         }
-
-        extras = _strip_unsupported_field_types({**(document.meta_data or {}), **(filters or {})})
-        record.update(extras)
+        if not self._use_semantic_index():
+            record[self.TOPK_DOCUMENT_EMBEDDING_FIELD] = f32_vector(document.embedding)
 
         return record
 
@@ -139,22 +155,16 @@ class TopK(VectorDb):
         return document.id or md5(document.content.encode()).hexdigest()
 
     def _topk_doc_to_document(self, record: Dict[str, Any]) -> Document:
-        meta_data = {k: v for k, v in record.items() if k not in self.SYSTEM_FIELDS}
         content = record.get("content")
 
         return Document(
             content=content if isinstance(content, str) else "",
             id=record.get(self.TOPK_DOCUMENT_ID_FIELD),
             name=record.get("name"),
-            meta_data=meta_data,
-            usage=_deserialize_usage(record.get("usage")),
+            meta_data=record.get("meta_data") or {},
+            usage=record.get("usage"),
             content_id=record.get("content_id"),
         )
-
-    def _vector_score_asc(self) -> bool:
-        # dot_product returns raw similarity (higher = more similar) → sort descending.
-        # cosine and euclidean return a distance (lower = more similar) → sort ascending.
-        return self.distance != Distance.max_inner_product
 
     def _search_query(
         self,
@@ -163,14 +173,39 @@ class TopK(VectorDb):
         limit: int,
         filters: Optional[Dict[str, Any]] = None,
     ) -> Query:
-        filter_fields = list(filters.keys()) if filters else []
-        filter_expr = topk_all([field(key) == value for key, value in filters.items()]) if filters else None
-        select_fields = (*self.AGNO_DOCUMENT_FIELDS, *filter_fields)
-        vector_asc = self._vector_score_asc()
+        filter_expr = (
+            topk_all([field(f"meta_data.{key}") == value for key, value in filters.items()]) if filters else None
+        )
+        select_fields = (
+            (*self.AGNO_DOCUMENT_FIELDS, *(f"meta_data.{key}" for key in filters))
+            if filters
+            else self.AGNO_DOCUMENT_FIELDS
+        )
+        if self._use_semantic_index():
+            if self.search_type == SearchType.keyword:
+                q = select(*select_fields, score=fn.bm25_score()).filter(match(query_text, "content"))
+                if filter_expr is not None:
+                    q = q.filter(filter_expr)
+                return q.sort(field("score"), asc=False).limit(limit)
+            elif self.search_type == SearchType.hybrid:
+                q = select(*select_fields, semantic_score=fn.semantic_similarity("content", query_text))
+                if filter_expr is not None:
+                    q = q.filter(filter_expr)
+                return q.sort(
+                    field("semantic_score").boost(field("content").match_any(query_text), 0.5), asc=False
+                ).limit(limit)
+            else:
+                q = select(*select_fields, score=fn.semantic_similarity("content", query_text))
+                if filter_expr is not None:
+                    q = q.filter(filter_expr)
+                return q.sort(field("score"), asc=False).limit(limit)
+
+        # dot_product returns raw similarity (higher = more similar) → sort descending.
+        # cosine and euclidean return a distance (lower = more similar) → sort ascending.
+        vector_asc = self.distance != Distance.max_inner_product
 
         if self.search_type == SearchType.keyword:
-            tokens = query_text.split() or []
-            q = select(*select_fields, score=fn.bm25_score()).filter(match_tokens(tokens, "content", all=False))
+            q = select(*select_fields, score=fn.bm25_score()).filter(match(query_text, "content", all=False))
             if filter_expr is not None:
                 q = q.filter(filter_expr)
             return q.sort(field("score"), asc=False).limit(limit)
@@ -255,7 +290,9 @@ class TopK(VectorDb):
             True if a matching document exists, False otherwise.
         """
         try:
-            results = self.client.collection(self.collection).query(filter(field("name") == name).limit(1))
+            results = self.client.collection(self.collection).query(
+                filter(field("name") == name).limit(1), consistency=ConsistencyLevel.Strong
+            )
             return len(results) > 0
         except Exception as e:
             log_error(f"Error in name_exists: {e}")
@@ -271,7 +308,9 @@ class TopK(VectorDb):
             True if a matching document exists, False otherwise.
         """
         try:
-            results = await self.async_client.collection(self.collection).query(filter(field("name") == name).limit(1))
+            results = await self.async_client.collection(self.collection).query(
+                filter(field("name") == name).limit(1), consistency=ConsistencyLevel.Strong
+            )
             return len(results) > 0
         except Exception as e:
             log_error(f"Error in async_name_exists: {e}")
@@ -287,7 +326,7 @@ class TopK(VectorDb):
             True if the document exists, False otherwise.
         """
         try:
-            result = self.client.collection(self.collection).get([id])
+            result = self.client.collection(self.collection).get([id], consistency=ConsistencyLevel.Strong)
             return id in result
         except Exception as e:
             log_error(f"Error in id_exists: {e}")
@@ -304,7 +343,7 @@ class TopK(VectorDb):
         """
         try:
             results = self.client.collection(self.collection).query(
-                filter(field("content_hash") == content_hash).limit(1)
+                filter(field("content_hash") == content_hash).limit(1), consistency=ConsistencyLevel.Strong
             )
             return len(results) > 0
         except Exception as e:
@@ -328,7 +367,8 @@ class TopK(VectorDb):
             return
         records = []
         for doc in documents:
-            doc.embed(embedder=self.embedder)
+            if not self._use_semantic_index():
+                doc.embed(embedder=self.embedder)
             records.append(self._document_to_topk_doc(doc, content_hash, filters))
         log_debug(f"Inserting {len(records)} documents into TopK collection: {self.collection}")
         self.client.collection(self.collection).upsert(records)
@@ -348,7 +388,8 @@ class TopK(VectorDb):
             return
         records = []
         for doc in documents:
-            await doc.async_embed(embedder=self.embedder)
+            if not self._use_semantic_index():
+                await doc.async_embed(embedder=self.embedder)
             records.append(self._document_to_topk_doc(doc, content_hash, filters))
         log_debug(f"Inserting {len(records)} documents into TopK collection: {self.collection}")
         await self.async_client.collection(self.collection).upsert(records)
@@ -387,9 +428,9 @@ class TopK(VectorDb):
             List of matching documents ordered by relevance.
         """
         try:
-            embedding = self.embedder.get_embedding(query)
+            embedding = [] if self._use_semantic_index() else self.embedder.get_embedding(query)
             q = self._search_query(embedding, query, limit, filters)
-            records = self.client.collection(self.collection).query(q)
+            records = self.client.collection(self.collection).query(q, consistency=ConsistencyLevel.Strong)
             return [self._topk_doc_to_document(r) for r in records]
         except Exception as e:
             log_error(f"Error searching TopK collection: {e}")
@@ -407,9 +448,9 @@ class TopK(VectorDb):
             List of matching documents ordered by relevance.
         """
         try:
-            embedding = await self.embedder.async_get_embedding(query)
+            embedding = [] if self._use_semantic_index() else await self.embedder.async_get_embedding(query)
             q = self._search_query(embedding, query, limit, filters)
-            records = await self.async_client.collection(self.collection).query(q)
+            records = await self.async_client.collection(self.collection).query(q, consistency=ConsistencyLevel.Strong)
             return [self._topk_doc_to_document(r) for r in records]
         except Exception as e:
             log_error(f"Error searching TopK collection: {e}")
@@ -470,7 +511,7 @@ class TopK(VectorDb):
         """
         try:
             self.client.collection(self.collection).delete(
-                topk_all([field(key) == value for key, value in metadata.items()])
+                topk_all([field(f"meta_data.{key}") == value for key, value in metadata.items()])
             )
             return True
         except Exception as e:
@@ -500,31 +541,3 @@ class TopK(VectorDb):
             List containing ``vector``, ``keyword``, and ``hybrid``.
         """
         return [SearchType.vector, SearchType.keyword, SearchType.hybrid]
-
-
-def _strip_unsupported_field_types(data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Strip unsupported field types in TopK from the data.
-    Supported field types are: bool, int, float, str, none, list of strings, list of ints, list of floats.
-
-    Args:
-        data: The data to strip unsupported field types from.
-
-    Returns:
-        The dictionary with unsupported field types stripped.
-    """
-    out: Dict[str, Any] = {}
-    for k, v in data.items():
-        if v is None or isinstance(v, (bool, int, float, str)):
-            out[k] = v
-        elif isinstance(v, list) and v and all(isinstance(i, str) for i in v):
-            out[k] = v
-        elif isinstance(v, list) and v and all(isinstance(i, (int, float)) for i in v):
-            out[k] = v
-    return out
-
-
-def _deserialize_usage(value: Optional[str]) -> Optional[Dict[str, Any]]:
-    if value is None:
-        return None
-    return json.loads(value)
