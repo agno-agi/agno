@@ -273,42 +273,20 @@ class AwsBedrock(Model):
 
     def _format_tool_choice(self, tool_choice: Union[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         if isinstance(tool_choice, dict):
-            # Bedrock native format passthrough
             if "auto" in tool_choice or "any" in tool_choice or "tool" in tool_choice:
                 return tool_choice
-
-            # Anthropic format: {"type": "auto"}, {"type": "any"}, {"type": "tool", "name": "X"}
-            type_value = tool_choice.get("type")
-            if type_value == "auto":
-                return {"auto": {}}
-            if type_value == "any":
-                return {"any": {}}
-            if type_value == "none":
-                log_warning("Bedrock Converse API does not support tool_choice='none'. Ignoring tool_choice.")
-                return None
-
-            # Extract tool name from various formats
-            name = tool_choice.get("name")
-            if not name:
-                func_dict = tool_choice.get("function", {})
-                name = func_dict.get("name") if isinstance(func_dict, dict) else None
-            if name:
-                return {"tool": {"name": name}}
             return None
 
         if isinstance(tool_choice, str):
             choice_lower = tool_choice.lower()
             if choice_lower == "auto":
                 return {"auto": {}}
-            if choice_lower == "any":
+            if choice_lower in ("any", "required"):
                 return {"any": {}}
             if choice_lower == "none":
                 log_warning("Bedrock Converse API does not support tool_choice='none'. Ignoring tool_choice.")
                 return None
-            # Treat as a tool name
             return {"tool": {"name": tool_choice}}
-
-        return None
 
     def _ensure_additional_properties_false(self, schema: Dict[str, Any]) -> None:
         if not isinstance(schema, dict):
@@ -692,6 +670,7 @@ class AwsBedrock(Model):
 
             assistant_message.metrics.start_timer()
 
+            # Track current tool being built across chunks
             current_tool: Dict[str, Any] = {}
 
             for chunk in self.get_client().converse_stream(modelId=self.id, messages=formatted_messages, **body)[
@@ -808,6 +787,7 @@ class AwsBedrock(Model):
 
             assistant_message.metrics.start_timer()
 
+            # Track current tool being built across chunks
             current_tool: Dict[str, Any] = {}
 
             async with self.get_async_client() as client:
@@ -870,40 +850,37 @@ class AwsBedrock(Model):
 
         if "output" in response and "message" in response["output"]:
             message = response["output"]["message"]
+            # Set the role of the message
             model_response.role = message["role"]
+
+            # Get the content of the message
             content = message["content"]
 
-            # Handle tool use response
+            # Tools
             if "stopReason" in response and response["stopReason"] == "tool_use":
+                model_response.tool_calls = []
+                model_response.extra = model_response.extra or {}
+                model_response.extra["tool_ids"] = []
                 for tool in content:
                     if "toolUse" in tool:
-                        tool_name = tool["toolUse"]["name"]
-                        tool_input = tool["toolUse"]["input"]
-
-                        if model_response.tool_calls is None:
-                            model_response.tool_calls = []
-                        if model_response.extra is None:
-                            model_response.extra = {}
-                        if "tool_ids" not in model_response.extra:
-                            model_response.extra["tool_ids"] = []
-
                         model_response.extra["tool_ids"].append(tool["toolUse"]["toolUseId"])
                         model_response.tool_calls.append(
                             {
                                 "id": tool["toolUse"]["toolUseId"],
                                 "type": "function",
                                 "function": {
-                                    "name": tool_name,
-                                    "arguments": json.dumps(tool_input),
+                                    "name": tool["toolUse"]["name"],
+                                    "arguments": json.dumps(tool["toolUse"]["input"]),
                                 },
                             }
                         )
 
             # Extract text content if it's a list of dictionaries
-            if model_response.content is None:
-                if isinstance(content, list) and content and isinstance(content[0], dict):
-                    text_content = [item.get("text", "") for item in content if "text" in item]
-                    model_response.content = "\n".join(text_content)
+            if isinstance(content, list) and content and isinstance(content[0], dict):
+                content = [item.get("text", "") for item in content if "text" in item]
+                content = "\n".join(content)  # Join multiple text items if present
+
+            model_response.content = content
 
         if "usage" in response:
             model_response.response_usage = self._get_metrics(response["usage"])
@@ -930,13 +907,14 @@ class AwsBedrock(Model):
         if "contentBlockStart" in response_delta:
             start = response_delta["contentBlockStart"]["start"]
             if "toolUse" in start:
+                # Start a new tool
                 tool_use_data = start["toolUse"]
                 current_tool = {
                     "id": tool_use_data.get("toolUseId", ""),
                     "type": "function",
                     "function": {
                         "name": tool_use_data.get("name", ""),
-                        "arguments": "",
+                        "arguments": "",  # Will be filled in subsequent deltas
                     },
                 }
 
@@ -946,14 +924,18 @@ class AwsBedrock(Model):
             if "text" in delta:
                 model_response.content = delta["text"]
             elif "toolUse" in delta and current_tool:
+                # Accumulate tool input
                 tool_input = delta["toolUse"].get("input", "")
                 if tool_input:
                     current_tool["function"]["arguments"] += tool_input
 
         # Handle contentBlockStop - tool use complete
         elif "contentBlockStop" in response_delta and current_tool:
+            # Tool is complete, add it to model response
             model_response.tool_calls = [current_tool]
+            # Track tool_id in extra for format_function_call_results
             model_response.extra = {"tool_ids": [current_tool["id"]]}
+            # Reset current_tool for next tool
             current_tool = {}
 
         # Handle metadata/usage information

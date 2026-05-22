@@ -68,13 +68,9 @@ class TestFormatToolChoice:
     def test_string_bare_tool_name(self):
         assert self.model._format_tool_choice("get_weather") == {"tool": {"name": "get_weather"}}
 
-    def test_dict_top_level_name(self):
-        result = self.model._format_tool_choice({"type": "function", "name": "get_weather"})
-        assert result == {"tool": {"name": "get_weather"}}
-
-    def test_dict_nested_function_name(self):
-        result = self.model._format_tool_choice({"type": "function", "function": {"name": "get_weather"}})
-        assert result == {"tool": {"name": "get_weather"}}
+    def test_string_required(self):
+        assert self.model._format_tool_choice("required") == {"any": {}}
+        assert self.model._format_tool_choice("REQUIRED") == {"any": {}}
 
     def test_bedrock_native_auto_passthrough(self):
         assert self.model._format_tool_choice({"auto": {}}) == {"auto": {}}
@@ -86,27 +82,9 @@ class TestFormatToolChoice:
         choice = {"tool": {"name": "get_weather"}}
         assert self.model._format_tool_choice(choice) == {"tool": {"name": "get_weather"}}
 
-    def test_anthropic_format_auto(self):
-        assert self.model._format_tool_choice({"type": "auto"}) == {"auto": {}}
-
-    def test_anthropic_format_any(self):
-        assert self.model._format_tool_choice({"type": "any"}) == {"any": {}}
-
-    def test_anthropic_format_none(self):
-        assert self.model._format_tool_choice({"type": "none"}) is None
-
-    def test_anthropic_format_tool_with_name(self):
-        result = self.model._format_tool_choice({"type": "tool", "name": "get_weather"})
-        assert result == {"tool": {"name": "get_weather"}}
-
-    def test_dict_no_name_returns_none(self):
+    def test_dict_unknown_format_returns_none(self):
         assert self.model._format_tool_choice({"type": "function"}) is None
-
-    def test_dict_empty_returns_none(self):
         assert self.model._format_tool_choice({}) is None
-
-    def test_non_string_non_dict_returns_none(self):
-        assert self.model._format_tool_choice(123) is None  # type: ignore
 
 
 class TestInvokeToolChoice:
@@ -119,7 +97,7 @@ class TestInvokeToolChoice:
             messages=[Message(role="user", content="hi")],
             assistant_message=Message(role="assistant"),
             tools=SAMPLE_TOOLS,
-            tool_choice={"type": "function", "name": "get_weather"},
+            tool_choice="get_weather",
         )
 
         call_kwargs = mock_client.converse.call_args[1]
@@ -151,7 +129,7 @@ class TestInvokeToolChoice:
             messages=[Message(role="user", content="hi")],
             assistant_message=Message(role="assistant"),
             tools=None,
-            tool_choice={"type": "function", "name": "get_weather"},
+            tool_choice="get_weather",
         )
 
         call_kwargs = mock_client.converse.call_args[1]
@@ -205,7 +183,7 @@ class TestInvokeStreamToolChoice:
                 messages=[Message(role="user", content="hi")],
                 assistant_message=Message(role="assistant"),
                 tools=SAMPLE_TOOLS,
-                tool_choice={"type": "function", "function": {"name": "get_weather"}},
+                tool_choice={"tool": {"name": "get_weather"}},
             )
         )
 
@@ -290,7 +268,7 @@ class TestAsyncInvokeToolChoice:
                 messages=[Message(role="user", content="hi")],
                 assistant_message=Message(role="assistant"),
                 tools=SAMPLE_TOOLS,
-                tool_choice={"type": "tool", "name": "get_weather"},
+                tool_choice={"tool": {"name": "get_weather"}},
             ):
                 responses.append(response)
 
