@@ -101,10 +101,11 @@ def test_get_function_call_argument(sample_functions):
     """Test argument sanitization for boolean and null values."""
     arguments = json.dumps(
         {
-            "param1": "None",
-            "param2": "True",
-            "param3": "False",
+            "param1": "  None  ",
+            "param2": " True ",
+            "param3": " False ",
             "param4": "  test  ",
+            "param5": "\n\n",
         }
     )
 
@@ -118,7 +119,8 @@ def test_get_function_call_argument(sample_functions):
         "param1": None,
         "param2": True,
         "param3": False,
-        "param4": "test",
+        "param4": "  test  ",
+        "param5": "\n\n",
     }
 
 
