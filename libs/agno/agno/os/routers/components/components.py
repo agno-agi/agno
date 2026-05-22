@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.base import ComponentType as DbComponentType
+from agno.db.utils import DB_TABLE_NAME_KEYS
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     BadRequestResponse,
@@ -42,7 +43,11 @@ def _resolve_db_in_config(
     If config contains a db dict with an id, this function will:
     1. Check if the id matches the OS db
     2. Check if the id exists in the registry
-    3. Convert the found db to a dict for serialization
+    3. Merge the resolved db's connection details with the caller-provided
+       fields, with caller-provided fields (e.g. custom table names) taking
+       precedence. This preserves user-specified overrides like
+       ``session_table`` / ``memory_table`` while still reusing the resolved
+       db's connection configuration.
 
     Args:
         config: The config dict that may contain a db reference
@@ -64,9 +69,15 @@ def _resolve_db_in_config(
             elif registry is not None:
                 resolved_db = registry.get_db(component_db_id)
 
-            # Store the full db dict for serialization
+            # Merge resolved db with caller-provided table-name overrides.
+            # Connection-defining fields (type, db_url, db_file, db_schema,
+            # id, ...) always come from the resolved db so the caller can't
+            # redirect a referenced db to a different backend. Only the
+            # whitelisted table-name keys are taken from the caller.
             if resolved_db is not None:
-                config["db"] = resolved_db.to_dict()
+                resolved_dict = resolved_db.to_dict()
+                table_overrides = {key: component_db[key] for key in DB_TABLE_NAME_KEYS if key in component_db}
+                config["db"] = {**resolved_dict, **table_overrides}
             else:
                 log_error(f"Could not resolve db with id: {component_db_id}")
     elif component_db is None and "db" in config:
