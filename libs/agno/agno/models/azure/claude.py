@@ -162,19 +162,14 @@ class Claude(AnthropicClaude):
     ) -> Dict[str, Any]:
         """Prepare the request keyword arguments for the API call."""
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools).copy()
-        if system_message:
-            if self.cache_system_prompt:
-                cache_control = (
-                    {"type": "ephemeral", "ttl": "1h"}
-                    if self.extended_cache_time is not None and self.extended_cache_time is True
-                    else {"type": "ephemeral"}
-                )
-                request_kwargs["system"] = [{"text": system_message, "type": "text", "cache_control": cache_control}]
-            else:
-                request_kwargs["system"] = [{"text": system_message, "type": "text"}]
+        system = self._build_system(system_message)
+        if system:
+            request_kwargs["system"] = system
 
         if tools:
             request_kwargs["tools"] = format_tools_for_model(tools)
+
+        self._apply_cache_tools(request_kwargs)
 
         if request_kwargs:
             log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)

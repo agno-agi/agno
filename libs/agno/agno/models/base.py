@@ -587,6 +587,14 @@ class Model(ABC):
         """
         pass
 
+    @staticmethod
+    def _tool_name(t: Dict[str, Any]) -> str:
+        """Extract a tool's name for deterministic sorting."""
+        fn = t.get("function")
+        if isinstance(fn, dict):
+            return str(fn.get("name", ""))
+        return str(t.get("name", ""))
+
     def _format_tools(self, tools: Optional[List[Union[Function, dict]]]) -> List[Dict[str, Any]]:
         _tool_dicts = []
         for tool in tools or []:
@@ -595,6 +603,10 @@ class Model(ABC):
             else:
                 # If a dict is passed, it is a builtin tool
                 _tool_dicts.append(tool)
+        # Deterministic ordering so prompt caching gets consistent cache hits.
+        # Applies across providers — Anthropic, OpenAI, and Gemini prompt/context
+        # caching all require stable request prefixes.
+        _tool_dicts.sort(key=self._tool_name)
         return _tool_dicts
 
     def _ensure_message_metrics_initialized(self, assistant_message: Message) -> None:
@@ -1146,6 +1158,13 @@ class Model(ABC):
             model_response.provider_data = provider_response.provider_data
         if provider_response.response_usage is not None:
             model_response.response_usage = provider_response.response_usage
+        # Providers (e.g. GeminiInteractions on the agent path) can produce
+        # already-executed ToolExecution records server-side; carry them
+        # through so run_response.tools / AgentOS UI sees the audit.
+        if provider_response.tool_executions:
+            if model_response.tool_executions is None:
+                model_response.tool_executions = []
+            model_response.tool_executions.extend(provider_response.tool_executions)
 
     async def _aprocess_model_response(
         self,
@@ -1209,6 +1228,13 @@ class Model(ABC):
             model_response.provider_data = provider_response.provider_data
         if provider_response.response_usage is not None:
             model_response.response_usage = provider_response.response_usage
+        # Providers (e.g. GeminiInteractions on the agent path) can produce
+        # already-executed ToolExecution records server-side; carry them
+        # through so run_response.tools / AgentOS UI sees the audit.
+        if provider_response.tool_executions:
+            if model_response.tool_executions is None:
+                model_response.tool_executions = []
+            model_response.tool_executions.extend(provider_response.tool_executions)
 
     def _populate_assistant_message(
         self,

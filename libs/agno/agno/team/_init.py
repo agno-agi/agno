@@ -373,6 +373,7 @@ def __init__(
         team.events_to_skip = [
             RunEvent.run_content,
             TeamRunEvent.run_content,
+            TeamRunEvent.run_intermediate_content,
         ]
     team.stream_member_events = stream_member_events
 
@@ -542,7 +543,7 @@ def _set_default_model(team: "Team") -> None:
     # Set the default model
     if team.model is None:
         try:
-            from agno.models.openai import OpenAIChat
+            from agno.models.openai import OpenAIResponses
         except ModuleNotFoundError as e:
             log_exception(e)
             log_error(
@@ -550,8 +551,8 @@ def _set_default_model(team: "Team") -> None:
             )
             exit(1)
 
-        log_info("Setting default model to OpenAI Chat")
-        team.model = OpenAIChat(id="gpt-4o")
+        log_info("Setting default model to OpenAI Responses")
+        team.model = OpenAIResponses(id="gpt-5.4")
 
 
 def _set_memory_manager(team: "Team") -> None:
@@ -631,6 +632,10 @@ def _set_learning_machine(team: "Team") -> None:
         if team.learning.model is None:
             team.learning.model = team.model
         team._learning = team.learning
+
+        # PROPOSE/HITL modes need chat history for multi-turn confirmation
+        if team._learning.requires_history and not team.add_history_to_context:
+            team.add_history_to_context = True
 
 
 def _initialize_session(
