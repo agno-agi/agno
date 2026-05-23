@@ -197,6 +197,7 @@ class AgentOS:
         description: Optional[str] = None,
         version: Optional[str] = None,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+        checkpoint: Optional[Literal["runs", "steps", "tools"]] = None,
         agents: Optional[List[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]] = None,
         teams: Optional[List[Union[Team, RemoteTeam, TeamFactory]]] = None,
         workflows: Optional[List[Union[Workflow, RemoteWorkflow, WorkflowFactory]]] = None,
@@ -230,6 +231,10 @@ class AgentOS:
             description: Description of the AgentOS instance
             version: Version of the AgentOS instance
             db: Default database for the AgentOS instance. Agents, teams and workflows with no db will use this one.
+            checkpoint: Default checkpoint level for agents in this AgentOS. Agents without their own
+                checkpoint setting inherit this one. One of "runs", "steps", "tools" (see
+                specs/agno/features/checkpointing/). None means no OS-level default; each agent falls
+                back to "runs" at first-run time.
             agents: List of agents to include in the OS
             teams: List of teams to include in the OS
             workflows: List of workflows to include in the OS
@@ -290,6 +295,7 @@ class AgentOS:
         self.version = version
         self.description = description
         self.db = db
+        self.checkpoint = checkpoint
 
         self.telemetry = telemetry
         self.tracing = tracing
@@ -545,6 +551,9 @@ class AgentOS:
             # Set the default db to agents without their own
             if self.db is not None and agent.db is None:
                 agent.db = self.db
+            # Set the default checkpoint level on agents without their own
+            if self.checkpoint is not None and agent.checkpoint is None:
+                agent.checkpoint = self.checkpoint
             # Track all MCP tools to later handle their connection
             if agent.tools and isinstance(agent.tools, list):
                 for tool in agent.tools:

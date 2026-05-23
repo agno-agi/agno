@@ -661,6 +661,15 @@ class RunOutput:
     # User control flow (HITL) requirements to continue a run when paused, in order of arrival
     requirements: Optional[list[RunRequirement]] = None
 
+    # Checkpoint coordinate: index into messages at the most recent checkpoint write.
+    # Set when checkpoint="steps" (or any future non-default level) persists mid-run state.
+    last_checkpoint_at_message_index: Optional[int] = None
+
+    # Fork lineage. Distinct from parent_run_id (which carries team-member / workflow-step
+    # parentage); see ADR-007 in specs/agno/features/checkpointing/decisions.md.
+    forked_from_run_id: Optional[str] = None
+    forked_from_message_index: Optional[int] = None
+
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity
