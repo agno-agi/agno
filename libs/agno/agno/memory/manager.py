@@ -71,6 +71,12 @@ class MemoryManager:
     # The database to store memories
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
+    # Default retrieval method used by search_user_memories when retrieval_method is not specified.
+    retrieval: Literal["last_n", "first_n", "agentic"] = "last_n"
+    # Default limit used by search_user_memories when limit is not specified.
+    # When None, all stored memories are returned.
+    retrieval_limit: Optional[int] = None
+
     debug_mode: bool = False
 
     def __init__(
@@ -84,6 +90,8 @@ class MemoryManager:
         update_memories: bool = True,
         add_memories: bool = True,
         clear_memories: bool = False,
+        retrieval: Literal["last_n", "first_n", "agentic"] = "last_n",
+        retrieval_limit: Optional[int] = None,
         debug_mode: bool = False,
     ):
         self.model = model  # type: ignore[assignment]
@@ -95,6 +103,8 @@ class MemoryManager:
         self.update_memories = update_memories
         self.add_memories = add_memories
         self.clear_memories = clear_memories
+        self.retrieval = retrieval
+        self.retrieval_limit = retrieval_limit
         self.debug_mode = debug_mode
 
         if self.model is not None:
@@ -620,9 +630,9 @@ class MemoryManager:
             return []
 
         # Use default retrieval method if not specified
-        retrieval_method = retrieval_method
+        retrieval_method = retrieval_method if retrieval_method is not None else self.retrieval
         # Use default limit if not specified
-        limit = limit
+        limit = limit if limit is not None else self.retrieval_limit
 
         # Handle different retrieval methods
         if retrieval_method == "agentic":
