@@ -6,101 +6,107 @@ import pytest
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 
 
+class DummyEmbeddings:
+    def __init__(self):
+        self.last_kwargs = None
+
+    def create(self, **kwargs):
+        self.last_kwargs = kwargs
+        dims = kwargs.get("dimensions", 1536)
+        return SimpleNamespace(
+            data=[SimpleNamespace(embedding=[0.0] * dims)],
+            usage=None,
+        )
+
+
+class DummyAsyncEmbeddings:
+    def __init__(self):
+        self.last_kwargs = None
+
+    async def create(self, **kwargs):
+        self.last_kwargs = kwargs
+        dims = kwargs.get("dimensions", 1536)
+        return SimpleNamespace(
+            data=[SimpleNamespace(embedding=[0.0] * dims)],
+            usage=None,
+        )
+
+
+class DummyClient:
+    def __init__(self):
+        self.embeddings = DummyEmbeddings()
+
+
+class DummyAsyncClient:
+    def __init__(self):
+        self.embeddings = DummyAsyncEmbeddings()
+
+
 @pytest.mark.skipif(not importlib.util.find_spec("openai"), reason="openai package not installed")
-def test_dimensions_propagated_when_explicitly_set():
-    """Ensure dimensions parameter is passed when explicitly set, regardless of model."""
-
-    class DummyEmbeddings:
-        def __init__(self):
-            self.last_kwargs = None
-
-        def create(self, **kwargs):
-            self.last_kwargs = kwargs
-            dims = kwargs.get("dimensions", 1)
-            return SimpleNamespace(
-                data=[SimpleNamespace(embedding=[0.0] * dims)],
-                usage=None,
-            )
-
-    class DummyClient:
-        def __init__(self):
-            self.embeddings = DummyEmbeddings()
-
-    embedder = OpenAIEmbedder(id="text-embedding-v4", dimensions=512)
+def test_dimensions_passed_for_text_embedding_3_models():
+    """Dimensions should be passed for OpenAI text-embedding-3-* models."""
+    embedder = OpenAIEmbedder(id="text-embedding-3-small", dimensions=512)
     embedder.openai_client = DummyClient()
 
-    _ = embedder.get_embedding("hello world")
+    embedder.get_embedding("test")
 
-    assert embedder.openai_client.embeddings.last_kwargs is not None, "Embeddings request not captured"
-    assert (
-        embedder.openai_client.embeddings.last_kwargs.get("dimensions") == 512
-    ), "dimensions parameter not propagated when explicitly set"
+    assert embedder.openai_client.embeddings.last_kwargs is not None
+    assert embedder.openai_client.embeddings.last_kwargs.get("dimensions") == 512
 
 
 @pytest.mark.skipif(not importlib.util.find_spec("openai"), reason="openai package not installed")
-def test_dimensions_propagated_for_any_model():
-    """Ensure dimensions parameter is passed for ANY model when explicitly set (future-proof)."""
+def test_dimensions_passed_with_custom_base_url():
+    """Dimensions should be passed for third-party APIs using custom base_url (e.g., DashScope)."""
+    embedder = OpenAIEmbedder(
+        id="text-embedding-v4",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        dimensions=1024,
+    )
+    embedder.openai_client = DummyClient()
 
-    class DummyEmbeddings:
-        def __init__(self):
-            self.last_kwargs = None
+    embedder.get_embedding("test")
 
-        def create(self, **kwargs):
-            self.last_kwargs = kwargs
-            dims = kwargs.get("dimensions", 1536)
-            return SimpleNamespace(
-                data=[SimpleNamespace(embedding=[0.0] * dims)],
-                usage=None,
-            )
+    assert embedder.openai_client.embeddings.last_kwargs is not None
+    assert embedder.openai_client.embeddings.last_kwargs.get("dimensions") == 1024
 
-    class DummyClient:
-        def __init__(self):
-            self.embeddings = DummyEmbeddings()
 
+@pytest.mark.skipif(not importlib.util.find_spec("openai"), reason="openai package not installed")
+def test_dimensions_not_passed_for_legacy_openai_models():
+    """Dimensions should NOT be passed for legacy OpenAI models like ada-002 (they don't support it)."""
     embedder = OpenAIEmbedder(id="text-embedding-ada-002", dimensions=256)
     embedder.openai_client = DummyClient()
 
-    _ = embedder.get_embedding("test")
+    embedder.get_embedding("test")
 
-    assert embedder.openai_client.embeddings.last_kwargs.get("dimensions") == 256, (
-        "dimensions should be passed for legacy models too"
-    )
-
-    embedder2 = OpenAIEmbedder(id="text-embedding-v5-ultra", dimensions=2048)
-    embedder2.openai_client = DummyClient()
-
-    _ = embedder2.get_embedding("test")
-
-    assert embedder2.openai_client.embeddings.last_kwargs.get("dimensions") == 2048, (
-        "dimensions should be passed for any future models"
-    )
+    assert embedder.openai_client.embeddings.last_kwargs is not None
+    assert "dimensions" not in embedder.openai_client.embeddings.last_kwargs
 
 
 @pytest.mark.skipif(not importlib.util.find_spec("openai"), reason="openai package not installed")
-def test_dimensions_not_passed_when_none():
-    """Ensure dimensions parameter is NOT passed when set to None (respects model defaults)."""
-
-    class DummyEmbeddings:
-        def __init__(self):
-            self.last_kwargs = None
-
-        def create(self, **kwargs):
-            self.last_kwargs = kwargs
-            return SimpleNamespace(
-                data=[SimpleNamespace(embedding=[0.0] * 1536)],
-                usage=None,
-            )
-
-    class DummyClient:
-        def __init__(self):
-            self.embeddings = DummyEmbeddings()
-
-    embedder = OpenAIEmbedder(id="text-embedding-3-small")
-    embedder.dimensions = None
-    embedder.openai_client = DummyClient()
-
-    _ = embedder.get_embedding("test")
-
-    assert "dimensions" not in embedder.openai_client.embeddings.last_kwargs, (
-        "dimensions should NOT be passed when None (use model default)"
+@pytest.mark.asyncio
+async def test_async_dimensions_passed_with_custom_base_url():
+    """Async path should also pass dimensions for custom base_url."""
+    embedder = OpenAIEmbedder(
+        id="text-embedding-v4",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        dimensions=768,
     )
+    embedder.async_client = DummyAsyncClient()
+
+    await embedder.async_get_embedding("test")
+
+    assert embedder.async_client.embeddings.last_kwargs is not None
+    assert embedder.async_client.embeddings.last_kwargs.get("dimensions") == 768
+
+
+@pytest.mark.skipif(not importlib.util.find_spec("openai"), reason="openai package not installed")
+@pytest.mark.asyncio
+async def test_async_dimensions_not_passed_for_legacy_models():
+    """Async path should NOT pass dimensions for legacy models without base_url."""
+    embedder = OpenAIEmbedder(id="text-embedding-ada-002", dimensions=256)
+    embedder.async_client = DummyAsyncClient()
+
+    await embedder.async_get_embedding("test")
+
+    assert embedder.async_client.embeddings.last_kwargs is not None
+    assert "dimensions" not in embedder.async_client.embeddings.last_kwargs
