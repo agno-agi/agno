@@ -2,6 +2,8 @@
 
 Agno is an open-source project and we welcome contributions.
 
+This is a Coda HITL smoke test.
+
 ## 👩‍💻 How to contribute
 
 Please follow the [fork and pull request](https://docs.github.com/en/get-started/quickstart/contributing-to-projects) workflow:
