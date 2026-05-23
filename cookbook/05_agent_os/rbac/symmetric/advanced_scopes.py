@@ -9,7 +9,7 @@ Scope Format:
 3. Wildcard support: resource:*:action
 
 Scope Examples:
-- system:read - Read system config
+- config:read - Read system config
 - agents:read - List all agents
 - agents:web-agent:read - Read specific agent
 - agents:web-agent:run - Run specific agent
@@ -111,7 +111,7 @@ if __name__ == "__main__":
        - "agent_os:admin" grants full access to all endpoints
     
     2. GLOBAL RESOURCE SCOPES:
-       - "system:read" - Read system configuration
+       - "config:read" - Read system configuration
        - "agents:read" - List all agents
        - "agents:run" - Run any agent
     
@@ -134,7 +134,7 @@ if __name__ == "__main__":
     power_user_token = create_token(
         user_id="power_user",
         scopes=[
-            "system:read",
+            "config:read",
             "agents:read",
             "agents:run",
             "sessions:read",
@@ -159,7 +159,7 @@ if __name__ == "__main__":
         user_id="readonly_user",
         scopes=[
             "agents:*:read",  # Can read all agents
-            "system:read",  # Can read system info
+            "config:read",  # Can read system info
             # Cannot run any agents
         ],
     )
@@ -182,7 +182,7 @@ if __name__ == "__main__":
     print("   Token: " + admin_token[:50] + "...")
 
     print("\n2. POWER USER (global access):")
-    print("   Scopes: ['system:read', 'agents:read', 'agents:run', ...]")
+    print("   Scopes: ['config:read', 'agents:read', 'agents:run', ...]")
     print("   Token: " + power_user_token[:50] + "...")
 
     print("\n3. LIMITED USER (specific agents only):")
@@ -192,7 +192,7 @@ if __name__ == "__main__":
     print("   Token: " + limited_user_token[:50] + "...")
 
     print("\n4. READ-ONLY USER (view only):")
-    print("   Scopes: ['agents:*:read', 'system:read']")
+    print("   Scopes: ['agents:*:read', 'config:read']")
     print("   Token: " + readonly_user_token[:50] + "...")
 
     print("\n5. WILDCARD USER (run any agent):")
