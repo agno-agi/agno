@@ -434,3 +434,57 @@ def test_default_status_code(model):
     """Verify that default status code (502) is retryable."""
     error = ModelProviderError("Unknown error")  # Default status_code=502
     assert model._is_retryable_error(error) is True
+
+
+# =============================================================================
+# Tests for retries_with_guidance_count scoping in _invoke_with_retry
+# =============================================================================
+
+
+def test_guidance_count_preserved_across_plain_retries():
+    """retries_with_guidance_count must not be reset to 0 on subsequent retry attempts.
+
+    Previously, ``kwargs.pop("retries_with_guidance_count", 0)`` was called on
+    every iteration of the retry loop.  Because the key is consumed on the first
+    iteration, every subsequent iteration would see the default value of 0,
+    silently resetting the guidance counter.
+
+    Scenario: model is already on guidance-retry #1 (count=1, limit=1).
+    - attempt 0: ModelProviderError → plain retry (sleep, continue loop)
+    - attempt 1: RetryableModelProviderError
+
+    With the bug: count read as 0 (re-popped = default), 0 < 1 → guidance retry allowed
+    (limit bypassed).  With the fix: count read as 1, 1 >= 1 → raises ModelProviderError
+    immediately.
+    """
+    from agno.exceptions import RetryableModelProviderError
+    from unittest.mock import MagicMock
+
+    model = OpenAIChat(id="gpt-4o-mini", retries=1, delay_between_retries=0)
+    model.retry_with_guidance_limit = 1  # Only 1 guidance retry allowed
+
+    call_count = [0]
+
+    def invoke_side_effect(**kwargs):
+        n = call_count[0]
+        call_count[0] += 1
+        if n == 0:
+            # First attempt: plain retryable error → normal sleep-retry
+            raise ModelProviderError("rate limit", status_code=429)
+        # Second attempt: guidance-needed error
+        raise RetryableModelProviderError(
+            retry_guidance_message="please fix your output",
+            original_error="bad output",
+        )
+
+    with patch.object(model, "invoke", side_effect=invoke_side_effect):
+        # We call with retries_with_guidance_count=1 to simulate being on the last
+        # allowed guidance retry.  With the fix, attempt 1 of the retry loop reads
+        # count=1 (>= limit=1) and raises ModelProviderError.
+        # With the bug, attempt 1 reads count=0 (reset by the second pop call)
+        # and would proceed to a recursive guidance retry instead.
+        with pytest.raises(ModelProviderError, match="Max retries with guidance reached"):
+            model._invoke_with_retry(
+                messages=[MagicMock()],
+                retries_with_guidance_count=1,  # already at guidance retry limit
+            )
