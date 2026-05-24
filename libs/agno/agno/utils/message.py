@@ -228,6 +228,26 @@ def reformat_tool_call_ids(messages: List[Message], provider: str) -> List[Messa
                         tc["id"] = id_map[old_id]
                         if call_id_prefix:
                             tc["call_id"] = call_id_map.get(old_id, id_map[old_id])
+            # Also rewrite provider_data["reasoning_details"][i].id with the
+            # same id_map. Gemini 3.x (reached via OpenRouter) emits a
+            # `reasoning_details` array where each entry carries the
+            # encrypted reasoning blob plus an `id` field that references
+            # the corresponding tool_call. On the next turn Gemini validates
+            # this cross-reference server-side; if the tool_call id has been
+            # rewritten here but the reasoning_details id still points at
+            # the *original* tool_call id, Gemini sees an orphaned signature
+            # and returns either an empty body or
+            # `native_finish_reason: "MALFORMED_FUNCTION_CALL"`. Reapplying
+            # the same map keeps the link consistent without touching the
+            # encrypted `data` blob.
+            if msg_copy.provider_data:
+                rd_list = msg_copy.provider_data.get("reasoning_details")
+                if isinstance(rd_list, list):
+                    for entry in rd_list:
+                        if isinstance(entry, dict):
+                            entry_id = entry.get("id")
+                            if entry_id and entry_id in id_map:
+                                entry["id"] = id_map[entry_id]
             result.append(msg_copy)
         elif msg.role == "tool" and msg.tool_call_id and msg.tool_call_id in id_map:
             msg_copy = msg.model_copy(deep=True)
