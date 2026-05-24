@@ -518,6 +518,13 @@ def _run(
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    after_tool_results=build_after_tool_results_callback(
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                    ),
                 )
 
                 # Check for cancellation after model call
@@ -1602,6 +1609,13 @@ async def _arun(
                     send_media_to_model=agent.send_media_to_model,
                     run_response=run_response,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    after_tool_results=abuild_after_tool_results_callback(
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                    ),
                 )
 
                 # Check for cancellation after model call
@@ -3123,6 +3137,13 @@ def _continue_run(
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    after_tool_results=build_after_tool_results_callback(
+                        agent,
+                        run_response=run_response,
+                        session=session,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                    ),
                 )
 
                 # Check for cancellation after model processing
@@ -4056,6 +4077,13 @@ async def _acontinue_run(
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    after_tool_results=abuild_after_tool_results_callback(
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                    ),
                 )
                 # Check for cancellation after model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -4796,41 +4824,51 @@ def scrub_run_output_for_storage(agent: Agent, run_response: RunOutput) -> None:
         scrub_history_messages_from_run_output(run_response)
 
 
-def cleanup_and_store(
+def _scrub_and_propagate_session_state(
     agent: Agent,
     run_response: RunOutput,
-    session: AgentSession,
-    run_context: Optional[RunContext] = None,
-    user_id: Optional[str] = None,
-) -> None:
+    run_context: Optional[RunContext],
+) -> RunOutput:
+    """Build a scrubbed shallow copy of ``run_response`` and propagate session_state.
+
+    Helper shared by cleanup_and_store (terminal) and persist_run_in_session
+    (checkpoint). Scrubbing is in-place on the shallow copy; the original
+    ``run_response`` is not mutated except for its session_state (mirrored from
+    run_context so the caller sees the latest state).
+    """
     import copy
 
-    from agno.agent import _session
-    from agno.run.approval import update_approval_run_status
-
-    # Scrub a shallow copy for storage — the original run_response is never
-    # mutated so the caller always sees generated media regardless of store_media.
     storage_copy = copy.copy(run_response)
     scrub_run_output_for_storage(agent, storage_copy)
 
-    # Stop the timer for the Run duration
-    if run_response.metrics:
-        run_response.metrics.stop_timer()
-
-    # Update run_response.session_state before saving
-    # This ensures RunOutput reflects all tool modifications
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
         storage_copy.session_state = run_context.session_state
 
-    # Optional: Save output to file if save_response_to_file is set
-    save_run_response_to_file(
-        agent,
-        run_response=storage_copy,
-        input=run_response.input.input_content_string() if run_response.input else "",
-        session_id=session.session_id,
-        user_id=user_id,
-    )
+    return storage_copy
+
+
+def persist_run_in_session(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+    storage_copy: Optional[RunOutput] = None,
+) -> None:
+    """Persist the current run state into the session and save the session.
+
+    Shared by terminal cleanup (cleanup_and_store) and mid-run checkpointing
+    (checkpoint_run). Performs: scrub a shallow copy (unless one is supplied),
+    upsert it into the session's runs list, refresh session metrics, sync
+    session_state into session_data, and call save_session.
+
+    Does NOT stop the run timer, write to file, or update approval status —
+    those are terminal-only and live in cleanup_and_store.
+    """
+    from agno.agent import _session
+
+    if storage_copy is None:
+        storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context)
 
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
@@ -4848,8 +4886,63 @@ def cleanup_and_store(
     # Save session to memory
     _session.save_session(agent, session=session)
 
+
+async def apersist_run_in_session(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+    storage_copy: Optional[RunOutput] = None,
+) -> None:
+    """Async variant of :func:`persist_run_in_session`."""
+    from agno.agent import _session
+
+    if storage_copy is None:
+        storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context)
+
+    session.upsert_run(run=storage_copy)
+    update_session_metrics(agent, session=session, run_response=run_response)
+
+    if run_context is not None and run_context.session_state is not None:
+        if session.session_data is not None:
+            session.session_data["session_state"] = run_context.session_state
+        else:
+            session.session_data = {"session_state": run_context.session_state}
+
+    await _session.asave_session(agent, session=session)
+
+
+def cleanup_and_store(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    from agno.run.approval import update_approval_run_status
+
+    # Scrub a shallow copy for storage — the original run_response is never
+    # mutated so the caller always sees generated media regardless of store_media.
+    storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context)
+
+    # Stop the timer for the Run duration (terminal only)
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
+
+    # Optional: Save output to file if save_response_to_file is set (terminal only)
+    save_run_response_to_file(
+        agent,
+        run_response=storage_copy,
+        input=run_response.input.input_content_string() if run_response.input else "",
+        session_id=session.session_id,
+        user_id=user_id,
+    )
+
+    # Persist run into session and save session
+    persist_run_in_session(agent, run_response, session, run_context, storage_copy=storage_copy)
+
     # Update approval run_status if this run has an associated approval.
-    # This is a no-op if no approval exists for this run_id.
+    # This is a no-op if no approval exists for this run_id. (Terminal only.)
     if run_response.status is not None and run_response.run_id is not None:
         update_approval_run_status(agent.db, run_response.run_id, run_response.status)
 
@@ -4861,26 +4954,13 @@ async def acleanup_and_store(
     run_context: Optional[RunContext] = None,
     user_id: Optional[str] = None,
 ) -> None:
-    import copy
-
-    from agno.agent import _session
     from agno.run.approval import aupdate_approval_run_status
 
-    # Scrub a shallow copy for storage — the original run_response is never
-    # mutated so the caller always sees generated media regardless of store_media.
-    storage_copy = copy.copy(run_response)
-    scrub_run_output_for_storage(agent, storage_copy)
+    storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context)
 
-    # Stop the timer for the Run duration
     if run_response.metrics:
         run_response.metrics.stop_timer()
 
-    # Update run_response.session_state before saving
-    if run_context is not None and run_context.session_state is not None:
-        run_response.session_state = run_context.session_state
-        storage_copy.session_state = run_context.session_state
-
-    # Optional: Save output to file if save_response_to_file is set
     save_run_response_to_file(
         agent,
         run_response=storage_copy,
@@ -4889,26 +4969,113 @@ async def acleanup_and_store(
         user_id=user_id,
     )
 
-    # Add scrubbed RunOutput to Agent Session
-    session.upsert_run(run=storage_copy)
+    await apersist_run_in_session(agent, run_response, session, run_context, storage_copy=storage_copy)
 
-    # Calculate session metrics
-    update_session_metrics(agent, session=session, run_response=run_response)
-
-    # Update session state before saving the session
-    if run_context is not None and run_context.session_state is not None:
-        if session.session_data is not None:
-            session.session_data["session_state"] = run_context.session_state
-        else:
-            session.session_data = {"session_state": run_context.session_state}
-
-    # Save session to memory
-    await _session.asave_session(agent, session=session)
-
-    # Update approval run_status if this run has an associated approval.
-    # This is a no-op if no approval exists for this run_id.
     if run_response.status is not None and run_response.run_id is not None:
         await aupdate_approval_run_status(agent.db, run_response.run_id, run_response.status)
+
+
+# ---------------------------------------------------------------------------
+# Mid-run checkpointing (checkpoint="steps")
+# ---------------------------------------------------------------------------
+
+
+def _sync_run_response_with_model_response(
+    run_response: RunOutput,
+    run_messages: RunMessages,
+    model_response: ModelResponse,
+) -> None:
+    """Mirror the in-flight model_response/run_messages state onto run_response.
+
+    Called by the checkpoint callback so the persisted snapshot reflects the
+    state through the most recent tool batch. The end-of-run ``update_run_response``
+    will redo this work; the duplication is intentional — we need an accurate
+    intermediate snapshot.
+    """
+    if model_response.tool_executions is not None:
+        run_response.tools = list(model_response.tool_executions)
+    run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
+
+
+def checkpoint_run(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+) -> None:
+    """Persist a mid-run checkpoint when ``agent.checkpoint == "steps"``.
+
+    Sets ``RunStatus.running`` and ``last_checkpoint_at_message_index``, then
+    persists the run into the session. No-op when checkpointing is not "steps".
+    Idempotent — calling twice in a row writes the same state twice.
+
+    Callers are responsible for ensuring ``run_response.messages`` and
+    ``run_response.tools`` reflect the state to persist (see
+    :func:`_sync_run_response_with_model_response`).
+    """
+    if agent.checkpoint != "steps":
+        return
+    run_response.status = RunStatus.running
+    run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
+    persist_run_in_session(agent, run_response, session, run_context)
+
+
+async def acheckpoint_run(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+) -> None:
+    """Async variant of :func:`checkpoint_run`."""
+    if agent.checkpoint != "steps":
+        return
+    run_response.status = RunStatus.running
+    run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
+    await apersist_run_in_session(agent, run_response, session, run_context)
+
+
+def build_after_tool_results_callback(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_messages: RunMessages,
+    run_context: Optional[RunContext] = None,
+) -> Optional[Any]:
+    """Build the sync ``after_tool_results`` callback for ``checkpoint="steps"``.
+
+    Returns ``None`` when checkpointing is not enabled — the caller passes the
+    result directly to the model's ``after_tool_results=`` kwarg, and the
+    zero-cost path is taken when the callback is None.
+
+    The returned callback receives the current ``ModelResponse``, syncs
+    ``run_response`` with the in-flight messages/tools, and writes a checkpoint.
+    """
+    if agent.checkpoint != "steps":
+        return None
+
+    def _callback(model_response: ModelResponse) -> None:
+        _sync_run_response_with_model_response(run_response, run_messages, model_response)
+        checkpoint_run(agent, run_response, session, run_context)
+
+    return _callback
+
+
+def abuild_after_tool_results_callback(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_messages: RunMessages,
+    run_context: Optional[RunContext] = None,
+) -> Optional[Any]:
+    """Async variant of :func:`build_after_tool_results_callback`."""
+    if agent.checkpoint != "steps":
+        return None
+
+    async def _callback(model_response: ModelResponse) -> None:
+        _sync_run_response_with_model_response(run_response, run_messages, model_response)
+        await acheckpoint_run(agent, run_response, session, run_context)
+
+    return _callback
 
 
 # ---------------------------------------------------------------------------

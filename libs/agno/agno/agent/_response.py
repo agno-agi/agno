@@ -1063,6 +1063,8 @@ def handle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
+    from agno.agent._run import build_after_tool_results_callback
+
     for model_response_event in call_model_stream_with_fallback(
         agent.model,
         agent.fallback_config,
@@ -1075,6 +1077,13 @@ def handle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        after_tool_results=build_after_tool_results_callback(
+            agent,
+            run_response=run_response,
+            session=session,
+            run_messages=run_messages,
+            run_context=run_context,
+        ),
     ):
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
@@ -1214,6 +1223,8 @@ async def ahandle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
+    from agno.agent._run import abuild_after_tool_results_callback
+
     model_response_stream = acall_model_stream_with_fallback(
         agent.model,
         agent.fallback_config,
@@ -1226,6 +1237,13 @@ async def ahandle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        after_tool_results=abuild_after_tool_results_callback(
+            agent,
+            run_response=run_response,
+            session=session,
+            run_messages=run_messages,
+            run_context=run_context,
+        ),
     )  # type: ignore
 
     async for model_response_event in model_response_stream:  # type: ignore
