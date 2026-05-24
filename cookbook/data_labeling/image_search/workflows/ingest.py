@@ -26,7 +26,6 @@ from typing import Any, Dict
 import httpx
 from agno.agent import Agent
 from agno.media import Image
-from agno.models.google import Gemini
 from agno.workflow import Step, StepInput, StepOutput, Workflow
 from db import get_db, get_knowledge
 from schemas import ImageDescription, to_searchable_text
@@ -79,7 +78,7 @@ EXTRACTOR_INSTRUCTIONS = (
 def make_extractor() -> Agent:
     return Agent(
         name="ImageLabeler",
-        model=Gemini(id=EXTRACTOR_MODEL_ID),
+        model=f"google:{EXTRACTOR_MODEL_ID}",
         instructions=EXTRACTOR_INSTRUCTIONS,
         output_schema=ImageDescription,
     )
