@@ -11,7 +11,6 @@ This example classifies short product reviews into sentiment classes.
 from typing import Literal
 
 from agno.agent import Agent, RunOutput  # noqa
-from agno.models.openai import OpenAIResponses
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -29,7 +28,7 @@ class Classification(BaseModel):
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model="google:gemini-3.5-flash",
     instructions="You classify product reviews by sentiment.",
     output_schema=Classification,
 )
