@@ -978,6 +978,7 @@ class Milvus(VectorDb):
                             name=entity.get("name", None),
                             meta_data=meta_data,  # Now a dictionary
                             content=entity.get("content", ""),
+                            content_id=entity.get("content_id", None),
                             embedder=self.embedder,
                             embedding=entity.get("dense_vector", None),
                             usage=usage,  # Now a dictionary or None
@@ -1137,7 +1138,8 @@ class Milvus(VectorDb):
         if isinstance(value, str):
             try:
                 return json.loads(value)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as e:
+                log_debug(f"Failed to decode JSON field, returning default: {e}")
                 return default
         return value
 
@@ -1188,11 +1190,14 @@ class Milvus(VectorDb):
         try:
             # Fetch the full row so we can do a complete upsert. Milvus only supports
             # partial-field upsert from 2.6.2+, so we read every field and rewrite it.
+            # Vector fields are listed explicitly because some Milvus versions exclude
+            # them from output_fields=["*"].
             search_expr = f'content_id == "{content_id}"'
+            output_fields = ["*", "dense_vector", "sparse_vector"] if self.search_type == SearchType.hybrid else ["*", "vector"]
             results = self.client.query(
                 collection_name=self.collection,
                 filter=search_expr,
-                output_fields=["*"],
+                output_fields=output_fields,
             )
 
             if not results:
@@ -1205,17 +1210,17 @@ class Milvus(VectorDb):
                 if not isinstance(current_metadata, dict):
                     current_metadata = {}
 
-                current_filters = self._decode_json_field(row.get("filters"), default={})
-                if not isinstance(current_filters, dict):
-                    current_filters = {}
-
                 updated_metadata = {**current_metadata, **metadata}
-                updated_filters = {**current_filters, **metadata}
 
-                # Rebuild the full row.
+                # Rebuild the full row
                 new_row: Dict[str, Any] = dict(row)
                 new_row["meta_data"] = json.dumps(updated_metadata)
-                new_row["filters"] = json.dumps(updated_filters)
+                if "filters" in row:
+                    current_filters = self._decode_json_field(row.get("filters"), default={})
+                    if not isinstance(current_filters, dict):
+                        current_filters = {}
+                    new_row["filters"] = json.dumps({**current_filters, **metadata})
+
                 usage_value = row.get("usage")
                 if isinstance(usage_value, (dict, list)):
                     new_row["usage"] = json.dumps(usage_value)
