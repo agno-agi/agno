@@ -208,6 +208,8 @@ async def agent_continue_response_streamer(
     run_id: str,
     updated_tools: Optional[List] = None,
     input: Optional[str] = None,
+    from_checkpoint: Optional[int] = None,
+    fork: bool = False,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
@@ -228,6 +230,8 @@ async def agent_continue_response_streamer(
             run_id=run_id,
             updated_tools=updated_tools,
             input=input,
+            from_checkpoint=from_checkpoint,
+            fork=fork,
             session_id=session_id,
             user_id=user_id,
             stream=True,
@@ -265,6 +269,8 @@ async def agent_resumable_continue_response_streamer(
     run_id: str,
     updated_tools: Optional[List] = None,
     input: Optional[str] = None,
+    from_checkpoint: Optional[int] = None,
+    fork: bool = False,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
@@ -295,6 +301,8 @@ async def agent_resumable_continue_response_streamer(
             run_id=run_id,
             updated_tools=updated_tools,
             input=input,
+            from_checkpoint=from_checkpoint,
+            fork=fork,
             session_id=session_id,
             user_id=user_id,
             stream=True,
@@ -963,6 +971,22 @@ def get_agent_router(
                 "to an INTERRUPTED/ERROR resume."
             ),
         ),
+        from_checkpoint: Optional[int] = Form(
+            None,
+            description=(
+                "Optional message index to truncate to before resuming. Time-travel: "
+                "drops messages and tools past this index. Pair with ``fork=true`` to "
+                "explore an alternative path without mutating the original run."
+            ),
+        ),
+        fork: bool = Form(
+            False,
+            description=(
+                "When true, clone the run with a new ``run_id`` before resuming. The "
+                "original is untouched; the clone becomes a sibling within the same "
+                "session, with ``forked_from_run_id`` set."
+            ),
+        ),
         session_id: Optional[str] = Form(None, description="Session ID for the paused run"),
         user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
         stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
@@ -1080,6 +1104,8 @@ def get_agent_router(
                     run_id=run_id,
                     updated_tools=updated_tools,
                     input=input,
+                    from_checkpoint=from_checkpoint,
+                    fork=fork,
                     session_id=session_id,
                     user_id=user_id,
                     background_tasks=background_tasks,
@@ -1095,6 +1121,8 @@ def get_agent_router(
                     run_id=run_id,  # run_id from path
                     updated_tools=updated_tools,
                     input=input,
+                    from_checkpoint=from_checkpoint,
+                    fork=fork,
                     session_id=session_id,
                     user_id=user_id,
                     background_tasks=background_tasks,
@@ -1116,6 +1144,8 @@ def get_agent_router(
                         run_id=run_id,  # run_id from path
                         updated_tools=updated_tools,
                         input=input,
+                        from_checkpoint=from_checkpoint,
+                        fork=fork,
                         session_id=session_id,
                         user_id=user_id,
                         stream=False,

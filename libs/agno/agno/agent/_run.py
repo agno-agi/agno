@@ -2830,6 +2830,100 @@ def arun_dispatch(  # type: ignore
         )
 
 
+def _truncate_run_to_checkpoint(run_response: RunOutput, from_checkpoint: int) -> None:
+    """Truncate ``run_response.messages`` to length ``from_checkpoint`` and prune
+    tools / requirements that referenced removed messages.
+
+    Used by the unified /continue dispatch (ADR-003) to support time-travel —
+    resuming a run from an earlier point in its conversation. The retained
+    state is a strict prefix of the original.
+
+    A tool is kept iff its ``tool_call_id`` is still referenced by either:
+    - a remaining tool-role message's ``tool_call_id`` field, or
+    - a remaining assistant message's ``tool_calls`` list.
+
+    A requirement is kept iff its underlying tool execution survives. The
+    checkpoint marker is updated to ``from_checkpoint``.
+
+    No-op when ``from_checkpoint >= len(messages)`` or ``from_checkpoint < 0``.
+    """
+    if run_response.messages is None or from_checkpoint < 0:
+        return
+    if from_checkpoint >= len(run_response.messages):
+        return
+
+    # Truncate messages
+    run_response.messages = run_response.messages[:from_checkpoint]
+
+    # Collect tool_call_ids referenced by the surviving messages
+    valid_tool_call_ids: set = set()
+    for msg in run_response.messages:
+        tool_call_id = getattr(msg, "tool_call_id", None)
+        if tool_call_id:
+            valid_tool_call_ids.add(tool_call_id)
+        tool_calls = getattr(msg, "tool_calls", None) or []
+        for tc in tool_calls:
+            tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+            if tc_id:
+                valid_tool_call_ids.add(tc_id)
+
+    # Filter tools and requirements to those still referenced
+    if run_response.tools:
+        run_response.tools = [t for t in run_response.tools if t.tool_call_id in valid_tool_call_ids]
+    if run_response.requirements:
+        run_response.requirements = [
+            req
+            for req in run_response.requirements
+            if req.tool_execution and req.tool_execution.tool_call_id in valid_tool_call_ids
+        ]
+
+    # Update the checkpoint marker to the new truncation index
+    run_response.last_checkpoint_at_message_index = from_checkpoint
+
+
+def _fork_run(run_response: RunOutput, from_checkpoint: int) -> RunOutput:
+    """Deep-clone ``run_response`` with a new ``run_id`` and set fork metadata,
+    then truncate the clone to ``from_checkpoint``.
+
+    The original ``run_response`` is untouched. The returned RunOutput has:
+    - a fresh UUID4 ``run_id``
+    - ``forked_from_run_id`` set to the original's ``run_id``
+    - ``forked_from_message_index`` set to ``from_checkpoint``
+    - messages / tools / requirements truncated per
+      :func:`_truncate_run_to_checkpoint`
+
+    Same ``session_id`` — forks are sibling runs within the same session.
+    """
+    import copy
+
+    forked = copy.deepcopy(run_response)
+    forked.run_id = str(uuid4())
+    forked.forked_from_run_id = run_response.run_id
+    forked.forked_from_message_index = from_checkpoint
+    _truncate_run_to_checkpoint(forked, from_checkpoint)
+    return forked
+
+
+def _apply_continue_modifiers(
+    run_response: RunOutput,
+    fork: bool,
+    from_checkpoint: Optional[int],
+) -> RunOutput:
+    """Apply ``fork`` and / or ``from_checkpoint`` to a loaded run_response.
+
+    Returns the resulting RunOutput — the same instance when only truncating,
+    a new instance when forking. Called from continue_run_dispatch /
+    acontinue_run_dispatch after a run is loaded and before validation, so the
+    rest of the dispatch operates on the modified state.
+    """
+    if fork:
+        idx = from_checkpoint if from_checkpoint is not None else len(run_response.messages or [])
+        return _fork_run(run_response, idx)
+    if from_checkpoint is not None:
+        _truncate_run_to_checkpoint(run_response, from_checkpoint)
+    return run_response
+
+
 def _maybe_append_input_message(run_response: RunOutput, new_input: Optional[str], agent: Agent) -> None:
     """If ``new_input`` is a non-empty string, append it as a new user-role message
     to ``run_response.messages``.
@@ -2869,6 +2963,8 @@ def continue_run_dispatch(
     updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
     input: Optional[str] = None,
+    from_checkpoint: Optional[int] = None,
+    fork: bool = False,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = False,
     user_id: Optional[str] = None,
@@ -2890,6 +2986,11 @@ def continue_run_dispatch(
         input: Optional new user-message text to append before resuming. Use for
             continuing a COMPLETED run with a follow-up, or adding context to an
             INTERRUPTED/ERROR resume.
+        from_checkpoint: Optional message index to truncate to before resuming.
+            Time-travel — drops messages and tools past index K from the run.
+        fork: When True, clone the run with a new ``run_id`` before truncating /
+            resuming. The original run is untouched; the clone becomes a sibling
+            within the same session, with ``forked_from_run_id`` set.
         stream: Whether to stream the response.
         stream_events: Whether to stream all events.
         user_id: The user id to continue the run for.
@@ -2975,6 +3076,7 @@ def continue_run_dispatch(
     # Run can be continued from previous run response or from passed run_response context
     if run_response is not None:
         # The run is continued from a provided run_response. This contains the updated tools.
+        run_response = _apply_continue_modifiers(run_response, fork, from_checkpoint)
         input_messages = run_response.messages or []
     elif run_id is not None:
         # The run is continued from a run_id.
@@ -2982,6 +3084,14 @@ def continue_run_dispatch(
         run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
         if run_response is None:
             raise RuntimeError(f"No runs found for run ID {run_id}")
+
+        # Apply fork/truncate before validation so the rest of the dispatch operates
+        # on the modified state (time-travel + forking land before HITL checks).
+        # NOTE: for fork=True, ``run_response.run_id`` becomes a new UUID. The local
+        # ``run_id`` variable still points at the ORIGINAL run — used for approval
+        # lookups (the fork inherits the original's resolved approval, if any).
+        # ``run_response.run_id`` is what gets persisted as the new sibling run.
+        run_response = _apply_continue_modifiers(run_response, fork, from_checkpoint)
 
         input_messages = run_response.messages or []
 
@@ -3622,6 +3732,8 @@ def acontinue_run_dispatch(  # type: ignore
     updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
     input: Optional[str] = None,
+    from_checkpoint: Optional[int] = None,
+    fork: bool = False,
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = None,
     user_id: Optional[str] = None,
@@ -3645,6 +3757,11 @@ def acontinue_run_dispatch(  # type: ignore
         input: Optional new user-message text to append before resuming. Use for
             continuing a COMPLETED run with a follow-up, or adding context to an
             INTERRUPTED/ERROR resume.
+        from_checkpoint: Optional message index to truncate to before resuming.
+            Time-travel — drops messages and tools past index K from the run.
+        fork: When True, clone the run with a new ``run_id`` before truncating /
+            resuming. The original run is untouched; the clone becomes a sibling
+            within the same session, with ``forked_from_run_id`` set.
         stream: Whether to stream the response.
         stream_events: Whether to stream all events.
         user_id: The user id to continue the run for.
@@ -3748,6 +3865,8 @@ def acontinue_run_dispatch(  # type: ignore
                 updated_tools=updated_tools,
                 requirements=requirements,
                 input=input,
+                from_checkpoint=from_checkpoint,
+                fork=fork,
                 run_id=run_id,
                 user_id=user_id,
                 session_id=session_id,
@@ -3767,6 +3886,8 @@ def acontinue_run_dispatch(  # type: ignore
             updated_tools=updated_tools,
             requirements=requirements,
             input=input,
+            from_checkpoint=from_checkpoint,
+            fork=fork,
             run_id=run_id,
             user_id=user_id,
             session_id=session_id,
@@ -3786,6 +3907,8 @@ def acontinue_run_dispatch(  # type: ignore
             updated_tools=updated_tools,
             requirements=requirements,
             input=input,
+            from_checkpoint=from_checkpoint,
+            fork=fork,
             run_id=run_id,
             user_id=user_id,
             response_format=response_format,
@@ -3803,6 +3926,8 @@ async def _acontinue_run_background_stream(
     updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
     input: Optional[str] = None,
+    from_checkpoint: Optional[int] = None,
+    fork: bool = False,
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -3858,6 +3983,8 @@ async def _acontinue_run_background_stream(
                 updated_tools=updated_tools,
                 requirements=requirements,
                 input=input,
+                from_checkpoint=from_checkpoint,
+                fork=fork,
                 run_id=run_id,
                 user_id=user_id,
                 session_id=session_id,
@@ -3946,6 +4073,8 @@ async def _acontinue_run(
     updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
     input: Optional[str] = None,
+    from_checkpoint: Optional[int] = None,
+    fork: bool = False,
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -4022,6 +4151,7 @@ async def _acontinue_run(
                 # 4. Prepare run response
                 if run_response is not None:
                     # The run is continued from a provided run_response. This contains the updated tools.
+                    run_response = _apply_continue_modifiers(run_response, fork, from_checkpoint)
                     input_messages = run_response.messages or []
                 elif run_id is not None:
                     # The run is continued from a run_id.
@@ -4029,6 +4159,12 @@ async def _acontinue_run(
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
                         raise RuntimeError(f"No runs found for run ID {run_id}")
+
+                    # Apply fork/truncate before validation so the rest of the dispatch operates
+                    # on the modified state. The local ``run_id`` continues to refer to the
+                    # original run (used for HITL approval lookups); ``run_response.run_id``
+                    # is the new UUID when fork=True.
+                    run_response = _apply_continue_modifiers(run_response, fork, from_checkpoint)
 
                     input_messages = run_response.messages or []
 
@@ -4343,6 +4479,8 @@ async def _acontinue_run_stream(
     updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
     input: Optional[str] = None,
+    from_checkpoint: Optional[int] = None,
+    fork: bool = False,
     run_id: Optional[str] = None,
     user_id: Optional[str] = None,
     response_format: Optional[Union[Dict, Type[BaseModel]]] = None,

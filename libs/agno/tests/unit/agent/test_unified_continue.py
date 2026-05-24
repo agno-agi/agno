@@ -20,6 +20,7 @@ import pytest
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
 from agno.agent import _init, _response, _run, _storage, _tools
+from agno.agent._run import _fork_run, _truncate_run_to_checkpoint
 from agno.agent.agent import Agent
 from agno.models.message import Message
 from agno.models.response import ToolExecution
@@ -655,3 +656,355 @@ class TestInputAppend:
         assert len(msgs) == 4
         assert msgs[-1].role == "user"
         assert msgs[-1].content == "also include bar"
+
+
+# ---------------------------------------------------------------------------
+# from_checkpoint — time-travel truncation
+# ---------------------------------------------------------------------------
+
+
+class TestTruncateHelper:
+    """Direct coverage of _truncate_run_to_checkpoint."""
+
+    def _build_run_with_tools(self) -> RunOutput:
+        """5 messages: user, assistant(calls tc1), tool(tc1), assistant(calls tc2), tool(tc2)."""
+        return RunOutput(
+            run_id="run-1",
+            session_id="session-1",
+            tools=[
+                ToolExecution(tool_call_id="tc1", tool_name="x", tool_args={}, result="r1"),
+                ToolExecution(tool_call_id="tc2", tool_name="y", tool_args={}, result="r2"),
+            ],
+            messages=[
+                Message(role="user", content="q1"),
+                Message(role="assistant", content=None, tool_calls=[{"id": "tc1"}]),
+                Message(role="tool", content="r1", tool_call_id="tc1"),
+                Message(role="assistant", content=None, tool_calls=[{"id": "tc2"}]),
+                Message(role="tool", content="r2", tool_call_id="tc2"),
+            ],
+        )
+
+    def test_truncate_drops_trailing_messages(self):
+        run = self._build_run_with_tools()
+        _truncate_run_to_checkpoint(run, 3)
+        assert run.messages is not None
+        assert len(run.messages) == 3
+        assert run.messages[-1].content == "r1"
+
+    def test_truncate_drops_tools_for_removed_messages(self):
+        """Truncating to index 3 keeps tc1 (referenced in surviving messages) and
+        drops tc2 (its tool message and assistant tool_calls entry are both gone)."""
+        run = self._build_run_with_tools()
+        _truncate_run_to_checkpoint(run, 3)
+        assert run.tools is not None
+        assert [t.tool_call_id for t in run.tools] == ["tc1"]
+
+    def test_truncate_updates_checkpoint_marker(self):
+        run = self._build_run_with_tools()
+        _truncate_run_to_checkpoint(run, 3)
+        assert run.last_checkpoint_at_message_index == 3
+
+    def test_truncate_beyond_length_is_noop(self):
+        run = self._build_run_with_tools()
+        original_len = len(run.messages or [])
+        _truncate_run_to_checkpoint(run, 100)
+        assert len(run.messages or []) == original_len
+        assert [t.tool_call_id for t in (run.tools or [])] == ["tc1", "tc2"]
+
+    def test_truncate_negative_is_noop(self):
+        run = self._build_run_with_tools()
+        original_len = len(run.messages or [])
+        _truncate_run_to_checkpoint(run, -1)
+        assert len(run.messages or []) == original_len
+
+    def test_truncate_zero_clears_messages(self):
+        run = self._build_run_with_tools()
+        _truncate_run_to_checkpoint(run, 0)
+        assert run.messages == []
+        assert run.tools == [], "All tools dropped when no messages survive"
+        assert run.last_checkpoint_at_message_index == 0
+
+    def test_truncate_filters_requirements(self):
+        pending_tool = ToolExecution(tool_call_id="tc-late", tool_name="z", tool_args={})
+        run = RunOutput(
+            run_id="r1",
+            session_id="s1",
+            tools=[pending_tool],
+            requirements=[RunRequirement(tool_execution=pending_tool)],
+            messages=[
+                Message(role="user", content="q"),
+                Message(role="assistant", content=None, tool_calls=[{"id": "tc-late"}]),
+                Message(role="tool", content="r", tool_call_id="tc-late"),
+            ],
+        )
+        # Truncate before the tool was even called
+        _truncate_run_to_checkpoint(run, 1)
+        assert run.tools == []
+        assert run.requirements == [], "Requirement dropped because its tool no longer survives"
+
+
+class TestForkHelper:
+    """Direct coverage of _fork_run."""
+
+    def _build_run(self) -> RunOutput:
+        return RunOutput(
+            run_id="origin-run",
+            session_id="session-1",
+            tools=[ToolExecution(tool_call_id="tc1", tool_name="x", tool_args={}, result="r1")],
+            messages=[
+                Message(role="user", content="q1"),
+                Message(role="assistant", content=None, tool_calls=[{"id": "tc1"}]),
+                Message(role="tool", content="r1", tool_call_id="tc1"),
+                Message(role="assistant", content="final answer"),
+            ],
+        )
+
+    def test_fork_assigns_new_run_id(self):
+        original = self._build_run()
+        forked = _fork_run(original, 4)
+        assert forked.run_id != original.run_id
+        assert isinstance(forked.run_id, str)
+        assert len(forked.run_id) > 0
+
+    def test_fork_sets_fork_metadata(self):
+        original = self._build_run()
+        forked = _fork_run(original, 2)
+        assert forked.forked_from_run_id == "origin-run"
+        assert forked.forked_from_message_index == 2
+
+    def test_fork_preserves_session_id(self):
+        original = self._build_run()
+        forked = _fork_run(original, 2)
+        assert forked.session_id == original.session_id
+
+    def test_fork_does_not_mutate_original(self):
+        original = self._build_run()
+        original_messages = list(original.messages or [])
+        original_tools = list(original.tools or [])
+        original_run_id = original.run_id
+
+        _fork_run(original, 1)
+
+        assert original.run_id == original_run_id
+        assert list(original.messages or []) == original_messages
+        assert list(original.tools or []) == original_tools
+        assert original.forked_from_run_id is None
+
+    def test_fork_truncates_to_index(self):
+        original = self._build_run()
+        forked = _fork_run(original, 2)
+        assert forked.messages is not None
+        assert len(forked.messages) == 2
+        # tc1 is referenced by the assistant message at index 1, so it survives
+        # truncation to length 2. The tool RESULT at index 2 is gone but the
+        # tool_call is still in the assistant's tool_calls list.
+        assert forked.tools is not None
+        assert [t.tool_call_id for t in forked.tools] == ["tc1"]
+
+    def test_fork_truncate_drops_unreferenced_tools(self):
+        """Truncating to a point BEFORE any tool_calls drops the tool entirely."""
+        original = self._build_run()
+        forked = _fork_run(original, 1)  # only user q1 survives
+        assert forked.messages is not None
+        assert len(forked.messages) == 1
+        assert forked.tools == [], "No tool_call_ids referenced in surviving messages"
+
+
+# ---------------------------------------------------------------------------
+# Dispatch wiring for from_checkpoint and fork
+# ---------------------------------------------------------------------------
+
+
+class TestDispatchTruncate:
+    """End-to-end: continue_run_dispatch applies from_checkpoint to the loaded run."""
+
+    def test_dispatch_truncates_messages(self, monkeypatch: pytest.MonkeyPatch):
+        existing_run = RunOutput(
+            run_id="run-1",
+            session_id="session-1",
+            status=RunStatus.completed,
+            tools=[ToolExecution(tool_call_id="tc1", tool_name="x", tool_args={}, result="r")],
+            messages=[
+                Message(role="user", content="q1"),
+                Message(role="assistant", content=None, tool_calls=[{"id": "tc1"}]),
+                Message(role="tool", content="r", tool_call_id="tc1"),
+                Message(role="assistant", content="answer"),
+            ],
+        )
+        agent = _make_agent(monkeypatch, runs=[existing_run])
+
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["messages"] = list(run_response.messages or [])
+            captured["tools"] = list(run_response.tools or [])
+            captured["checkpoint_idx"] = run_response.last_checkpoint_at_message_index
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        # Truncate to index 1 — only the user question survives. The assistant's
+        # tool_calls and the tool result are both dropped, so tc1 has no references.
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-1",
+            session_id="session-1",
+            from_checkpoint=1,
+            stream=False,
+        )
+
+        assert len(captured["messages"]) == 1
+        assert captured["tools"] == [], "Tools dropped — no references in surviving messages"
+        assert captured["checkpoint_idx"] == 1
+
+    def test_dispatch_truncate_composes_with_input(self, monkeypatch: pytest.MonkeyPatch):
+        """from_checkpoint=K AND input="..." → truncate then append."""
+        existing_run = RunOutput(
+            run_id="run-1",
+            session_id="session-1",
+            status=RunStatus.completed,
+            tools=[],
+            messages=[
+                Message(role="user", content="original"),
+                Message(role="assistant", content="answer 1"),
+                Message(role="user", content="follow-up 1"),
+                Message(role="assistant", content="answer 2"),
+            ],
+        )
+        agent = _make_agent(monkeypatch, runs=[existing_run])
+
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["messages"] = list(run_response.messages or [])
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="run-1",
+            session_id="session-1",
+            from_checkpoint=2,
+            input="new follow-up",
+            stream=False,
+        )
+
+        msgs = captured["messages"]
+        # 2 from truncate + 1 appended user message
+        assert len(msgs) == 3
+        assert msgs[-1].role == "user"
+        assert msgs[-1].content == "new follow-up"
+
+
+class TestDispatchFork:
+    """End-to-end: continue_run_dispatch with fork=True clones the run."""
+
+    def test_fork_creates_new_run_with_metadata(self, monkeypatch: pytest.MonkeyPatch):
+        original = RunOutput(
+            run_id="origin-run",
+            session_id="session-1",
+            status=RunStatus.completed,
+            tools=[],
+            messages=[
+                Message(role="user", content="q1"),
+                Message(role="assistant", content="a1"),
+            ],
+        )
+        agent = _make_agent(monkeypatch, runs=[original])
+
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["run_response"] = run_response
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="origin-run",
+            session_id="session-1",
+            fork=True,
+            from_checkpoint=1,
+            stream=False,
+        )
+
+        rr = captured["run_response"]
+        assert rr.run_id != "origin-run", "Forked run has a new ID"
+        assert rr.forked_from_run_id == "origin-run"
+        assert rr.forked_from_message_index == 1
+        assert rr.session_id == "session-1", "Fork stays in the same session"
+        assert len(rr.messages or []) == 1, "Truncated to index 1"
+
+    def test_fork_without_explicit_from_checkpoint_defaults_to_full_length(self, monkeypatch: pytest.MonkeyPatch):
+        """fork=True without from_checkpoint clones at the current end → no
+        truncation, just a sibling that starts where the original left off."""
+        original = RunOutput(
+            run_id="origin-run",
+            session_id="session-1",
+            status=RunStatus.completed,
+            tools=[],
+            messages=[
+                Message(role="user", content="q1"),
+                Message(role="assistant", content="a1"),
+            ],
+        )
+        agent = _make_agent(monkeypatch, runs=[original])
+
+        captured: dict = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["run_response"] = run_response
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="origin-run",
+            session_id="session-1",
+            fork=True,
+            stream=False,
+        )
+
+        rr = captured["run_response"]
+        assert rr.run_id != "origin-run"
+        assert rr.forked_from_run_id == "origin-run"
+        assert rr.forked_from_message_index == 2  # len(messages)
+        assert len(rr.messages or []) == 2, "Full messages preserved"
+
+    def test_fork_does_not_mutate_session_run(self, monkeypatch: pytest.MonkeyPatch):
+        """Forking via dispatch should NOT mutate the original run sitting in the
+        session.runs array — the clone is independent."""
+        original = RunOutput(
+            run_id="origin-run",
+            session_id="session-1",
+            status=RunStatus.completed,
+            tools=[],
+            messages=[
+                Message(role="user", content="q1"),
+                Message(role="assistant", content="a1"),
+                Message(role="user", content="follow"),
+            ],
+        )
+        agent = _make_agent(monkeypatch, runs=[original])
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(
+            agent=agent,
+            run_id="origin-run",
+            session_id="session-1",
+            fork=True,
+            from_checkpoint=1,
+            stream=False,
+        )
+
+        # Original is unchanged
+        assert original.run_id == "origin-run"
+        assert len(original.messages or []) == 3
+        assert original.forked_from_run_id is None
